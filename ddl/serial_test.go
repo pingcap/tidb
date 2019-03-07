@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = SerialSuites(&testSerialSuite{})
@@ -44,7 +43,6 @@ type testSerialSuite struct {
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	session.SetSchemaLease(200 * time.Millisecond)
 	session.SetStatsLease(0)
 
@@ -64,7 +62,6 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 	if s.store != nil {
 		s.store.Close()
 	}
-	testleak.AfterTest(c)()
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
@@ -460,4 +457,15 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+}
+
+func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	gofail.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	_, err := tk.Exec("create table t (a int)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 }

@@ -112,18 +112,14 @@ func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
 	m[tableID] = item
 }
 
-func (h *Handle) merge(s *SessionStatsCollector) {
-	s.Lock()
-	defer s.Unlock()
+func (h *Handle) merge(s *SessionStatsCollector, rateMap errorRateDeltaMap) {
 	for id, item := range s.mapper {
 		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
 	}
-	h.mu.Lock()
-	h.mu.rateMap.merge(s.rateMap)
-	h.mu.Unlock()
+	s.mapper = make(tableDeltaMap)
+	rateMap.merge(s.rateMap)
 	s.rateMap = make(errorRateDeltaMap)
 	h.feedback = mergeQueryFeedback(h.feedback, s.feedback)
-	s.mapper = make(tableDeltaMap)
 	s.feedback = s.feedback[:0]
 }
 
@@ -134,7 +130,6 @@ type SessionStatsCollector struct {
 	mapper   tableDeltaMap
 	feedback []*QueryFeedback
 	rateMap  errorRateDeltaMap
-	prev     *SessionStatsCollector
 	next     *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
@@ -193,8 +188,11 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	} else {
 		rate = math.Abs(expected-float64(q.actual)) / float64(q.actual)
 	}
-	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) && log.GetLevel() == log.DebugLevel {
-		q.logDetailedInfo(h)
+	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) {
+		metrics.SignificantFeedbackCounter.Inc()
+		if log.GetLevel() == log.DebugLevel {
+			q.logDetailedInfo(h)
+		}
 	}
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()
@@ -207,21 +205,6 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	return nil
 }
 
-// tryToRemoveFromList will remove this collector from the list if it's deleted flag is set.
-func (s *SessionStatsCollector) tryToRemoveFromList() {
-	s.Lock()
-	defer s.Unlock()
-	if !s.deleted {
-		return
-	}
-	next := s.next
-	prev := s.prev
-	prev.next = next
-	if next != nil {
-		next.prev = prev
-	}
-}
-
 // NewSessionStatsCollector allocates a stats collector for a session.
 func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
@@ -230,10 +213,6 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 		mapper:  make(tableDeltaMap),
 		rateMap: make(errorRateDeltaMap),
 		next:    h.listHead.next,
-		prev:    h.listHead,
-	}
-	if h.listHead.next != nil {
-		h.listHead.next.prev = newCollector
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -275,15 +254,36 @@ const (
 	DumpDelta = false
 )
 
+// sweepList will loop over the list, merge each session's local stats into handle
+// and remove closed session's collector.
+func (h *Handle) sweepList() {
+	prev := h.listHead
+	prev.Lock()
+	errorRateMap := make(errorRateDeltaMap)
+	for curr := prev.next; curr != nil; curr = curr.next {
+		curr.Lock()
+		// Merge the session stats into handle and error rate map.
+		h.merge(curr, errorRateMap)
+		if curr.deleted {
+			prev.next = curr.next
+			// Since the session is already closed, we can safely unlock it here.
+			curr.Unlock()
+		} else {
+			// Unlock the previous lock, so we only holds at most two session's lock at the same time.
+			prev.Unlock()
+			prev = curr
+		}
+	}
+	prev.Unlock()
+	h.mu.Lock()
+	h.mu.rateMap.merge(errorRateMap)
+	h.mu.Unlock()
+}
+
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the `dumpAll` is false, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
-	h.listHead.Lock()
-	for collector := h.listHead.next; collector != nil; collector = collector.next {
-		collector.tryToRemoveFromList()
-		h.merge(collector)
-	}
-	h.listHead.Unlock()
+	h.sweepList()
 	currentTime := time.Now()
 	for id, item := range h.globalMap {
 		if dumpMode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
@@ -416,12 +416,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 // it takes 10 minutes for a feedback to take effect. However, we can use the
 // feedback locally on this tidb-server, so it could be used more timely.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
-	h.listHead.Lock()
-	for collector := h.listHead.next; collector != nil; collector = collector.next {
-		collector.tryToRemoveFromList()
-		h.merge(collector)
-	}
-	h.listHead.Unlock()
+	h.sweepList()
 	for _, fb := range h.feedback {
 		h.mu.Lock()
 		table, ok := h.getTableByPhysicalID(is, fb.physicalID)
@@ -632,24 +627,25 @@ func withinTimePeriod(start, end, now time.Time) bool {
 // 1. If the table has never been analyzed, we need to analyze it when it has
 //    not been modified for a while.
 // 2. If the table had been analyzed before, we need to analyze it when
-//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
-// 3. The current time is between `start` and `end`.
-func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) bool {
+//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
+//    between `start` and `end`.
+func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-		return time.Since(t) >= limit
+		dur := time.Since(t)
+		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %vs", dur)
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
-		return false
+		return false, ""
 	}
 	// No need to analyze it.
 	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
-		return false
+		return false, ""
 	}
 	// Tests if current time is within the time period.
-	return withinTimePeriod(start, end, now)
+	return withinTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v)", tbl.ModifyCount, tbl.Count)
 }
 
 const (
@@ -700,13 +696,14 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
-func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
+func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
-		return errors.Trace(err)
+		log.Errorf("[stats] parse auto analyze period failed: %v", errors.ErrorStack(err))
+		return
 	}
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
@@ -717,33 +714,34 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := fmt.Sprintf("analyze table %s", tblName)
-				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
-					return err
+					return
 				}
 				continue
 			}
 			for _, def := range pi.Definitions {
 				sql := fmt.Sprintf("analyze table %s partition `%s`", tblName, def.Name.O)
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
-					return err
+					return
 				}
 				continue
 			}
 		}
 	}
-	return nil
+	return
 }
 
-func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, start, end time.Time, ratio float64, sql string) (bool, error) {
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, start, end time.Time, ratio float64, sql string) bool {
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
-		return false, nil
+		return false
 	}
-	if NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()) {
-		log.Infof("[stats] auto %s now", sql)
-		return true, h.execAutoAnalyze(sql)
+	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()); needAnalyze {
+		log.Infof("[stats] %s, auto %s now", sql, reason)
+		h.execAutoAnalyze(sql)
+		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State != model.StatePublic {
@@ -751,21 +749,23 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		}
 		if _, ok := statsTbl.Indices[idx.ID]; !ok {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
-			log.Infof("[stats] auto %s now", sql)
-			return true, h.execAutoAnalyze(sql)
+			log.Infof("[stats] index unanalyzed, auto %s now", sql)
+			h.execAutoAnalyze(sql)
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
-func (h *Handle) execAutoAnalyze(sql string) error {
+func (h *Handle) execAutoAnalyze(sql string) {
 	startTime := time.Now()
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
-	metrics.AutoAnalyzeHistogram.Observe(time.Since(startTime).Seconds())
+	dur := time.Since(startTime)
+	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
+		log.Errorf("[stats] auto %v failed: %v, cost_time:%vs", sql, errors.ErrorStack(err), dur.Seconds())
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
 	}
-	return errors.Trace(err)
 }

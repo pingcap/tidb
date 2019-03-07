@@ -2657,7 +2657,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 
 	duration := time.Duration(dur)
 	goTime = goTime.Add(duration)
-	goTime = goTime.AddDate(int(year), int(month), int(day))
+	goTime = types.AddDate(year, month, day, goTime)
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
@@ -2683,7 +2683,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 
 	duration := time.Duration(dur)
 	goTime = goTime.Add(duration)
-	goTime = goTime.AddDate(int(year), int(month), int(day))
+	goTime = types.AddDate(year, month, day, goTime)
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
@@ -5060,7 +5060,7 @@ func (b *builtinSubStringAndStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinAddStringAndStringSig.
+// evalString evals a builtinSubStringAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubStringAndStringSig) evalString(row chunk.Row) (result string, isNull bool, err error) {
 	var (
@@ -5117,7 +5117,7 @@ func (b *builtinSubDurationAndDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDuration evals a builtinAddDurationAndDurationSig.
+// evalDuration evals a builtinSubDurationAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDurationAndDurationSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5145,7 +5145,7 @@ func (b *builtinSubDurationAndStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDuration evals a builtinAddDurationAndStringSig.
+// evalDuration evals a builtinSubDurationAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDurationAndStringSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5193,7 +5193,7 @@ func (b *builtinSubDateAndDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinAddDateAndDurationSig.
+// evalString evals a builtinSubDateAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndDurationSig) evalString(row chunk.Row) (string, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5218,7 +5218,7 @@ func (b *builtinSubDateAndStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinAddDateAndStringSig.
+// evalString evals a builtinSubDateAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndStringSig) evalString(row chunk.Row) (string, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5619,19 +5619,12 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 	tm := arg.Time
-	year, month, day := tm.Year(), tm.Month(), 30
+	var day int
+	year, month := tm.Year(), tm.Month()
 	if year == 0 && month == 0 && tm.Day() == 0 {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
 	}
-	if month == 1 || month == 3 || month == 5 ||
-		month == 7 || month == 8 || month == 10 || month == 12 {
-		day = 31
-	} else if month == 2 {
-		day = 28
-		if tm.IsLeapYear() {
-			day = 29
-		}
-	}
+	day = types.GetLastDay(year, month)
 	ret := types.Time{
 		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
 		Type: mysql.TypeDate,

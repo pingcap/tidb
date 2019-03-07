@@ -384,8 +384,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(1))
@@ -403,8 +402,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(2))
@@ -414,8 +412,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(3))
@@ -425,8 +422,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(4))
@@ -486,8 +482,7 @@ func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	testKit.MustExec("insert into t values (1)")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	c.Assert(stats.Count, Equals, int64(1))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
@@ -1124,6 +1119,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		end    string
 		now    string
 		result bool
+		reason string
 	}{
 		// table was never analyzed and has reach the limit
 		{
@@ -1134,6 +1130,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: true,
+			reason: "table unanalyzed",
 		},
 		// table was never analyzed but has not reach the limit
 		{
@@ -1144,6 +1141,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed but auto analyze is disabled
 		{
@@ -1154,6 +1152,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but modify count is small
 		{
@@ -1164,6 +1163,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but not within time period
 		{
@@ -1174,6 +1174,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:02 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but not within time period
 		{
@@ -1184,6 +1185,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "06:00 +0800",
 			now:    "10:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and within time period
 		{
@@ -1194,6 +1196,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: true,
+			reason: "too many modifications",
 		},
 		// table was already analyzed and within time period
 		{
@@ -1204,6 +1207,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "06:00 +0800",
 			now:    "23:00 +0800",
 			result: true,
+			reason: "too many modifications",
 		},
 	}
 	for _, test := range tests {
@@ -1213,7 +1217,9 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		c.Assert(err, IsNil)
 		now, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.now, time.UTC)
 		c.Assert(err, IsNil)
-		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now), Equals, test.result)
+		needAnalyze, reason := statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now)
+		c.Assert(needAnalyze, Equals, test.result)
+		c.Assert(strings.HasPrefix(reason, test.reason), IsTrue)
 	}
 }
 
@@ -1288,6 +1294,73 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 		} else {
 			c.Assert(tbl.Indices[t.rangeID].ToString(1), Equals, tests[i].hist)
 		}
+		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+		c.Assert(err, IsNil)
+		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)
+	}
+}
+
+func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx_ab(a,b))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
+	}
+	testKit.MustExec("analyze table t with 3 buckets")
+	testKit.MustExec("delete from t where a = 1")
+	testKit.MustExec("delete from t where b > 10")
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	h := s.do.StatsHandle()
+	tests := []struct {
+		sql     string
+		hist    string
+		rangeID int64
+		idxID   int64
+		eqCount uint32
+	}{
+		{
+			// The real count of `a = 1` is 0.
+			sql: "select * from t where a = 1 and b < 21",
+			hist: "column:2 ndv:20 totColSize:20\n" +
+				"num: 4 lower_bound: -9223372036854775808 upper_bound: 6 repeats: 0\n" +
+				"num: 3 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
+				"num: 6 lower_bound: 14 upper_bound: 19 repeats: 1",
+			rangeID: tblInfo.Columns[1].ID,
+			idxID:   tblInfo.Indices[0].ID,
+			eqCount: 3,
+		},
+		{
+			// The real count of `b > 10` is 0.
+			sql: "select * from t where a = 2 and b > 10",
+			hist: "column:2 ndv:20 totColSize:20\n" +
+				"num: 4 lower_bound: -9223372036854775808 upper_bound: 6 repeats: 0\n" +
+				"num: 2 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
+				"num: 6 lower_bound: 14 upper_bound: 19 repeats: 1",
+			rangeID: tblInfo.Columns[1].ID,
+			idxID:   tblInfo.Indices[0].ID,
+			eqCount: 3,
+		},
+	}
+	for i, t := range tests {
+		testKit.MustQuery(t.sql)
+		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		h.Update(is)
+		tbl := h.GetTableStats(tblInfo)
+		c.Assert(tbl.Columns[t.rangeID].ToString(0), Equals, tests[i].hist)
 		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
 		c.Assert(err, IsNil)
 		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)

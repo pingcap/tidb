@@ -42,7 +42,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	infoSchema := GetInfoSchema(c.Ctx)
-	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
+	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -122,7 +122,114 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	if inRestrictedSQL {
 		return
 	}
-	metrics.StmtNodeCounter.WithLabelValues(GetStmtLabel(stmtNode)).Inc()
+
+	typeLabel := GetStmtLabel(stmtNode)
+	metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
+
+	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
+		return
+	}
+
+	dbLabels := getStmtDbLabel(stmtNode)
+	for dbLabel := range dbLabels {
+		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
+	}
+}
+
+func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
+	dbLabelSet := make(map[string]struct{})
+
+	switch x := stmtNode.(type) {
+	case *ast.AlterTableStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelSet[dbLabel] = struct{}{}
+	case *ast.CreateIndexStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelSet[dbLabel] = struct{}{}
+	case *ast.CreateTableStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelSet[dbLabel] = struct{}{}
+	case *ast.InsertStmt:
+		dbLabels := getDbFromResultNode(x.Table.TableRefs)
+		for _, db := range dbLabels {
+			dbLabelSet[db] = struct{}{}
+		}
+		dbLabels = getDbFromResultNode(x.Select)
+		for _, db := range dbLabels {
+			dbLabelSet[db] = struct{}{}
+		}
+	case *ast.DropIndexStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelSet[dbLabel] = struct{}{}
+	case *ast.DropTableStmt:
+		tables := x.Tables
+		for _, table := range tables {
+			dbLabel := table.Schema.O
+			if _, ok := dbLabelSet[dbLabel]; !ok {
+				dbLabelSet[dbLabel] = struct{}{}
+			}
+		}
+	case *ast.SelectStmt:
+		dbLabels := getDbFromResultNode(x)
+		for _, db := range dbLabels {
+			dbLabelSet[db] = struct{}{}
+		}
+	case *ast.UpdateStmt:
+		if x.TableRefs != nil {
+			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+	case *ast.DeleteStmt:
+		if x.TableRefs != nil {
+			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+	}
+
+	return dbLabelSet
+}
+
+func getDbFromResultNode(resultNode ast.ResultSetNode) []string { //may have duplicate db name
+	var dbLabels []string
+
+	if resultNode == nil {
+		return dbLabels
+	}
+
+	switch x := resultNode.(type) {
+	case *ast.TableSource:
+		return getDbFromResultNode(x.Source)
+	case *ast.SelectStmt:
+		if x.From != nil {
+			return getDbFromResultNode(x.From.TableRefs)
+		}
+	case *ast.TableName:
+		dbLabels = append(dbLabels, x.DBInfo.Name.O)
+	case *ast.Join:
+		if x.Left != nil {
+			dbs := getDbFromResultNode(x.Left)
+			if dbs != nil {
+				for _, db := range dbs {
+					dbLabels = append(dbLabels, db)
+				}
+			}
+		}
+
+		if x.Right != nil {
+			dbs := getDbFromResultNode(x.Right)
+			if dbs != nil {
+				for _, db := range dbs {
+					dbLabels = append(dbLabels, db)
+				}
+			}
+		}
+	}
+
+	return dbLabels
 }
 
 // GetStmtLabel generates a label for a statement.

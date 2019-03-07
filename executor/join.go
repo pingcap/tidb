@@ -184,7 +184,6 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 			return true, keyBuf, nil
 		}
 	}
-
 	keyBuf = keyBuf[:0]
 	keyBuf, err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, keyBuf, row, allTypes, keyColIdx)
 	if err != nil {
@@ -202,7 +201,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			return
 		}
 		var outerResource *outerChkResource
-		ok := true
+		var ok bool
 		select {
 		case <-e.closeCh:
 			return
@@ -402,13 +401,13 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		return false, joinResult
 	}
 	if hasNull {
-		e.joiners[workerID].onMissMatch(outerRow, joinResult.chk)
+		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
 		return true, joinResult
 	}
 	e.hashTableValBufs[workerID] = e.globalHashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
 	innerPtrs := e.hashTableValBufs[workerID]
 	if len(innerPtrs) == 0 {
-		e.joiners[workerID].onMissMatch(outerRow, joinResult.chk)
+		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
 		return true, joinResult
 	}
 	innerRows := make([]chunk.Row, 0, len(innerPtrs))
@@ -418,14 +417,15 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		innerRows = append(innerRows, matchedInner)
 	}
 	iter := chunk.NewIterator4Slice(innerRows)
-	hasMatch := false
+	hasMatch, hasNull := false, false
 	for iter.Begin(); iter.Current() != iter.End(); {
-		matched, err := e.joiners[workerID].tryToMatch(outerRow, iter, joinResult.chk)
+		matched, isNull, err := e.joiners[workerID].tryToMatch(outerRow, iter, joinResult.chk)
 		if err != nil {
 			joinResult.err = errors.Trace(err)
 			return false, joinResult
 		}
 		hasMatch = hasMatch || matched
+		hasNull = hasNull || isNull
 
 		if joinResult.chk.NumRows() == e.maxChunkSize {
 			e.joinResultCh <- joinResult
@@ -436,7 +436,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		}
 	}
 	if !hasMatch {
-		e.joiners[workerID].onMissMatch(outerRow, joinResult.chk)
+		e.joiners[workerID].onMissMatch(hasNull, outerRow, joinResult.chk)
 	}
 	return true, joinResult
 }
@@ -464,7 +464,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 	}
 	for i := range selected {
 		if !selected[i] { // process unmatched outer rows
-			e.joiners[workerID].onMissMatch(outerChk.GetRow(i), joinResult.chk)
+			e.joiners[workerID].onMissMatch(false, outerChk.GetRow(i), joinResult.chk)
 		} else { // process matched outer rows
 			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResult)
 			if !ok {
@@ -590,6 +590,7 @@ type NestedLoopApplyExec struct {
 	innerIter        chunk.Iterator
 	outerRow         *chunk.Row
 	hasMatch         bool
+	hasNull          bool
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -647,7 +648,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 		if selected {
 			return &outerRow, nil
 		} else if e.outer {
-			e.joiner.onMissMatch(outerRow, chk)
+			e.joiner.onMissMatch(false, outerRow, chk)
 			if chk.NumRows() == e.maxChunkSize {
 				return nil, nil
 			}
@@ -695,13 +696,14 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) 
 	for {
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			if e.outerRow != nil && !e.hasMatch {
-				e.joiner.onMissMatch(*e.outerRow, req.Chunk)
+				e.joiner.onMissMatch(e.hasNull, *e.outerRow, req.Chunk)
 			}
 			e.outerRow, err = e.fetchSelectedOuterRow(ctx, req.Chunk)
 			if e.outerRow == nil || err != nil {
 				return errors.Trace(err)
 			}
 			e.hasMatch = false
+			e.hasNull = false
 
 			for _, col := range e.outerSchema {
 				*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
@@ -714,8 +716,9 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) 
 			e.innerIter.Begin()
 		}
 
-		matched, err := e.joiner.tryToMatch(*e.outerRow, e.innerIter, req.Chunk)
+		matched, isNull, err := e.joiner.tryToMatch(*e.outerRow, e.innerIter, req.Chunk)
 		e.hasMatch = e.hasMatch || matched
+		e.hasNull = e.hasNull || isNull
 
 		if err != nil || req.NumRows() == e.maxChunkSize {
 			return errors.Trace(err)
