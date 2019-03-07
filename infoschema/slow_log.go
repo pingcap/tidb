@@ -97,8 +97,7 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			value, err := parseSlowLogField(variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
 			if err != nil {
-				log.Errorf("parse slow log error: %v", err)
-				continue
+				return rows, err
 			}
 			rowMap[variable.SlowLogTimeStr] = *value
 			startFlag = true
@@ -117,8 +116,7 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 					}
 					value, err := parseSlowLogField(field, fieldValues[i+1])
 					if err != nil {
-						log.Errorf("parse slow log error: %v", err)
-						continue
+						return rows, err
 					}
 					rowMap[field] = *value
 
@@ -134,7 +132,7 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.AddStack(err)
 	}
 	return rows, nil
 }
@@ -157,7 +155,7 @@ func parseSlowLogField(field, value string) (*types.Datum, error) {
 	case mysql.TypeDouble:
 		num, err := strconv.ParseFloat(value, 64)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.AddStack(err)
 		}
 		val = types.NewDatum(num)
 	case mysql.TypeTiny:
@@ -166,7 +164,7 @@ func parseSlowLogField(field, value string) (*types.Datum, error) {
 	case mysql.TypeDatetime:
 		t, err := parseTime(value)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		val = types.NewTimeDatum(types.Time{
 			Time: types.FromGoTime(t),

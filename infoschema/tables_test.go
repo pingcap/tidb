@@ -261,6 +261,5 @@ select * from t_slim;`))
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	re := tk.MustQuery("select * from information_schema.slow_query")
-	c.Assert(err, IsNil)
 	re.Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|<nil>|<nil>|1|100001|100000|test|0|<nil>|select * from t_slim;"))
 }
