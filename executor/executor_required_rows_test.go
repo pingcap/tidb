@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -575,7 +576,7 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 
 			// wait projectionInputFetcher blocked on fetching data
 			// from child in the background.
-			time.Sleep(time.Millisecond * 5)
+			time.Sleep(time.Millisecond * 25)
 		}
 		c.Assert(exec.Close(), IsNil)
 		c.Assert(ds.checkNumNextCalled(), IsNil)
@@ -587,5 +588,142 @@ func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, 
 		baseExecutor:  newBaseExecutor(ctx, src.Schema(), "", src),
 		numWorkers:    int64(numWorkers),
 		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+	}
+}
+
+func divGenerator(factor int) func(valType *types.FieldType) interface{} {
+	closureCountInt := 0
+	closureCountDouble := 0
+	return func(valType *types.FieldType) interface{} {
+		switch valType.Tp {
+		case mysql.TypeLong, mysql.TypeLonglong:
+			ret := int64(closureCountInt / factor)
+			closureCountInt++
+			return ret
+		case mysql.TypeDouble:
+			ret := float64(closureCountInt / factor)
+			closureCountDouble++
+			return ret
+		default:
+			panic("not implement")
+		}
+	}
+}
+
+func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		aggFunc        string
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+		gen            func(valType *types.FieldType) interface{}
+	}{
+		{
+			totalRows:      1000000,
+			aggFunc:        ast.AggFuncSum,
+			requiredRows:   []int{1, 2, 3, 4, 5, 6, 7},
+			expectedRows:   []int{1, 2, 3, 4, 5, 6, 7},
+			expectedRowsDS: []int{maxChunkSize},
+			gen:            divGenerator(1),
+		},
+		{
+			totalRows:      maxChunkSize * 3,
+			aggFunc:        ast.AggFuncAvg,
+			requiredRows:   []int{1, 3},
+			expectedRows:   []int{1, 2},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
+			gen:            divGenerator(maxChunkSize),
+		},
+		{
+			totalRows:      maxChunkSize*2 - 1,
+			aggFunc:        ast.AggFuncMax,
+			requiredRows:   []int{maxChunkSize/2 + 1},
+			expectedRows:   []int{maxChunkSize/2 + 1},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize - 1},
+			gen:            divGenerator(2),
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
+		ds := newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
+		childCols := ds.Schema().Columns
+		schema := expression.NewSchema(childCols...)
+		groupBy := []expression.Expression{childCols[1]}
+		aggFunc := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
+		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
+		exec := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+		}
+		c.Assert(exec.Close(), IsNil)
+		c.Assert(ds.checkNumNextCalled(), IsNil)
+	}
+}
+
+func (s *testExecSuite) TestHashAggParallelRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		aggFunc        string
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+		gen            func(valType *types.FieldType) interface{}
+	}{
+		{
+			totalRows:      maxChunkSize,
+			aggFunc:        ast.AggFuncSum,
+			requiredRows:   []int{1, 2, 3, 4, 5, 6, 7},
+			expectedRows:   []int{1, 2, 3, 4, 5, 6, 7},
+			expectedRowsDS: []int{maxChunkSize, 0},
+			gen:            divGenerator(1),
+		},
+		{
+			totalRows:      maxChunkSize * 3,
+			aggFunc:        ast.AggFuncAvg,
+			requiredRows:   []int{1, 3},
+			expectedRows:   []int{1, 2},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
+			gen:            divGenerator(maxChunkSize),
+		},
+		{
+			totalRows:      maxChunkSize * 3,
+			aggFunc:        ast.AggFuncAvg,
+			requiredRows:   []int{maxChunkSize, maxChunkSize},
+			expectedRows:   []int{maxChunkSize, maxChunkSize / 2},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
+			gen:            divGenerator(2),
+		},
+	}
+
+	for _, hasDistinct := range []bool{false, true} {
+		for _, testCase := range testCases {
+			sctx := defaultCtx()
+			ctx := context.Background()
+			ds := newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
+			childCols := ds.Schema().Columns
+			schema := expression.NewSchema(childCols...)
+			groupBy := []expression.Expression{childCols[1]}
+			aggFunc := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, hasDistinct)
+			aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
+			exec := buildHashAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
+			c.Assert(exec.Open(ctx), IsNil)
+			chk := exec.newFirstChunk()
+			for i := range testCase.requiredRows {
+				chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+				c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+				c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+			}
+			c.Assert(exec.Close(), IsNil)
+			c.Assert(ds.checkNumNextCalled(), IsNil)
+		}
 	}
 }
