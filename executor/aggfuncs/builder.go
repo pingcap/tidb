@@ -69,6 +69,8 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 		return buildFirstValue(windowFuncDesc, ordinal)
 	case ast.WindowFuncLastValue:
 		return buildLastValue(windowFuncDesc, ordinal)
+	case ast.WindowFuncNthValue:
+		return buildNthValue(windowFuncDesc, ordinal)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -367,4 +369,14 @@ func buildLastValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 	return &lastValue{baseAggFunc: base, tp: aggFuncDesc.RetTp}
+}
+
+func buildNthValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	// Already checked when building the function description.
+	nth, _, _ := expression.GetUint64FromConstant(aggFuncDesc.Args[1])
+	return &nthValue{baseAggFunc: base, tp: aggFuncDesc.RetTp, nth: nth}
 }
