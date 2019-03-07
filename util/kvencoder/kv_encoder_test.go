@@ -707,3 +707,15 @@ func (s *testKvEncoderSuite) TestRefCount(c *C) {
 	tmp.Close()
 	c.Assert(refCount, Equals, int64(0))
 }
+
+// TestExoticDatabaseName checks if https://github.com/pingcap/tidb/issues/9532
+// is fixed.
+func (s *testKvEncoderSuite) TestExoticDatabaseName(c *C) {
+	encoder1, err := New("pay-service_micro_db", nil)
+	c.Assert(err, IsNil)
+	encoder1.Close()
+
+	encoder2, err := New("㎩¥`𝕊ℯ®Ⅵ₠—🎤肉 ㏈", nil)
+	c.Assert(err, IsNil)
+	encoder2.Close()
+}
