@@ -16,7 +16,6 @@ package privileges
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/parser/auth"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
