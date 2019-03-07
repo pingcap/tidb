@@ -208,6 +208,8 @@ func convertJob2RollbackJob(d *ddl, t *meta.Meta, job *model.Job) (ver int64, er
 		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionDropIndex:
 		ver, err = rollingbackDropIndex(t, job)
+	case model.ActionDropTable, model.ActionDropSchema:
+		job.State = model.JobStateRollingback
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob
