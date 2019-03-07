@@ -251,7 +251,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.RecordBatch) erro
 			task.hasMatch = false
 			task.hasNull = false
 		}
-		if req.NumRows() == e.maxChunkSize {
+		if req.IsFull() {
 			return nil
 		}
 	}
