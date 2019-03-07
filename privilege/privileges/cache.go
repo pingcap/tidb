@@ -138,7 +138,8 @@ type MySQLPrivilege struct {
 // FindRole is used to detect whether this is an edge between user and role
 func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdentity) bool {
 	rec := p.matchUser(user, host)
-	if rec != nil && role != nil {
+	r := p.matchUser(role.Username, role.Hostname)
+	if rec != nil && r != nil {
 		key := rec.User + "@" + rec.Host
 		return p.RoleGraph[key].Find(role.Username, role.Hostname)
 	}
