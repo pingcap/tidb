@@ -708,9 +708,9 @@ func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSo
 	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates
 }
 
-// analyzeOtherFilters analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
+// buildLastColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
 // The returned value is just for outputting explain information
-func (ijHelper *indexJoinBuildHelper) analyzeOtherFilters(nextCol *expression.Column,
+func (ijHelper *indexJoinBuildHelper) buildLastColManager(nextCol *expression.Column,
 	innerPlan *DataSource, cwc *ColWithCmpFuncManager) []expression.Expression {
 	var lastColAccesses []expression.Expression
 loopOtherConds:
@@ -794,7 +794,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		colLength:         colLengths[lastColPos],
 		affectedColSchema: expression.NewSchema(),
 	}
-	lastColAccess := ijHelper.analyzeOtherFilters(lastPossibleCol, innerPlan, lastColManager)
+	lastColAccess := ijHelper.buildLastColManager(lastPossibleCol, innerPlan, lastColManager)
 	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
 	if len(lastColAccess) == 0 {
 		colAccesses, colRemained := ranger.DetachCondsForTableRange(ijHelper.join.ctx, rangeFilterCandidates, lastPossibleCol)
