@@ -789,6 +789,14 @@ func doDDLWorks(s Session) {
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
 func doDMLWorks(s Session) {
+	if config.CheckTableBeforeDrop {
+		defer func() {
+			sql := fmt.Sprintf("admin check table `%s`.`%s`", mysql.SystemDB, mysql.GlobalVariablesTable)
+			log.Warnf("%s before AfterInit GlobalSysVar", sql)
+			mustExecute(s, sql)
+		}()
+	}
+
 	mustExecute(s, "BEGIN")
 
 	// Insert a default user with empty password.
@@ -807,12 +815,6 @@ func doDMLWorks(s Session) {
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))
 	mustExecute(s, sql)
-
-	if config.CheckTableBeforeDrop {
-		sql = fmt.Sprintf("admin check table `%s`.`%s`", mysql.SystemDB, mysql.GlobalVariablesTable)
-		log.Warnf("%s before AfterInit GlobalSysVar", sql)
-		mustExecute(s, sql)
-	}
 
 	sql = fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.")
 		ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
