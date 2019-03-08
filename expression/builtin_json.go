@@ -782,12 +782,10 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		}
 
 		obj = json.MergeBinary([]json.BinaryJSON{obj, value})
-		res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
+		res, _ = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
+		// we have done same checks where res.Modify might return with error before, thus ignore it
 	}
-	if err != nil {
-		return res, true, err
-	}
-	return res, isNull, err
+	return res, isNull, nil
 }
 
 type jsonArrayInsertFunctionClass struct {
