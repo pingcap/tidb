@@ -68,10 +68,12 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 
 func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	defer func() {
-		rowsRet := req.NumRows()
-		expected := r.expectedRowsRet[r.numNextCalled]
-		if rowsRet != expected {
-			panic(fmt.Sprintf("unexpected number of rows returned, obtain: %v, expected: %v", rowsRet, expected))
+		if r.expectedRowsRet != nil {
+			rowsRet := req.NumRows()
+			expected := r.expectedRowsRet[r.numNextCalled]
+			if rowsRet != expected {
+				panic(fmt.Sprintf("unexpected number of rows returned, obtain: %v, expected: %v", rowsRet, expected))
+			}
 		}
 		r.numNextCalled++
 	}()
@@ -726,4 +728,68 @@ func (s *testExecSuite) TestHashAggParallelRequiredRows(c *C) {
 			c.Assert(ds.checkNumNextCalled(), IsNil)
 		}
 	}
+}
+
+func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
+	justReturn1 := func(valType *types.FieldType) interface{} {
+		switch valType.Tp {
+		case mysql.TypeLong, mysql.TypeLonglong:
+			return int64(1)
+		case mysql.TypeDouble:
+			return float64(1)
+		default:
+			panic("not support")
+		}
+	}
+	// TODO: plannercore.RightOuterJoin
+	joinTypes := []plannercore.JoinType{plannercore.InnerJoin, plannercore.LeftOuterJoin}
+	for _, joinType := range joinTypes {
+		ctx := defaultCtx()
+		required := make([]int, 100)
+		for i := range required {
+			required[i] = rand.Int()%ctx.GetSessionVars().MaxChunkSize + 1
+		}
+		lSrc := newRequiredRowsDataSourceWithGenerator(ctx, 1, nil, justReturn1)             // just return one row: (1, 1)
+		rSrc := newRequiredRowsDataSourceWithGenerator(ctx, 10000000, required, justReturn1) // always return (1, 1)
+		mj := buildMergeJoinExec(ctx, joinType, lSrc, rSrc)
+
+		chk := mj.newFirstChunk()
+		for i := range required {
+			chk.SetRequiredRows(required[i], ctx.GetSessionVars().MaxChunkSize)
+			c.Assert(mj.Next(context.Background(), chunk.NewRecordBatch(chk)), IsNil)
+		}
+		c.Assert(mj.Close(), IsNil)
+		c.Assert(rSrc.checkNumNextCalled(), IsNil)
+	}
+}
+
+func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, lSrc, rSrc Executor) Executor {
+	j := plannercore.PhysicalMergeJoin{
+		JoinType:        joinType,
+		LeftConditions:  nil,
+		RightConditions: nil,
+		DefaultValues:   []types.Datum{types.NewDatum(1), types.NewDatum(1)},
+		LeftKeys:        lSrc.Schema().Columns,
+		RightKeys:       rSrc.Schema().Columns,
+	}.Init(ctx, nil)
+	j.SetChildren(nil, nil)
+	cols := append([]*expression.Column{}, rSrc.Schema().Columns...)
+	cols = append(cols, lSrc.Schema().Columns...)
+	schema := expression.NewSchema(cols...)
+	j.SetSchema(schema)
+
+	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftKeys))
+	for i := range j.LeftKeys {
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(j.LeftKeys[i], j.RightKeys[i]))
+	}
+
+	b := newExecutorBuilder(ctx, nil)
+	exec := b.build(j)
+	je := exec.(*MergeJoinExec)
+	if joinType == plannercore.RightOuterJoin {
+		je.innerTable.reader, je.outerTable.reader = lSrc, rSrc
+	} else {
+		je.innerTable.reader, je.outerTable.reader = rSrc, lSrc
+	}
+	return exec
 }
