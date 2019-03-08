@@ -8,12 +8,15 @@ coverage:
   range: "65...90"
 
   status:
-    project: yes
-    patch: no
-    changes: no
-    default:
-      threshold: 0.2   #Allow the coverage to drop by threshold%, and posting a success status.
-
+    project: 
+      default:
+        threshold: 0.2   #Allow the coverage to drop by threshold%, and posting a success status.
+    patch: 
+      default:
+        target: 50%
+    changes: 
+      default:
+        target: 0%
 parsers:
   gcov:
     branch_detection:
