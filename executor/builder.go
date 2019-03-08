@@ -1573,6 +1573,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 				}
 			}
 			if isInnerKeysSuffix {
+				is.KeepOrder = true
 				return &IndexLookUpMergeJoin{
 					baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 					outerMergeCtx: outerMergeCtx{

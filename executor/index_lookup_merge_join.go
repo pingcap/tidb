@@ -268,16 +268,18 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 			task.hasNull = task.hasNull || isNull
 
 			if req.NumRows() >= e.maxChunkSize {
-				return nil
+				break
 			}
 		}
 
-		if !task.hasMatch {
-			e.joiner.onMissMatch(task.hasNull, outerRow, req.Chunk)
+		if task.sameKeyIter.Current() == task.sameKeyIter.End() {
+			if !task.hasMatch {
+				e.joiner.onMissMatch(task.hasNull, outerRow, req.Chunk)
+			}
+			task.cursor++
+			task.hasMatch = false
+			task.hasNull = false
 		}
-		task.cursor++
-		task.hasMatch = false
-		task.hasNull = false
 
 		if req.Chunk.NumRows() >= e.maxChunkSize {
 			return nil
