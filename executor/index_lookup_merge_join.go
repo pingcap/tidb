@@ -250,7 +250,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 			task.hasMatch = false
 			task.hasNull = false
 
-			if req.Chunk.NumRows() == e.maxChunkSize {
+			if req.Chunk.NumRows() >= e.maxChunkSize {
 				return nil
 			}
 			continue
