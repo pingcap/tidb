@@ -18,10 +18,10 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/mock"
-	log "github.com/sirupsen/logrus"
 )
 
 // sessionPool is used to new session.
@@ -83,7 +83,7 @@ func (sg *sessionPool) close() {
 		return
 	}
 
-	log.Info("[ddl] closing sessionPool")
+	log.Info("ddl closing sessionPool")
 	sg.resPool.Close()
 	sg.mu.closed = true
 }
