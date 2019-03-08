@@ -807,7 +807,6 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 	do.bindHandler = infobind.NewHandler()
 
 	bindCacheUpdater := infobind.NewBindCacheUpdater(ctx, do.BindHandler(), parser)
-
 	err := bindCacheUpdater.Update(true)
 	if err != nil {
 		return errors.Trace(err)
@@ -824,7 +823,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 			}
 			err = bindCacheUpdater.Update(false)
 			if err != nil {
-				log.Error("[domain] load bindinfo fail:", errors.ErrorStack(err))
+				log.Error("[domain] update bindinfo failed:", errors.ErrorStack(err))
 			}
 		}
 	}()

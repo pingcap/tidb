@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infobind"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -1239,12 +1238,6 @@ func CreateSession(store kv.Storage) (Session, error) {
 		Handle: do.PrivilegeHandle(),
 	}
 	privilege.BindPrivilegeManager(s, pm)
-
-	bm := &infobind.BindManager{
-		GlobalHandler:  do.BindHandler(),
-		SessionHandler: infobind.NewHandler(),
-	}
-	infobind.BindBinderManager(s, bm)
 
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
