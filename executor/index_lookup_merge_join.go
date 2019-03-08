@@ -227,33 +227,35 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 		}
 
 		outerRow := task.outerResult.GetRow(task.cursor)
-		cmpResult := -1
-		if len(task.outerMatch) > 0 && !task.outerMatch[task.cursor] {
-			task.cursor++
-			continue
-		}
-		if task.innerIter.Current() != task.innerIter.End() {
-			cmpResult, err = e.compare(outerRow, task.innerIter.Current())
-			if err != nil {
-				return nil
+		if task.sameKeyIter == nil || task.sameKeyIter.Current() == task.sameKeyIter.End() {
+			cmpResult := -1
+			if len(task.outerMatch) > 0 && !task.outerMatch[task.cursor] {
+				task.cursor++
+				continue
 			}
-		}
-		if cmpResult >= 0 {
-			err = e.fetchNextOuterRows(task, outerRow)
-			if err != nil {
-				return errors.Trace(err)
+			if task.innerIter.Current() != task.innerIter.End() {
+				cmpResult, err = e.compare(outerRow, task.innerIter.Current())
+				if err != nil {
+					return nil
+				}
 			}
-		} else {
-			e.joiner.onMissMatch(false, outerRow, req.Chunk)
+			if cmpResult >= 0 {
+				err = e.fetchNextOuterRows(task, outerRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				e.joiner.onMissMatch(false, outerRow, req.Chunk)
 
-			task.cursor++
-			task.hasMatch = false
-			task.hasNull = false
+				task.cursor++
+				task.hasMatch = false
+				task.hasNull = false
 
-			if req.NumRows() >= e.maxChunkSize {
-				return nil
+				if req.NumRows() >= e.maxChunkSize {
+					return nil
+				}
+				continue
 			}
-			continue
 		}
 
 		for task.sameKeyIter.Current() != task.sameKeyIter.End() {
@@ -455,7 +457,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 
 func (omw *outerMergeWorker) increaseBatchSize() {
 	if omw.batchSize < omw.maxBatchSize {
-		omw.batchSize <<= 2
+		omw.batchSize *= 2
 	}
 	if omw.batchSize > omw.maxBatchSize {
 		omw.batchSize = omw.maxBatchSize
