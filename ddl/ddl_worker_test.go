@@ -303,7 +303,7 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
-		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema && job.Type != model.ActionRebaseAutoID {
+		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema && job.Type != model.ActionRebaseAutoID && job.Type != model.ActionShardRowID {
 			// If the schema state is none and is not equal to model.JobStateDone, we only test the job is finished.
 			// Unless the job is model.ActionCreateTable, model.ActionCreateSchema, model.ActionRebaseAutoID, we do the cancel anyway.
 		} else {
@@ -575,7 +575,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// cancel shard bits
 	test = &tests[14]
 	shardRowIDArgs := []interface{}{uint64(7)}
-	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, shardRowIDArgs, &cancelState)
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionShardRowID, shardRowIDArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(changedTable.Meta().ShardRowIDBits, Equals, shardRowIDBits)
