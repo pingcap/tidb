@@ -736,9 +736,11 @@ func (b *builtinJSONArrayAppendSig) Clone() builtinFunc {
 
 func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
-	if isNull || err != nil {
-		// bad json will only get nil in mysql
-		// select JSON_ARRAY_APPEND('asdf', "$", NULL);show warnings;
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(json.ErrInvalidJSONPath.FastGen("Syntax error in JSON text in argument 1 to function 'json_set'"))
+		return res, true, nil
+	}
+	if isNull {
 		return res, true, nil
 	}
 
@@ -749,7 +751,7 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		s, isNull, err := b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(json.ErrInvalidJSONPath.FastGen("Syntax error in JSON path in argument %d to function 'json_array_append'", i+1))
-			return res, isNull, nil
+			return res, true, nil
 		}
 		pathExpr, err := json.ParseJSONPathExpr(s)
 		if err != nil {
@@ -795,7 +797,8 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		}
 		// we have done same checks where res.Modify might return with error before, thus ignore it
 	}
-	return res, isNull, err
+	// res won't be null
+	return res, false, err
 }
 
 type jsonArrayInsertFunctionClass struct {

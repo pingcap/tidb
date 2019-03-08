@@ -707,9 +707,11 @@ func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
 		// explains hy call res.Modify every path-value pair and not do as JSON_SET do?
 		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON, `$.a[1]`, sampleJSON}, `{"a": [1, [{"b": 2}, {"b": 2}]]}`, true, false},
 		{[]interface{}{nil, `$`, nil}, nil, true, false},
+		{[]interface{}{nil, `$`, `a`}, nil, true, false},
+		{[]interface{}{`null`, `$`, nil}, `[null]`, true, false},
 		// bad arguments
-		{[]interface{}{`asdf`, `$`, nil}, nil, true, false},
-		{[]interface{}{``, `$`, nil}, nil, true, false},
+		{[]interface{}{`asdf`, `$`, nil}, nil, true, true},
+		{[]interface{}{``, `$`, nil}, nil, true, true},
 		{[]interface{}{`[]`, `$`, nil}, `[null]`, true, false},
 		{[]interface{}{`{}`, `$`, nil}, `[{}, null]`, true, false},
 		// following tests comes from MySQL doc
