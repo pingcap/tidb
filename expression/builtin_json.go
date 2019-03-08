@@ -54,6 +54,7 @@ var (
 	_ builtinFunc = &builtinJSONQuoteSig{}
 	_ builtinFunc = &builtinJSONUnquoteSig{}
 	_ builtinFunc = &builtinJSONArraySig{}
+	_ builtinFunc = &builtinJSONArrayAppendSig{}
 	_ builtinFunc = &builtinJSONObjectSig{}
 	_ builtinFunc = &builtinJSONExtractSig{}
 	_ builtinFunc = &builtinJSONSetSig{}
@@ -702,8 +703,91 @@ type jsonArrayAppendFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONArrayAppendSig struct {
+	baseBuiltinFunc
+}
+
 func (c *jsonArrayAppendFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_ARRAY_APPEND")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	if len(args)&1 != 1 {
+		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETJson)
+	for i := 1; i < len(args)-1; i += 2 {
+		argTps = append(argTps, types.ETString, types.ETJson)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
+	for i := 2; i < len(args); i += 2 {
+		DisableParseJSONFlag4Expr(args[i])
+	}
+	sig := &builtinJSONArrayAppendSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonArrayAppendSig)
+	return sig, nil
+}
+
+func (b *builtinJSONArrayAppendSig) Clone() builtinFunc {
+	newSig := &builtinJSONArrayAppendSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		// bad json will only get nil in mysql
+		// select JSON_ARRAY_APPEND('asdf', "$", NULL);
+		return res, true, nil
+	}
+
+	for i := 1; i < len(b.args)-1; i += 2 {
+		// bad arguments should return null
+		// NOTE: mysql does not report error
+		// also they does not ignore it, they just return NULL
+		s, isNull, err := b.args[i].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return res, isNull, nil
+		}
+		pathExpr, err := json.ParseJSONPathExpr(s)
+		if err != nil {
+			return res, true, nil
+		}
+		if pathExpr.ContainsAnyAsterisk() {
+			return res, true, nil
+		}
+
+		var exists bool
+		obj, exists := res.Extract([]json.PathExpression{pathExpr})
+		if !exists {
+			// just do nothing for this
+			continue
+		}
+
+		if obj.TypeCode != json.TypeCodeArray {
+			// JSON_ARRAY_APPEND({"a": "b"}, "$", "c") =>
+			// [{"a": "b"}, "c"]
+			// We should convert them to a single array first
+			obj = json.CreateBinary([]interface{}{obj})
+		}
+
+		value, isnull, err := b.args[i+1].EvalJSON(b.ctx, row)
+		if err != nil {
+			return res, true, err
+		}
+
+		if isnull {
+			value = json.CreateBinary(nil)
+		}
+
+		obj = json.MergeBinary([]json.BinaryJSON{obj, value})
+		res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
+	}
+	if err != nil {
+		return res, true, err
+	}
+	return res, isNull, err
 }
 
 type jsonArrayInsertFunctionClass struct {

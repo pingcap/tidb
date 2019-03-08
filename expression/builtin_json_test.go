@@ -686,3 +686,68 @@ func (s *testEvaluatorSuite) TestJSONDepth(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
+	defer testleak.AfterTest(c)()
+	sampleJSON, err := json.ParseBinaryFromString(`{"b": 2}`)
+	c.Assert(err, IsNil)
+	fc := funcs[ast.JSONArrayAppend]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, true},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, `w`}, `[{"a": 1, "b": [2, 3], "c": 4}, "w"]`, true},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, nil}, `[{"a": 1, "b": [2, 3], "c": 4}, null]`, true},
+		{[]interface{}{`{"a": 1}`, `$`, `{"b": 2}`}, `[{"a": 1}, "{\"b\": 2}"]`, true},
+		{[]interface{}{`{"a": 1}`, `$`, sampleJSON}, `[{"a": 1}, {"b": 2}]`, true},
+		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON}, `{"a": [1, {"b": 2}]}`, true},
+		// explains hy call res.Modify every path-value pair and not do as JSON_SET do?
+		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON, `$.a[1]`, sampleJSON}, `{"a": [1, [{"b": 2}, {"b": 2}]]}`, true},
+		{[]interface{}{nil, `$`, nil}, nil, true},
+		// bad arguments
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, true},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, true},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, true},
+		{[]interface{}{`asdf`, `$`, nil}, nil, true},
+		{[]interface{}{``, `$`, nil}, nil, true},
+		{[]interface{}{`[]`, `$`, nil}, `[null]`, true},
+		{[]interface{}{`{}`, `$`, nil}, `[{}, null]`, true},
+		// following tests comes from MySQL doc
+		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1]`, 1}, `["a", ["b", "c", 1], "d"]`, true},
+		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[0]`, 2}, `[["a", 2], ["b", "c"], "d"]`, true},
+		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1][0]`, 3}, `["a", [["b", 3], "c"], "d"]`, true},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b`, `x`}, `{"a": 1, "b": [2, 3, "x"], "c": 4}`, true},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`}, `{"a": 1, "b": [2, 3], "c": [4, "y"]}`, true},
+		// following tests comes from MySQL test
+		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, true},
+		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].a`, 3.14}, `[1, 2, 3, {"a": [4, 5, 6, 3.14]}, 7]`, true},
+		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].b`, 8}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, true},
+	}
+	for i, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		comment := Commentf("case:%v \n input:%v \n output: %s \n expected: %v", i, t.input, d.GetString(), t.expected)
+		if t.success {
+			c.Assert(err, IsNil, comment)
+
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue, comment)
+			} else {
+				var j1 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(t.expected.(string))
+				c.Assert(err, IsNil)
+				j2 := d.GetMysqlJSON()
+				var cmp int
+				cmp = json.CompareBinary(j1, j2)
+				c.Assert(err, IsNil, comment)
+				c.Assert(cmp, Equals, 0, comment)
+			}
+		} else {
+			c.Assert(err, NotNil, comment)
+		}
+	}
+}
