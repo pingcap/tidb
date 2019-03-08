@@ -17,9 +17,6 @@ import (
 	"bufio"
 	"bytes"
 	"testing"
-
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
 )
 
 func TestParseSlowLogFile(t *testing.T) {
@@ -38,37 +35,19 @@ select * from t;`)
 	if len(rows) != 1 {
 		t.Fatalf("parse slow log failed")
 	}
-	row := rows[0]
-	t1 := types.Time{
-		Time: types.FromDate(2019, 01, 24, 22, 32, 29, 313255),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
+	recordString := ""
+	for i, value := range rows[0] {
+		str, err := value.ToString()
+		if err != nil {
+			t.Fatalf("parse slow log failed")
+		}
+		if i > 0 {
+			recordString += ","
+		}
+		recordString += str
 	}
-	if logTime, ok := row["Time"]; !ok || logTime.GetMysqlTime() != t1 {
-		t.Fatalf("parse slow log failed")
-	}
-	if ts, ok := row["Txn_start_ts"]; !ok || ts.GetUint64() != 405888132465033227 {
-		t.Fatalf("parse slow log failed")
-	}
-	if queryTime, ok := row["Query_time"]; !ok || queryTime.GetFloat64() != 0.216905 {
-		t.Fatalf("parse slow log failed")
-	}
-	if ProcessTime, ok := row["Process_time"]; !ok || ProcessTime.GetFloat64() != 0.021 {
-		t.Fatalf("parse slow log failed")
-	}
-	if requestCount, ok := row["Request_count"]; !ok || requestCount.GetUint64() != 1 {
-		t.Fatalf("parse slow log failed")
-	}
-	if totalKeys, ok := row["Total_keys"]; !ok || totalKeys.GetUint64() != 637 {
-		t.Fatalf("parse slow log failed")
-	}
-	if processedKeys, ok := row["Processed_keys"]; !ok || processedKeys.GetUint64() != 436 {
-		t.Fatalf("parse slow log failed")
-	}
-	if isInternal, ok := row["Is_internal"]; !ok || isInternal.GetInt64() != 1 {
-		t.Fatalf("parse slow log failed")
-	}
-	if sql, ok := row["Query"]; !ok || sql.GetString() != "select * from t;" {
-		t.Fatalf("parse slow log failed")
+	expectRecordString := "2019-01-24 22:32:29.313255,405888132465033227,,0,0.216905,0.021,0,0,1,637,0,,,1,select * from t;"
+	if expectRecordString != recordString {
+		t.Fatalf("parse slow log failed, expect: %v\nbut got: %v\n", expectRecordString, recordString)
 	}
 }

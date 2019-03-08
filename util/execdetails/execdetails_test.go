@@ -41,7 +41,7 @@ func TestString(t *testing.T) {
 			TxnRetry:          1,
 		},
 	}
-	expected := "Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Processed_keys: 10 Prewrite_time: 1 Commit_time: 1 " +
+	expected := "Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 Prewrite_time: 1 Commit_time: 1 " +
 		"Get_commit_ts_time: 1 Total_backoff_time: 1 Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1"
 	if str := detail.String(); str != expected {
 		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)

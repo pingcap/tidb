@@ -16,6 +16,7 @@ package execdetails
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -64,30 +65,30 @@ const (
 	RequestCountStr = "Request_count"
 	// TotalKeysStr means the total scan keys.
 	TotalKeysStr = "Total_keys"
-	// ProcessedKeysStr means the total processed keys.
-	ProcessedKeysStr = "Processed_keys"
+	// ProcessKeysStr means the total processed keys.
+	ProcessKeysStr = "Process_keys"
 )
 
 // String implements the fmt.Stringer interface.
 func (d ExecDetails) String() string {
 	parts := make([]string, 0, 6)
 	if d.ProcessTime > 0 {
-		parts = append(parts, fmt.Sprintf("Process_time: %v", d.ProcessTime.Seconds()))
+		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
 	}
 	if d.WaitTime > 0 {
-		parts = append(parts, fmt.Sprintf("Wait_time: %v", d.WaitTime.Seconds()))
+		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64))
 	}
 	if d.BackoffTime > 0 {
-		parts = append(parts, fmt.Sprintf("Backoff_time: %v", d.BackoffTime.Seconds()))
+		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
 	}
 	if d.RequestCount > 0 {
-		parts = append(parts, fmt.Sprintf("Request_count: %d", d.RequestCount))
+		parts = append(parts, RequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
 	}
 	if d.TotalKeys > 0 {
-		parts = append(parts, fmt.Sprintf("Total_keys: %d", d.TotalKeys))
+		parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(d.TotalKeys, 10))
 	}
 	if d.ProcessedKeys > 0 {
-		parts = append(parts, fmt.Sprintf("Processed_keys: %d", d.ProcessedKeys))
+		parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(d.ProcessedKeys, 10))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {

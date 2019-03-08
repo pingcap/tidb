@@ -107,7 +107,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # User: root@192.168.0.1
 # Conn_ID: 1
 # Query_time: 1
-# Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Processed_keys: 20001
+# Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
 # DB: test
 # Index_names: idx1,idx2
 # Is_internal: true

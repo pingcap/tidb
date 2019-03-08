@@ -42,36 +42,20 @@ var slowQueryCols = []columnInfo{
 	{execdetails.BackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.RequestCountStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{execdetails.TotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
-	{execdetails.ProcessedKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{execdetails.ProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogDBStr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogIndexNamesStr, mysql.TypeVarchar, 640, 0, nil, nil},
+	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeVarchar, 4096, 0, nil, nil},
 }
 
 func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
-	rowsMap, err := parseSlowLogFile(ctx.GetSessionVars().SlowQueryFile)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var rows [][]types.Datum
-	for _, row := range rowsMap {
-		record := make([]types.Datum, 0, len(slowQueryCols))
-		for _, col := range slowQueryCols {
-			if v, ok := row[col.name]; ok {
-				record = append(record, v)
-			} else {
-				record = append(record, types.NewDatum(nil))
-			}
-		}
-		rows = append(rows, record)
-	}
-	return rows, nil
+	return parseSlowLogFile(ctx.GetSessionVars().SlowQueryFile)
 }
 
 // TODO: Support parse multiple log-files.
 // parseSlowLogFile uses to parse slow log file.
-func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
+func parseSlowLogFile(filePath string) ([][]types.Datum, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -86,20 +70,20 @@ func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
 }
 
 // TODO: optimize for parse huge log-file.
-func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
-	rows := make([]map[string]types.Datum, 0)
-	rowMap := make(map[string]types.Datum, len(slowQueryCols))
+func parseSlowLog(scanner *bufio.Scanner) ([][]types.Datum, error) {
+	var rows [][]types.Datum
 	startFlag := false
-
+	var st *slowQueryTuple
+	var err error
 	for scanner.Scan() {
 		line := scanner.Text()
 		// Check slow log entry start flag.
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
-			value, err := parseSlowLogField(variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
+			st = &slowQueryTuple{}
+			err = st.setFieldValue(variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
 			if err != nil {
 				return rows, err
 			}
-			rowMap[variable.SlowLogTimeStr] = *value
 			startFlag = true
 			continue
 		}
@@ -114,65 +98,144 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 					if strings.HasSuffix(field, ":") {
 						field = field[:len(field)-1]
 					}
-					value, err := parseSlowLogField(field, fieldValues[i+1])
+					err = st.setFieldValue(field, fieldValues[i+1])
 					if err != nil {
 						return rows, err
 					}
-					rowMap[field] = *value
-
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				// Get the sql string, and mark the start flag to false.
-				rowMap[variable.SlowLogQuerySQLStr] = types.NewStringDatum(string(hack.Slice(line)))
-				rows = append(rows, rowMap)
-				rowMap = make(map[string]types.Datum, len(slowQueryCols))
+				err = st.setFieldValue(variable.SlowLogQuerySQLStr, string(hack.Slice(line)))
+				if err != nil {
+					return rows, err
+				}
+				rows = append(rows, st.convertToDatumRow())
 				startFlag = false
 			}
 		}
 	}
-
 	if err := scanner.Err(); err != nil {
 		return nil, errors.AddStack(err)
 	}
 	return rows, nil
 }
 
-func parseSlowLogField(field, value string) (*types.Datum, error) {
-	col := findColumnByName(slowQueryCols, field)
-	if col == nil {
-		return nil, errors.Errorf("can't found column %v", field)
-	}
-	var val types.Datum
-	switch col.tp {
-	case mysql.TypeLonglong:
-		num, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return nil, errors.AddStack(err)
-		}
-		val = types.NewUintDatum(num)
-	case mysql.TypeVarchar:
-		val = types.NewStringDatum(value)
-	case mysql.TypeDouble:
-		num, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return nil, errors.AddStack(err)
-		}
-		val = types.NewDatum(num)
-	case mysql.TypeTiny:
-		// parse bool
-		val = types.NewDatum(value == "true")
-	case mysql.TypeDatetime:
+type slowQueryTuple struct {
+	time         time.Time
+	txnStartTs   uint64
+	user         string
+	connID       uint64
+	queryTime    float64
+	processTime  float64
+	waitTime     float64
+	backOffTime  float64
+	requestCount uint64
+	totalKeys    uint64
+	processKeys  uint64
+	db           string
+	indexNames   string
+	isInternal   bool
+	sql          string
+}
+
+func (st *slowQueryTuple) setFieldValue(field, value string) error {
+	switch field {
+	case variable.SlowLogTimeStr:
 		t, err := parseTime(value)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		val = types.NewTimeDatum(types.Time{
-			Time: types.FromGoTime(t),
-			Type: mysql.TypeDatetime,
-			Fsp:  types.MaxFsp,
-		})
+		st.time = t
+	case variable.SlowLogTxnStartTSStr:
+		num, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.txnStartTs = num
+	case variable.SlowLogUserStr:
+		st.user = value
+	case variable.SlowLogConnIDStr:
+		num, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.connID = num
+	case variable.SlowLogQueryTimeStr:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.queryTime = num
+	case execdetails.ProcessTimeStr:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.processTime = num
+	case execdetails.WaitTimeStr:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.waitTime = num
+	case execdetails.BackoffTimeStr:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.backOffTime = num
+	case execdetails.RequestCountStr:
+		num, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.requestCount = num
+	case execdetails.TotalKeysStr:
+		num, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.totalKeys = num
+	case execdetails.ProcessKeysStr:
+		num, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.processKeys = num
+	case variable.SlowLogDBStr:
+		st.db = value
+	case variable.SlowLogIndexNamesStr:
+		st.indexNames = value
+	case variable.SlowLogIsInternalStr:
+		st.isInternal = value == "true"
+	case variable.SlowLogQuerySQLStr:
+		st.sql = value
 	}
-	return &val, nil
+	return nil
+}
+
+func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
+	record := make([]types.Datum, 0, len(slowQueryCols))
+	record = append(record, types.NewTimeDatum(types.Time{
+		Time: types.FromGoTime(st.time),
+		Type: mysql.TypeDatetime,
+		Fsp:  types.MaxFsp,
+	}))
+	record = append(record, types.NewUintDatum(st.txnStartTs))
+	record = append(record, types.NewStringDatum(st.user))
+	record = append(record, types.NewUintDatum(st.connID))
+	record = append(record, types.NewFloat64Datum(st.queryTime))
+	record = append(record, types.NewFloat64Datum(st.processTime))
+	record = append(record, types.NewFloat64Datum(st.waitTime))
+	record = append(record, types.NewFloat64Datum(st.backOffTime))
+	record = append(record, types.NewUintDatum(st.requestCount))
+	record = append(record, types.NewUintDatum(st.totalKeys))
+	record = append(record, types.NewUintDatum(st.processKeys))
+	record = append(record, types.NewStringDatum(st.db))
+	record = append(record, types.NewStringDatum(st.indexNames))
+	record = append(record, types.NewDatum(st.isInternal))
+	record = append(record, types.NewStringDatum(st.sql))
+	return record
 }
 
 func parseTime(s string) (time.Time, error) {
@@ -181,13 +244,4 @@ func parseTime(s string) (time.Time, error) {
 		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\", err: %v", s, logutil.SlowLogTimeFormat, err)
 	}
 	return t, err
-}
-
-func findColumnByName(cols []columnInfo, colName string) *columnInfo {
-	for _, col := range cols {
-		if col.name == colName {
-			return &col
-		}
-	}
-	return nil
 }
