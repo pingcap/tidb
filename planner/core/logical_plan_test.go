@@ -2065,7 +2065,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
-			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(order by test.t.a asc, test.t.b desc))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(order by test.t.a asc, test.t.b desc range between unbounded preceding and current row))->Projection",
 		},
 		{
 			sql:    "select a, b as a, avg(a) over(partition by a) from t",
@@ -2194,6 +2194,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "select sum(a) over(order by a range between 1.0 preceding and 1 following) from t",
 			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(order by test.t.a asc range between 1.0 preceding and 1 following))->Projection",
+		},
+		{
+			sql:    "select row_number() over(rows between 1 preceding and 1 following) from t",
+			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
 		},
 	}
 
