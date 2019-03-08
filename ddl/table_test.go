@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/parser/ast"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -323,39 +322,4 @@ func (s *testTableSuite) TestTableResume(c *C) {
 	}
 	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)
-}
-
-func (s *testTableSuite) TestCreateTableWithLikeBuildTableInfo(c *C) {
-	t1TblInfo := testTableInfo(c, s.d, "t1", 3)
-	t1TblInfo.Columns[1].State = model.StateDeleteOnly
-	idx1Columns := []*model.IndexColumn{{
-		Name:   t1TblInfo.Columns[1].Name,
-		Offset: t1TblInfo.Columns[1].Offset,
-		Length: types.UnspecifiedLength,
-	}}
-	idx1Info := &model.IndexInfo{
-		Name:    model.NewCIStr("idx1"),
-		Columns: idx1Columns,
-		State:   model.StateDeleteOnly,
-	}
-	idx2Columns := []*model.IndexColumn{{
-		Name:   t1TblInfo.Columns[2].Name,
-		Offset: t1TblInfo.Columns[2].Offset,
-		Length: types.UnspecifiedLength,
-	}}
-	idx2Info := &model.IndexInfo{
-		Name:    model.NewCIStr("idx2"),
-		Columns: idx2Columns,
-		State:   model.StatePublic,
-	}
-	t1TblInfo.Indices = []*model.IndexInfo{idx1Info, idx2Info}
-
-	t2TblInfo := buildTableInfoWithLike(ast.Ident{Name: model.NewCIStr("t2")}, t1TblInfo)
-	c.Assert(len(t2TblInfo.Columns), Equals, 2)
-	for i, col := range t2TblInfo.Columns {
-		c.Assert(col.Offset, Equals, i)
-	}
-	c.Assert(len(t2TblInfo.Indices), Equals, 1)
-	c.Assert(t2TblInfo.Indices[0].Name.L, Equals, "idx2")
-	c.Assert(t2TblInfo.Indices[0].Columns[0].Offset, Equals, 1)
 }

@@ -1029,38 +1029,11 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) model.TableInfo {
 	tblInfo := *referTblInfo
 	// Check non-public column and adjust column offset.
-	newColumns := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
-	offsetChanged := make(map[int]int)
-	for _, col := range tblInfo.Columns {
-		if col.State == model.StatePublic {
-			newCol := col.Clone()
-			if newCol.Offset != len(newColumns) {
-				offsetChanged[newCol.Offset] = len(newColumns)
-				newCol.Offset = len(newColumns)
-			}
-			newColumns = append(newColumns, newCol)
-		}
-	}
-	// Update index column offset if have column offset changed.
+	newColumns := referTblInfo.Cols()
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-	if len(offsetChanged) > 0 {
-		for _, idx := range tblInfo.Indices {
-			if idx.State == model.StatePublic {
-				newIdx := idx.Clone()
-				for _, col := range newIdx.Columns {
-					if newOffset, ok := offsetChanged[col.Offset]; ok {
-						col.Offset = newOffset
-					}
-				}
-				newIndices = append(newIndices, newIdx)
-			}
-		}
-	} else {
-		// No need to clone.
-		for _, idx := range tblInfo.Indices {
-			if idx.State == model.StatePublic {
-				newIndices = append(newIndices, idx)
-			}
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StatePublic {
+			newIndices = append(newIndices, idx)
 		}
 	}
 	tblInfo.Columns = newColumns
