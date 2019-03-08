@@ -160,7 +160,7 @@ func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, e
 	return tbl, errors.Trace(err)
 }
 
-func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
+func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
 	tableID := job.TableID
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
@@ -199,7 +199,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -241,7 +241,7 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -276,7 +276,7 @@ func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -300,7 +300,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfo(t, job, oldSchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, oldSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -364,7 +364,7 @@ func (d *ddl) onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ e
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
