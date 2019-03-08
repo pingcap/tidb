@@ -13,7 +13,7 @@
     {
         "connections": 0,
         "git_hash": "f572e33854e1c0f942f031e9656d0004f99995c6",
-        "version": "5.7.10-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
+        "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
     }
     ```
 
@@ -288,7 +288,7 @@ timezone.*
         "lease": "45s",
         "listening_port": 4000,
         "status_port": 10080,
-        "version": "5.7.10-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
+        "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
     }
     ```
 
@@ -309,7 +309,7 @@ timezone.*
                 "lease": "45s",
                 "listening_port": 4001,
                 "status_port": 10081,
-                "version": "5.7.10-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
+                "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
             },
             "f7e73ed5-63b4-4cb4-ba7c-42b32dc74e77": {
                 "ddl_id": "f7e73ed5-63b4-4cb4-ba7c-42b32dc74e77",
@@ -318,7 +318,7 @@ timezone.*
                 "lease": "45s",
                 "listening_port": 4000,
                 "status_port": 10080,
-                "version": "5.7.10-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
+                "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
             }
         },
         "is_all_server_version_consistent": true,
