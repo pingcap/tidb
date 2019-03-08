@@ -591,8 +591,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
-				Endpoints:   addrs,
-				DialTimeout: 5 * time.Second,
+				Endpoints:        addrs,
+				AutoSyncInterval: 30 * time.Second,
+				DialTimeout:      5 * time.Second,
 				DialOptions: []grpc.DialOption{
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
