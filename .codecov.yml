@@ -5,12 +5,14 @@ codecov:
 coverage:
   precision: 4
   round: down
-  range: "65...100"
+  range: "65...90"
 
   status:
     project: yes
     patch: no
     changes: no
+    default:
+      threshold: 0.2   #Allow the coverage to drop by threshold%, and posting a success status.
 
 parsers:
   gcov:
@@ -26,7 +28,7 @@ comment:
   require_changes: no
 
 ignore:
-  - "*test.go"       
+  - "*_test.go"       
   - "cmd/.*"       
   - "docs/.*"
   - "LICENSES"
@@ -35,9 +37,8 @@ ignore:
   - ".git"
   - "*.yml"
   - "*.md"
-  - "ddl/failtest"
-  - "ddl/testutil"
-  - "ddl/util"
-  - "executor/seqtest"
-  - "metrics/"
+  - "ddl/failtest/.*"
+  - "ddl/testutil/.*"
+  - "executor/seqtest/.*"
+  - "metrics/.*"
 
