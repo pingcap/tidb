@@ -14,9 +14,8 @@ coverage:
     patch: 
       default:
         target: 0% # trial operation
-    changes: 
-      default:
-        target: 0% # trial operation
+    changes: no
+
 parsers:
   gcov:
     branch_detection:
