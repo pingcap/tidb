@@ -91,7 +91,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4Avg(ctx)
 	case ast.AggFuncGroupConcat:
 		a.typeInfer4GroupConcat(ctx)
-	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
+	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow,
+		ast.WindowFuncFirstValue, ast.WindowFuncLastValue:
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)

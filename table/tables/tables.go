@@ -1035,7 +1035,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
 	return false
 }
 
-// canSkipUpdateBinlog checks whether the column can be skiped or not.
+// canSkipUpdateBinlog checks whether the column can be skipped or not.
 func (t *tableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
 	if col.IsGenerated() && !col.GeneratedStored {
 		return true
