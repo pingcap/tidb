@@ -446,12 +446,14 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	defer d.Stop()
 	dbInfo := testSchemaInfo(c, d, "test_cancel_job")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
-
+	// create a partition table.
+	partitionTblInfo := testTableInfoWithPartition(c, d, "t_partition", 5)
 	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int);
 	tblInfo := testTableInfo(c, d, "t", 5)
 	ctx := testNewContext(d)
 	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
+	testCreateTable(c, ctx, d, dbInfo, partitionTblInfo)
 	tableAutoID := int64(100)
 	shardRowIDBits := uint64(5)
 	tblInfo.AutoIncID = tableAutoID
@@ -700,6 +702,21 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(changedTable.Meta().Charset, Equals, "utf8mb4")
 	c.Assert(changedTable.Meta().Collate, Equals, "utf8mb4_bin")
+
+	// test truncate table partition failed caused by canceled.
+	test = &tests[24]
+	truncateTblPartitionArgs := []interface{}{partitionTblInfo.Partition.Definitions[0].ID}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, partitionTblInfo.ID, test.act, truncateTblPartitionArgs, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
+	c.Assert(changedTable.Meta().Partition.Definitions[0].ID == partitionTblInfo.Partition.Definitions[0].ID, IsTrue)
+
+	// // test truncate table partition charset successful.
+	test = &tests[25]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, partitionTblInfo.ID, test.act, truncateTblPartitionArgs)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
+	c.Assert(changedTable.Meta().Partition.Definitions[0].ID == partitionTblInfo.Partition.Definitions[0].ID, IsFalse)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
