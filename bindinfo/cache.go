@@ -40,15 +40,15 @@ type bindMeta struct {
 	ast ast.StmtNode //ast will be used to do query sql bind check
 }
 
-// bindCache is a k-v map, key is original sql, value is a slice of bindRecords.
-type bindCache map[string][]*bindMeta
+// cache is a k-v map, key is original sql, value is a slice of bindRecords.
+type cache map[string][]*bindMeta
 
-// Handle holds an atomic bindCache.
+// Handle holds an atomic cache.
 type Handle struct {
 	atomic.Value
 }
 
-// BindCacheUpdater is used to update the global bindCache.
+// BindCacheUpdater is used to update the global cache.
 // BindCacheUpdater will update the bind cache per 3 seconds in domain gorountine loop. When the tidb server first startup, the updater will load all bind info in memory; then load diff bind info pre 3 second.
 type BindCacheUpdater struct {
 	ctx sessionctx.Context
@@ -80,14 +80,14 @@ func NewBindCacheUpdater(ctx sessionctx.Context, handler *Handle, parser *parser
 	}
 }
 
-// NewHandler creates a Handle with a bindCache.
+// NewHandler creates a Handle with a cache.
 func NewHandler() *Handle {
 	handler := &Handle{}
 	return handler
 }
 
-// Get gets bindCache from a Handle.
-func (h *Handle) Get() bindCache {
+// Get gets cache from a Handle.
+func (h *Handle) Get() cache {
 	bc := h.Load()
 
 	if bc != nil {
@@ -97,8 +97,8 @@ func (h *Handle) Get() bindCache {
 	return make(map[string][]*bindMeta)
 }
 
-// LoadDiff is used to load new bind info to bindCache bc.
-func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc bindCache) error {
+// LoadDiff is used to load new bind info to cache bc.
+func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
 	recordSets, err := bindCacheUpdater.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -131,7 +131,7 @@ func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc bindCache) err
 	}
 }
 
-// Update updates the BindCacheUpdater's bindCache. The fullLoad is true when tidb first startup, otherwise it is false.
+// Update updates the BindCacheUpdater's cache. The fullLoad is true when tidb first startup, otherwise it is false.
 func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	var sql string
 	bc := bindCacheUpdater.globalHandle.Get()
@@ -167,7 +167,7 @@ func newBindMeta(row chunk.Row) *bindRecord {
 	}
 }
 
-func (b bindCache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) error {
+func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) error {
 	hash := parser.DigestHash(newBindRecord.OriginalSQL)
 
 	if bindArr, ok := b[hash]; ok {
