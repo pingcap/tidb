@@ -95,10 +95,13 @@ const (
 type LogicalJoin struct {
 	logicalSchemaProducer
 
-	JoinType       JoinType
-	reordered      bool
-	cartesianJoin  bool
-	StraightJoin   bool
+	JoinType      JoinType
+	reordered     bool
+	cartesianJoin bool
+	StraightJoin  bool
+
+	// hintInfo stores the join algorithm hint information specified by client.
+	hintInfo       *tableHintInfo
 	preferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
