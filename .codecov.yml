@@ -13,10 +13,10 @@ coverage:
         threshold: 0.2 #Allow the coverage to drop by threshold%, and posting a success status.
     patch: 
       default:
-        target: 50%
+        target: 0% # trial operation
     changes: 
       default:
-        target: 0% #This option is closed by default. To set target 0% just wants to display this filed.
+        target: 0% # trial operation
 parsers:
   gcov:
     branch_detection:
