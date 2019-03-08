@@ -312,8 +312,8 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 	}
 	if bound.UnBounded {
 		buffer.WriteString("unbounded")
-	} else if bound.CalcFunc != nil {
-		sf := bound.CalcFunc.(*expression.ScalarFunction)
+	} else if len(bound.CalcFuncs) > 0 {
+		sf := bound.CalcFuncs[0].(*expression.ScalarFunction)
 		switch sf.FuncName.L {
 		case ast.DateAdd, ast.DateSub:
 			// For `interval '2:30' minute_second`.
