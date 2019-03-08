@@ -10,13 +10,13 @@ coverage:
   status:
     project: 
       default:
-        threshold: 0.2   #Allow the coverage to drop by threshold%, and posting a success status.
+        threshold: 0.2 #Allow the coverage to drop by threshold%, and posting a success status.
     patch: 
       default:
         target: 50%
     changes: 
       default:
-        target: 0%
+        target: 0% #This option is closed by default. To set target 0% just wants to display this filed.
 parsers:
   gcov:
     branch_detection:
