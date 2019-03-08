@@ -3,9 +3,9 @@ codecov:
     require_ci_to_pass: yes
 
 coverage:
-  precision: 2
+  precision: 4
   round: down
-  range: "70...100"
+  range: "65...100"
 
   status:
     project: yes
@@ -33,4 +33,11 @@ ignore:
   - "cmd/.*"
   - "vendor/.*"
   - ".git"
+  - "*.yml"
+  - "*.md"
+  - "ddl/failtest"
+  - "ddl/testutil"
+  - "ddl/util"
+  - "executor/seqtest"
+  - "metrics/"
 
