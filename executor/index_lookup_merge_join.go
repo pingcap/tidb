@@ -215,7 +215,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 			return nil
 		}
 		if task.cursor >= task.outerResult.NumRows() {
-			task, err := e.getFinishedTask(ctx)
+			task, err = e.getFinishedTask(ctx)
 			if err != nil || task == nil {
 				return errors.Trace(err)
 			}
@@ -225,8 +225,8 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 			task.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
 			task.innerIter.Begin()
 		}
-		outerRow := task.outerResult.GetRow(task.cursor)
 
+		outerRow := task.outerResult.GetRow(task.cursor)
 		cmpResult := -1
 		if len(task.outerMatch) > 0 && !task.outerMatch[task.cursor] {
 			task.cursor++
@@ -250,7 +250,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 			task.hasMatch = false
 			task.hasNull = false
 
-			if req.Chunk.NumRows() >= e.maxChunkSize {
+			if req.NumRows() >= e.maxChunkSize {
 				return nil
 			}
 			continue
@@ -265,7 +265,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 			task.hasMatch = task.hasMatch || matched
 			task.hasNull = task.hasNull || isNull
 
-			if req.Chunk.NumRows() >= e.maxChunkSize {
+			if req.NumRows() >= e.maxChunkSize {
 				return nil
 			}
 		}
@@ -285,6 +285,8 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 
 func (e *IndexLookUpMergeJoin) fetchNextOuterRows(task *lookUpMergeJoinTask, key chunk.Row) error {
 	task.sameKeyRows = task.sameKeyRows[:0]
+	task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
+	task.sameKeyIter.Begin()
 	if task.innerCursor >= task.innerResult.NumChunks() {
 		return nil
 	}
@@ -357,6 +359,7 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) (*lookUpMerg
 		e.task.memTracker.Detach()
 	}
 	e.task = task
+	task.cursor = 0
 	return task, nil
 }
 
