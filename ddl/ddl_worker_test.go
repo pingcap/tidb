@@ -338,21 +338,15 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
-		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema &&
-			job.Type != model.ActionRebaseAutoID && job.Type != model.ActionShardRowID && job.Type != model.ActionModifyColumn && job.Type != model.ActionAddForeignKey && job.Type != model.ActionDropForeignKey && job.Type != model.ActionRenameTable {
-			// If the schema state is none and is not equal to model.JobStateDone, we only test the job is finished.
-			// Unless the job is model.ActionCreateTable, model.ActionCreateSchema, model.ActionRebaseAutoID, we do the cancel anyway.
-		} else {
-			errs, err := admin.CancelJobs(txn, test.jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return checkErr
-			}
-			// It only tests cancel one DDL job.
-			if !terror.ErrorEqual(errs[0], test.cancelRetErrs[0]) {
-				checkErr = errors.Trace(errs[0])
-				return checkErr
-			}
+		errs, err := admin.CancelJobs(txn, test.jobIDs)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return checkErr
+		}
+		// It only tests cancel one DDL job.
+		if !terror.ErrorEqual(errs[0], test.cancelRetErrs[0]) {
+			checkErr = errors.Trace(errs[0])
+			return checkErr
 		}
 	}
 	return checkErr
@@ -398,6 +392,12 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 
 		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 23}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 24}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 24)}, cancelState: model.StatePublic},
+
+		{act: model.ActionModifyTableCharsetAndCollate, jobIDs: []int64{firstID + 25}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifyTableCharsetAndCollate, jobIDs: []int64{firstID + 26}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 26)}, cancelState: model.StatePublic},
+
+		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 27}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 28}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 28)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -683,6 +683,23 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(changedTable.Meta().Name.L, Equals, "t2")
+
+	// test modify table charset failed caused by canceled.
+	test = &tests[22]
+	modifyTableCharsetArgs := []interface{}{"utf8mb4", "utf8mb4_bin"}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyTableCharsetArgs, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Charset, Equals, "utf8")
+	c.Assert(changedTable.Meta().Collate, Equals, "utf8_bin")
+
+	// // test modify table charset successful.
+	test = &tests[23]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyTableCharsetArgs)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(changedTable.Meta().Collate, Equals, "utf8mb4_bin")
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

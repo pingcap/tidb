@@ -62,9 +62,9 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 		col.ID = allocateColumnID(tblInfo)
 		cols[i] = col
 	}
-
 	tblInfo.Columns = cols
-
+	tblInfo.Charset = "utf8"
+	tblInfo.Collate = "utf8_bin"
 	return tblInfo
 }
 
