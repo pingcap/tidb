@@ -28,15 +28,14 @@ comment:
   require_changes: no
 
 ignore:
-  - "*_test.go"       
-  - "cmd/.*"       
-  - "docs/.*"
   - "LICENSES"
-  - "cmd/.*"
-  - "vendor/.*"
+  - "*_test.go"       
   - ".git"
   - "*.yml"
   - "*.md"
+  - "cmd/.*"       
+  - "docs/.*"
+  - "vendor/.*"
   - "ddl/failtest/.*"
   - "ddl/testutil/.*"
   - "executor/seqtest/.*"
