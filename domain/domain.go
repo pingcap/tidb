@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/infobind"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
@@ -70,7 +70,7 @@ type Domain struct {
 	wg              sync.WaitGroup
 	gvc             GlobalVariableCache
 	slowQuery       *topNSlowQueries
-	bindHandler     *infobind.Handler
+	bindHandle      *bindinfo.Handle
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -797,16 +797,16 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 }
 
 // BindHandler returns the BindInfo.
-func (do *Domain) BindHandler() *infobind.Handler {
-	return do.bindHandler
+func (do *Domain) BindHandler() *bindinfo.Handle {
+	return do.bindHandle
 }
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should be called only once in BootstrapSession.
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.bindHandler = infobind.NewHandler()
+	do.bindHandle = bindinfo.NewHandler()
 
-	bindCacheUpdater := infobind.NewBindCacheUpdater(ctx, do.BindHandler(), parser)
+	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandler(), parser)
 	err := bindCacheUpdater.Update(true)
 	if err != nil {
 		return errors.Trace(err)

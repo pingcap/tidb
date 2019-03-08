@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infobind_test
+package bindinfo_test
 
 import (
 	"flag"
@@ -21,8 +21,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infobind"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
@@ -117,9 +117,9 @@ func (s *testSuite) TestBindParse(c *C) {
 
 	tk.MustExec(sql)
 
-	bindHandle := infobind.NewHandler()
+	bindHandle := bindinfo.NewHandler()
 
-	bindCacheUpdater := infobind.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser)
+	bindCacheUpdater := bindinfo.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser)
 
 	err := bindCacheUpdater.Update(true)
 	c.Check(err, IsNil)

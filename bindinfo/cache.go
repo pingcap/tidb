@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infobind
+package bindinfo
 
 import (
 	"context"
@@ -43,8 +43,8 @@ type bindMeta struct {
 // bindCache is a k-v map, key is original sql, value is a slice of bindRecords.
 type bindCache map[string][]*bindMeta
 
-// Handler holds an atomic bindCache.
-type Handler struct {
+// Handle holds an atomic bindCache.
+type Handle struct {
 	atomic.Value
 }
 
@@ -55,7 +55,7 @@ type BindCacheUpdater struct {
 
 	parser         *parser.Parser
 	lastUpdateTime types.Time
-	globalHandler  *Handler
+	globalHandle   *Handle
 }
 
 type bindRecord struct {
@@ -72,22 +72,22 @@ type bindRecord struct {
 }
 
 // NewBindCacheUpdater creates a new BindCacheUpdater.
-func NewBindCacheUpdater(ctx sessionctx.Context, handler *Handler, parser *parser.Parser) *BindCacheUpdater {
+func NewBindCacheUpdater(ctx sessionctx.Context, handler *Handle, parser *parser.Parser) *BindCacheUpdater {
 	return &BindCacheUpdater{
-		globalHandler: handler,
-		parser:        parser,
-		ctx:           ctx,
+		globalHandle: handler,
+		parser:       parser,
+		ctx:          ctx,
 	}
 }
 
-// NewHandler creates a Handler with a bindCache.
-func NewHandler() *Handler {
-	handler := &Handler{}
+// NewHandler creates a Handle with a bindCache.
+func NewHandler() *Handle {
+	handler := &Handle{}
 	return handler
 }
 
-// Get gets bindCache from a Handler.
-func (h *Handler) Get() bindCache {
+// Get gets bindCache from a Handle.
+func (h *Handle) Get() bindCache {
 	bc := h.Load()
 
 	if bc != nil {
@@ -134,7 +134,7 @@ func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc bindCache) err
 // Update updates the BindCacheUpdater's bindCache. The fullLoad is true when tidb first startup, otherwise it is false.
 func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	var sql string
-	bc := bindCacheUpdater.globalHandler.Get()
+	bc := bindCacheUpdater.globalHandle.Get()
 	newBc := make(map[string][]*bindMeta, len(bc))
 	for hash, bindDataArr := range bc {
 		newBc[hash] = append(newBc[hash], bindDataArr...)
@@ -150,7 +150,7 @@ func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 		return errors.Trace(err)
 	}
 
-	bindCacheUpdater.globalHandler.Store(newBc)
+	bindCacheUpdater.globalHandle.Store(newBc)
 	return nil
 }
 
