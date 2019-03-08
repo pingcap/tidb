@@ -708,7 +708,7 @@ func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
 		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON, `$.a[1]`, sampleJSON}, `{"a": [1, [{"b": 2}, {"b": 2}]]}`, true, false},
 		{[]interface{}{nil, `$`, nil}, nil, true, false},
 		{[]interface{}{nil, `$`, `a`}, nil, true, false},
-		{[]interface{}{`null`, `$`, nil}, `[null]`, true, false},
+		{[]interface{}{`null`, `$`, nil}, `[null, null]`, true, false},
 		// bad arguments
 		{[]interface{}{`asdf`, `$`, nil}, nil, true, true},
 		{[]interface{}{``, `$`, nil}, nil, true, true},
