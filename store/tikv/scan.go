@@ -107,10 +107,17 @@ func (s *Scanner) Next() error {
 		}
 
 		current := s.cache[s.idx]
-		if !s.reverse && len(s.endKey) > 0 && kv.Key(current.Key).Cmp(kv.Key(s.endKey)) >= 0 {
-			s.eof = true
-			s.Close()
-			return nil
+		if len(s.endKey) > 0 {
+			if !s.reverse && kv.Key(current.Key).Cmp(kv.Key(s.endKey)) >= 0 {
+				s.eof = true
+				s.Close()
+				return nil
+			}
+			if s.reverse && kv.Key(current.Key).Cmp(kv.Key(s.endKey)) <= 0 {
+				s.eof = true
+				s.Close()
+				return nil
+			}
 		}
 		// Try to resolve the lock
 		if current.GetError() != nil {
@@ -182,7 +189,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 
 		// when endkey is beyond current region, stop at current boundary.
 		if s.reverse {
-			if len(s.endKey) > 0 && len(loc.StartKey) > 0 && bytes.Compare(loc.StartKey, s.endKey) < 0 {
+			if len(s.endKey) > 0 && len(loc.StartKey) > 0 && bytes.Compare(loc.StartKey, s.endKey) > 0 {
 				req.Scan.EndKey = loc.StartKey
 			}
 		} else {
