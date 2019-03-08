@@ -274,7 +274,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		}
 	}
 
-	for req.NumRows() < e.maxChunkSize {
+	for !req.IsFull() {
 		hasMore, err := e.joinToChunk(ctx, req.Chunk)
 		if err != nil || !hasMore {
 			return errors.Trace(err)
@@ -340,7 +340,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			e.innerIter4Row.Begin()
 		}
 
-		if chk.NumRows() >= e.maxChunkSize {
+		if chk.IsFull() {
 			return true, errors.Trace(err)
 		}
 	}

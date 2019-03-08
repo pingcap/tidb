@@ -741,40 +741,47 @@ func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
 			panic("not support")
 		}
 	}
-	// TODO: plannercore.RightOuterJoin
-	joinTypes := []plannercore.JoinType{plannercore.InnerJoin, plannercore.LeftOuterJoin}
+	joinTypes := []plannercore.JoinType{plannercore.RightOuterJoin, plannercore.LeftOuterJoin,
+		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin}
 	for _, joinType := range joinTypes {
 		ctx := defaultCtx()
 		required := make([]int, 100)
 		for i := range required {
 			required[i] = rand.Int()%ctx.GetSessionVars().MaxChunkSize + 1
 		}
-		lSrc := newRequiredRowsDataSourceWithGenerator(ctx, 1, nil, justReturn1)             // just return one row: (1, 1)
-		rSrc := newRequiredRowsDataSourceWithGenerator(ctx, 10000000, required, justReturn1) // always return (1, 1)
-		mj := buildMergeJoinExec(ctx, joinType, lSrc, rSrc)
+		innerSrc := newRequiredRowsDataSourceWithGenerator(ctx, 1, nil, justReturn1)             // just return one row: (1, 1)
+		outerSrc := newRequiredRowsDataSourceWithGenerator(ctx, 10000000, required, justReturn1) // always return (1, 1)
+		exec := buildMergeJoinExec(ctx, joinType, innerSrc, outerSrc)
+		c.Assert(exec.Open(context.Background()), IsNil)
 
-		chk := mj.newFirstChunk()
+		chk := exec.newFirstChunk()
 		for i := range required {
 			chk.SetRequiredRows(required[i], ctx.GetSessionVars().MaxChunkSize)
-			c.Assert(mj.Next(context.Background(), chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(context.Background(), chunk.NewRecordBatch(chk)), IsNil)
 		}
-		c.Assert(mj.Close(), IsNil)
-		c.Assert(rSrc.checkNumNextCalled(), IsNil)
+		c.Assert(exec.Close(), IsNil)
+		c.Assert(outerSrc.checkNumNextCalled(), IsNil)
 	}
 }
 
-func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, lSrc, rSrc Executor) Executor {
+func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc Executor) Executor {
+	if joinType == plannercore.RightOuterJoin {
+		innerSrc, outerSrc = outerSrc, innerSrc
+	}
+
+	innerCols := innerSrc.Schema().Columns
+	outerCols := outerSrc.Schema().Columns
 	j := plannercore.PhysicalMergeJoin{
 		JoinType:        joinType,
 		LeftConditions:  nil,
 		RightConditions: nil,
 		DefaultValues:   []types.Datum{types.NewDatum(1), types.NewDatum(1)},
-		LeftKeys:        lSrc.Schema().Columns,
-		RightKeys:       rSrc.Schema().Columns,
+		LeftKeys:        outerCols,
+		RightKeys:       innerCols,
 	}.Init(ctx, nil)
-	j.SetChildren(nil, nil)
-	cols := append([]*expression.Column{}, rSrc.Schema().Columns...)
-	cols = append(cols, lSrc.Schema().Columns...)
+
+	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
+	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
 	schema := expression.NewSchema(cols...)
 	j.SetSchema(schema)
 
@@ -784,12 +791,14 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, l
 	}
 
 	b := newExecutorBuilder(ctx, nil)
-	exec := b.build(j)
-	je := exec.(*MergeJoinExec)
-	if joinType == plannercore.RightOuterJoin {
-		je.innerTable.reader, je.outerTable.reader = lSrc, rSrc
-	} else {
-		je.innerTable.reader, je.outerTable.reader = rSrc, lSrc
-	}
-	return exec
+	return b.build(j)
+}
+
+type mockPlan struct {
+	MockPhysicalPlan
+	exec Executor
+}
+
+func (mp *mockPlan) GetExecutor() Executor {
+	return mp.exec
 }
