@@ -57,6 +57,7 @@ type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
+	bindHandle      *bindinfo.Handle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
 	statsUpdating   sync2.AtomicInt32
@@ -70,7 +71,6 @@ type Domain struct {
 	wg              sync.WaitGroup
 	gvc             GlobalVariableCache
 	slowQuery       *topNSlowQueries
-	bindHandle      *bindinfo.Handle
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
