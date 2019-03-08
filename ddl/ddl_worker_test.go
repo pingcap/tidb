@@ -441,7 +441,7 @@ func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []inte
 func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) error {
 	var checkErr error
 	if test.cancelState == job.SchemaState {
-		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema && job.Type != model.ActionRebaseAutoID {
+		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema && job.Type != model.ActionRebaseAutoID && job.Type != model.ActionShardRowID {
 			// If the schema state is none and is not equal to model.JobStateDone, we only test the job is finished.
 			// Unless the job is model.ActionCreateTable, model.ActionCreateSchema, model.ActionRebaseAutoID, we do the cancel anyway.
 		} else {
@@ -700,7 +700,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 
 	// cancel rebase auto id
-	test = &tests[15]
+	test = &tests[13]
 	rebaseIDArgs := []interface{}{int64(200)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, rebaseIDArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
@@ -708,9 +708,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(changedTable.Meta().AutoIncID, Equals, tableAutoID)
 
 	// cancel shard bits
-	test = &tests[16]
+	test = &tests[14]
 	shardRowIDArgs := []interface{}{uint64(7)}
-	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, shardRowIDArgs, &cancelState)
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionShardRowID, shardRowIDArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(changedTable.Meta().ShardRowIDBits, Equals, shardRowIDBits)
