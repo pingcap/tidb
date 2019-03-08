@@ -738,7 +738,7 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		// bad json will only get nil in mysql
-		// select JSON_ARRAY_APPEND('asdf', "$", NULL);
+		// select JSON_ARRAY_APPEND('asdf', "$", NULL);show warnings;
 		return res, true, nil
 	}
 
@@ -748,13 +748,16 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		// also they does not ignore it, they just return NULL
 		s, isNull, err := b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(json.ErrInvalidJSONPath.FastGen("Syntax error in JSON path in argument %d to function 'json_array_append'", i+1))
 			return res, isNull, nil
 		}
 		pathExpr, err := json.ParseJSONPathExpr(s)
 		if err != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(json.ErrInvalidJSONPath.FastGen("Syntax error in JSON path in argument %d to function 'json_array_append'", i+1))
 			return res, true, nil
 		}
 		if pathExpr.ContainsAnyAsterisk() {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(json.ErrInvalidJSONPath.FastGen("Wildcard path expression is not allowed in function 'json_array_append' at position %d", i+1))
 			return res, true, nil
 		}
 
@@ -766,13 +769,17 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		}
 
 		if obj.TypeCode != json.TypeCodeArray {
-			// JSON_ARRAY_APPEND({"a": "b"}, "$", "c") =>
-			// [{"a": "b"}, "c"]
+			// JSON_ARRAY_APPEND({"a": "b"}, "$", "c") => [{"a": "b"}, "c"]
 			// We should convert them to a single array first
 			obj = json.CreateBinary([]interface{}{obj})
 		}
 
-		value, isnull, err := b.args[i+1].EvalJSON(b.ctx, row)
+		var (
+			value  json.BinaryJSON
+			isnull bool
+		)
+
+		value, isnull, err = b.args[i+1].EvalJSON(b.ctx, row)
 		if err != nil {
 			return res, true, err
 		}
@@ -782,10 +789,13 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		}
 
 		obj = json.MergeBinary([]json.BinaryJSON{obj, value})
-		res, _ = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
+		res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
+		if err != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
 		// we have done same checks where res.Modify might return with error before, thus ignore it
 	}
-	return res, isNull, nil
+	return res, isNull, err
 }
 
 type jsonArrayInsertFunctionClass struct {
