@@ -68,12 +68,14 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 
 func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	defer func() {
-		if r.expectedRowsRet != nil {
-			rowsRet := req.NumRows()
-			expected := r.expectedRowsRet[r.numNextCalled]
-			if rowsRet != expected {
-				panic(fmt.Sprintf("unexpected number of rows returned, obtain: %v, expected: %v", rowsRet, expected))
-			}
+		if r.expectedRowsRet == nil {
+			r.numNextCalled++
+			return
+		}
+		rowsRet := req.NumRows()
+		expected := r.expectedRowsRet[r.numNextCalled]
+		if rowsRet != expected {
+			panic(fmt.Sprintf("unexpected number of rows returned, obtain: %v, expected: %v", rowsRet, expected))
 		}
 		r.numNextCalled++
 	}()
