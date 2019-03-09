@@ -353,6 +353,10 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 }
 
 func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum) error {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
 	for _, idx := range t.DeletableIndices() {
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
@@ -362,7 +366,7 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, rm, h, oldVs, idx); err != nil {
+			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, rm, h, oldVs, idx, txn); err != nil {
 				return errors.Trace(err)
 			}
 			break
@@ -503,6 +507,8 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
+	txn.SetAssertion(key, kv.None)
+
 	if !sessVars.LightningMode {
 		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
 			return 0, errors.Trace(err)
@@ -758,7 +764,10 @@ func (t *tableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = txn.Delete([]byte(t.RecordKey(h)))
+
+	key := t.RecordKey(h)
+	txn.SetAssertion(key, kv.Exist)
+	err = txn.Delete([]byte(key))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -771,14 +780,13 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
 			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, txn.StartTS(), h, rec)
 			return errors.Trace(err)
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h, txn); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -791,9 +799,9 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	return nil
 }
 
-// removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	if err := idx.Delete(sc, rm, vals, h); err != nil {
+// removeRowIndex implements table.Table RemoveRowIndex interface.能
+func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
+	if err := idx.Delete(sc, rm, vals, h, txn); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1027,7 +1035,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
 	return false
 }
 
-// canSkipUpdateBinlog checks whether the column can be skiped or not.
+// canSkipUpdateBinlog checks whether the column can be skipped or not.
 func (t *tableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
 	if col.IsGenerated() && !col.GeneratedStored {
 		return true
