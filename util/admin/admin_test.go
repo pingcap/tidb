@@ -511,7 +511,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(40)), 4)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(40)), 4, nil)
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
