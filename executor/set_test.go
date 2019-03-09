@@ -242,6 +242,11 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable == "on")))
 	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable == "on")))
 
+	tk.MustExec("set global tidb_log_bin = on")
+	tk.MustQuery(`select @@global.tidb_log_bin;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_log_bin = off")
+	tk.MustQuery(`select @@global.tidb_log_bin;`).Check(testkit.Rows("0"))
+
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
 
