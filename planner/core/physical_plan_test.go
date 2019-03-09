@@ -1358,7 +1358,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		c.Assert(se.StmtCommit(), IsNil)
 		p, err := planner.Optimize(se, stmt, tt.is)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
 }
