@@ -342,6 +342,7 @@ var defaultConf = Config{
 		BatchWaitSize:     8,
 	},
 	Binlog: Binlog{
+		Enable:       "auto",
 		WriteTimeout: "15s",
 	},
 }
