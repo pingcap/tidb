@@ -192,15 +192,13 @@ func (e *InsertValues) insertRows(ctx context.Context, exec func(ctx context.Con
 			return errors.Trace(err)
 		}
 		rows = append(rows, row)
-		if e.rowCount%uint64(batchSize) == 0 {
+		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 			if err = exec(ctx, rows); err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			rows = rows[:0]
-			if batchInsert {
-				if err = e.doBatchInsert(ctx); err != nil {
-					return err
-				}
+			if err = e.doBatchInsert(ctx); err != nil {
+				return err
 			}
 		}
 	}
@@ -324,15 +322,13 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 				return errors.Trace(err)
 			}
 			rows = append(rows, row)
-			if e.rowCount%uint64(batchSize) == 0 {
+			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 				if err = exec(ctx, rows); err != nil {
 					return errors.Trace(err)
 				}
 				rows = rows[:0]
-				if batchInsert {
-					if err = e.doBatchInsert(ctx); err != nil {
-						return err
-					}
+				if err = e.doBatchInsert(ctx); err != nil {
+					return err
 				}
 			}
 		}

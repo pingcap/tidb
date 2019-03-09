@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
@@ -88,8 +88,6 @@ type HashAggFinalWorker struct {
 type AfFinalResult struct {
 	chk *chunk.Chunk
 	err error
-
-	giveBackCh chan *chunk.Chunk
 }
 
 // HashAggExec deals with all the aggregate functions.
@@ -154,6 +152,7 @@ type HashAggExec struct {
 
 	finishCh         chan struct{}
 	finalOutputCh    chan *AfFinalResult
+	finalInputCh     chan *chunk.Chunk
 	partialOutputChs []chan *HashAggIntermData
 	inputCh          chan *HashAggInput
 	partialInputChs  []chan *chunk.Chunk
@@ -249,6 +248,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	partialConcurrency := sessionVars.HashAggPartialConcurrency
 	e.isChildReturnEmpty = true
 	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
+	e.finalInputCh = make(chan *chunk.Chunk, finalConcurrency)
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
 	e.finishCh = make(chan struct{}, 1)
 
@@ -293,11 +293,10 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupSet:            set.NewStringSet(),
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
-			finalResultHolderCh: make(chan *chunk.Chunk, 1),
+			finalResultHolderCh: e.finalInputCh,
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:          chunk.MutRowFromTypes(e.retTypes()),
 		}
-		e.finalWorkers[i].finalResultHolderCh <- e.newFirstChunk()
 	}
 }
 
@@ -472,7 +471,6 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 	if finished {
 		return
 	}
-	result.Reset()
 	for groupKey := range w.groupSet {
 		partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, []byte(groupKey), w.partialResultMap)
 		for i, af := range w.aggFuncs {
@@ -483,18 +481,15 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 		if len(w.aggFuncs) == 0 {
 			result.SetNumVirtualRows(result.NumRows() + 1)
 		}
-		if result.NumRows() == w.maxChunkSize {
-			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
+		if result.IsFull() {
+			w.outputCh <- &AfFinalResult{chk: result}
 			result, finished = w.receiveFinalResultHolder()
 			if finished {
 				return
 			}
-			result.Reset()
 		}
 	}
-	if result.NumRows() > 0 {
-		w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
-	}
+	w.outputCh <- &AfFinalResult{chk: result}
 }
 
 func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
@@ -619,11 +614,12 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 	// 	return errors.New("HashAggExec.parallelExec error")
 	// }
 
-	for {
+	for !chk.IsFull() {
+		e.finalInputCh <- chk
 		result, ok := <-e.finalOutputCh
-		if !ok || result.err != nil || result.chk.NumRows() == 0 {
-			if result != nil {
-				return errors.Trace(result.err)
+		if !ok { // all finalWorkers exited
+			if chk.NumRows() > 0 { // but there are some data left
+				return nil
 			}
 			if e.isChildReturnEmpty && e.defaultVal != nil {
 				chk.Append(e.defaultVal, 0, 1)
@@ -631,12 +627,11 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 			e.isChildReturnEmpty = false
 			return nil
 		}
-		e.isChildReturnEmpty = false
-		chk.SwapColumns(result.chk)
-		// Put result.chk back to the corresponded final worker's finalResultHolderCh.
-		result.giveBackCh <- result.chk
+		if result.err != nil {
+			return result.err
+		}
 		if chk.NumRows() > 0 {
-			break
+			e.isChildReturnEmpty = false
 		}
 	}
 	return nil
@@ -670,11 +665,11 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			chk.SetNumVirtualRows(chk.NumRows() + 1)
 		}
 		for i, af := range e.PartialAggFuncs {
-			if err := (af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk)); err != nil {
+			if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
 				return err
 			}
 		}
-		if chk.NumRows() == e.maxChunkSize {
+		if chk.IsFull() {
 			e.cursor4GroupKey++
 			return nil
 		}
@@ -807,7 +802,7 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
-	for !e.executed && req.NumRows() < e.maxChunkSize {
+	for !e.executed && !req.IsFull() {
 		err := e.consumeOneGroup(ctx, req.Chunk)
 		if err != nil {
 			e.executed = true
