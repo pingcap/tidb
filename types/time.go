@@ -2355,11 +2355,17 @@ const (
 )
 
 func isAMOrPM(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	if strings.HasPrefix(input, "AM") {
+	if len(input) < 2 {
+		return input, false
+	}
+
+	s := strings.ToLower(input[:2])
+	switch s {
+	case "am":
 		ctx["%p"] = constForAM
-	} else if strings.HasPrefix(input, "PM") {
+	case "pm":
 		ctx["%p"] = constForPM
-	} else {
+	default:
 		return input, false
 	}
 	return input[2:], true
