@@ -628,7 +628,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// cancel shard bits
 	updateTest(&tests[14])
 	shardRowIDArgs := []interface{}{uint64(7)}
-	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, shardRowIDArgs, &cancelState)
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionShardRowID, shardRowIDArgs, &cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(changedTable.Meta().ShardRowIDBits, Equals, shardRowIDBits)
