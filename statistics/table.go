@@ -148,6 +148,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
 	totColSize := row.GetInt64(6)
+	correlation := row.GetFloat64(9)
 	col := table.Columns[histID]
 	errorRate := ErrorRate{}
 	if isAnalyzed(row.GetInt64(8)) {
@@ -184,6 +185,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 				ErrorRate:  errorRate,
 				isHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
+			col.Histogram.Correlation = correlation
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
@@ -191,6 +193,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 			if err != nil {
 				return errors.Trace(err)
 			}
+			hg.Correlation = correlation
 			cms, err := h.cmSketchFromStorage(table.PhysicalID, 0, colInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
@@ -214,7 +217,6 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 		break
 	}
 	if col != nil {
-		col.Histogram.Correlation = row.GetFloat64(9)
 		table.Columns[col.ID] = col
 	} else {
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
