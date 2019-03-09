@@ -14,6 +14,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -599,62 +600,68 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
-func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	plans := make([]PhysicalPlan, 0, 2)
+func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, forced bool) {
 	rightOuter := (p.preferJoinType & preferLeftAsIndexInner) > 0
 	leftOuter := (p.preferJoinType & preferRightAsIndexInner) > 0
-	if len(p.EqualConditions) == 0 {
-		if leftOuter || rightOuter {
-			warning := ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
+	hasIndexJoinHint := leftOuter || rightOuter
+
+	defer func() {
+		if !forced && hasIndexJoinHint {
+			// Construct warning message prefix.
+			errMsg := "Optimizer Hint TIDB_INLJ is inapplicable"
+			if p.hintInfo != nil {
+				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", p.hintInfo.restore2IndexJoinHint())
+			}
+
+			// Append inapplicable reason.
+			if len(p.EqualConditions) == 0 {
+				errMsg += " without column equal ON condition"
+			}
+
+			// Generate warning message to client.
+			warning := ErrInternal.GenWithStack(errMsg)
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
+	}()
+
+	if len(p.EqualConditions) == 0 {
 		return nil, false
 	}
+
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(prop, 0)
-		if join != nil {
-			// If the plan is not nil and matches the hint, return it directly.
-			if leftOuter {
-				return join, true
-			}
-			plans = append(plans, join...)
-		}
+		return join, join != nil && leftOuter
 	case RightOuterJoin:
 		join := p.getIndexJoinByOuterIdx(prop, 1)
-		if join != nil {
-			// If the plan is not nil and matches the hint, return it directly.
-			if rightOuter {
-				return join, true
-			}
-			plans = append(plans, join...)
-		}
+		return join, join != nil && rightOuter
 	case InnerJoin:
 		lhsCardinality := p.Children()[0].statsInfo().Count()
 		rhsCardinality := p.Children()[1].statsInfo().Count()
 
 		leftJoins := p.getIndexJoinByOuterIdx(prop, 0)
-		if leftOuter && leftJoins != nil {
+		if leftJoins != nil && leftOuter && !rightOuter {
 			return leftJoins, true
 		}
 
 		rightJoins := p.getIndexJoinByOuterIdx(prop, 1)
-		if rightOuter && rightJoins != nil {
+		if rightJoins != nil && rightOuter && !leftOuter {
 			return rightJoins, true
 		}
 
 		if leftJoins != nil && lhsCardinality < rhsCardinality {
-			return leftJoins, leftOuter
+			return leftJoins, hasIndexJoinHint
 		}
 
 		if rightJoins != nil && rhsCardinality < lhsCardinality {
-			return rightJoins, rightOuter
+			return rightJoins, hasIndexJoinHint
 		}
 
-		plans = append(plans, leftJoins...)
-		plans = append(plans, rightJoins...)
+		joins := append(leftJoins, rightJoins...)
+		return joins, hasIndexJoinHint && len(joins) != 0
 	}
-	return plans, false
+
+	return nil, false
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.
