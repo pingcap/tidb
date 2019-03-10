@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -383,9 +384,8 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
 		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
-			log.Warn("SQL",
+			logutil.Logger(ctx).Warn("SQL",
 				zap.String("label", s.getSQLLabel()),
-				zap.Uint64("con", s.sessionVars.ConnectionID),
 				zap.Error(err),
 				zap.String("txn", s.txn.GoString()))
 			// Transactions will retry 2 ~ commitRetryLimit times.
@@ -413,8 +413,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 
 	if err != nil {
-		log.Warn("Commit failed",
-			zap.Uint64("con", s.sessionVars.ConnectionID),
+		logutil.Logger(ctx).Warn("Commit failed",
 			zap.String("finished txn", s.txn.GoString()),
 			zap.Error(err))
 		return errors.Trace(err)
@@ -581,15 +580,13 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				log.Warn("Retrying",
-					zap.Uint64("con", connID),
+				logutil.Logger(ctx).Warn("Retrying",
 					zap.Int64("schema_ver", schemaVersion),
 					zap.Uint("retry_cnt", retryCnt),
 					zap.Int("query_num", i),
 					zap.String("sql", sqlForLog(st.OriginText())+sessVars.GetExecuteArgumentsInfo()))
 			} else {
-				log.Warn("Retrying",
-					zap.Uint64("con", connID),
+				logutil.Logger(ctx).Warn("Retrying",
 					zap.Int64("schema_ver", schemaVersion),
 					zap.Uint("retry_cnt", retryCnt),
 					zap.Int("query_num", i))
@@ -604,8 +601,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				return errors.Trace(err)
 			}
 		}
-		log.Warn("Transaction association",
-			zap.Uint64("con", connID),
+		logutil.Logger(ctx).Warn("Transaction association",
 			zap.Uint64("retrying_txn_start_ts", s.GetSessionVars().TxnCtx.StartTS),
 			zap.Uint64("original_txn_start_ts", orgStartTS))
 		if hook := ctx.Value("preCommitHook"); hook != nil {
@@ -619,9 +615,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warn("SQL",
+			logutil.Logger(ctx).Warn("SQL",
 				zap.String("label", label),
-				zap.Uint64("con", connID),
 				zap.String("session", s.String()),
 				zap.Error(err))
 			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable)
@@ -629,16 +624,14 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
-			log.Warn("SQL",
+			logutil.Logger(ctx).Warn("SQL",
 				zap.String("label", label),
-				zap.Uint64("con", connID),
 				zap.Uint("Retry reached max count", retryCnt))
 			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax)
 			return errors.Trace(err)
 		}
-		log.Warn("SQL",
+		logutil.Logger(ctx).Warn("SQL",
 			zap.String("label", label),
-			zap.Uint64("con", connID),
 			zap.Error(err),
 			zap.String("txn", s.txn.GoString()))
 		kv.BackOff(retryCnt)
@@ -918,8 +911,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
-			log.Warn("Run statement error",
-				zap.Uint64("con", connID),
+			logutil.Logger(ctx).Warn("Run statement error",
 				zap.Int64("schema_ver", s.sessionVars.TxnCtx.SchemaVersion),
 				zap.Error(err),
 				zap.String("session", s.String()))
@@ -961,8 +953,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
-		log.Warn("Parse SQL error",
-			zap.Uint64("con", connID),
+		logutil.Logger(ctx).Warn("Parse SQL error",
 			zap.Error(err),
 			zap.String("sql", sql))
 		return nil, util.SyntaxError(err)
@@ -983,8 +974,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			log.Warn("Compile SQL error",
-				zap.Uint64("con", connID),
+			logutil.Logger(ctx).Warn("Compile SQL error",
 				zap.Error(err),
 				zap.String("sql", sql))
 			return nil, errors.Trace(err)
@@ -1146,8 +1136,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 		vars := s.GetSessionVars()
-		log.Info("NewTxn() inside a transaction auto commit",
-			zap.Uint64("con", vars.ConnectionID),
+		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
 			zap.Int64("schema_ver", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("start_ts", txnID))
 	}
