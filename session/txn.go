@@ -16,12 +16,12 @@ package session
 import (
 	"context"
 	"fmt"
-	"runtime/debug"
 	"strings"
 	"sync/atomic"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	binlog "github.com/pingcap/tipb/go-binlog"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tipb/go-binlog"
+	"go.uber.org/zap"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
@@ -92,10 +92,13 @@ func (st *TxnState) GoString() string {
 		s.WriteString("state=valid")
 		fmt.Fprintf(&s, ", startTS=%d", st.Transaction.StartTS())
 		if len(st.dirtyTableOP) > 0 {
-			fmt.Fprintf(&s, ", len(dirtyTable)=%d", len(st.dirtyTableOP))
+			fmt.Fprintf(&s, ", len(dirtyTable)=%d, %#v", len(st.dirtyTableOP), st.dirtyTableOP)
 		}
 		if len(st.mutations) > 0 {
-			fmt.Fprintf(&s, ", len(mutations)=%d", len(st.mutations))
+			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(st.mutations), st.mutations)
+		}
+		if st.buf != nil && st.buf.Len() != 0 {
+			fmt.Fprintf(&s, ", buf.length: %d, buf.size: %d", st.buf.Len(), st.buf.Size())
 		}
 	} else {
 		s.WriteString("state=invalid")
@@ -161,17 +164,14 @@ func mockAutoIDRetry() bool {
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
-		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
-			st,
-			st.mutations,
-			st.dirtyTableOP,
-			st.buf,
-			debug.Stack())
+		log.Error("The code should never run here",
+			zap.String("TxnState", st.GoString()),
+			zap.Stack("something must be wrong"))
 		return errors.New("invalid transaction")
 	}
 	if st.doNotCommit != nil {
 		if err1 := st.Transaction.Rollback(); err1 != nil {
-			log.Error(err1)
+			log.Error(err1.Error())
 		}
 		return errors.Trace(st.doNotCommit)
 	}

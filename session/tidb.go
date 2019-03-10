@@ -25,6 +25,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -38,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type domainMap struct {
@@ -68,7 +69,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	ddlLease = schemaLease
 	statisticLease = statsLease
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
-		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
+		log.Info("New domain",
+			zap.String("store", store.UUID()),
+			zap.String("ddl lease", ddlLease.String()),
+			zap.String("stats lease", statisticLease.String()))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
 		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
@@ -76,7 +80,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
-			log.Errorf("[ddl] init domain failed %v", errors.ErrorStack(errors.Trace(err1)))
+			log.Error("[ddl] init domain failed",
+				zap.Error(errors.Trace(err1)))
 		}
 		return true, errors.Trace(err1)
 	})
@@ -128,7 +133,7 @@ func SetStatsLease(lease time.Duration) {
 
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
-	log.Debug("compiling", src)
+	log.Debug("Compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
 	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
@@ -138,7 +143,8 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
-		log.Warnf("compiling %s, error: %v", src, err)
+		log.Warn("Compiling", zap.String("source", src),
+			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return stmts, nil
@@ -220,7 +226,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				}
 			}
 		} else {
-			log.Error(err1)
+			log.Error(err1.Error())
 		}
 	}
 

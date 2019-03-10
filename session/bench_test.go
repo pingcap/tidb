@@ -17,14 +17,16 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap/zapcore"
 )
 
 var smallCount = 100
@@ -33,16 +35,16 @@ var bigCount = 10000
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err.Error())
 	}
 	domain, err := BootstrapSession(store)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err.Error())
 	}
-	log.SetLevel(log.ErrorLevel)
+	log.SetLevel(zapcore.ErrorLevel)
 	se, err := CreateSession4Test(store)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err.Error())
 	}
 	mustExecute(se, "use test")
 	return se, domain, store
@@ -88,10 +90,10 @@ func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
 	for count > 0 {
 		err := rs.Next(ctx, req)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal(err.Error())
 		}
 		if req.NumRows() == 0 {
-			log.Fatal(count)
+			log.Fatal(strconv.Itoa(count))
 		}
 		count -= req.NumRows()
 	}
