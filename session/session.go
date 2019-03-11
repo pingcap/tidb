@@ -1326,7 +1326,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 	variable.SysVars[variable.TiDBLogBin].Value = tidbLogBin
 
-
 	if len(cfg.Plugin.Load) > 0 {
 		plugin.InitWatchLoops(dom.GetEtcdClient())
 	}
