@@ -289,6 +289,7 @@ var defaultConf = Config{
 		Level:              "info",
 		Format:             "text",
 		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
+		SlowQueryFile:      "tidb-slow.log",
 		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
 		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
