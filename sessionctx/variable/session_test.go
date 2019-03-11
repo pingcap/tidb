@@ -14,7 +14,11 @@
 package variable_test
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -77,4 +81,37 @@ func (*testSessionSuite) TestSession(c *C) {
 	c.Assert(ss.TouchedRows(), Equals, uint64(0))
 	c.Assert(ss.CopiedRows(), Equals, uint64(0))
 	c.Assert(ss.WarningCount(), Equals, uint16(0))
+}
+
+func (*testSessionSuite) TestSlowLogFormat(c *C) {
+	ctx := mock.NewContext()
+
+	seVar := ctx.GetSessionVars()
+	c.Assert(seVar, NotNil)
+
+	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
+	seVar.ConnectionID = 1
+	seVar.CurrentDB = "test"
+	seVar.InRestrictedSQL = true
+	txnTS := uint64(406649736972468225)
+	costTime := time.Second
+	execDetail := execdetails.ExecDetails{
+		ProcessTime:   time.Second * time.Duration(2),
+		WaitTime:      time.Minute,
+		BackoffTime:   time.Millisecond,
+		RequestCount:  2,
+		TotalKeys:     10000,
+		ProcessedKeys: 20001,
+	}
+	resultString := `# Txn_start_ts: 406649736972468225
+# User: root@192.168.0.1
+# Conn_ID: 1
+# Query_time: 1
+# Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
+# DB: test
+# Index_ids: [1,2]
+# Is_internal: true
+select * from t;`
+	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", "select * from t")
+	c.Assert(logString, Equals, resultString)
 }
