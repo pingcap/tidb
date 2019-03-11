@@ -672,11 +672,15 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				expr = p.Schema().Columns[i]
 			}
 			proj.Exprs = append(proj.Exprs, expr)
-			col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
-			if err != nil {
-				return nil, 0, errors.Trace(err)
+			if isWindowFuncField {
+				col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
+				if err != nil {
+					return nil, 0, errors.Trace(err)
+				}
+				schema.Append(col)
+			} else {
+				schema.Append(p.Schema().Columns[i])
 			}
-			schema.Append(col)
 			continue
 		}
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
