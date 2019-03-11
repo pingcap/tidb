@@ -22,13 +22,14 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/printer"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -139,7 +140,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 	err := ddl.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		log.Errorf("[info-syncer] remove server info failed %v", err)
+		log.Error("Remove server info failed.", zap.Error(err))
 	}
 }
 
@@ -188,7 +189,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 		resp, err = etcdCli.Get(childCtx, key, opts...)
 		cancel()
 		if err != nil {
-			log.Infof("[info-syncer] get %s failed %v, continue checking.", key, err)
+			log.Info("Get key failed.", zap.String("key", key), zap.Error(err))
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -196,7 +197,8 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			info := &ServerInfo{}
 			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
-				log.Infof("[info-syncer] get %s, json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
+				log.Info("Get key failed.", zap.String("key", string(kv.Key)), zap.Any("value", kv.Value),
+					zap.Error(err))
 				return nil, errors.Trace(err)
 			}
 			allInfo[info.ID] = info
