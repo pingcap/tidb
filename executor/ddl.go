@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -61,7 +61,7 @@ func (e *DDLExec) toErr(err error) error {
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	txn, err1 := e.ctx.Txn(true)
 	if err1 != nil {
-		log.Error("Active txn failed", zap.Error(err))
+		logutil.Logger(context.Background()).Error("active txn failed", zap.Error(err))
 		return errors.Trace(err1)
 	}
 	schemaInfoErr := checker.Check(txn.StartTS())
@@ -253,7 +253,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 		}
 
 		if config.CheckTableBeforeDrop {
-			log.Warn("Admin check table before drop", zap.String("table name", fmt.Sprintf("`%s`.`%s`", fullti.Schema.O, fullti.Name.O)))
+			logutil.Logger(context.Background()).Warn("admin check table before drop", zap.String("tableName", fmt.Sprintf("`%s`.`%s`", fullti.Schema.O, fullti.Name.O)))
 			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 			if err != nil {

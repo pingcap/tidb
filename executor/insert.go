@@ -19,7 +19,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -172,7 +172,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
 	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
-		log.Error("Get old row failed when insert on dup", zap.Int64("handle", handle), zap.String("to be inserted row", types.DatumsToStrNoErr(row.row)))
+		logutil.Logger(context.Background()).Error("get old row failed when insert on dup", zap.Int64("handle", handle), zap.String("toBeInsertedRow", types.DatumsToStrNoErr(row.row)))
 		return errors.Trace(err)
 	}
 	// Do update row.

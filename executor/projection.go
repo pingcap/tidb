@@ -21,11 +21,11 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -380,7 +380,7 @@ func recoveryProjection(output *projectionOutput, r interface{}) {
 		output.done <- errors.Errorf("%v", r)
 	}
 	buf := util.GetStack()
-	log.Error("Projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.String("stack trace", string(buf)))
+	logutil.Logger(context.Background()).Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.String("stack", string(buf)))
 }
 
 func readProjectionInput(inputCh <-chan *projectionInput, finishCh <-chan struct{}) *projectionInput {

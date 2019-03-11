@@ -20,7 +20,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
@@ -321,7 +321,7 @@ func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
 	err := errors.Errorf("%v", r)
 	output <- &AfFinalResult{err: err}
 	buf := util.GetStack()
-	log.Error("Panic in the recoverable goroutine", zap.Error(err), zap.String("stack trace", string(buf)))
+	logutil.Logger(context.Background()).Error("panic in the recoverable goroutine", zap.Error(err), zap.String("stack", string(buf)))
 }
 
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
@@ -475,7 +475,7 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 		partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, []byte(groupKey), w.partialResultMap)
 		for i, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i], result); err != nil {
-				log.Error("Append final result failed", zap.String("error stack", errors.ErrorStack(err)))
+				logutil.Logger(context.Background()).Error("append final result failed", zap.Error(err))
 			}
 		}
 		if len(w.aggFuncs) == 0 {

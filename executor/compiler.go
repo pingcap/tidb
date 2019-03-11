@@ -19,7 +19,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -77,7 +77,7 @@ func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plannercore.Plan) (expen
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
-	log.Warn("[EXPENSIVE_QUERY]", zap.String("sql", sql))
+	logutil.Logger(context.Background()).Warn("[EXPENSIVE_QUERY]", zap.String("sql", sql))
 	return
 }
 
@@ -306,7 +306,7 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 	var is infoschema.InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(infoschema.InfoSchema)
-		log.Info("Use snapshot schema", zap.Uint64("con", sessVar.ConnectionID), zap.Int64("schema meta version", is.SchemaMetaVersion()))
+		logutil.Logger(context.Background()).Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
 	} else {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}

@@ -19,13 +19,13 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -248,8 +248,8 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		e.rowCount++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
-			log.Info("This insert rows has reached the batch limit", zap.Int("max rows in batch", e.maxChunkSize),
-				zap.Uint64("current total rows", e.rowCount))
+			logutil.Logger(context.Background()).Info("this insert rows has reached the batch limit", zap.Int("maxBatchRows", e.maxChunkSize),
+				zap.Uint64("totalRows", e.rowCount))
 			break
 		}
 	}

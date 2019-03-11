@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -220,7 +220,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if types.ErrTruncated.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			log.Warn("Truncate error", zap.Error(err1))
+			logutil.Logger(context.Background()).Warn("truncate error", zap.Error(err1))
 		}
 		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
@@ -525,7 +525,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 func (e *InsertValues) handleWarning(err error, logInfo string) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	sc.AppendWarning(err)
-	log.Warn(logInfo)
+	logutil.Logger(context.Background()).Warn(logInfo)
 }
 
 // batchCheckAndInsert checks rows with duplicate errors.

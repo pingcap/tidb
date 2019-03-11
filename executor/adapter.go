@@ -288,7 +288,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		txnTS := uint64(0)
 		// Don't active pending txn here.
 		if txn, err1 := sctx.Txn(false); err1 != nil {
-			log.Error("Get current transaction failed", zap.Error(err))
+			logutil.Logger(ctx).Error("get current transaction failed", zap.Error(err))
 		} else {
 			if txn.Valid() {
 				txnTS = txn.StartTS()
@@ -315,7 +315,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			return nil, errors.Trace(err)
 		}
 		if isPointGet {
-			log.Debug("InitTxnWithStartTS", zap.Uint64("con", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
+			logutil.Logger(context.Background()).Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else if ctx.GetSessionVars().SnapshotTS != 0 {
 			if _, ok := a.Plan.(*plannercore.CheckTable); ok {

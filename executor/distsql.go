@@ -25,7 +25,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -465,7 +465,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		}
 		cancel()
 		if err := result.Close(); err != nil {
-			log.Error("Close Select result failed", zap.String("error stack", errors.ErrorStack(err)))
+			logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
 		}
 		if e.runtimeStats != nil {
 			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[len(e.idxPlans)-1].ExplainID())
@@ -517,7 +517,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 	}
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
 	if err != nil {
-		log.Error("Build table reader from handles failed", zap.Error(err))
+		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return tableReader, nil
@@ -613,7 +613,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Error("Index worker panicked", zap.String("panic stack", string(buf)))
+			logutil.Logger(ctx).Error("index worker panicked", zap.String("stack", string(buf)))
 			err4Panic := errors.Errorf("%v", r)
 			doneCh := make(chan error, 1)
 			doneCh <- err4Panic
@@ -714,7 +714,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Error("Table worker panicked", zap.String("panic stack", string(buf)))
+			logutil.Logger(ctx).Error("table worker panicked", zap.String("stack", string(buf)))
 			task.doneCh <- errors.Errorf("%v", r)
 		}
 	}()
@@ -740,7 +740,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
 	tableReader, err := w.buildTblReader(ctx, task.handles)
 	if err != nil {
-		log.Error("Build table reader failed", zap.Error(err))
+		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	defer terror.Call(tableReader.Close)
@@ -755,7 +755,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		chk := tableReader.newFirstChunk()
 		err = tableReader.Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
-			log.Error("Table reader fetch next chunk failed", zap.Error(err))
+			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
 			return errors.Trace(err)
 		}
 		if chk.NumRows() == 0 {

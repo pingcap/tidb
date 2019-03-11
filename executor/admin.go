@@ -18,7 +18,6 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -309,9 +309,9 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 		totalScanCnt += result.scanRowCount
 		if totalScanCnt-lastLogCnt >= 50000 {
 			lastLogCnt = totalScanCnt
-			log.Info("Recover index", zap.String("table", e.table.Meta().Name.O),
-				zap.String("index", e.index.Meta().Name.O), zap.Int64("total added cnt", totalAddedCnt),
-				zap.Int64("total scan cnt", totalScanCnt), zap.Int64("next handle", result.nextHandle))
+			logutil.Logger(ctx).Info("recover index", zap.String("table", e.table.Meta().Name.O),
+				zap.String("index", e.index.Meta().Name.O), zap.Int64("totalAddedCnt", totalAddedCnt),
+				zap.Int64("totalScanCnt", totalScanCnt), zap.Int64("nextHandle", result.nextHandle))
 		}
 
 		// no more rows
@@ -395,9 +395,9 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 				}
 
 				if handle != rows[i].handle {
-					log.Warn("The constraint of unique index is broken when recovering index",
-						zap.String("index name", e.index.Meta().Name.O), zap.ByteString("key value", key),
-						zap.Int64("handle", rows[i].handle), zap.Int64("another handle", handle))
+					logutil.Logger(context.Background()).Warn("the constraint of unique index is broken when recovering index",
+						zap.String("indexName", e.index.Meta().Name.O), zap.ByteString("key", key),
+						zap.Int64("handle", rows[i].handle), zap.Int64("anotherHandle", handle))
 				}
 			}
 			rows[i].skip = true
@@ -523,7 +523,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				}
 				e.removeCnt++
 				if e.removeCnt%e.batchSize == 0 {
-					log.Info("Cleaning up dangling index", zap.String("table", e.table.Meta().Name.String()),
+					logutil.Logger(context.Background()).Info("cleaning up dangling index", zap.String("table", e.table.Meta().Name.String()),
 						zap.String("index", e.index.Meta().Name.String()), zap.Uint64("count", e.removeCnt))
 				}
 			}

@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -146,7 +146,7 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
-	log.Debug("Execute rollback statement", zap.Uint64("con", sessVars.ConnectionID))
+	logutil.Logger(context.Background()).Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {

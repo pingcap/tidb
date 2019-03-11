@@ -21,9 +21,9 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
@@ -176,9 +176,9 @@ func (e *RadixHashJoinExec) preAlloc4InnerParts() (err error) {
 	if e.numNonEmptyPart < len(e.innerParts) {
 		numTotalPart := len(e.innerParts)
 		numEmptyPart := numTotalPart - e.numNonEmptyPart
-		log.Debug("Empty partition in radix hash join", zap.Uint64("txn_start_ts", e.ctx.GetSessionVars().TxnCtx.StartTS),
-			zap.Int("num_empty_parts", numEmptyPart), zap.Int("num_total_parts", numTotalPart),
-			zap.Float64("empty_ratio", float64(numEmptyPart)/float64(numTotalPart)))
+		logutil.Logger(context.Background()).Debug("empty partition in radix hash join", zap.Uint64("txnStartTS", e.ctx.GetSessionVars().TxnCtx.StartTS),
+			zap.Int("numEmptyParts", numEmptyPart), zap.Int("numTotalParts", numTotalPart),
+			zap.Float64("emptyRatio", float64(numEmptyPart)/float64(numTotalPart)))
 	}
 	return
 }

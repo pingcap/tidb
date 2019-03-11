@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/terror"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -176,7 +176,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			valStr, err = value.ToString()
 			terror.Log(errors.Trace(err))
 		}
-		log.Info("Set session var", zap.Uint64("con", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		logutil.Logger(context.Background()).Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
 
 	return nil
@@ -227,7 +227,7 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
 		vars.SnapshotInfoschema = nil
 		return nil
 	}
-	log.Info("Load snapshot info schema", zap.Uint64("con", vars.ConnectionID), zap.Uint64("SnapshotTS", vars.SnapshotTS))
+	logutil.Logger(context.Background()).Info("load snapshot info schema", zap.Uint64("conn", vars.ConnectionID), zap.Uint64("SnapshotTS", vars.SnapshotTS))
 	dom := domain.GetDomain(e.ctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
 	if err != nil {
