@@ -2009,12 +2009,19 @@ type WindowSpec struct {
 	PartitionBy *PartitionByClause
 	OrderBy     *OrderByClause
 	Frame       *FrameClause
+
+	// OnlyAlias will set to true of the first following case.
+	// To make compatiable with MySQL, we need to distinguish `select func over w` from `select func over (w)`.
+	OnlyAlias bool
 }
 
 // Restore implements Node interface.
 func (n *WindowSpec) Restore(ctx *RestoreCtx) error {
 	if name := n.Name.String(); name != "" {
 		ctx.WriteName(name)
+		if n.OnlyAlias {
+			return nil
+		}
 		ctx.WriteKeyWord(" AS ")
 	}
 	ctx.WritePlain("(")
