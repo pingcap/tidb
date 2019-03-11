@@ -61,7 +61,7 @@ TiDB is written in [Go](http://golang.org).
 If you don't have a Go development environment,
 please [set one up](http://golang.org/doc/code.html).
 
-The version of GO should be **1.11** or above.
+The version of GO should be **1.12** or above.
 
 After installation, there are two ways to build TiDB binary.
 
@@ -215,12 +215,22 @@ mysql -h127.0.0.1 -P4000 -uroot test --default-character-set utf8
 
 #### Run Test
 
+Run all tests
+
 ```sh
 # Run unit test to make sure all test passed.
 make dev
 
 # Check checklist before you move on.
 make checklist
+```
+
+You can also run a single test in a file. For example, if you want to run
+test `TestToInt64` in file `types/datum.go`, you can do something like
+
+```sh
+cd types
+GO111MODULE=on go test -check.f TestToInt64
 ```
 
 ### Step 5: Keep your branch in sync
