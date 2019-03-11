@@ -14,19 +14,20 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -148,7 +149,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		table, ok := h.getTableByPhysicalID(is, physicalID)
 		h.mu.Unlock()
 		if !ok {
-			log.Debug("Unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
+			logutil.Logger(context.Background()).Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
@@ -156,7 +157,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			log.Debug("Error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.String("error stack", errors.ErrorStack(err)))
+			logutil.Logger(context.Background()).Debug("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
 		if tbl == nil {
@@ -298,13 +299,13 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
-			log.Debug("[stats] handle ddl event fail", zap.String("error stack", errors.ErrorStack(err)))
+			logutil.Logger(context.Background()).Debug("[stats] handle ddl event fail", zap.Error(err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
-		log.Debug("[stats] dump stats delta fail", zap.String("error stack", errors.ErrorStack(err)))
+		logutil.Logger(context.Background()).Debug("[stats] dump stats delta fail", zap.Error(err))
 	}
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
-		log.Debug("[stats] dump stats feedback fail", zap.String("error stack", errors.ErrorStack(err)))
+		logutil.Logger(context.Background()).Debug("[stats] dump stats feedback fail", zap.Error(err))
 	}
 }

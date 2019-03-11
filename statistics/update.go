@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -392,7 +393,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debug("Error occurred when encoding feedback", zap.String("error stack", errors.ErrorStack(err)))
+		logutil.Logger(context.Background()).Debug("error occurred when encoding feedback", zap.Error(err))
 		return nil
 	}
 	var isIndex int64
@@ -560,7 +561,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	for _, row := range rows {
 		err1 := decodeFeedback(row.GetBytes(3), q, cms, mysql.HasUnsignedFlag(hist.Tp.Flag))
 		if err1 != nil {
-			log.Debug("decode feedback failed", zap.String("error stack", errors.ErrorStack(err)))
+			logutil.Logger(context.Background()).Debug("decode feedback failed", zap.Error(err))
 		}
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
@@ -703,7 +704,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
-		log.Error("[stats] parse auto analyze period failed", zap.String("error stack", errors.ErrorStack(err)))
+		logutil.Logger(context.Background()).Error("[stats] parse auto analyze period failed", zap.Error(err))
 		return
 	}
 	for _, db := range dbs {
@@ -740,7 +741,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()); needAnalyze {
-		log.Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
+		logutil.Logger(context.Background()).Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
 		h.execAutoAnalyze(sql)
 		return true
 	}
@@ -750,7 +751,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		}
 		if _, ok := statsTbl.Indices[idx.ID]; !ok {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
-			log.Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
+			logutil.Logger(context.Background()).Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
 			h.execAutoAnalyze(sql)
 			return true
 		}
@@ -764,8 +765,7 @@ func (h *Handle) execAutoAnalyze(sql string) {
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
-		log.Error("[stats] auto analyze failed", zap.String("sql", sql), zap.Duration("cost_time", dur),
-			zap.String("error stack", errors.ErrorStack(err)))
+		logutil.Logger(context.Background()).Error("[stats] auto analyze failed", zap.String("sql", sql), zap.Duration("cost_time", dur), zap.Error(err))
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()

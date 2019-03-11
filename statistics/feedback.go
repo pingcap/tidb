@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"context"
 	"encoding/gob"
 	"fmt"
 	"math"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
@@ -143,12 +145,12 @@ func (q *QueryFeedback) decodeIntValues() *QueryFeedback {
 	for _, fb := range q.feedback {
 		_, lowInt, err := codec.DecodeInt(fb.lower.GetBytes())
 		if err != nil {
-			log.Debug("Decode feedback lower bound value to integer failed", zap.Binary("value", fb.lower.GetBytes()), zap.Error(err))
+			logutil.Logger(context.Background()).Debug("decode feedback lower bound value to integer failed", zap.Binary("value", fb.lower.GetBytes()), zap.Error(err))
 			continue
 		}
 		_, highInt, err := codec.DecodeInt(fb.upper.GetBytes())
 		if err != nil {
-			log.Debug("Decode feedback upper bound value to integer failed", zap.Binary("value", fb.upper.GetBytes()), zap.Error(err))
+			logutil.Logger(context.Background()).Debug("decode feedback upper bound value to integer failed", zap.Binary("value", fb.upper.GetBytes()), zap.Error(err))
 			continue
 		}
 		low, high := types.NewIntDatum(lowInt), types.NewIntDatum(highInt)
@@ -299,7 +301,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 	for _, fb := range feedback.feedback {
 		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
 		if err != nil {
-			log.Debug("Adjust feedback boundaries failed", zap.String("error stack", errors.ErrorStack(err)))
+			logutil.Logger(context.Background()).Debug("adjust feedback boundaries failed", zap.Error(err))
 			continue
 		}
 		if skip {
@@ -327,8 +329,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		// Update the bound if necessary.
 		res, err := bkt.lower.CompareDatum(nil, fb.lower)
 		if err != nil {
-			log.Debug("Compare datum failed", zap.Any("value1", bkt.lower),
-				zap.Any("value2", fb.lower), zap.String("error stack", errors.ErrorStack(err)))
+			logutil.Logger(context.Background()).Debug("compare datum failed", zap.Any("value1", bkt.lower), zap.Any("value2", fb.lower), zap.Error(err))
 			continue
 		}
 		if res > 0 {
@@ -336,8 +337,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		}
 		res, err = bkt.upper.CompareDatum(nil, fb.upper)
 		if err != nil {
-			log.Debug("Compare datum failed", zap.Any("value1", bkt.upper),
-				zap.Any("value2", fb.upper), zap.String("error stack", errors.ErrorStack(err)))
+			logutil.Logger(context.Background()).Debug("compare datum failed", zap.Any("value1", bkt.upper), zap.Any("value2", fb.upper), zap.Error(err))
 			continue
 		}
 		if res < 0 {
@@ -357,7 +357,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	vals = append(vals, *b.lower)
 	err := types.SortDatums(nil, vals)
 	if err != nil {
-		log.Debug("Sort datums failed", zap.String("error stack", errors.ErrorStack(err)))
+		logutil.Logger(context.Background()).Debug("sort datums failed", zap.Error(err))
 		vals = vals[:0]
 		vals = append(vals, *b.lower, *b.upper)
 		return vals
@@ -375,8 +375,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	for i := 1; i < len(vals); i++ {
 		cmp, err := vals[total-1].CompareDatum(nil, &vals[i])
 		if err != nil {
-			log.Debug("Compare datum failed", zap.Any("value1", vals[total-1]), zap.Any("value2", vals[i]),
-				zap.String("error stack", errors.ErrorStack(err)))
+			logutil.Logger(context.Background()).Debug("compare datum failed", zap.Any("value1", vals[total-1]), zap.Any("value2", vals[i]), zap.Error(err))
 			continue
 		}
 		if cmp == 0 {
@@ -888,7 +887,7 @@ func logForPK(prefix string, c *Column, ranges []*ranger.Range, actual []int64, 
 		if ran.LowVal[0].GetInt64()+1 >= ran.HighVal[0].GetInt64() {
 			continue
 		}
-		log.Debug(prefix, zap.String("column", c.Info.Name.O), zap.String("expected", colRangeToStr(c, ran, actual[i], factor)))
+		logutil.Logger(context.Background()).Debug(prefix, zap.String("column", c.Info.Name.O), zap.String("expected", colRangeToStr(c, ran, actual[i], factor)))
 	}
 }
 
@@ -920,7 +919,7 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	if idx.CMSketch == nil || idx.statsVer != version1 {
 		for i, ran := range ranges {
-			log.Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("expected", logForIndexRange(idx, ran, actual[i], factor)))
+			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("expected", logForIndexRange(idx, ran, actual[i], factor)))
 		}
 		return
 	}
@@ -928,7 +927,7 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 		rangePosition := getOrdinalOfRangeCond(sc, ran)
 		// only contains range or equality query
 		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
-			log.Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("expected", logForIndexRange(idx, ran, actual[i], factor)))
+			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("expected", logForIndexRange(idx, ran, actual[i], factor)))
 			continue
 		}
 		equalityString, err := types.DatumsToString(ran.LowVal[:rangePosition], true)
@@ -948,18 +947,18 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 		// prefer index stats over column stats
 		if idxHist := t.indexStartWithColumn(colName); idxHist != nil && idxHist.Histogram.Len() > 0 {
 			rangeString := logForIndexRange(idxHist, &rang, -1, factor)
-			log.Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
+			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
 				zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
 				zap.String("range", rangeString))
 		} else if colHist := t.columnByName(colName); colHist != nil && colHist.Histogram.Len() > 0 {
 			rangeString := colRangeToStr(colHist, &rang, -1, factor)
-			log.Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
+			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
 				zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
 				zap.String("range", rangeString))
 		} else {
 			count, err := getPseudoRowCountByColumnRanges(sc, float64(t.Count), []*ranger.Range{&rang}, 0)
 			if err == nil {
-				log.Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
+				logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
 					zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
 					zap.String("range", rang.String()), zap.Float64("pseudo count", math.Round(count)))
 			}
@@ -975,7 +974,7 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 	isIndex := q.hist.isIndexHist()
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
-		log.Debug("Decoding to ranges failed", zap.Error(err))
+		logutil.Logger(context.Background()).Debug("decoding to ranges failed", zap.Error(err))
 		return
 	}
 	actual := make([]int64, 0, len(q.feedback))
@@ -1027,7 +1026,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 	}
 	ranges, err := q.DecodeToRanges(true)
 	if err != nil {
-		log.Debug("Decoding feedback ranges fail", zap.Error(err))
+		logutil.Logger(context.Background()).Debug("decoding feedback ranges fail", zap.Error(err))
 		return nil
 	}
 	for i, ran := range ranges {
@@ -1039,7 +1038,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 
 		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 		if err != nil {
-			log.Debug("Encoding keys fail", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("dncoding keys fail", zap.Error(err))
 			continue
 		}
 		equalityCount := float64(idx.CMSketch.QueryBytes(bytes)) * idx.getIncreaseFactor(t.Count)
@@ -1061,7 +1060,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 			continue
 		}
 		if err != nil {
-			log.Debug("Getting row count by ranges fail", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("getting row count by ranges fail", zap.Error(err))
 			continue
 		}
 
@@ -1070,7 +1069,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 		q.feedback[i] = feedback{lower: &value, upper: &value, count: int64(equalityCount)}
 		err = rangeFB.dumpRangeFeedback(sc, h, &rang, rangeCount)
 		if err != nil {
-			log.Debug("Dumping range feedback fail", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("dumping range feedback fail", zap.Error(err))
 			continue
 		}
 	}
@@ -1172,7 +1171,7 @@ func getMaxValue(ft *types.FieldType) (max types.Datum) {
 		bytes, err := codec.EncodeKey(nil, nil, val)
 		// should not happen
 		if err != nil {
-			log.Error("Encoding key fail", zap.Error(err))
+			logutil.Logger(context.Background()).Error("encoding key fail", zap.Error(err))
 		}
 		max.SetBytes(bytes)
 	case mysql.TypeNewDecimal:
@@ -1206,7 +1205,7 @@ func getMinValue(ft *types.FieldType) (min types.Datum) {
 		bytes, err := codec.EncodeKey(nil, nil, val)
 		// should not happen
 		if err != nil {
-			log.Error("Encoding key fail", zap.Error(err))
+			logutil.Logger(context.Background()).Error("encoding key fail", zap.Error(err))
 		}
 		min.SetBytes(bytes)
 	case mysql.TypeNewDecimal:

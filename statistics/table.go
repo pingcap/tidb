@@ -14,13 +14,13 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
@@ -138,7 +139,7 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *Table, tableInfo *m
 	if idx != nil {
 		table.Indices[histID] = idx
 	} else {
-		log.Debug("We cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
+		logutil.Logger(context.Background()).Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
 	}
 	return nil
 }
@@ -222,7 +223,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
 		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
 		// avoid error.
-		log.Debug("We cannot find column in table info now. It may be deleted", zap.Int64("colID", histID), zap.String("table", tableInfo.Name.O))
+		logutil.Logger(context.Background()).Debug("we cannot find column in table info now. It may be deleted", zap.Int64("colID", histID), zap.String("table", tableInfo.Name.O))
 	}
 	return nil
 }
