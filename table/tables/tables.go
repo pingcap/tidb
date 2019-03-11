@@ -110,9 +110,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		// Print some information when the column's offset isn't equal to i.
 		if colInfo.Offset != i {
-			tblInfoStr := fmt.Sprintf("%#v", tblInfo)
-			colInfoStr := fmt.Sprintf("%#v", colInfo)
-			logutil.Logger(context.Background()).Error("wrong table schema", zap.String("table", tblInfoStr), zap.String("column", colInfoStr), zap.Int("index", i), zap.Int("offset", colInfo.Offset), zap.Int("number of columns", colsLen))
+			logutil.Logger(context.Background()).Error("wrong table schema", zap.Any("table", tblInfo), zap.Any("column", colInfo), zap.Int("index", i), zap.Int("offset", colInfo.Offset), zap.Int("columnNumber", colsLen))
 		}
 
 		col := table.ToColumn(colInfo)
@@ -786,17 +784,14 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
-			indexStr := fmt.Sprintf("%v", v.Meta())
-			recStr := fmt.Sprintf("%v", rec)
-			logutil.Logger(context.Background()).Info("remove row index failed", zap.String("index", indexStr), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h), zap.String("record", recStr), zap.Error(err))
+			logutil.Logger(context.Background()).Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h), zap.Any("record", rec), zap.Error(err))
 			return errors.Trace(err)
 		}
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h, txn); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
-				indexStr := fmt.Sprintf("%v", v.Meta())
-				logutil.Logger(context.Background()).Debug("row index not exists", zap.String("index", indexStr), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h))
+				logutil.Logger(context.Background()).Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h))
 				continue
 			}
 			return errors.Trace(err)
