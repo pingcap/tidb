@@ -109,10 +109,9 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Query_time: 1
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
 # DB: test
-# Index_names: idx1,idx2
+# Index_ids: [1,2]
 # Is_internal: true
 select * from t;`
-	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "idx1,idx2", "select * from t")
+	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", "select * from t")
 	c.Assert(logString, Equals, resultString)
-
 }

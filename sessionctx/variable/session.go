@@ -837,8 +837,8 @@ const (
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
 	SlowLogIsInternalStr = "Is_internal"
-	// SlowLogIndexNamesStr is slow log field name.
-	SlowLogIndexNamesStr = "Index_names"
+	// SlowLogIndexIDsStr is slow log field name.
+	SlowLogIndexIDsStr = "Index_ids"
 	// SlowLogQuerySQLStr is slow log field name.
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
 )
@@ -852,6 +852,7 @@ const (
 // # Query_time: 4.895492
 // # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
 // # DB: test
+// # Index_ids: [1,2]
 // # Is_internal: false
 // select * from t_slim;
 func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, sql string) string {
@@ -872,14 +873,15 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 		buf.WriteString(SlowLogPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
 	}
 	if len(indexIDs) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogIndexNamesStr + SlowLogSpaceMarkStr + indexIDs + "\n")
+		buf.WriteString(SlowLogPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
 	}
 	buf.WriteString(SlowLogPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
-	if len(sql) > 0 {
-		buf.WriteString(sql)
-		if sql[len(sql)-1] != ';' {
-			buf.WriteString(";")
-		}
+	if len(sql) == 0 {
+		sql = ";"
+	}
+	buf.WriteString(sql)
+	if sql[len(sql)-1] != ';' {
+		buf.WriteString(";")
 	}
 	return buf.String()
 }

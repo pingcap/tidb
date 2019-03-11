@@ -44,7 +44,7 @@ var slowQueryCols = []columnInfo{
 	{execdetails.TotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{execdetails.ProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogDBStr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{variable.SlowLogIndexNamesStr, mysql.TypeVarchar, 640, 0, nil, nil},
+	{variable.SlowLogIndexIDsStr, mysql.TypeVarchar, 100, 0, nil, nil},
 	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeVarchar, 4096, 0, nil, nil},
 }
@@ -53,8 +53,8 @@ func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return parseSlowLogFile(ctx.GetSessionVars().Location(), ctx.GetSessionVars().SlowQueryFile)
 }
 
-// TODO: Support parse multiple log-files.
 // parseSlowLogFile uses to parse slow log file.
+// TODO: Support parse multiple log-files.
 func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -208,7 +208,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.processKeys = num
 	case variable.SlowLogDBStr:
 		st.db = value
-	case variable.SlowLogIndexNamesStr:
+	case variable.SlowLogIndexIDsStr:
 		st.indexNames = value
 	case variable.SlowLogIsInternalStr:
 		st.isInternal = value == "true"
