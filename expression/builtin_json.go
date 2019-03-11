@@ -738,41 +738,24 @@ func (b *builtinJSONArrayAppendSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinJSONArrayAppendSig) checkError(err error) error {
-	if err == nil || b.ctx.GetSessionVars().StrictSQLMode {
-		return err
-	}
-	b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-	return nil
-}
-
 func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
-	if err != nil {
-		return res, true, b.checkError(err)
-	}
-	if isNull {
-		return res, true, nil
+	if err != nil || isNull {
+		return res, true, err
 	}
 
 	for i := 1; i < len(b.args)-1; i += 2 {
-		// bad arguments should return null
-		// NOTE: mysql does not report error
-		// also they does not ignore it, they just return NULL
+		// if JSON path is Null, then mysql break and return null
 		s, isNull, err := b.args[i].EvalString(b.ctx, row)
-		if isNull {
-			return res, true, b.checkError(json.ErrInvalidJSONPath.GenWithStackByArgs(s))
-		}
-		err = b.checkError(err)
-		if err != nil {
+		if isNull || err != nil {
 			return res, true, err
 		}
 		pathExpr, err := json.ParseJSONPathExpr(s)
 		if err != nil {
-			return res, true, b.checkError(json.ErrInvalidJSONPath.GenWithStackByArgs(s))
+			return res, true, json.ErrInvalidJSONPath.GenWithStackByArgs(s)
 		}
 		if pathExpr.ContainsAnyAsterisk() {
-			return res, true, b.checkError(json.ErrInvalidJSONPathWildcard.GenWithStackByArgs(s))
+			return res, true, json.ErrInvalidJSONPathWildcard.GenWithStackByArgs(s)
 		}
 
 		var exists bool
@@ -804,14 +787,13 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 
 		obj = json.MergeBinary([]json.BinaryJSON{obj, value})
 		res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
-		err = b.checkError(err)
 		if err != nil {
+			// err should always be nil, the function should never return here
 			return res, true, err
 		}
-		// we have done same checks where res.Modify might return with error before, thus ignore it
 	}
-	// res won't be null
-	return res, false, err
+	// res won't be nil, error should be nil
+	return res, false, nil
 }
 
 type jsonArrayInsertFunctionClass struct {
