@@ -423,7 +423,8 @@ func isCoveringIndex(columns []*expression.Column, indexColumns []*model.IndexCo
 		isIndexColumn := false
 		for _, indexCol := range indexColumns {
 			isFullLen := indexCol.Length == types.UnspecifiedLength || indexCol.Length == col.RetType.Flen
-			// We use col.OrigColName instead of col.ColName
+			// We use col.OrigColName instead of col.ColName.
+			// Related issue: https://github.com/pingcap/tidb/issues/9636.
 			if col.OrigColName.L == indexCol.Name.L && isFullLen {
 				isIndexColumn = true
 				break
