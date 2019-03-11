@@ -155,6 +155,8 @@ func (ft *FieldType) CompactStr() string {
 	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
 		// Flen is always shown.
 		suffix = fmt.Sprintf("(%d)", displayFlen)
+	case mysql.TypeYear:
+		suffix = fmt.Sprintf("(%d)", ft.Flen)
 	}
 	return ts + suffix
 }
