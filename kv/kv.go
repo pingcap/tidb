@@ -148,6 +148,8 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
+	// SetAssertion sets an assertion for an operation on the key.
+	SetAssertion(key Key, assertion AssertionType)
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	BatchGet(keys []Key) (map[string][]byte, error)
 }
