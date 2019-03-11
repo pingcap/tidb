@@ -31,15 +31,10 @@ comment:
 
 ignore:
   - "LICENSES"
-  - "*_test.go"       
   - ".git"
   - "*.yml"
   - "*.md"
   - "cmd/.*"       
   - "docs/.*"
   - "vendor/.*"
-  - "ddl/failtest/.*"
-  - "ddl/testutil/.*"
-  - "executor/seqtest/.*"
-  - "metrics/.*"
 

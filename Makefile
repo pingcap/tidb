@@ -130,7 +130,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	$(GO) get github.com/go-playground/overalls
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
-			-ignore='.git,vendor,cmd,docs,LICENSES,ddl/failtest,ddl/testutil/,executor/seqtest' \
+			-ignore='.git,vendor,cmd,docs,LICENSES' \
 			-concurrency=4 \
 			|| { $(GOFAIL_DISABLE); exit 1; }
 else
