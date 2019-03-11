@@ -2199,6 +2199,14 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select row_number() over(rows between 1 preceding and 1 following) from t",
 			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
 		},
+		{
+			sql:    "select nth_value(a, 1.0) over() from t",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
+			sql:    "select nth_value(a, 0) over() from t",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
