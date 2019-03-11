@@ -59,7 +59,7 @@ format = "text"
 disable-timestamp = false
 
 # Stores slow query log into separated files.
-slow-query-file = ""
+slow-query-file = "tidb-slow.log"
 
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300

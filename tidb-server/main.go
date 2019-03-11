@@ -458,6 +458,7 @@ func setGlobalVars() {
 	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
 	variable.SysVars[variable.Socket].Value = cfg.Socket
 	variable.SysVars[variable.DataDir].Value = cfg.Path
+	variable.SysVars[variable.TiDBSlowQueryFile].Value = cfg.Log.SlowQueryFile
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
