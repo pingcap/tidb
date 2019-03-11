@@ -53,7 +53,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test 
+dev: checklist test check 
 
 build:
 	$(GOBUILD)
