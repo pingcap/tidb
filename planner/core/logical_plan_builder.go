@@ -295,6 +295,11 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 		p.preferJoinType |= preferRightAsIndexInner
 	}
 
+	// set hintInfo for further usage if this hint info can be used.
+	if p.preferJoinType != 0 {
+		p.hintInfo = hintInfo
+	}
+
 	// If there're multiple join types and one of them is not index join hint,
 	// then there is a conflict of join types.
 	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexInner^preferLeftAsIndexInner) > 0 {
@@ -659,13 +664,13 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		// When `considerWindow` is false, we will only build fields for non-window functions, so we add fake placeholders.
 		// for window functions. These fake placeholders will be erased in column pruning.
 		// When `considerWindow` is true, all the non-window fields have been built, so we just use the schema columns.
-		if (considerWindow && !isWindowFuncField) || (!considerWindow && isWindowFuncField) {
-			var expr expression.Expression
-			if isWindowFuncField {
-				expr = expression.Zero
-			} else {
-				expr = p.Schema().Columns[i]
-			}
+		if considerWindow && !isWindowFuncField {
+			col := p.Schema().Columns[i]
+			proj.Exprs = append(proj.Exprs, col)
+			schema.Append(col)
+			continue
+		} else if !considerWindow && isWindowFuncField {
+			expr := expression.Zero
 			proj.Exprs = append(proj.Exprs, expr)
 			col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
 			if err != nil {
@@ -2055,7 +2060,11 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	}
 
 	tableInfo := tbl.Meta()
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", nil)
+	var authErr error = nil
+	if b.ctx.GetSessionVars().User != nil {
+		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Hostname, b.ctx.GetSessionVars().User.Username, tableInfo.Name.L)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
 	if tableInfo.IsView() {
 		return b.BuildDataSourceFromView(dbName, tableInfo)
@@ -2173,7 +2182,9 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 // BuildDataSourceFromView is used to build LogicalPlan from view
 func (b *PlanBuilder) BuildDataSourceFromView(dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
-	selectNode, err := parser.New().ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
+	viewParser := parser.New()
+	viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
+	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err
 	}
