@@ -1,0 +1,22 @@
+drop table if exists t1, t2;
+create table t1(a bigint, b bigint, index idx(a));
+create table t2(a bigint, b bigint, index idx(a));
+insert into t1 values(1, 1), (1, 1), (1, 1), (1, 1), (1, 1);
+insert into t2 values(1, 1);
+analyze table t1, t2;
+explain select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
+id	count	task	operator info
+IndexJoin_14	1.25	root	inner join, inner:IndexLookUp_13, outer key:test.t2.a, inner key:test.t1.a
+├─IndexLookUp_13	5.00	root	
+│ ├─IndexScan_11	5.00	cop	table:t1, index:a, range: decided by [test.t2.a], keep order:false
+│ └─TableScan_12	5.00	cop	table:t1, keep order:false
+└─TableReader_16	1.00	root	data:TableScan_15
+  └─TableScan_15	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
+explain select * from t1 join t2 on t1.a=t2.a;
+id	count	task	operator info
+IndexJoin_14	1.25	root	inner join, inner:IndexLookUp_13, outer key:test.t2.a, inner key:test.t1.a
+├─IndexLookUp_13	5.00	root	
+│ ├─IndexScan_11	5.00	cop	table:t1, index:a, range: decided by [test.t2.a], keep order:false
+│ └─TableScan_12	5.00	cop	table:t1, keep order:false
+└─TableReader_26	1.00	root	data:TableScan_25
+  └─TableScan_25	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
