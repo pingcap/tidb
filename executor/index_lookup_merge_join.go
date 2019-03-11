@@ -76,13 +76,14 @@ type lookUpMergeJoinTask struct {
 	sameKeyRows []chunk.Row
 	sameKeyIter chunk.Iterator
 
-	doneCh      chan error
+	doneErr     error
+	done        bool
 	cursor      int
 	innerCursor int
 	hasMatch    bool
 	hasNull     bool
 
-	results []*chunk.Chunk
+	results chan *chunk.Chunk
 
 	memTracker *memory.Tracker
 }
@@ -223,24 +224,26 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 	}
 
 	task = e.task
-	if task.cursor >= len(task.results) {
+	if task.doneErr != nil {
+		return errors.Trace(task.doneErr)
+	}
+	if task.done {
 		task, err = e.getFinishedTask(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	chk := task.results[task.cursor]
+	chk := <-task.results
 	req.Append(chk, 0, chk.NumRows())
-	task.cursor++
 
 	return nil
 }
 
 func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
 	task := e.task
-	if task != nil && task.cursor < len(task.results) {
-		return task, nil
+	if task != nil && (!task.done || len(task.results) > 0 || task.doneErr != nil) {
+		return task, task.doneErr
 	}
 
 	select {
@@ -252,21 +255,11 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) (*lookUpMerg
 		return nil, nil
 	}
 
-	select {
-	case err := <-task.doneCh:
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	case <-ctx.Done():
-		return nil, nil
-	}
-
 	if e.task != nil {
 		e.task.memTracker.Detach()
 	}
 	e.task = task
-	task.cursor = 0
-	return task, nil
+	return task, task.doneErr
 }
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
@@ -276,8 +269,9 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			log.Errorf("outerWorker panic stack is:\n%s", buf)
-			task := &lookUpMergeJoinTask{doneCh: make(chan error, 1)}
-			task.doneCh <- errors.Errorf("%v", r)
+			task := &lookUpMergeJoinTask{results: make(chan *chunk.Chunk, 3)}
+			task.doneErr = errors.Errorf("%v", r)
+			task.done = true
 			omw.pushToChan(ctx, task, omw.resultCh)
 		}
 		close(omw.resultCh)
@@ -287,7 +281,8 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	for {
 		task, err := omw.buildTask(ctx)
 		if err != nil {
-			task.doneCh <- errors.Trace(err)
+			task.doneErr = errors.Trace(err)
+			task.done = true
 			omw.pushToChan(ctx, task, omw.resultCh)
 			return
 		}
@@ -320,7 +315,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 	omw.executor.newFirstChunk()
 
 	task := &lookUpMergeJoinTask{
-		doneCh:      make(chan error, 1),
+		results:     make(chan *chunk.Chunk, 3),
 		outerResult: omw.executor.newFirstChunk(),
 	}
 	task.memTracker = memory.NewTracker(fmt.Sprintf("lookup join task %p", task), -1)
@@ -376,7 +371,8 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			log.Errorf("innerMergeWorker panic stack is:\n%s", buf)
-			task.doneCh <- errors.Errorf("%v", r)
+			task.doneErr = errors.Errorf("%v", r)
+			task.done = true
 		}
 		wg.Done()
 	}()
@@ -392,7 +388,8 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		}
 
 		err := imw.handleTask(ctx, task)
-		task.doneCh <- errors.Trace(err)
+		task.doneErr = err
+		task.done = true
 	}
 }
 
@@ -447,7 +444,7 @@ func (imw *innerMergeWorker) handleMergeJoin(task *lookUpMergeJoinTask) error {
 				task.hasNull = false
 
 				if chk.NumRows() >= imw.maxChunkSize {
-					task.results = append(task.results, chk)
+					task.results <- chk
 					chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
 				}
 				continue
@@ -478,12 +475,12 @@ func (imw *innerMergeWorker) handleMergeJoin(task *lookUpMergeJoinTask) error {
 		}
 
 		if chk.NumRows() >= imw.maxChunkSize {
-			task.results = append(task.results, chk)
+			task.results <- chk
 			chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
 		}
 	}
 	if chk.NumRows() > 0 {
-		task.results = append(task.results, chk)
+		task.results <- chk
 	}
 
 	return nil
