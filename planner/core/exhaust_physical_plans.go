@@ -14,6 +14,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -142,6 +143,12 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		mergeJoin.initCompareFuncs()
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
+			// Adjust expected count for children nodes.
+			if prop.ExpectedCnt < p.stats.RowCount {
+				expCntScale := prop.ExpectedCnt / p.stats.RowCount
+				reqProps[0].ExpectedCnt = p.children[0].statsInfo().RowCount * expCntScale
+				reqProps[1].ExpectedCnt = p.children[1].statsInfo().RowCount * expCntScale
+			}
 			mergeJoin.childrenReqProps = reqProps
 			joins = append(joins, mergeJoin)
 		}
@@ -260,7 +267,11 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int) *PhysicalHashJoin {
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt}
+	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	if prop.ExpectedCnt < p.stats.RowCount {
+		expCntScale := prop.ExpectedCnt / p.stats.RowCount
+		chReqProps[1-innerIdx].ExpectedCnt = p.children[1-innerIdx].statsInfo().RowCount * expCntScale
+	}
 	hashJoin := PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -315,7 +326,11 @@ func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, innerJ
 		return nil
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
-	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: prop.ExpectedCnt, Items: prop.Items}
+	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, Items: prop.Items}
+	if prop.ExpectedCnt < p.stats.RowCount {
+		expCntScale := prop.ExpectedCnt / p.stats.RowCount
+		chReqProps[outerIdx].ExpectedCnt = p.children[outerIdx].statsInfo().RowCount * expCntScale
+	}
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
 	newKeyOff := make([]int, 0, len(keyOff2IdxOff))
@@ -598,62 +613,68 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
-func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	plans := make([]PhysicalPlan, 0, 2)
+func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, forced bool) {
 	rightOuter := (p.preferJoinType & preferLeftAsIndexInner) > 0
 	leftOuter := (p.preferJoinType & preferRightAsIndexInner) > 0
-	if len(p.EqualConditions) == 0 {
-		if leftOuter || rightOuter {
-			warning := ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
+	hasIndexJoinHint := leftOuter || rightOuter
+
+	defer func() {
+		if !forced && hasIndexJoinHint {
+			// Construct warning message prefix.
+			errMsg := "Optimizer Hint TIDB_INLJ is inapplicable"
+			if p.hintInfo != nil {
+				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", p.hintInfo.restore2IndexJoinHint())
+			}
+
+			// Append inapplicable reason.
+			if len(p.EqualConditions) == 0 {
+				errMsg += " without column equal ON condition"
+			}
+
+			// Generate warning message to client.
+			warning := ErrInternal.GenWithStack(errMsg)
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
+	}()
+
+	if len(p.EqualConditions) == 0 {
 		return nil, false
 	}
+
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(prop, 0)
-		if join != nil {
-			// If the plan is not nil and matches the hint, return it directly.
-			if leftOuter {
-				return join, true
-			}
-			plans = append(plans, join...)
-		}
+		return join, join != nil && leftOuter
 	case RightOuterJoin:
 		join := p.getIndexJoinByOuterIdx(prop, 1)
-		if join != nil {
-			// If the plan is not nil and matches the hint, return it directly.
-			if rightOuter {
-				return join, true
-			}
-			plans = append(plans, join...)
-		}
+		return join, join != nil && rightOuter
 	case InnerJoin:
 		lhsCardinality := p.Children()[0].statsInfo().Count()
 		rhsCardinality := p.Children()[1].statsInfo().Count()
 
 		leftJoins := p.getIndexJoinByOuterIdx(prop, 0)
-		if leftOuter && leftJoins != nil {
+		if leftJoins != nil && leftOuter && !rightOuter {
 			return leftJoins, true
 		}
 
 		rightJoins := p.getIndexJoinByOuterIdx(prop, 1)
-		if rightOuter && rightJoins != nil {
+		if rightJoins != nil && rightOuter && !leftOuter {
 			return rightJoins, true
 		}
 
 		if leftJoins != nil && lhsCardinality < rhsCardinality {
-			return leftJoins, leftOuter
+			return leftJoins, hasIndexJoinHint
 		}
 
 		if rightJoins != nil && rhsCardinality < lhsCardinality {
-			return rightJoins, rightOuter
+			return rightJoins, hasIndexJoinHint
 		}
 
-		plans = append(plans, leftJoins...)
-		plans = append(plans, rightJoins...)
+		joins := append(leftJoins, rightJoins...)
+		return joins, hasIndexJoinHint && len(joins) != 0
 	}
-	return plans, false
+
+	return nil, false
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.

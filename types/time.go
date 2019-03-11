@@ -564,7 +564,11 @@ func ParseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
 	start := 0
-	var seps = make([]string, 0)
+	// Initialize `seps` with capacity of 6. The input `format` is typically
+	// a date time of the form "2006-01-02 15:04:05", which has 6 numeric parts
+	// (the fractional second part is usually removed by `splitDateTime`).
+	// Setting `seps`'s capacity to 6 avoids reallocation in this common case.
+	seps := make([]string, 0, 6)
 	for i := 0; i < len(format); i++ {
 		// Date format must start and end with number.
 		if i == 0 || i == len(format)-1 {
@@ -2206,7 +2210,13 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 	}
 
 	format = skipWhiteSpace(format)
-	for token, formatRemain, succ := getFormatToken(format); len(token) != 0; format = formatRemain {
+	var token string
+	var succ bool
+	for {
+		token, format, succ = getFormatToken(format)
+		if len(token) == 0 {
+			break
+		}
 		if !succ {
 			isDuration, isDate = false, false
 			break
@@ -2219,7 +2229,6 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 		if isDuration && isDate {
 			break
 		}
-		token, formatRemain, succ = getFormatToken(format)
 	}
 	return
 }
@@ -2346,11 +2355,17 @@ const (
 )
 
 func isAMOrPM(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	if strings.HasPrefix(input, "AM") {
+	if len(input) < 2 {
+		return input, false
+	}
+
+	s := strings.ToLower(input[:2])
+	switch s {
+	case "am":
 		ctx["%p"] = constForAM
-	} else if strings.HasPrefix(input, "PM") {
+	case "pm":
 		ctx["%p"] = constForPM
-	} else {
+	default:
 		return input, false
 	}
 	return input[2:], true

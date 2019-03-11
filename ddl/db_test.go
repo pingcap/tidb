@@ -596,9 +596,6 @@ func (s *testDBSuite) TestCancelDropTableAndSchema(c *C) {
 		{true, model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, false},
 	}
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
 	testCase := &testCases[0]
@@ -1099,9 +1096,6 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
 	}
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
 	testCase := &testCases[0]

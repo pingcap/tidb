@@ -762,7 +762,7 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
@@ -867,7 +867,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		s.ctx.GetSessionVars().HashJoinConcurrency = 1
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
@@ -1329,7 +1329,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		_, err = BuildLogicalPlan(s.ctx, stmt, s.is)
 		if tt.err == nil {
 			c.Assert(err, IsNil, comment)
@@ -1639,7 +1639,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			ctx:       MockContext(),
@@ -1757,7 +1757,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
@@ -1889,7 +1889,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
@@ -2000,7 +2000,7 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
@@ -2031,7 +2031,7 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
@@ -2065,7 +2065,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
-			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(order by test.t.a asc, test.t.b desc))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(order by test.t.a asc, test.t.b desc range between unbounded preceding and current row))->Projection",
 		},
 		{
 			sql:    "select a, b as a, avg(a) over(partition by a) from t",
@@ -2191,6 +2191,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select sum(a) over(order by a range between 1.0 preceding and 1 following) from t",
 			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(order by test.t.a asc range between 1.0 preceding and 1 following))->Projection",
 		},
+		{
+			sql:    "select row_number() over(rows between 1 preceding and 1 following) from t",
+			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
@@ -2201,7 +2205,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
@@ -2286,7 +2290,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
