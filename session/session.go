@@ -848,12 +848,12 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(s, sql)
-	if err != nil && config.CheckTableBeforeDrop {
+	if config.CheckTableBeforeDrop {
 		sql := fmt.Sprintf("admin check table `%s`.`%s`", mysql.SystemDB, mysql.GlobalVariablesTable)
 		log.Infof("%s after SetGlobalSysVar", sql)
-		_, _, err := s.ExecRestrictedSQL(s, sql)
-		if err != nil {
-			return errors.Trace(err)
+		_, _, err1 := s.ExecRestrictedSQL(s, sql)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 	}
 	return errors.Trace(err)
