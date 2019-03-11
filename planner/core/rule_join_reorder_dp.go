@@ -31,9 +31,9 @@ type joinGroupEqEdge struct {
 }
 
 type joinGroupNonEqEdge struct {
-	nodeIDs []int
-	idMask  uint
-	expr    expression.Expression
+	nodeIDs    []int
+	nodeIDMask uint
+	expr       expression.Expression
 }
 
 func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expression.Expression) (LogicalPlan, error) {
@@ -86,9 +86,9 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expressio
 			mask |= 1 << uint(idx)
 		}
 		totalNonEqEdges = append(totalNonEqEdges, joinGroupNonEqEdge{
-			nodeIDs: ids,
-			idMask:  mask,
-			expr:    cond,
+			nodeIDs:    ids,
+			nodeIDMask: mask,
+			expr:       cond,
 		})
 	}
 	visited := make([]bool, len(joinGroup))
@@ -107,14 +107,14 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expressio
 		var subNonEqEdges []joinGroupNonEqEdge
 		for i := len(totalNonEqEdges) - 1; i >= 0; i-- {
 			// If this edge is not the subset of the current sub graph.
-			if totalNonEqEdges[i].idMask&nodeIDMask != totalNonEqEdges[i].idMask {
+			if totalNonEqEdges[i].nodeIDMask&nodeIDMask != totalNonEqEdges[i].nodeIDMask {
 				continue
 			}
 			newMask := uint(0)
 			for _, nodeID := range totalNonEqEdges[i].nodeIDs {
 				newMask |= 1 << uint(nodeID2VisitID[nodeID])
 			}
-			totalNonEqEdges[i].idMask = newMask
+			totalNonEqEdges[i].nodeIDMask = newMask
 			subNonEqEdges = append(subNonEqEdges, totalNonEqEdges[i])
 			totalNonEqEdges = append(totalNonEqEdges[:i], totalNonEqEdges[i+1:]...)
 		}
@@ -154,13 +154,16 @@ func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents 
 	return visitID2NodeID
 }
 
-func (s *joinReorderDPSolver) dpGraph(newPos2OldPos, oldPos2NewPos []int, joinGroup []LogicalPlan,
+// dpGraph is the core part of this algorithm.
+// It implements the traditional join reorder algorithm: DP by subset using the following formula:
+//   bestPlan[S:set of node] = the best one among Join(bestPlan[S1:subset of S], bestPlan[S2: S/S1])
+func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, joinGroup []LogicalPlan,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) (LogicalPlan, error) {
-	nodeCnt := uint(len(newPos2OldPos))
+	nodeCnt := uint(len(visitID2NodeID))
 	bestPlan := make([]*jrNode, 1<<nodeCnt)
 	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
 	for i := uint(0); i < nodeCnt; i++ {
-		bestPlan[1<<i] = s.curJoinGroup[newPos2OldPos[i]]
+		bestPlan[1<<i] = s.curJoinGroup[visitID2NodeID[i]]
 	}
 	// Enumerate the nodeBitmap from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
 	for nodeBitmap := uint(1); nodeBitmap < (1 << nodeCnt); nodeBitmap++ {
@@ -178,7 +181,7 @@ func (s *joinReorderDPSolver) dpGraph(newPos2OldPos, oldPos2NewPos []int, joinGr
 				continue
 			}
 			// Get the edge connecting the two parts.
-			usedEdges, otherConds := s.nodesAreConnected(sub, remain, oldPos2NewPos, totalEqEdges, totalNonEqEdges)
+			usedEdges, otherConds := s.nodesAreConnected(sub, remain, nodeID2VisitID, totalEqEdges, totalNonEqEdges)
 			// Here we only check equal condition currently.
 			if len(usedEdges) == 0 {
 				continue
@@ -217,11 +220,11 @@ func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos
 	}
 	for _, edge := range totalNonEqEdges {
 		// If the result is false, means that the current group hasn't covered the columns involved in the expression.
-		if edge.idMask&(leftMask|rightMask) != edge.idMask {
+		if edge.nodeIDMask&(leftMask|rightMask) != edge.nodeIDMask {
 			continue
 		}
 		// Check whether this expression is only built from one side of the join.
-		if edge.idMask&leftMask == 0 || edge.idMask&rightMask == 0 {
+		if edge.nodeIDMask&leftMask == 0 || edge.nodeIDMask&rightMask == 0 {
 			continue
 		}
 		otherConds = append(otherConds, edge.expr)

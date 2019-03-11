@@ -455,8 +455,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
-		if v < 0 || v > 64 {
-			return value, errors.Errorf("tidb_join_order_algo_threshold cannot be smaller than 0 and larger than 63")
+		if v < 0 || v >= 64 {
+			return value, errors.Errorf("tidb_join_order_algo_threshold(%d) cannot be smaller than 0 or larger than 63", v)
 		}
 	}
 	return value, nil

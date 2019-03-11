@@ -333,8 +333,8 @@ type SessionVars struct {
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
 
-	// TIDBOptJoinOrderAlgoThreshold defines the threshold less than which
-	// we'll choose a rather time consuming algorithm to calculate the join order.
+	// TIDBOptJoinOrderAlgoThreshold defines the minimal number of join nodes
+	// to use the greedy join reorder algorithm.
 	TiDBOptJoinReorderThreshold int
 }
 
