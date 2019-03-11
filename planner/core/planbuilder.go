@@ -14,6 +14,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -81,6 +82,18 @@ func (info *tableHintInfo) matchTableName(tables []*model.CIStr, tablesInHints [
 		}
 	}
 	return false
+}
+
+func (info *tableHintInfo) restore2IndexJoinHint() string {
+	buffer := bytes.NewBufferString("/*+ TIDB_INLJ(")
+	for i, tableName := range info.indexNestedLoopJoinTables {
+		buffer.WriteString(tableName.O)
+		if i < len(info.indexNestedLoopJoinTables)-1 {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(") */")
+	return buffer.String()
 }
 
 // clauseCode indicates in which clause the column is currently.
