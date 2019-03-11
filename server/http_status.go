@@ -124,7 +124,8 @@ func (s *Server) startHTTPServer() {
 		w.Header().Set("X-Go-Pprof", "1")
 		w.Header().Del("Content-Disposition")
 		w.WriteHeader(status)
-		fmt.Fprintln(w, txt)
+		_, err := fmt.Fprintln(w, txt)
+		terror.Log(err)
 	}
 
 	sleep := func(w http.ResponseWriter, d time.Duration) {
@@ -167,7 +168,8 @@ func (s *Server) startHTTPServer() {
 				serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", item.name, err))
 				return
 			}
-			p.WriteTo(fw, item.debug)
+			err = p.WriteTo(fw, item.debug)
+			terror.Log(err)
 		}
 
 		// dump profile
@@ -199,7 +201,8 @@ func (s *Server) startHTTPServer() {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("get config info fail%v", err))
 			return
 		}
-		fw.Write(js)
+		_, err = fw.Write(js)
+		terror.Log(err)
 
 		// dump version
 		fw, err = zw.Create("version")
@@ -207,9 +210,11 @@ func (s *Server) startHTTPServer() {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "version", err))
 			return
 		}
-		fw.Write([]byte(printer.GetTiDBInfo()))
+		_, err = fw.Write([]byte(printer.GetTiDBInfo()))
+		terror.Log(err)
 
-		zw.Close()
+		err = zw.Close()
+		terror.Log(err)
 	})
 
 	var (
