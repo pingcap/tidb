@@ -223,8 +223,11 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 		return nil
 	}
 
-	chk := <-task.results
-	req.Append(chk, 0, chk.NumRows())
+	select {
+	case chk := <-task.results:
+		req.Append(chk, 0, chk.NumRows())
+	case <-ctx.Done():
+	}
 
 	return nil
 }
@@ -258,9 +261,11 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			log.Errorf("outerWorker panic stack is:\n%s", buf)
-			task := &lookUpMergeJoinTask{results: make(chan *chunk.Chunk, 3)}
-			task.doneErr = errors.Errorf("%v", r)
-			task.done = true
+			task := &lookUpMergeJoinTask{
+				results: make(chan *chunk.Chunk, 3),
+				doneErr: errors.Errorf("%v", r),
+				done:    true,
+			}
 			omw.pushToChan(ctx, task, omw.resultCh)
 		}
 		close(omw.resultCh)
@@ -396,11 +401,11 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		return errors.Trace(err)
 	}
 
-	err = imw.handleMergeJoin(task)
+	err = imw.handleMergeJoin(ctx, task)
 	return err
 }
 
-func (imw *innerMergeWorker) handleMergeJoin(task *lookUpMergeJoinTask) error {
+func (imw *innerMergeWorker) handleMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) error {
 	task.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
 	task.innerIter.Begin()
 
@@ -433,7 +438,11 @@ func (imw *innerMergeWorker) handleMergeJoin(task *lookUpMergeJoinTask) error {
 				task.hasNull = false
 
 				if chk.NumRows() >= imw.maxChunkSize {
-					task.results <- chk
+					select {
+					case task.results <- chk:
+					case <-ctx.Done():
+						return nil
+					}
 					chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
 				}
 				continue
@@ -450,6 +459,12 @@ func (imw *innerMergeWorker) handleMergeJoin(task *lookUpMergeJoinTask) error {
 			task.hasNull = task.hasNull || isNull
 
 			if chk.NumRows() >= imw.maxChunkSize {
+				select {
+				case task.results <- chk:
+				case <-ctx.Done():
+					return nil
+				}
+				chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
 				break
 			}
 		}
@@ -464,12 +479,20 @@ func (imw *innerMergeWorker) handleMergeJoin(task *lookUpMergeJoinTask) error {
 		}
 
 		if chk.NumRows() >= imw.maxChunkSize {
-			task.results <- chk
+			select {
+			case task.results <- chk:
+			case <-ctx.Done():
+				return nil
+			}
 			chk = chunk.NewChunkWithCapacity(imw.retFieldTypes, imw.maxChunkSize)
 		}
 	}
 	if chk.NumRows() > 0 {
-		task.results <- chk
+		select {
+		case task.results <- chk:
+		case <-ctx.Done():
+			return nil
+		}
 	}
 
 	return nil
