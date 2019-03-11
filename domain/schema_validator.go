@@ -17,8 +17,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type checkResult int
@@ -83,7 +84,7 @@ func (s *schemaValidator) IsStarted() bool {
 }
 
 func (s *schemaValidator) Stop() {
-	log.Info("[domain-ddl] the schema validator stops")
+	log.Info("The schema validator stops.")
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = false
@@ -92,7 +93,7 @@ func (s *schemaValidator) Stop() {
 }
 
 func (s *schemaValidator) Restart() {
-	log.Info("[domain-ddl] the schema validator restarts")
+	log.Info("The schema validator restarts.")
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
@@ -111,7 +112,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	defer s.mux.Unlock()
 
 	if !s.isStarted {
-		log.Infof("[domain-ddl] the schema validator stopped before updating")
+		log.Info("The schema validator stopped before updating.")
 		return
 	}
 
@@ -123,7 +124,8 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 
 	// Update the schema deltaItem information.
 	if currVer != oldVer {
-		log.Debugf("[domain-ddl] update schema validator, old ver %d, curr ver %d, changed IDs %v", oldVer, currVer, changedTableIDs)
+		log.Debug("Update schema validator.", zap.Int64("old ver", oldVer),
+			zap.Int64("current ver", currVer), zap.Any("changed IDs", changedTableIDs))
 		s.enqueue(currVer, changedTableIDs)
 	}
 }
@@ -144,12 +146,13 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 // NOTE, this function should be called under lock!
 func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
 	if len(s.deltaSchemaInfos) == 0 {
-		log.Infof("[domain-ddl] schema change history is empty, checking %d", currVer)
+		log.Info("Schema change history is empty.", zap.Int64("current version", currVer))
 		return true
 	}
 	newerDeltas := s.findNewerDeltas(currVer)
 	if len(newerDeltas) == len(s.deltaSchemaInfos) {
-		log.Infof("[domain-ddl] the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
+		log.Info("The schema version is much older than the latest version.", zap.Int64("current version", currVer),
+			zap.Int64("lastest version", s.latestSchemaVer))
 		return true
 	}
 	for _, item := range newerDeltas {
@@ -174,7 +177,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 	if !s.isStarted {
-		log.Infof("[domain-ddl] the schema validator stopped before checking")
+		log.Info("The schema validator stopped before checking.")
 		return ResultUnknown
 	}
 	if s.lease == 0 {
@@ -185,8 +188,8 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	if schemaVer < s.latestSchemaVer {
 		// The DDL relatedTableIDs is empty.
 		if len(relatedTableIDs) == 0 {
-			log.Infof("[domain-ddl] the related table ID is empty, current schema version %d, latest schema version %d",
-				schemaVer, s.latestSchemaVer)
+			log.Info("The related table ID is empty", zap.Int64("current version", schemaVer),
+				zap.Int64("latest version", s.latestSchemaVer))
 			return ResultFail
 		}
 
