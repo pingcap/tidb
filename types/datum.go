@@ -1409,8 +1409,8 @@ func (d *Datum) ToInt64(sc *stmtctx.StatementContext) (int64, error) {
 }
 
 func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, error) {
-	lowerBound := SignedLowerBound[tp]
-	upperBound := SignedUpperBound[tp]
+	lowerBound := ByteToSignedLowerBound(tp)
+	upperBound := ByteToSignedUpperBound(tp)
 	switch d.Kind() {
 	case KindInt64:
 		return ConvertIntToInt(d.GetInt64(), lowerBound, upperBound, tp)

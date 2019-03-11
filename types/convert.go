@@ -67,6 +67,42 @@ var SignedLowerBound = map[byte]int64{
 	mysql.TypeLonglong: math.MinInt64,
 }
 
+// ByteToSignedUpperBound indicates the max int64 values of different mysql types.
+func ByteToSignedUpperBound(b byte) int64 {
+	switch b {
+	case mysql.TypeTiny:
+		return math.MaxInt8
+	case mysql.TypeShort:
+		return math.MaxInt16
+	case mysql.TypeInt24:
+		return mysql.MaxInt24
+	case mysql.TypeLong:
+		return math.MaxInt32
+	case mysql.TypeLonglong:
+		return math.MaxInt64
+	default:
+		panic("Input byte is not a mysql type")
+	}
+}
+
+// ByteToSignedLowerBound indicates the min int64 values of different mysql types.
+func ByteToSignedLowerBound(b byte) int64 {
+	switch b {
+	case mysql.TypeTiny:
+		return math.MinInt8
+	case mysql.TypeShort:
+		return math.MinInt16
+	case mysql.TypeInt24:
+		return mysql.MinInt24
+	case mysql.TypeLong:
+		return math.MinInt32
+	case mysql.TypeLonglong:
+		return math.MinInt64
+	default:
+		panic("Input byte is not a mysql type")
+	}
+}
+
 // ConvertFloatToInt converts a float64 value to a int value.
 func ConvertFloatToInt(fval float64, lowerBound, upperBound int64, tp byte) (int64, error) {
 	val := RoundFloat(fval)
