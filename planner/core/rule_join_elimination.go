@@ -14,9 +14,11 @@
 package core
 
 import (
+	"context"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type outerJoinEliminator struct {
@@ -76,7 +78,7 @@ func (o *outerJoinEliminator) isAggColsAllFromOuterTable(outerPlan LogicalPlan, 
 	for _, col := range aggCols {
 		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
 		if c, err := outerPlan.Schema().FindColumn(columnName); c == nil {
-			log.Warn(err)
+			logutil.Logger(context.Background()).Warn("outerJoinEliminator raises an error", zap.Error(err))
 			return false
 		}
 	}
@@ -91,7 +93,7 @@ func (o *outerJoinEliminator) isParentColsAllFromOuterTable(outerPlan LogicalPla
 	for _, col := range parentSchema.Columns {
 		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
 		if c, err := outerPlan.Schema().FindColumn(columnName); c == nil {
-			log.Warn(err)
+			logutil.Logger(context.Background()).Warn("outerJoinEliminator raises an error", zap.Error(err))
 			return false
 		}
 	}
@@ -105,7 +107,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalP
 		for _, col := range keyInfo {
 			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
 			if c, err := joinKeys.FindColumn(columnName); c == nil {
-				log.Warn(err)
+				logutil.Logger(context.Background()).Warn("outerJoinEliminator raises an error", zap.Error(err))
 				joinKeysContainKeyInfo = false
 				break
 			}
@@ -135,7 +137,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 		for _, idxCol := range idx.Columns {
 			columnName := &ast.ColumnName{Schema: ds.DBName, Table: ds.tableInfo.Name, Name: idxCol.Name}
 			if c, err := joinKeys.FindColumn(columnName); c == nil {
-				log.Warn(err)
+				logutil.Logger(context.Background()).Warn("outerJoinEliminator raises an error", zap.Error(err))
 				joinKeysContainIndex = false
 				break
 			}
