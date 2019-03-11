@@ -101,7 +101,8 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
 
-func boolToIntStr(b bool) string {
+// BoolToIntStr converts bool to int string, for example "0" or "1".
+func BoolToIntStr(b bool) string {
 	if b {
 		return "1"
 	}
@@ -378,7 +379,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_syslog_include_pid", ""},
 	{ScopeSession, "last_insert_id", ""},
 	{ScopeNone, "innodb_ft_cache_size", "8000000"},
-	{ScopeNone, "log_bin", "OFF"},
+	{ScopeNone, LogBin, "0"},
 	{ScopeGlobal, "innodb_disable_sort_file_cache", "OFF"},
 	{ScopeGlobal, "log_error_verbosity", ""},
 	{ScopeNone, "performance_schema_hosts_size", "100"},
@@ -620,23 +621,23 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, ErrorCount, "0"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
-	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
-	{ScopeSession, TiDBOptWriteRowID, boolToIntStr(DefOptWriteRowID)},
+	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
+	{ScopeSession, TiDBOptWriteRowID, BoolToIntStr(DefOptWriteRowID)},
 	{ScopeGlobal | ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal, TiDBAutoAnalyzeRatio, strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
 	{ScopeGlobal, TiDBAutoAnalyzeStartTime, DefAutoAnalyzeStartTime},
 	{ScopeGlobal, TiDBAutoAnalyzeEndTime, DefAutoAnalyzeEndTime},
 	{ScopeSession, TiDBChecksumTableConcurrency, strconv.Itoa(DefChecksumTableConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBDistSQLScanConcurrency, strconv.Itoa(DefDistSQLScanConcurrency)},
-	{ScopeGlobal | ScopeSession, TiDBOptInSubqUnFolding, boolToIntStr(DefOptInSubqUnfolding)},
+	{ScopeGlobal | ScopeSession, TiDBOptInSubqUnFolding, BoolToIntStr(DefOptInSubqUnfolding)},
 	{ScopeGlobal | ScopeSession, TiDBIndexJoinBatchSize, strconv.Itoa(DefIndexJoinBatchSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupConcurrency, strconv.Itoa(DefIndexLookupConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupJoinConcurrency, strconv.Itoa(DefIndexLookupJoinConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
-	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
-	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
-	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},
+	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, BoolToIntStr(DefSkipUTF8Check)},
+	{ScopeSession, TiDBBatchInsert, BoolToIntStr(DefBatchInsert)},
+	{ScopeSession, TiDBBatchDelete, BoolToIntStr(DefBatchDelete)},
 	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeGlobal | ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
@@ -657,8 +658,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBHashAggFinalConcurrency, strconv.Itoa(DefTiDBHashAggFinalConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBBackoffLockFast, strconv.Itoa(kv.DefBackoffLockFast)},
 	{ScopeGlobal | ScopeSession, TiDBRetryLimit, strconv.Itoa(DefTiDBRetryLimit)},
-	{ScopeGlobal | ScopeSession, TiDBDisableTxnAutoRetry, boolToIntStr(DefTiDBDisableTxnAutoRetry)},
-	{ScopeGlobal | ScopeSession, TiDBConstraintCheckInPlace, boolToIntStr(DefTiDBConstraintCheckInPlace)},
+	{ScopeGlobal | ScopeSession, TiDBDisableTxnAutoRetry, BoolToIntStr(DefTiDBDisableTxnAutoRetry)},
+	{ScopeGlobal | ScopeSession, TiDBConstraintCheckInPlace, BoolToIntStr(DefTiDBConstraintCheckInPlace)},
 	{ScopeSession, TiDBOptimizerSelectivityLevel, strconv.Itoa(DefTiDBOptimizerSelectivityLevel)},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
@@ -669,7 +670,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
-	{ScopeSession, TiDBCheckMb4ValueInUtf8, boolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8)},
+	{ScopeSession, TiDBCheckMb4ValueInUtf8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -728,6 +729,8 @@ const (
 	InnodbLockWaitTimeout = "innodb_lock_wait_timeout"
 	// SQLLogBin is the name for 'sql_log_bin' system variable.
 	SQLLogBin = "sql_log_bin"
+	// LogBin is the name for 'log_bin' system variable.
+	LogBin = "log_bin"
 	// MaxSortLength is the name for 'max_sort_length' system variable.
 	MaxSortLength = "max_sort_length"
 	// MaxSpRecursionDepth is the name for 'max_sp_recursion_depth' system variable.
