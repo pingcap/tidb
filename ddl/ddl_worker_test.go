@@ -704,7 +704,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(changedTable.Meta().Charset, Equals, "utf8")
 	c.Assert(changedTable.Meta().Collate, Equals, "utf8_bin")
 
-	// // test modify table charset successful.
+	// test modify table charset successfully.
 	test = &tests[23]
 	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyTableCharsetArgs)
 	c.Check(checkErr, IsNil)
