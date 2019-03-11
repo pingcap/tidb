@@ -32,7 +32,7 @@ import (
 )
 
 var slowQueryCols = []columnInfo{
-	{variable.SlowLogTimeStr, mysql.TypeTimestamp, -1, 0, nil, nil},
+	{variable.SlowLogTimeStr, mysql.TypeTimestamp, 26, 0, nil, nil},
 	{variable.SlowLogTxnStartTSStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogUserStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogConnIDStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
