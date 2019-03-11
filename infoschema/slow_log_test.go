@@ -17,6 +17,9 @@ import (
 	"bufio"
 	"bytes"
 	"testing"
+	"time"
+
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 func TestParseSlowLogFile(t *testing.T) {
@@ -49,5 +52,23 @@ select * from t;`)
 	expectRecordString := "2019-01-24 22:32:29.313255,405888132465033227,,0,0.216905,0.021,0,0,1,637,0,,,1,select * from t;"
 	if expectRecordString != recordString {
 		t.Fatalf("parse slow log failed, expect: %v\nbut got: %v\n", expectRecordString, recordString)
+	}
+}
+
+func TestParseTime(t *testing.T) {
+	t1Str := "2019-01-24-22:32:29.313255 +0800"
+	t2Str := "2019-01-24-22:32:29.313255"
+	t1, err := parseTime(t1Str)
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatalf("parse time failed")
+	}
+	t2, err := time.ParseInLocation("2006-01-02-15:04:05.999999999", t2Str, loc)
+	if t1.Unix() != t2.Unix() {
+		t.Fatalf("parse time failed, %v != %v", t1.Unix(), t2.Unix())
+	}
+	t1Format := t1.In(loc).Format(logutil.SlowLogTimeFormat)
+	if t1Format != t1Str {
+		t.Fatalf("parse time failed, %v != %v", t1Format, t1Str)
 	}
 }
