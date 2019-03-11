@@ -18,6 +18,7 @@
 package table
 
 import (
+	"context"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -140,7 +141,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 		if err != nil {
 			if sc.DupKeyAsWarning {
 				sc.AppendWarning(err)
-				logutil.Logger(ctx).Warn("CastValues failed", zap.Error(err))
+				logutil.Logger(context.Background()).Warn("CastValues failed", zap.Error(err))
 			} else {
 				return errors.Trace(err)
 			}
@@ -153,7 +154,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	err := ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-	logutil.Logger(ctx).Error("incorrect UTF-8 value", zap.Error(err))
+	logutil.Logger(context.Background()).Error("incorrect UTF-8 value", zap.Error(err))
 	// Truncate to valid utf8 string.
 	truncateVal := types.NewStringDatum(str[:i])
 	err = sc.HandleTruncate(err)

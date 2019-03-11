@@ -112,7 +112,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		if colInfo.Offset != i {
 			tblInfoStr := fmt.Sprintf("%#v", tblInfo)
 			colInfoStr := fmt.Sprintf("%#v", colInfo)
-			logutil.Logger(context.TODO()).Error("wrong table schema", zap.String("table", tblInfoStr), zap.String("column", colInfoStr), zap.Int("index", i), zap.Int("offset", colInfo.Offset), zap.Int("number of columns", colsLen))
+			logutil.Logger(context.Background()).Error("wrong table schema", zap.String("table", tblInfoStr), zap.String("column", colInfoStr), zap.Int("index", i), zap.Int("offset", colInfo.Offset), zap.Int("number of columns", colsLen))
 		}
 
 		col := table.ToColumn(colInfo)
@@ -788,7 +788,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 		if err != nil {
 			indexStr := fmt.Sprintf("%v", v.Meta())
 			recStr := fmt.Sprintf("%v", rec)
-			logutil.Logger(ctx).Info("remove row index failed", zap.String("index", indexStr), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h), zap.String("record", recStr), zap.Error(err))
+			logutil.Logger(context.Background()).Info("remove row index failed", zap.String("index", indexStr), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h), zap.String("record", recStr), zap.Error(err))
 			return errors.Trace(err)
 		}
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h, txn); err != nil {
@@ -796,7 +796,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
 				indexStr := fmt.Sprintf("%v", v.Meta())
-				logutil.Logger(ctx).Debug("row index not exists", zap.String("index", indexStr), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h))
+				logutil.Logger(context.Background()).Debug("row index not exists", zap.String("index", indexStr), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h))
 				continue
 			}
 			return errors.Trace(err)
@@ -850,7 +850,7 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		return nil
 	}
 
-	logutil.Logger(ctx).Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
+	logutil.Logger(context.Background()).Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
 
 	colMap := make(map[int64]*types.FieldType)
 	for _, col := range cols {
