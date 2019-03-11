@@ -16,8 +16,8 @@ package expression
 import (
 	"strings"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -90,15 +90,27 @@ func (s *Schema) Clone() *Schema {
 
 // ExprFromSchema checks if all columns of this expression are from the same schema.
 func ExprFromSchema(expr Expression, schema *Schema) bool {
-	cols := ExtractColumns(expr)
-	return len(schema.ColumnsIndices(cols)) > 0
+	switch v := expr.(type) {
+	case *Column:
+		return schema.Contains(v)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			if !ExprFromSchema(arg, schema) {
+				return false
+			}
+		}
+		return true
+	case *CorrelatedColumn, *Constant:
+		return true
+	}
+	return false
 }
 
 // FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
 func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	col, _, err := s.FindColumnAndIndex(astCol)
-	return col, errors.Trace(err)
+	return col, err
 }
 
 // FindColumnAndIndex finds an Column and its index from schema for a ast.ColumnName.
@@ -119,7 +131,7 @@ func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error
 				// we will get an Apply operator whose schema is [test.t1.a, test.t2.d, test.t2.d],
 				// we check whether the column of the schema comes from a subquery to avoid
 				// causing the ambiguous error when resolve the column `d` in the Selection.
-				if !col.IsAggOrSubq {
+				if !col.IsReferenced {
 					return nil, -1, errors.Errorf("Column %s is ambiguous", col.String())
 				}
 			}
@@ -153,11 +165,21 @@ func (s *Schema) IsUniqueKey(col *Column) bool {
 // ColumnIndex finds the index for a column.
 func (s *Schema) ColumnIndex(col *Column) int {
 	for i, c := range s.Columns {
-		if c.FromID == col.FromID && c.Position == col.Position {
+		if c.UniqueID == col.UniqueID {
 			return i
 		}
 	}
 	return -1
+}
+
+// FindColumnByName finds a column by its name.
+func (s *Schema) FindColumnByName(name string) *Column {
+	for _, col := range s.Columns {
+		if col.ColName.L == name {
+			return col
+		}
+	}
+	return nil
 }
 
 // Contains checks if the schema contains the column.

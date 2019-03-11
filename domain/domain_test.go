@@ -17,14 +17,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestT(t *testing.T) {
@@ -100,6 +103,48 @@ func (*testSuite) TestT(c *C) {
 	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 
+	// For slow query.
+	dom.LogSlowQuery(&SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
+	dom.LogSlowQuery(&SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+	dom.LogSlowQuery(&SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
+	// Collecting slow queries is asynchronous, wait a while to ensure it's done.
+	time.Sleep(5 * time.Millisecond)
+
+	res := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
+	c.Assert(res, HasLen, 2)
+	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
+
+	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
+	c.Assert(res, HasLen, 1)
+	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
+
+	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 4, Kind: ast.ShowSlowKindAll})
+	c.Assert(res, HasLen, 3)
+	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
+	c.Assert(*res[2], Equals, SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
+
+	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
+	c.Assert(res, HasLen, 2)
+	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
+	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+
+	metrics.PanicCounter.Reset()
+	// Since the stats lease is 0 now, so create a new ticker will panic.
+	// Test that they can recover from panic correctly.
+	dom.updateStatsWorker(ctx, nil)
+	dom.autoAnalyzeWorker(nil)
+	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
+	pb := &dto.Metric{}
+	counter.Write(pb)
+	c.Assert(pb.GetCounter().GetValue(), Equals, float64(2))
+
 	err = store.Close()
 	c.Assert(err, IsNil)
+}
+
+func (*testSuite) TestErrorCode(c *C) {
+	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrUnknown)
+	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, mysql.ErrUnknown)
 }

@@ -16,6 +16,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -24,10 +25,9 @@ import (
 	"os/exec"
 	"strings"
 
-	"flag"
 	"github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -87,6 +87,7 @@ func newTester(name string) *tester {
 	t.name = name
 	t.enableQueryLog = true
 	t.ctx = mock.NewContext()
+	t.ctx.GetSessionVars().EnableWindowFunction = true
 
 	return t
 }
@@ -114,7 +115,7 @@ func (t *tester) Run() error {
 		if t.resultFD != nil {
 			err = t.resultFD.Close()
 			if err != nil {
-				log.Errorf("result fd close error", err)
+				log.Errorf("result fd close error %v", err)
 			}
 		}
 	}()
@@ -566,11 +567,6 @@ func loadAllTests() ([]string, error) {
 		if strings.HasSuffix(name, ".test") {
 			name = strings.TrimSuffix(name, ".test")
 
-			// if we use record and the result file exists, skip generating
-			if record && resultExists(name) {
-				continue
-			}
-
 			if create && !strings.HasSuffix(name, "_stats") {
 				continue
 			}
@@ -629,9 +625,7 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 func main() {
 	flag.Parse()
 
-	err := logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		panic("init logger fail, " + err.Error())
 	}
@@ -667,6 +661,10 @@ func main() {
 		log.Fatalf("set @@tidb_hash_join_concurrency=1 err[%v]", err)
 	}
 
+	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
+		log.Fatalf("set sql_mode='STRICT_TRANS_TABLES' err[%v]", err)
+	}
+
 	tests := flag.Args()
 
 	// we will run all tests if no tests assigned
@@ -691,9 +689,8 @@ func main() {
 		tr := newTester(t)
 		if err = tr.Run(); err != nil {
 			log.Fatalf("run test [%s] err: %v", t, err)
-		} else {
-			log.Infof("run test [%s] ok", t)
 		}
+		log.Infof("run test [%s] ok", t)
 	}
 
 	println("\nGreat, All tests passed")

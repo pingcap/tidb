@@ -33,10 +33,10 @@ func TestT(t *testing.T) {
 
 func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
-	conf.Binlog.BinlogSocket = "/tmp/socket"
+	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.TiKVClient.CommitTimeout = "10s"
-
+	conf.CheckMb4ValueInUtf8 = true
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = path.Join(path.Dir(localFile), configFile)
@@ -45,16 +45,19 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`[performance]
 [tikv-client]
-commit-timeout="41s"`)
+commit-timeout="41s"
+max-batch-size=128
+`)
 	c.Assert(err, IsNil)
 	c.Assert(f.Sync(), IsNil)
 
 	c.Assert(conf.Load(configFile), IsNil)
 
 	// Test that the original value will not be clear by load the config file that does not contain the option.
-	c.Assert(conf.Binlog.BinlogSocket, Equals, "/tmp/socket")
+	c.Assert(conf.Binlog.Enable, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
+	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

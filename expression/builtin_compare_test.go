@@ -16,12 +16,13 @@ package expression
 import (
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -43,8 +44,8 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"a <= '1.1'", "le(a, 1)"},
 		{"a > 1.1", "gt(a, 1)"},
 		{"a >= '1.1'", "ge(a, 2)"},
-		{"a = '1.1'", "eq(cast(a), 1.1)"},
-		{"a <=> '1.1'", "nulleq(cast(a), 1.1)"},
+		{"a = '1.1'", "0"},
+		{"a <=> '1.1'", "0"},
 		{"a != '1.1'", "ne(cast(a), 1.1)"},
 		{"'1' < a", "lt(1, a)"},
 		{"'1' <= a", "le(1, a)"},
@@ -57,13 +58,18 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"'1.1' <= a", "le(2, a)"},
 		{"'1.1' > a", "gt(2, a)"},
 		{"'1.1' >= a", "ge(1, a)"},
-		{"'1.1' = a", "eq(1.1, cast(a))"},
-		{"'1.1' <=> a", "nulleq(1.1, cast(a))"},
+		{"'1.1' = a", "0"},
+		{"'1.1' <=> a", "0"},
 		{"'1.1' != a", "ne(1.1, cast(a))"},
+		{"'123456789123456711111189' = a", "0"},
+		{"123456789123456789.12345 = a", "0"},
+		// This cast can not be eliminated,
+		// since converting "aaaa" to an int will cause DataTruncate error.
+		{"'aaaa'=a", "eq(cast(aaaa), cast(a))"},
 	}
 
 	for _, t := range tests {
-		f, err := ParseSimpleExpr(s.ctx, t.exprStr, tblInfo)
+		f, err := ParseSimpleExprWithTableInfo(s.ctx, t.exprStr, tblInfo)
 		c.Assert(err, IsNil)
 		c.Assert(f.String(), Equals, t.result)
 	}
@@ -131,7 +137,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 		args := bf.getArgs()
 		c.Assert(args[0].GetType().Tp, Equals, t.tp)
 		c.Assert(args[1].GetType().Tp, Equals, t.tp)
-		res, isNil, err := bf.evalInt(nil)
+		res, isNil, err := bf.evalInt(chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isNil, IsFalse)
 		c.Assert(res, Equals, t.expected)
@@ -181,7 +187,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Coalesce, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -236,7 +242,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		fc := funcs[ast.Interval]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t.args))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v.GetInt64(), Equals, t.ret)
 	}
@@ -294,7 +300,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 	} {
 		f0, err := newFunctionForTest(s.ctx, ast.Greatest, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f0.Eval(nil)
+		d, err := f0.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -308,7 +314,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 
 		f1, err := newFunctionForTest(s.ctx, ast.Least, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err = f1.Eval(nil)
+		d, err = f1.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {

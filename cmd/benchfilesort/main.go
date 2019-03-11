@@ -24,9 +24,9 @@ import (
 	"runtime/pprof"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/filesort"
@@ -382,9 +382,7 @@ func driveRunCmd() {
 }
 
 func init() {
-	err := logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
 	cwd, err1 := os.Getwd()
 	terror.MustNil(err1)

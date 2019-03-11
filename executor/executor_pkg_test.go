@@ -14,20 +14,21 @@
 package executor
 
 import (
+	"context"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testExecSuite{})
@@ -56,9 +57,9 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
 	// Compose schema.
-	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
+	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
+		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
 	schema := buildSchema(names, ftypes)
 
 	// Compose a mocked session manager.
@@ -78,6 +79,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	}
 	sctx := mock.NewContext()
 	sctx.SetSessionManager(sm)
+	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
 
 	// Compose executor.
 	e := &ShowExec{
@@ -89,17 +91,17 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	err := e.Open(ctx)
 	c.Assert(err, IsNil)
 
-	chk := e.newChunk()
+	chk := e.newFirstChunk()
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
-		err = e.Next(context.Background(), chk)
+		err = e.Next(context.Background(), chunk.NewRecordBatch(chk))
 		c.Assert(err, IsNil)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			c.Assert(row.GetUint64(0), Equals, p.ID)
 		}
 	}
-	err = e.Next(context.Background(), chk)
+	err = e.Next(context.Background(), chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 0)
 	err = e.Close()
@@ -196,6 +198,11 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 			`"\0\b\n\r\t\Z\\\  \c\'\""`,
 			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
 		},
+		// Test mixed.
+		{
+			`"123",456,"\t7890",abcd`,
+			[]string{"123", "456", "\t7890", "abcd"},
+		},
 	}
 
 	ldInfo := LoadDataInfo{
@@ -212,7 +219,7 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 	}
 
 	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 }
 
 func assertEqualStrings(c *C, got []field, expect []string) {

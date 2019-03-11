@@ -18,8 +18,8 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -87,7 +87,7 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 		},
 	}
 	d, w := int32(5), int32(2048)
-	total, imax := uint64(1000000), uint64(10000000)
+	total, imax := uint64(100000), uint64(1000000)
 	for _, t := range tests {
 		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, t.zipfFactor)
 		c.Check(err, IsNil)

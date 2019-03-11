@@ -14,15 +14,16 @@
 package statistics
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -31,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 func TestT(t *testing.T) {
@@ -42,9 +43,9 @@ var _ = Suite(&testStatisticsSuite{})
 
 type testStatisticsSuite struct {
 	count   int
-	samples []types.Datum
-	rc      ast.RecordSet
-	pk      ast.RecordSet
+	samples []*SampleItem
+	rc      sqlexec.RecordSet
+	pk      sqlexec.RecordSet
 }
 
 type recordSet struct {
@@ -82,23 +83,23 @@ func (r *recordSet) getNext() []types.Datum {
 	return row
 }
 
-func (r *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (r *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	row := r.getNext()
 	if row != nil {
 		for i := 0; i < len(row); i++ {
-			chk.AppendDatum(i, &row[i])
+			req.AppendDatum(i, &row[i])
 		}
 	}
 	return nil
 }
 
-func (r *recordSet) NewChunk() *chunk.Chunk {
+func (r *recordSet) NewRecordBatch() *chunk.RecordBatch {
 	fields := make([]*types.FieldType, 0, len(r.fields))
 	for _, field := range r.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunkWithCapacity(fields, 32)
+	return chunk.NewRecordBatch(chunk.NewChunkWithCapacity(fields, 32))
 }
 
 func (r *recordSet) Close() error {
@@ -108,23 +109,26 @@ func (r *recordSet) Close() error {
 
 func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.count = 100000
-	samples := make([]types.Datum, 10000)
+	samples := make([]*SampleItem, 10000)
+	for i := 0; i < len(samples); i++ {
+		samples[i] = &SampleItem{}
+	}
 	start := 1000
-	samples[0].SetInt64(0)
+	samples[0].Value.SetInt64(0)
 	for i := 1; i < start; i++ {
-		samples[i].SetInt64(2)
+		samples[i].Value.SetInt64(2)
 	}
 	for i := start; i < len(samples); i++ {
-		samples[i].SetInt64(int64(i))
+		samples[i].Value.SetInt64(int64(i))
 	}
 	for i := start; i < len(samples); i += 3 {
-		samples[i].SetInt64(samples[i].GetInt64() + 1)
+		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 1)
 	}
 	for i := start; i < len(samples); i += 5 {
-		samples[i].SetInt64(samples[i].GetInt64() + 2)
+		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 2)
 	}
 	sc := new(stmtctx.StatementContext)
-	err := types.SortDatums(sc, samples)
+	err := SortSampleItems(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
 
@@ -169,21 +173,21 @@ func encodeKey(key types.Datum) types.Datum {
 	return types.NewBytesDatum(buf)
 }
 
-func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
+func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, error) {
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	ctx := context.Background()
 	for {
-		chk := records.NewChunk()
-		err := records.Next(ctx, chk)
+		req := records.NewRecordBatch()
+		err := records.Next(ctx, req)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
-		it := chunk.NewIterator4Chunk(chk)
+		it := chunk.NewIterator4Chunk(req.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			datums := ast.RowToDatums(row, records.Fields())
+			datums := RowToDatums(row, records.Fields())
 			err = b.Iterate(datums[0])
 			if err != nil {
 				return 0, nil, errors.Trace(err)
@@ -193,22 +197,22 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 	return b.Count, b.hist, nil
 }
 
-func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
+func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, *CMSketch, error) {
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
-	chk := records.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
+	req := records.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err := records.Next(ctx, chk)
+		err := records.Next(ctx, req)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			datums := ast.RowToDatums(row, records.Fields())
+			datums := RowToDatums(row, records.Fields())
 			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
 			if err != nil {
 				return 0, nil, nil, errors.Trace(err)
@@ -282,7 +286,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	c.Assert(col.Len(), Equals, 250)
 
-	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
+	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, sqlexec.RecordSet(s.rc))
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
@@ -299,7 +303,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 0)
 
 	s.pk.(*recordSet).cursor = 0
-	tblCount, col, err = buildPK(ctx, bucketCount, 4, ast.RecordSet(s.pk))
+	tblCount, col, err = buildPK(ctx, bucketCount, 4, sqlexec.RecordSet(s.pk))
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
@@ -323,10 +327,11 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 
 	datum := types.Datum{}
 	datum.SetMysqlJSON(json.BinaryJSON{TypeCode: json.TypeCodeLiteral})
+	item := &SampleItem{Value: datum}
 	collector = &SampleCollector{
 		Count:     1,
 		NullCount: 0,
-		Samples:   []types.Datum{datum},
+		Samples:   []*SampleItem{item},
 		FMSketch:  sketch,
 	}
 	col, err = BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeJSON))
@@ -338,7 +343,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
 	ctx := mock.NewContext()
 	s.rc.Close()
-	tblCount, col, _, err := buildIndex(ctx, 256, 1, ast.RecordSet(s.rc))
+	tblCount, col, _, err := buildIndex(ctx, 256, 1, sqlexec.RecordSet(s.rc))
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 
@@ -455,8 +460,10 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
 	tbl := &Table{
-		Count:   int64(col.totalRowCount()),
-		Columns: make(map[int64]*Column),
+		HistColl: HistColl{
+			Count:   int64(col.totalRowCount()),
+			Columns: make(map[int64]*Column),
+		},
 	}
 	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{{}},
@@ -522,8 +529,10 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	c.Check(rowCount, Equals, int64(100000))
 	col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
 	tbl := &Table{
-		Count:   int64(col.totalRowCount()),
-		Columns: make(map[int64]*Column),
+		HistColl: HistColl{
+			Count:   int64(col.totalRowCount()),
+			Columns: make(map[int64]*Column),
+		},
 	}
 	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
@@ -612,8 +621,10 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
 	idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 	tbl := &Table{
-		Count:   int64(idx.totalRowCount()),
-		Indices: make(map[int64]*Index),
+		HistColl: HistColl{
+			Count:   int64(idx.totalRowCount()),
+			Indices: make(map[int64]*Index),
+		},
 	}
 	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{types.MinNotNullDatum()},

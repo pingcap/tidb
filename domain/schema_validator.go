@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -46,6 +47,8 @@ type SchemaValidator interface {
 	Restart()
 	// Reset resets SchemaValidator to initial state.
 	Reset()
+	// IsStarted indicates whether SchemaValidator is started.
+	IsStarted() bool
 }
 
 type deltaSchemaInfo struct {
@@ -70,6 +73,13 @@ func NewSchemaValidator(lease time.Duration) SchemaValidator {
 		lease:            lease,
 		deltaSchemaInfos: make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
 	}
+}
+
+func (s *schemaValidator) IsStarted() bool {
+	s.mux.Lock()
+	isStarted := s.isStarted
+	s.mux.Unlock()
+	return isStarted
 }
 
 func (s *schemaValidator) Stop() {
@@ -107,7 +117,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 
 	// Renew the lease.
 	s.latestSchemaVer = currVer
-	leaseGrantTime := extractPhysicalTime(leaseGrantTS)
+	leaseGrantTime := oracle.GetTimeFromTS(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
 	s.latestSchemaExpire = leaseExpire
 
@@ -165,7 +175,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	defer s.mux.RUnlock()
 	if !s.isStarted {
 		log.Infof("[domain-ddl] the schema validator stopped before checking")
-		return ResultFail
+		return ResultUnknown
 	}
 	if s.lease == 0 {
 		return ResultSucc
@@ -187,16 +197,11 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	}
 
 	// Schema unchanged, maybe success or the schema validator is unavailable.
-	t := extractPhysicalTime(txnTS)
+	t := oracle.GetTimeFromTS(txnTS)
 	if t.After(s.latestSchemaExpire) {
 		return ResultUnknown
 	}
 	return ResultSucc
-}
-
-func extractPhysicalTime(ts uint64) time.Time {
-	t := int64(ts >> 18) // 18 is for the logical time.
-	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 
 func (s *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) {

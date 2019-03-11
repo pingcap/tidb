@@ -19,12 +19,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/mockstore"
 )
 
@@ -47,33 +47,33 @@ func (*testSuite) TestT(c *C) {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
-		err = m.CreateTable(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		c.Assert(err, IsNil)
-		err = m.CreateTable(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
 		c.Assert(err, IsNil)
-		err = m.CreateTable(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
 		c.Assert(err, IsNil)
 		return nil
 	})
 	c.Assert(err, IsNil)
 
-	alloc := autoid.NewAllocator(store, 1)
+	alloc := autoid.NewAllocator(store, 1, false)
 	c.Assert(alloc, NotNil)
 
-	globalAutoId, err := alloc.NextGlobalAutoID(1)
+	globalAutoID, err := alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
-	c.Assert(globalAutoId, Equals, int64(1))
+	c.Assert(globalAutoID, Equals, int64(1))
 	id, err := alloc.Alloc(1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(1))
 	id, err = alloc.Alloc(1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
-	id, err = alloc.Alloc(0)
+	_, err = alloc.Alloc(0)
 	c.Assert(err, NotNil)
-	globalAutoId, err = alloc.NextGlobalAutoID(1)
+	globalAutoID, err = alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
-	c.Assert(globalAutoId, Equals, int64(autoid.GetStep()+1))
+	c.Assert(globalAutoID, Equals, int64(autoid.GetStep()+1))
 
 	// rebase
 	err = alloc.Rebase(1, int64(1), true)
@@ -97,13 +97,13 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3011))
 
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 1, false)
 	c.Assert(alloc, NotNil)
 	id, err = alloc.Alloc(1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(autoid.GetStep()+1))
 
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 1, false)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(2, int64(1), false)
 	c.Assert(err, IsNil)
@@ -111,11 +111,102 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
 
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 1, false)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3210), false)
 	c.Assert(err, IsNil)
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 1, false)
+	c.Assert(alloc, NotNil)
+	err = alloc.Rebase(3, int64(3000), false)
+	c.Assert(err, IsNil)
+	id, err = alloc.Alloc(3)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(3211))
+	err = alloc.Rebase(3, int64(6543), false)
+	c.Assert(err, IsNil)
+	id, err = alloc.Alloc(3)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(6544))
+}
+
+func (*testSuite) TestUnsignedAutoid(c *C) {
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
+		c.Assert(err, IsNil)
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		c.Assert(err, IsNil)
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
+		c.Assert(err, IsNil)
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
+		c.Assert(err, IsNil)
+		return nil
+	})
+	c.Assert(err, IsNil)
+
+	alloc := autoid.NewAllocator(store, 1, true)
+	c.Assert(alloc, NotNil)
+
+	globalAutoID, err := alloc.NextGlobalAutoID(1)
+	c.Assert(err, IsNil)
+	c.Assert(globalAutoID, Equals, int64(1))
+	id, err := alloc.Alloc(1)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(1))
+	id, err = alloc.Alloc(1)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(2))
+	_, err = alloc.Alloc(0)
+	c.Assert(err, NotNil)
+	globalAutoID, err = alloc.NextGlobalAutoID(1)
+	c.Assert(err, IsNil)
+	c.Assert(globalAutoID, Equals, int64(autoid.GetStep()+1))
+
+	// rebase
+	err = alloc.Rebase(1, int64(1), true)
+	c.Assert(err, IsNil)
+	id, err = alloc.Alloc(1)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(3))
+	err = alloc.Rebase(1, int64(3), true)
+	c.Assert(err, IsNil)
+	id, err = alloc.Alloc(1)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(4))
+	err = alloc.Rebase(1, int64(10), true)
+	c.Assert(err, IsNil)
+	id, err = alloc.Alloc(1)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(11))
+	err = alloc.Rebase(1, int64(3010), true)
+	c.Assert(err, IsNil)
+	id, err = alloc.Alloc(1)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(3011))
+
+	alloc = autoid.NewAllocator(store, 1, true)
+	c.Assert(alloc, NotNil)
+	id, err = alloc.Alloc(1)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(autoid.GetStep()+1))
+
+	alloc = autoid.NewAllocator(store, 1, true)
+	c.Assert(alloc, NotNil)
+	err = alloc.Rebase(2, int64(1), false)
+	c.Assert(err, IsNil)
+	id, err = alloc.Alloc(2)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(2))
+
+	alloc = autoid.NewAllocator(store, 1, true)
+	c.Assert(alloc, NotNil)
+	err = alloc.Rebase(3, int64(3210), false)
+	c.Assert(err, IsNil)
+	alloc = autoid.NewAllocator(store, 1, true)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3000), false)
 	c.Assert(err, IsNil)
@@ -146,7 +237,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
-		err = m.CreateTable(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
 		c.Assert(err, IsNil)
 		return nil
 	})
@@ -155,11 +246,11 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	var mu sync.Mutex
 	wg := sync.WaitGroup{}
 	m := map[int64]struct{}{}
-	count := 100
+	count := 10
 	errCh := make(chan error, count)
 
 	allocIDs := func() {
-		alloc := autoid.NewAllocator(store, dbID)
+		alloc := autoid.NewAllocator(store, dbID, false)
 		for j := 0; j < int(autoid.GetStep())+5; j++ {
 			id, err1 := alloc.Alloc(tblID)
 			if err1 != nil {
@@ -204,7 +295,7 @@ func (*testSuite) TestRollbackAlloc(c *C) {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
-		err = m.CreateTable(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
 		c.Assert(err, IsNil)
 		return nil
 	})
@@ -213,7 +304,7 @@ func (*testSuite) TestRollbackAlloc(c *C) {
 	injectConf := new(kv.InjectionConfig)
 	injectConf.SetCommitError(errors.New("injected"))
 	injectedStore := kv.NewInjectedStore(store, injectConf)
-	alloc := autoid.NewAllocator(injectedStore, 1)
+	alloc := autoid.NewAllocator(injectedStore, 1, false)
 	_, err = alloc.Alloc(2)
 	c.Assert(err, NotNil)
 	c.Assert(alloc.Base(), Equals, int64(0))

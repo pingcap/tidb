@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -47,7 +46,7 @@ func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chun
 		for i := range e.outputIdxes {
 			err := evalOneColumn(ctx, e.exprs[i], iter, output, e.outputIdxes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		return nil
@@ -57,43 +56,43 @@ func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chun
 		for i := range e.outputIdxes {
 			err := evalOneCell(ctx, e.exprs[i], row, output, e.outputIdxes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
 	return nil
 }
 
-// EvaluatorSuit is responsible for the evaluation of a list of expressions.
+// EvaluatorSuite is responsible for the evaluation of a list of expressions.
 // It separates them to "column" and "other" expressions and evaluates "other"
 // expressions before "column" expressions.
-type EvaluatorSuit struct {
+type EvaluatorSuite struct {
 	*columnEvaluator  // Evaluator for column expressions.
 	*defaultEvaluator // Evaluator for other expressions.
 }
 
-// NewEvaluatorSuit creates an EvaluatorSuit to evaluate all the exprs.
-func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
-	e := &EvaluatorSuit{}
+// NewEvaluatorSuite creates an EvaluatorSuite to evaluate all the exprs.
+// avoidColumnEvaluator can be removed after column pool is supported.
+func NewEvaluatorSuite(exprs []Expression, avoidColumnEvaluator bool) *EvaluatorSuite {
+	e := &EvaluatorSuite{}
 
-	for i, expr := range exprs {
-		switch x := expr.(type) {
-		case *Column:
+	for i := 0; i < len(exprs); i++ {
+		if col, isCol := exprs[i].(*Column); isCol && !avoidColumnEvaluator {
 			if e.columnEvaluator == nil {
 				e.columnEvaluator = &columnEvaluator{inputIdxToOutputIdxes: make(map[int][]int)}
 			}
-			inputIdx, outputIdx := x.Index, i
+			inputIdx, outputIdx := col.Index, i
 			e.columnEvaluator.inputIdxToOutputIdxes[inputIdx] = append(e.columnEvaluator.inputIdxToOutputIdxes[inputIdx], outputIdx)
-		default:
-			if e.defaultEvaluator == nil {
-				e.defaultEvaluator = &defaultEvaluator{
-					outputIdxes: make([]int, 0, len(exprs)),
-					exprs:       make([]Expression, 0, len(exprs)),
-				}
-			}
-			e.defaultEvaluator.exprs = append(e.defaultEvaluator.exprs, x)
-			e.defaultEvaluator.outputIdxes = append(e.defaultEvaluator.outputIdxes, i)
+			continue
 		}
+		if e.defaultEvaluator == nil {
+			e.defaultEvaluator = &defaultEvaluator{
+				outputIdxes: make([]int, 0, len(exprs)),
+				exprs:       make([]Expression, 0, len(exprs)),
+			}
+		}
+		e.defaultEvaluator.exprs = append(e.defaultEvaluator.exprs, exprs[i])
+		e.defaultEvaluator.outputIdxes = append(e.defaultEvaluator.outputIdxes, i)
 	}
 
 	if e.defaultEvaluator != nil {
@@ -102,18 +101,18 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 	return e
 }
 
-// Vectorizable checks whether this EvaluatorSuit can use vectorizd execution mode.
-func (e *EvaluatorSuit) Vectorizable() bool {
+// Vectorizable checks whether this EvaluatorSuite can use vectorizd execution mode.
+func (e *EvaluatorSuite) Vectorizable() bool {
 	return e.defaultEvaluator == nil || e.defaultEvaluator.vectorizable
 }
 
-// Run evaluates all the expressions hold by this EvaluatorSuit.
+// Run evaluates all the expressions hold by this EvaluatorSuite.
 // NOTE: "defaultEvaluator" must be evaluated before "columnEvaluator".
-func (e *EvaluatorSuit) Run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
+func (e *EvaluatorSuite) Run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
 	if e.defaultEvaluator != nil {
 		err := e.defaultEvaluator.run(ctx, input, output)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 

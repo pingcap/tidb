@@ -14,15 +14,18 @@
 package tikv
 
 import (
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 )
 
 var (
 	// ErrBodyMissing response body is missing error
 	ErrBodyMissing = errors.New("response body is missing")
 )
+
+// mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
+const mismatchClusterID = "mismatch cluster id"
 
 // TiDB decides whether to retry transaction by checking if error message contains
 // string "try again later" literally.

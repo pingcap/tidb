@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 const (

@@ -29,9 +29,9 @@ func TestT(t *testing.T) {
 
 func (s *testJSONSuite) TestBinaryJSONMarshalUnmarshal(c *C) {
 	strs := []string{
-		`{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`,
-		`{"aaaaaaaaaaa":[1,"2",{"aa":"bb"},4.1],"bbbbbbbbbb":true,"ccccccccc":"d"}`,
-		`[{"a":1,"b":true},3,3.5,"hello, world",null,true]`,
+		`{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`,
+		`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.1], "bbbbbbbbbb": true, "ccccccccc": "d"}`,
+		`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`,
 	}
 	for _, str := range strs {
 		parsedBJ := mustParseBinaryFromString(c, str)
@@ -115,7 +115,7 @@ func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
 		{j: "\"\\u4f60\"", unquoted: "你"},
 		{j: `true`, unquoted: "true"},
 		{j: `null`, unquoted: "null"},
-		{j: `{"a": [1, 2]}`, unquoted: `{"a":[1,2]}`},
+		{j: `{"a": [1, 2]}`, unquoted: `{"a": [1, 2]}`},
 		{j: `"\""`, unquoted: `"`},
 		{j: `"'"`, unquoted: `'`},
 		{j: `"''"`, unquoted: `''`},
@@ -291,5 +291,56 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 	bj, _ := ParseBinaryFromString(benchStr)
 	for i := 0; i < b.N; i++ {
 		bj.MarshalJSON()
+	}
+}
+
+func (s *testJSONSuite) TestBinaryJSONContains(c *C) {
+	var tests = []struct {
+		input    string
+		target   string
+		expected bool
+	}{
+		{`{}`, `{}`, true},
+		{`{"a":1}`, `{}`, true},
+		{`{"a":1}`, `1`, false},
+		{`{"a":[1]}`, `[1]`, false},
+		{`{"b":2, "c":3}`, `{"c":3}`, true},
+		{`1`, `1`, true},
+		{`[1]`, `1`, true},
+		{`[1,2]`, `[1]`, true},
+		{`[1,2]`, `[1,3]`, false},
+		{`[1,2]`, `["1"]`, false},
+		{`[1,2,[1,3]]`, `[1,3]`, true},
+		{`[1,2,[1,[5,[3]]]]`, `[1,3]`, true},
+		{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`, true},
+		{`[{"a":1}]`, `{"a":1}`, true},
+		{`[{"a":1,"b":2}]`, `{"a":1}`, true},
+		{`[{"a":{"a":1},"b":2}]`, `{"a":1}`, false},
+	}
+
+	for _, tt := range tests {
+		obj := mustParseBinaryFromString(c, tt.input)
+		target := mustParseBinaryFromString(c, tt.target)
+		c.Assert(ContainsBinary(obj, target), Equals, tt.expected)
+	}
+}
+
+func (s *testJSONSuite) TestBinaryJSONDepth(c *C) {
+	var tests = []struct {
+		input    string
+		expected int
+	}{
+		{`{}`, 1},
+		{`[]`, 1},
+		{`true`, 1},
+		{`[10, 20]`, 2},
+		{`[[], {}]`, 2},
+		{`[10, {"a": 20}]`, 3},
+		{`{"Person": {"Name": "Homer", "Age": 39, "Hobbies": ["Eating", "Sleeping"]} }`, 4},
+	}
+
+	for _, tt := range tests {
+		obj := mustParseBinaryFromString(c, tt.input)
+		c.Assert(obj.GetElemDepth(), Equals, tt.expected)
 	}
 }

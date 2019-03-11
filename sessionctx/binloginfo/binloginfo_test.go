@@ -14,6 +14,7 @@
 package binloginfo_test
 
 import (
+	"context"
 	"net"
 	"os"
 	"strconv"
@@ -21,8 +22,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -30,22 +33,18 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -81,7 +80,7 @@ type testBinlogSuite struct {
 	unixFile string
 	serv     *grpc.Server
 	pump     *mockBinlogPump
-	client   binlog.PumpClient
+	client   *pumpcli.PumpsClient
 	ddl      ddl.DDL
 }
 
@@ -112,7 +111,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	sessionDomain := domain.GetDomain(tk.Se.(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
 
-	s.client = binlog.NewPumpClient(clientCon)
+	s.client = binloginfo.MockPumpsClient(binlog.NewPumpClient(clientCon))
 	s.ddl.SetBinlogClient(s.client)
 }
 
@@ -120,8 +119,8 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 	s.ddl.Stop()
 	s.serv.Stop()
 	os.Remove(s.unixFile)
-	s.store.Close()
 	s.domain.Close()
+	s.store.Close()
 }
 
 func (s *testBinlogSuite) TestBinlog(c *C) {
@@ -377,7 +376,7 @@ func (s *testBinlogSuite) TestZIgnoreError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().BinlogClient = s.client
-	tk.MustExec("drop table if exists ignore_error")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 
 	binloginfo.SetIgnoreError(true)
@@ -394,4 +393,41 @@ func (s *testBinlogSuite) TestZIgnoreError(c *C) {
 	s.pump.mu.Unlock()
 	binloginfo.DisableSkipBinlogFlag()
 	binloginfo.SetIgnoreError(false)
+}
+
+func (s *testBinlogSuite) TestPartitionedTable(c *C) {
+	// This test checks partitioned table write binlog with table ID, rather than partition ID.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int) partition by range (id) (
+			partition p0 values less than (1),
+			partition p1 values less than (4),
+			partition p2 values less than (7),
+			partition p3 values less than (10))`)
+	tids := make([]int64, 0, 10)
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values (?)", i)
+		prewriteVal := getLatestBinlogPrewriteValue(c, s.pump)
+		tids = append(tids, prewriteVal.Mutations[0].TableId)
+	}
+	c.Assert(len(tids), Equals, 10)
+	for i := 1; i < 10; i++ {
+		c.Assert(tids[i], Equals, tids[0])
+	}
+}
+
+func (s *testBinlogSuite) TestDeleteSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `b1` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `split_job_id` varchar(30) DEFAULT NULL, PRIMARY KEY (`id`), KEY `b1` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `b2` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `batch_class` varchar(20) DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `bu` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+	tk.MustExec("insert into b2 (job_id, batch_class) values (2, 'TEST');")
+	tk.MustExec("insert into b1 (job_id) values (2);")
+
+	// This test cover a bug that the final schema and the binlog row inconsistent.
+	// The final schema of this SQL should be the schema of table b1, rather than the schema of join result.
+	tk.MustExec("delete from b1 where job_id in (select job_id from b2 where batch_class = 'TEST') or split_job_id in (select job_id from b2 where batch_class = 'TEST');")
+	tk.MustExec("delete b1 from b2 right join b1 on b1.job_id = b2.job_id and batch_class = 'TEST';")
 }

@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -21,12 +22,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -54,11 +55,9 @@ var (
 func main() {
 	flag.Parse()
 	flag.PrintDefaults()
-	err := logutil.InitLogger(&logutil.LogConfig{
-		Level: *logLevel,
-	})
+	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
-	err = session.RegisterStore("tikv", tikv.Driver{})
+	err = store.Register("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
@@ -94,7 +93,7 @@ type benchDB struct {
 
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
-	store, err := session.NewStore("tikv://" + *addr + "?disableGC=true")
+	store, err := store.New("tikv://" + *addr + "?disableGC=true")
 	terror.MustNil(err)
 	_, err = session.BootstrapSession(store)
 	terror.MustNil(err)
@@ -117,13 +116,13 @@ func (ut *benchDB) mustExec(sql string) {
 	if len(rss) > 0 {
 		ctx := context.Background()
 		rs := rss[0]
-		chk := rs.NewChunk()
+		req := rs.NewRecordBatch()
 		for {
-			err := rs.Next(ctx, chk)
+			err := rs.Next(ctx, req)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if chk.NumRows() == 0 {
+			if req.NumRows() == 0 {
 				break
 			}
 		}

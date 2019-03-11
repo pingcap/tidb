@@ -17,15 +17,15 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	log "github.com/sirupsen/logrus"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -41,24 +41,24 @@ func (col *CorrelatedColumn) Clone() Expression {
 }
 
 // Eval implements Expression interface.
-func (col *CorrelatedColumn) Eval(row types.Row) (types.Datum, error) {
+func (col *CorrelatedColumn) Eval(row chunk.Row) (types.Datum, error) {
 	return *col.Data, nil
 }
 
 // EvalInt returns int representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalInt(ctx sessionctx.Context, row types.Row) (int64, bool, error) {
+func (col *CorrelatedColumn) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
 	if col.GetType().Hybrid() {
 		res, err := col.Data.ToInt64(ctx.GetSessionVars().StmtCtx)
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, err
 	}
 	return col.Data.GetInt64(), false, nil
 }
 
 // EvalReal returns real representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalReal(ctx sessionctx.Context, row types.Row) (float64, bool, error) {
+func (col *CorrelatedColumn) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
@@ -66,7 +66,7 @@ func (col *CorrelatedColumn) EvalReal(ctx sessionctx.Context, row types.Row) (fl
 }
 
 // EvalString returns string representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row types.Row) (string, bool, error) {
+func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
 	if col.Data.IsNull() {
 		return "", true, nil
 	}
@@ -75,11 +75,11 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row types.Row) (
 	if resLen < col.RetType.Flen && ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
 		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
 	}
-	return res, err != nil, errors.Trace(err)
+	return res, err != nil, err
 }
 
 // EvalDecimal returns decimal representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDecimal(ctx sessionctx.Context, row types.Row) (*types.MyDecimal, bool, error) {
+func (col *CorrelatedColumn) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
 	if col.Data.IsNull() {
 		return nil, true, nil
 	}
@@ -87,7 +87,7 @@ func (col *CorrelatedColumn) EvalDecimal(ctx sessionctx.Context, row types.Row) 
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row types.Row) (types.Time, bool, error) {
+func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
 	if col.Data.IsNull() {
 		return types.Time{}, true, nil
 	}
@@ -95,7 +95,7 @@ func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row types.Row) (ty
 }
 
 // EvalDuration returns Duration representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Duration, bool, error) {
+func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
 	if col.Data.IsNull() {
 		return types.Duration{}, true, nil
 	}
@@ -103,7 +103,7 @@ func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row types.Row)
 }
 
 // EvalJSON returns JSON representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row types.Row) (json.BinaryJSON, bool, error) {
+func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
 	if col.Data.IsNull() {
 		return json.BinaryJSON{}, true, nil
 	}
@@ -132,40 +132,46 @@ func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndices(_ *Schema) Expression {
-	return col
+func (col *CorrelatedColumn) ResolveIndices(_ *Schema) (Expression, error) {
+	return col, nil
 }
 
-func (col *CorrelatedColumn) resolveIndices(_ *Schema) {
+func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
+	return nil
 }
 
 // Column represents a column.
 type Column struct {
-	FromID      int
+	OrigColName model.CIStr
 	ColName     model.CIStr
 	DBName      model.CIStr
 	OrigTblName model.CIStr
 	TblName     model.CIStr
 	RetType     *types.FieldType
-	ID          int64
-	// Position means the position of this column that appears in the select fields.
-	// e.g. SELECT name as id , 1 - id as id , 1 + name as id, name as id from src having id = 1;
-	// There are four ids in the same schema, so you can't identify the column through the FromID and ColName.
-	Position int
-	// IsAggOrSubq means if this column is referenced to a Aggregation column or a Subquery column.
+	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
+	// We'll try to remove it in the future.
+	ID int64
+	// UniqueID is the unique id of this column.
+	UniqueID int64
+	// IsReferenced means if this column is referenced to an Aggregation column, or a Subquery column,
+	// or an argument column of function IfNull.
 	// If so, this column's name will be the plain sql text.
-	IsAggOrSubq bool
+	IsReferenced bool
 
-	// Index is only used for execution.
+	// Index is used for execution, to tell the column's position in the given row.
 	Index int
 
 	hashcode []byte
+
+	// InOperand indicates whether this column is the inner operand of column equal condition converted
+	// from `[not] in (subq)`.
+	InOperand bool
 }
 
 // Equal implements Expression interface.
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
-		return newCol.FromID == col.FromID && newCol.Position == col.Position
+		return newCol.UniqueID == col.UniqueID
 	}
 	return false
 }
@@ -193,19 +199,19 @@ func (col *Column) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row types.Row) (types.Datum, error) {
+func (col *Column) Eval(row chunk.Row) (types.Datum, error) {
 	return row.GetDatum(col.Index, col.RetType), nil
 }
 
 // EvalInt returns int representation of Column.
-func (col *Column) EvalInt(ctx sessionctx.Context, row types.Row) (int64, bool, error) {
+func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	if col.GetType().Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
 		if val.IsNull() {
 			return 0, true, nil
 		}
 		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx)
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, err
 	}
 	if row.IsNull(col.Index) {
 		return 0, true, nil
@@ -214,7 +220,7 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row types.Row) (int64, bool, 
 }
 
 // EvalReal returns real representation of Column.
-func (col *Column) EvalReal(ctx sessionctx.Context, row types.Row) (float64, bool, error) {
+func (col *Column) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
 	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
@@ -225,22 +231,18 @@ func (col *Column) EvalReal(ctx sessionctx.Context, row types.Row) (float64, boo
 }
 
 // EvalString returns string representation of Column.
-func (col *Column) EvalString(ctx sessionctx.Context, row types.Row) (string, bool, error) {
+func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
 	if row.IsNull(col.Index) {
 		return "", true, nil
 	}
+
+	// Specially handle the ENUM/SET/BIT input value.
 	if col.GetType().Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
-		if val.IsNull() {
-			return "", true, nil
-		}
 		res, err := val.ToString()
-		resLen := len([]rune(res))
-		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
-			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
-		}
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, err
 	}
+
 	val := row.GetString(col.Index)
 	if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
 		valLen := len([]rune(val))
@@ -252,7 +254,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row types.Row) (string, bo
 }
 
 // EvalDecimal returns decimal representation of Column.
-func (col *Column) EvalDecimal(ctx sessionctx.Context, row types.Row) (*types.MyDecimal, bool, error) {
+func (col *Column) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
 	if row.IsNull(col.Index) {
 		return nil, true, nil
 	}
@@ -260,7 +262,7 @@ func (col *Column) EvalDecimal(ctx sessionctx.Context, row types.Row) (*types.My
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
-func (col *Column) EvalTime(ctx sessionctx.Context, row types.Row) (types.Time, bool, error) {
+func (col *Column) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
 	if row.IsNull(col.Index) {
 		return types.Time{}, true, nil
 	}
@@ -268,15 +270,16 @@ func (col *Column) EvalTime(ctx sessionctx.Context, row types.Row) (types.Time, 
 }
 
 // EvalDuration returns Duration representation of Column.
-func (col *Column) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Duration, bool, error) {
+func (col *Column) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
 	if row.IsNull(col.Index) {
 		return types.Duration{}, true, nil
 	}
-	return row.GetDuration(col.Index), false, nil
+	duration := row.GetDuration(col.Index, col.RetType.Decimal)
+	return duration, false, nil
 }
 
 // EvalJSON returns JSON representation of Column.
-func (col *Column) EvalJSON(ctx sessionctx.Context, row types.Row) (json.BinaryJSON, bool, error) {
+func (col *Column) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
 	if row.IsNull(col.Index) {
 		return json.BinaryJSON{}, true, nil
 	}
@@ -304,25 +307,25 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode = make([]byte, 0, 17)
+	col.hashcode = make([]byte, 0, 9)
 	col.hashcode = append(col.hashcode, columnFlag)
-	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.FromID))
-	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.Position))
+	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.UniqueID))
 	return col.hashcode
 }
 
 // ResolveIndices implements Expression interface.
-func (col *Column) ResolveIndices(schema *Schema) Expression {
+func (col *Column) ResolveIndices(schema *Schema) (Expression, error) {
 	newCol := col.Clone()
-	newCol.resolveIndices(schema)
-	return newCol
+	err := newCol.resolveIndices(schema)
+	return newCol, err
 }
 
-func (col *Column) resolveIndices(schema *Schema) {
+func (col *Column) resolveIndices(schema *Schema) error {
 	col.Index = schema.ColumnIndex(col)
 	if col.Index == -1 {
-		log.Errorf("Can't find column %s in schema %s", col, schema)
+		return errors.Errorf("Can't find column %s in schema %s", col, schema)
 	}
+	return nil
 }
 
 // Column2Exprs will transfer column slice to expression slice.
@@ -374,4 +377,22 @@ func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 		}
 	}
 	return retCols, lengths
+}
+
+// FindPrefixOfIndex will find columns in index by checking the unique id.
+// So it will return at once no matching column is found.
+func FindPrefixOfIndex(cols []*Column, idxColIDs []int64) []*Column {
+	retCols := make([]*Column, 0, len(idxColIDs))
+idLoop:
+	for _, id := range idxColIDs {
+		for _, col := range cols {
+			if col.UniqueID == id {
+				retCols = append(retCols, col)
+				continue idLoop
+			}
+		}
+		// If no matching column is found, just return.
+		return retCols
+	}
+	return retCols
 }

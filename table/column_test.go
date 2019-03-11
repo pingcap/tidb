@@ -17,11 +17,11 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -43,7 +43,7 @@ func (t *testTableSuite) TestString(c *C) {
 	col.Collate = mysql.DefaultCollationName
 	col.Flag |= mysql.ZerofillFlag | mysql.UnsignedFlag | mysql.BinaryFlag | mysql.AutoIncrementFlag | mysql.NotNullFlag
 
-	c.Assert(col.GetTypeDesc(), Equals, "tinyint(2) UNSIGNED")
+	c.Assert(col.GetTypeDesc(), Equals, "tinyint(2) UNSIGNED ZEROFILL")
 	col.ToInfo()
 	tbInfo := &model.TableInfo{}
 	c.Assert(col.IsPKHandleColumn(tbInfo), Equals, false)
@@ -303,7 +303,7 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 				},
 			},
 			false,
-			types.NewStringDatum("abc"),
+			types.NewMysqlEnumDatum(types.Enum{Name: "abc", Value: 1}),
 			nil,
 		},
 		{
@@ -338,7 +338,7 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 				},
 			},
 			true,
-			types.Datum{},
+			types.NewIntDatum(0),
 			nil,
 		},
 	}

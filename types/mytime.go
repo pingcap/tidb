@@ -16,7 +16,7 @@ package types
 import (
 	gotime "time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 // MysqlTime is the internal struct type for Time.
@@ -112,14 +112,63 @@ func (t MysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	if year != t.Year() || int(month) != t.Month() || day != t.Day() ||
 		hour != t.Hour() || minute != t.Minute() || second != t.Second() ||
 		microsec != t.Microsecond() {
-		return tm, errors.Trace(ErrInvalidTimeFormat.GenByArgs(t))
+		return tm, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(t))
 	}
 	return tm, nil
 }
 
 // IsLeapYear returns if it's leap year.
 func (t MysqlTime) IsLeapYear() bool {
-	return (t.year%4 == 0 && t.year%100 != 0) || t.year%400 == 0
+	return isLeapYear(t.year)
+}
+
+func isLeapYear(year uint16) bool {
+	return (year%4 == 0 && year%100 != 0) || year%400 == 0
+}
+
+var daysByMonth = [12]int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+
+// GetLastDay returns the last day of the month
+func GetLastDay(year, month int) int {
+	var day = 0
+	if month > 0 && month <= 12 {
+		day = daysByMonth[month-1]
+	}
+	if month == 2 && isLeapYear(uint16(year)) {
+		day = 29
+	}
+	return day
+}
+
+func getFixDays(year, month, day int, ot gotime.Time) int {
+	if (year != 0 || month != 0) && day == 0 {
+		od := ot.Day()
+		t := ot.AddDate(year, month, day)
+		td := t.Day()
+		if od != td {
+			tm := int(t.Month()) - 1
+			tMax := GetLastDay(t.Year(), tm)
+			dd := tMax - od
+			return dd
+		}
+	}
+	return 0
+}
+
+// AddDate fix gap between mysql and golang api
+// When we execute select date_add('2018-01-31',interval 1 month) in mysql we got 2018-02-28
+// but in tidb we got 2018-03-03.
+// Dig it and we found it's caused by golang api time.Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time ,
+// it says October 32 converts to November 1 ,it conflits with mysql.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
+func AddDate(year, month, day int64, ot gotime.Time) (nt gotime.Time) {
+	df := getFixDays(int(year), int(month), int(day), ot)
+	if df != 0 {
+		nt = ot.AddDate(int(year), int(month), df)
+	} else {
+		nt = ot.AddDate(int(year), int(month), int(day))
+	}
+	return nt
 }
 
 func calcTimeFromSec(to *MysqlTime, seconds, microseconds int) {
@@ -232,8 +281,7 @@ func (v weekBehaviour) test(flag weekBehaviour) bool {
 }
 
 func weekMode(mode int) weekBehaviour {
-	var weekFormat weekBehaviour
-	weekFormat = weekBehaviour(mode & 7)
+	weekFormat := weekBehaviour(mode & 7)
 	if (weekFormat & weekBehaviourMondayFirst) == 0 {
 		weekFormat ^= weekBehaviourFirstWeekday
 	}

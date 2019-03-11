@@ -14,7 +14,7 @@
 package kv
 
 import (
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	log "github.com/sirupsen/logrus"
 )
 

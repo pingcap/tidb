@@ -27,13 +27,13 @@ var _ = Suite(testBufferStoreSuite{})
 func (s testBufferStoreSuite) TestGetSet(c *C) {
 	bs := NewBufferStore(&mockSnapshot{NewMemDbBuffer(DefaultTxnMembufCap)}, DefaultTxnMembufCap)
 	key := Key("key")
-	value, err := bs.Get(key)
+	_, err := bs.Get(key)
 	c.Check(err, NotNil)
 
 	err = bs.Set(key, []byte("value"))
 	c.Check(err, IsNil)
 
-	value, err = bs.Get(key)
+	value, err := bs.Get(key)
 	c.Check(err, IsNil)
 	c.Check(bytes.Compare(value, []byte("value")), Equals, 0)
 }
@@ -53,7 +53,7 @@ func (s testBufferStoreSuite) TestSaveTo(c *C) {
 	err := bs.SaveTo(mutator)
 	c.Check(err, IsNil)
 
-	iter, err := mutator.Seek(nil)
+	iter, err := mutator.Iter(nil, nil)
 	c.Check(err, IsNil)
 	for iter.Valid() {
 		cmp := bytes.Compare(iter.Key(), iter.Value())

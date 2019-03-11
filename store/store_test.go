@@ -14,19 +14,21 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -35,12 +37,16 @@ const (
 	indexStep  = 2
 )
 
+type brokenStore struct{}
+
+func (s *brokenStore) Open(schema string) (kv.Storage, error) {
+	return nil, errors.New("try again later")
+}
+
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -97,7 +103,7 @@ func valToStr(c *C, iter kv.Iterator) string {
 func checkSeek(c *C, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
 		val := encodeInt(i * indexStep)
-		iter, err := txn.Seek(val)
+		iter, err := txn.Iter(val, nil)
 		c.Assert(err, IsNil)
 		c.Assert([]byte(iter.Key()), BytesEquals, val)
 		c.Assert(decodeInt([]byte(valToStr(c, iter))), Equals, i*indexStep)
@@ -107,7 +113,7 @@ func checkSeek(c *C, txn kv.Transaction) {
 	// Test iterator Next()
 	for i := startIndex; i < testCount-1; i++ {
 		val := encodeInt(i * indexStep)
-		iter, err := txn.Seek(val)
+		iter, err := txn.Iter(val, nil)
 		c.Assert(err, IsNil)
 		c.Assert([]byte(iter.Key()), BytesEquals, val)
 		c.Assert(valToStr(c, iter), Equals, string(val))
@@ -123,7 +129,7 @@ func checkSeek(c *C, txn kv.Transaction) {
 	}
 
 	// Non exist and beyond maximum seek test
-	iter, err := txn.Seek(encodeInt(testCount * indexStep))
+	iter, err := txn.Iter(encodeInt(testCount*indexStep), nil)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Valid(), IsFalse)
 
@@ -131,7 +137,7 @@ func checkSeek(c *C, txn kv.Transaction) {
 	// it returns the smallest key that larger than the one we are seeking
 	inBetween := encodeInt((testCount-1)*indexStep - 1)
 	last := encodeInt((testCount - 1) * indexStep)
-	iter, err = txn.Seek(inBetween)
+	iter, err = txn.Iter(inBetween, nil)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Valid(), IsTrue)
 	c.Assert([]byte(iter.Key()), Not(BytesEquals), inBetween)
@@ -238,7 +244,8 @@ func (s *testKVSuite) TestDelete(c *C) {
 	mustDel(c, txn)
 
 	mustNotGet(c, txn)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	// Try get
 	txn, err = s.s.Begin()
@@ -248,20 +255,23 @@ func (s *testKVSuite) TestDelete(c *C) {
 
 	// Insert again
 	insertData(c, txn)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	// Delete all
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
 	mustDel(c, txn)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
 	mustNotGet(c, txn)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 }
 
 func (s *testKVSuite) TestDelete2(c *C) {
@@ -272,13 +282,14 @@ func (s *testKVSuite) TestDelete2(c *C) {
 	txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0004"), val)
 	txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0003"), val)
 	txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0004"), val)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	// Delete all
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
-	it, err := txn.Seek([]byte("DATA_test_tbl_department_record__0000000001_0003"))
+	it, err := txn.Iter([]byte("DATA_test_tbl_department_record__0000000001_0003"), nil)
 	c.Assert(err, IsNil)
 	for it.Valid() {
 		err = txn.Delete([]byte(it.Key()))
@@ -286,13 +297,15 @@ func (s *testKVSuite) TestDelete2(c *C) {
 		err = it.Next()
 		c.Assert(err, IsNil)
 	}
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	it, _ = txn.Seek([]byte("DATA_test_tbl_department_record__000000000"))
+	it, _ = txn.Iter([]byte("DATA_test_tbl_department_record__000000000"), nil)
 	c.Assert(it.Valid(), IsFalse)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 }
 
 func (s *testKVSuite) TestSetNil(c *C) {
@@ -307,12 +320,13 @@ func (s *testKVSuite) TestBasicSeek(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	txn.Set([]byte("1"), []byte("1"))
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Commit(context.Background())
 
-	it, err := txn.Seek([]byte("2"))
+	it, err := txn.Iter([]byte("2"), nil)
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), Equals, false)
 	txn.Delete([]byte("1"))
@@ -325,7 +339,8 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 		b := []byte(strconv.Itoa(i))
 		txn.Set(b, b)
 	}
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Commit(context.Background())
@@ -333,30 +348,30 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 	err = txn.Set([]byte("1"), []byte("1"))
 	c.Assert(err, IsNil)
 
-	it, err := txn.Seek([]byte("0"))
+	it, err := txn.Iter([]byte("0"), nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(it.Key()), Equals, "1")
 
 	err = txn.Set([]byte("0"), []byte("0"))
 	c.Assert(err, IsNil)
-	it, err = txn.Seek([]byte("0"))
+	it, err = txn.Iter([]byte("0"), nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(it.Key()), Equals, "0")
 	err = txn.Delete([]byte("0"))
 	c.Assert(err, IsNil)
 
 	txn.Delete([]byte("1"))
-	it, err = txn.Seek([]byte("0"))
+	it, err = txn.Iter([]byte("0"), nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(it.Key()), Equals, "2")
 
 	err = txn.Delete([]byte("3"))
 	c.Assert(err, IsNil)
-	it, err = txn.Seek([]byte("2"))
+	it, err = txn.Iter([]byte("2"), nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(it.Key()), Equals, "2")
 
-	it, err = txn.Seek([]byte("3"))
+	it, err = txn.Iter([]byte("3"), nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(it.Key()), Equals, "4")
 	err = txn.Delete([]byte("2"))
@@ -411,13 +426,14 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 		txn.Set([]byte(row.key), []byte(row.value))
 	}
 
-	it, err := txn.Seek(nil)
+	it, err := txn.Iter(nil, nil)
+	c.Assert(err, IsNil)
 	for it.Valid() {
 		fmt.Printf("%s, %s\n", it.Key(), it.Value())
 		it.Next()
 	}
 
-	it, err = txn.Seek([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"))
+	it, err = txn.Iter([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"), nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
 
@@ -635,4 +651,16 @@ func (s *testKVSuite) TestIsolationMultiInc(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
+}
+
+func (s *testKVSuite) TestRetryOpenStore(c *C) {
+	begin := time.Now()
+	Register("dummy", &brokenStore{})
+	store, err := newStoreWithRetry("dummy://dummy-store", 3)
+	if store != nil {
+		defer store.Close()
+	}
+	c.Assert(err, NotNil)
+	elapse := time.Since(begin)
+	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }

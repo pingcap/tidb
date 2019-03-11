@@ -17,8 +17,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
@@ -37,18 +38,21 @@ func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	defer testleak.AfterTest(c)()
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong).add("col1", mysql.TypeLonglong).build()
-	ifnullOuter, err := ParseSimpleExpr(s.ctx, "ifnull(col0, ifnull(col1, 1))", tblInfo)
-	c.Assert(err, IsNil)
 	schema := tableInfoToSchemaForTest(tblInfo)
+	col0 := schema.Columns[0]
 	col1 := schema.Columns[1]
 	schema.Columns = schema.Columns[:1]
+	innerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col1, One.Clone())
+	c.Assert(err, IsNil)
+	outerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col0, innerIfNull)
+	c.Assert(err, IsNil)
 
-	res := EvaluateExprWithNull(s.ctx, schema, ifnullOuter)
+	res := EvaluateExprWithNull(s.ctx, schema, outerIfNull)
 	c.Assert(res.String(), Equals, "ifnull(col1, 1)")
 
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
-	res = EvaluateExprWithNull(s.ctx, schema, ifnullOuter)
+	res = EvaluateExprWithNull(s.ctx, schema, outerIfNull)
 	c.Assert(res.Equal(s.ctx, One), IsTrue)
 }
 
@@ -124,8 +128,7 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 	schema := NewSchema(make([]*Column, 0, len(columns))...)
 	for i, col := range columns {
 		schema.Append(&Column{
-			FromID:   1,
-			Position: i,
+			UniqueID: int64(i),
 			TblName:  tableInfo.Name,
 			ColName:  col.Name,
 			ID:       col.ID,

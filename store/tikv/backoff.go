@@ -14,18 +14,19 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
+	"strings"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -86,7 +87,7 @@ const (
 	boTiKVRPC backoffType = iota
 	BoTxnLock
 	boTxnLockFast
-	boPDRPC
+	BoPDRPC
 	BoRegionMiss
 	BoUpdateLeader
 	boServerBusy
@@ -103,10 +104,11 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
 		return NewBackoffFn(200, 3000, EqualJitter)
 	case boTxnLockFast:
 		return NewBackoffFn(vars.BackoffLockFast, 3000, EqualJitter)
-	case boPDRPC:
+	case BoPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case BoRegionMiss:
-		return NewBackoffFn(100, 500, NoJitter)
+		// change base time to 2ms, because it may recover soon.
+		return NewBackoffFn(2, 500, NoJitter)
 	case BoUpdateLeader:
 		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
@@ -123,7 +125,7 @@ func (t backoffType) String() string {
 		return "txnLock"
 	case boTxnLockFast:
 		return "txnLockFast"
-	case boPDRPC:
+	case BoPDRPC:
 		return "pdRPC"
 	case BoRegionMiss:
 		return "regionMiss"
@@ -135,14 +137,14 @@ func (t backoffType) String() string {
 	return ""
 }
 
-func (t backoffType) TError() *terror.Error {
+func (t backoffType) TError() error {
 	switch t {
 	case boTiKVRPC:
 		return ErrTiKVServerTimeout
 	case BoTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
-	case boPDRPC:
-		return ErrPDServerTimeout.GenByArgs(txnRetryableMark)
+	case BoPDRPC:
+		return ErrPDServerTimeout.GenWithStackByArgs(txnRetryableMark)
 	case BoRegionMiss, BoUpdateLeader:
 		return ErrRegionUnavailable
 	case boServerBusy:
@@ -154,7 +156,7 @@ func (t backoffType) TError() *terror.Error {
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	copBuildTaskMaxBackoff         = 5000
-	tsoMaxBackoff                  = 5000
+	tsoMaxBackoff                  = 15000
 	scannerNextMaxBackoff          = 20000
 	batchGetMaxBackoff             = 20000
 	copNextMaxBackoff              = 20000
@@ -183,6 +185,9 @@ type Backoffer struct {
 	vars       *kv.Variables
 }
 
+// txnStartKey is a key for transaction start_ts info in context.Context.
+const txnStartKey = "_txn_start_key"
+
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
@@ -194,13 +199,18 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 
 // WithVars sets the kv.Variables to the Backoffer and return it.
 func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
-	b.vars = vars
+	if vars != nil {
+		b.vars = vars
+	}
 	return b
 }
 
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	if strings.Contains(err.Error(), mismatchClusterID) {
+		log.Fatalf("critical error %v", err)
+	}
 	select {
 	case <-b.ctx.Done():
 		return errors.Trace(err)
@@ -221,11 +231,15 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.totalSleep += f(b.ctx)
 	b.types = append(b.types, typ)
 
-	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
+	var startTs interface{} = ""
+	if ts := b.ctx.Value(txnStartKey); ts != nil {
+		startTs = ts
+	}
+	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms), type: %s, txn_start_ts: %v", err, b.totalSleep, b.maxSleep, typ.String(), startTs)
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
-		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
+		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
 			if log.GetLevel() == log.DebugLevel || i >= len(b.errors)-3 {
@@ -243,7 +257,7 @@ func (b *Backoffer) String() string {
 	if b.totalSleep == 0 {
 		return ""
 	}
-	return fmt.Sprintf(" backoff(%dms %s)", b.totalSleep, b.types)
+	return fmt.Sprintf(" backoff(%dms %v)", b.totalSleep, b.types)
 }
 
 // Clone creates a new Backoffer which keeps current Backoffer's sleep time and errors, and shares

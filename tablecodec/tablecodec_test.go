@@ -20,7 +20,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -135,7 +137,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 	r, err = DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
-	c.Assert(r, IsNil)
+	c.Assert(len(r), Equals, 0)
 }
 
 func (s *testTableCodecSuite) TestTimeCodec(c *C) {
@@ -155,7 +157,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 		"2016-06-23 11:30:45")
 	c.Assert(err, IsNil)
 	row[2] = types.NewDatum(ts)
-	du, err := types.ParseDuration("12:59:59.999999", 6)
+	du, err := types.ParseDuration(nil, "12:59:59.999999", 6)
 	c.Assert(err, IsNil)
 	row[3] = types.NewDatum(du)
 
@@ -279,6 +281,17 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
 }
 
+func (s *testTableCodecSuite) TestDecodeBadDecical(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal")
+	dec := types.NewDecFromStringForTest("0.111")
+	b, err := codec.EncodeDecimal(nil, dec, 0, 0)
+	c.Assert(err, IsNil)
+	// Expect no panic.
+	_, _, err = codec.DecodeOne(b)
+	c.Assert(err, NotNil)
+}
+
 func (s *testTableCodecSuite) TestIndexKey(c *C) {
 	tableID := int64(4)
 	indexID := int64(5)
@@ -358,4 +371,18 @@ func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
 	c.Assert(decodeTableID, Equals, tableID)
 	c.Assert(decodeIndexID, Equals, indexID)
 	c.Assert(decodeValues, DeepEquals, valueStrs)
+}
+
+func BenchmarkHasTablePrefix(b *testing.B) {
+	k := kv.Key("foobar")
+	for i := 0; i < b.N; i++ {
+		hasTablePrefix(k)
+	}
+}
+
+func BenchmarkHasTablePrefixBuiltin(b *testing.B) {
+	k := kv.Key("foobar")
+	for i := 0; i < b.N; i++ {
+		k.HasPrefix(tablePrefix)
+	}
 }

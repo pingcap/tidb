@@ -35,15 +35,17 @@
 package server
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
-	"golang.org/x/net/context"
 )
 
 func (cc *clientConn) handleStmtPrepare(sql string) error {
@@ -172,13 +174,14 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 
 		err = parseStmtArgs(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues)
+		stmt.Reset()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Annotatef(err, "%s", cc.preparedStmt2String(stmtID))
 		}
 	}
 	rs, err := stmt.Execute(ctx, args...)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotatef(err, "%s", cc.preparedStmt2String(stmtID))
 	}
 	if rs == nil {
 		return errors.Trace(cc.writeOK())
@@ -216,6 +219,11 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch")
 	}
+	sql := ""
+	if prepared, ok := cc.ctx.GetStatement(int(stmtID)).(*TiDBStatement); ok {
+		sql = prepared.sql
+	}
+	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute)
 	rs := stmt.GetResultSet()
 	if rs == nil {
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
@@ -245,12 +253,20 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 	var isNull bool
 
 	for i := 0; i < len(args); i++ {
-		if nullBitmap[i>>3]&(1<<(uint(i)%8)) > 0 {
-			args[i] = nil
-			continue
-		}
+		// if params had received via ComStmtSendLongData, use them directly.
+		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
+		// see clientConn#handleStmtSendLongData
 		if boundParams[i] != nil {
 			args[i] = boundParams[i]
+			continue
+		}
+
+		// check nullBitMap to determine the NULL arguments.
+		// ref https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
+		// notice: some client(e.g. mariadb) will set nullBitMap even if data had be sent via ComStmtSendLongData,
+		// so this check need place after boundParam's check.
+		if nullBitmap[i>>3]&(1<<(uint(i)%8)) > 0 {
+			args[i] = nil
 			continue
 		}
 
@@ -354,7 +370,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			pos++
 			switch length {
 			case 0:
-				args[i] = "0"
+				args[i] = types.ZeroDatetimeStr
 			case 4:
 				pos, args[i] = parseBinaryDate(pos, paramValues)
 			case 7:
@@ -417,13 +433,13 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 
 			if !isNull {
-				args[i] = hack.String(v)
+				args[i] = string(hack.String(v))
 			} else {
 				args[i] = nil
 			}
 			continue
 		default:
-			err = errUnknownFieldType.Gen("stmt unknown field type %d", tp)
+			err = errUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
 			return
 		}
 	}
@@ -527,7 +543,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	return cc.writeOK()
 }
 
-// See https://dev.mysql.com/doc/internals/en/com-set-option.html
+// handleSetOption refer to https://dev.mysql.com/doc/internals/en/com-set-option.html
 func (cc *clientConn) handleSetOption(data []byte) (err error) {
 	if len(data) < 2 {
 		return mysql.ErrMalformPacket
@@ -548,4 +564,12 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 	}
 
 	return errors.Trace(cc.flush())
+}
+
+func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
+	sv := cc.ctx.GetSessionVars()
+	if prepared, ok := sv.PreparedStmts[stmtID]; ok {
+		return prepared.Stmt.Text() + sv.GetExecuteArgumentsInfo()
+	}
+	return fmt.Sprintf("prepared statement not found, ID: %d", stmtID)
 }

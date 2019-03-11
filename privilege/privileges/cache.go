@@ -14,22 +14,23 @@
 package privileges
 
 import (
+	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -47,11 +48,13 @@ func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
 	return mask
 }
 
-type userRecord struct {
-	Host       string // max length 60, primary key
-	User       string // max length 16, primary key
-	Password   string // max length 41
-	Privileges mysql.PrivilegeType
+// UserRecord is used to represent a user record in privilege cache.
+type UserRecord struct {
+	Host          string // max length 60, primary key
+	User          string // max length 32, primary key
+	Password      string // max length 41
+	Privileges    mysql.PrivilegeType
+	AccountLocked bool // A role record when this field is true
 
 	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
@@ -103,7 +106,7 @@ type columnsPrivRecord struct {
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
-	User        []userRecord
+	User        []UserRecord
 	DB          []dbRecord
 	TablesPriv  []tablesPrivRecord
 	ColumnsPriv []columnsPrivRecord
@@ -154,26 +157,118 @@ func noSuchTable(err error) bool {
 
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Index_priv,Create_user_priv,Trigger_priv from mysql.user order by host, user;", p.decodeUserTableRow)
+	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Create_view_priv,Show_view_priv,Index_priv,Create_user_priv,Trigger_priv,Create_role_priv,Drop_role_priv,account_locked from mysql.user;", p.decodeUserTableRow)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// See https://dev.mysql.com/doc/refman/8.0/en/connection-access.html
+	// When multiple matches are possible, the server must determine which of them to use. It resolves this issue as follows:
+	// 1. Whenever the server reads the user table into memory, it sorts the rows.
+	// 2. When a client attempts to connect, the server looks through the rows in sorted order.
+	// 3. The server uses the first row that matches the client host name and user name.
+	// The server uses sorting rules that order rows with the most-specific Host values first.
+	p.SortUserTable()
+	return nil
+}
+
+type sortedUserRecord []UserRecord
+
+func (s sortedUserRecord) Len() int {
+	return len(s)
+}
+
+func (s sortedUserRecord) Less(i, j int) bool {
+	x := s[i]
+	y := s[j]
+
+	// Compare two item by user's host first.
+	c1 := compareHost(x.Host, y.Host)
+	if c1 < 0 {
+		return true
+	}
+	if c1 > 0 {
+		return false
+	}
+
+	// Then, compare item by user's name value.
+	return x.User < y.User
+}
+
+// compareHost compares two host string using some special rules, return value 1, 0, -1 means > = <.
+// TODO: Check how MySQL do it exactly, instead of guess its rules.
+func compareHost(x, y string) int {
+	// The more-specific, the smaller it is.
+	// The pattern '%' means “any host” and is least specific.
+	if y == `%` {
+		if x == `%` {
+			return 0
+		}
+		return -1
+	}
+
+	// The empty string '' also means “any host” but sorts after '%'.
+	if y == "" {
+		if x == "" {
+			return 0
+		}
+		return -1
+	}
+
+	// One of them end with `%`.
+	xEnd := strings.HasSuffix(x, `%`)
+	yEnd := strings.HasSuffix(y, `%`)
+	if xEnd || yEnd {
+		switch {
+		case !xEnd && yEnd:
+			return -1
+		case xEnd && !yEnd:
+			return 1
+		case xEnd && yEnd:
+			// 192.168.199.% smaller than 192.168.%
+			// A not very accurate comparison, compare them by length.
+			if len(x) > len(y) {
+				return -1
+			}
+		}
+		return 0
+	}
+
+	// For other case, the order is nondeterministic.
+	switch x < y {
+	case true:
+		return -1
+	case false:
+		return 1
+	}
+	return 0
+}
+
+func (s sortedUserRecord) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+// SortUserTable sorts p.User in the MySQLPrivilege struct.
+func (p MySQLPrivilege) SortUserTable() {
+	sort.Sort(sortedUserRecord(p.User))
 }
 
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
+	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
 func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv from mysql.tables_priv", p.decodeTablesPrivTableRow)
+	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv from mysql.tables_priv", p.decodeTablesPrivTableRow)
 }
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select Host,DB,User,Table_name,Column_name,Timestamp,Column_priv from mysql.columns_priv", p.decodeColumnsPrivTableRow)
+	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv from mysql.columns_priv", p.decodeColumnsPrivTableRow)
 }
 
 func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
-	decodeTableRow func(types.Row, []*ast.ResultField) error) error {
+	decodeTableRow func(chunk.Row, []*ast.ResultField) error) error {
 	ctx := context.Background()
 	tmp, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
@@ -183,30 +278,31 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	defer terror.Call(rs.Close)
 
 	fs := rs.Fields()
+	req := rs.NewRecordBatch()
 	for {
-		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
-		// The result will reference memory in the chunk, so the chunk must not be reused
-		// here, otherwise some werid bug will happen!
-		chk := rs.NewChunk()
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			return nil
 		}
-		it := chunk.NewIterator4Chunk(chk)
+		it := chunk.NewIterator4Chunk(req.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			err = decodeTableRow(row, fs)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
+		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
+		// The result will reference memory in the chunk, so the chunk must not be reused
+		// here, otherwise some werid bug will happen!
+		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 
-func (p *MySQLPrivilege) decodeUserTableRow(row types.Row, fs []*ast.ResultField) error {
-	var value userRecord
+func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField) error {
+	var value UserRecord
 	for i, f := range fs {
 		switch {
 		case f.ColumnAsName.L == "user":
@@ -216,13 +312,17 @@ func (p *MySQLPrivilege) decodeUserTableRow(row types.Row, fs []*ast.ResultField
 			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "password":
 			value.Password = row.GetString(i)
+		case f.ColumnAsName.L == "account_locked":
+			if row.GetEnum(i).String() == "Y" {
+				value.AccountLocked = true
+			}
 		case f.Column.Tp == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
-				return errInvalidPrivilegeType.Gen("Unknown Privilege Type!")
+				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
 			}
 			value.Privileges |= priv
 		}
@@ -231,7 +331,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row types.Row, fs []*ast.ResultField
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeDBTableRow(row types.Row, fs []*ast.ResultField) error {
+func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value dbRecord
 	for i, f := range fs {
 		switch {
@@ -249,7 +349,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row types.Row, fs []*ast.ResultField) 
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
-				return errInvalidPrivilegeType.Gen("Unknown Privilege Type!")
+				return errInvalidPrivilegeType.GenWithStack("Unknown Privilege Type!")
 			}
 			value.Privileges |= priv
 		}
@@ -258,7 +358,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row types.Row, fs []*ast.ResultField) 
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeTablesPrivTableRow(row types.Row, fs []*ast.ResultField) error {
+func (p *MySQLPrivilege) decodeTablesPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value tablesPrivRecord
 	for i, f := range fs {
 		switch {
@@ -281,7 +381,7 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row types.Row, fs []*ast.Resul
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row types.Row, fs []*ast.ResultField) error {
+func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value columnsPrivRecord
 	for i, f := range fs {
 		switch {
@@ -326,7 +426,7 @@ func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
 	return ret
 }
 
-func (record *userRecord) match(user, host string) bool {
+func (record *UserRecord) match(user, host string) bool {
 	return record.User == user && patternMatch(host, record.patChars, record.patTypes)
 }
 
@@ -355,7 +455,7 @@ func patternMatch(str string, patChars, patTypes []byte) bool {
 }
 
 // connectionVerification verifies the connection have access to TiDB server.
-func (p *MySQLPrivilege) connectionVerification(user, host string) *userRecord {
+func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	for i := 0; i < len(p.User); i++ {
 		record := &p.User[i]
 		if record.match(user, host) {
@@ -365,7 +465,7 @@ func (p *MySQLPrivilege) connectionVerification(user, host string) *userRecord {
 	return nil
 }
 
-func (p *MySQLPrivilege) matchUser(user, host string) *userRecord {
+func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
 	for i := 0; i < len(p.User); i++ {
 		record := &p.User[i]
 		if record.match(user, host) {
@@ -479,9 +579,11 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 
 func (p *MySQLPrivilege) showGrants(user, host string) []string {
 	var gs []string
+	var hasGlobalGrant bool = false
 	// Show global grants
 	for _, record := range p.User {
 		if record.User == user && record.Host == host {
+			hasGlobalGrant = true
 			g := userPrivToString(record.Privileges)
 			if len(g) > 0 {
 				s := fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, record.User, record.Host)
@@ -489,6 +591,12 @@ func (p *MySQLPrivilege) showGrants(user, host string) []string {
 			}
 			break // it's unique
 		}
+	}
+
+	// This is a mysql convention.
+	if len(gs) == 0 && hasGlobalGrant {
+		s := fmt.Sprintf("GRANT USAGE ON *.* TO '%s'@'%s'", user, host)
+		gs = append(gs, s)
 	}
 
 	// Show db scope grants
@@ -512,6 +620,7 @@ func (p *MySQLPrivilege) showGrants(user, host string) []string {
 			}
 		}
 	}
+
 	return gs
 }
 
@@ -542,7 +651,7 @@ func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allP
 		if priv&p == 0 {
 			continue
 		}
-		s, _ := allPrivNames[p]
+		s := allPrivNames[p]
 		pstrs = append(pstrs, s)
 	}
 	return strings.Join(pstrs, ",")
@@ -557,7 +666,7 @@ func (p *MySQLPrivilege) UserPrivilegesTable() [][]types.Datum {
 	return rows
 }
 
-func appendUserPrivilegesTableRow(rows [][]types.Datum, user userRecord) [][]types.Datum {
+func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]types.Datum {
 	var isGrantable string
 	if user.Privileges&mysql.GrantPriv > 0 {
 		isGrantable = "YES"

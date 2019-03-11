@@ -18,7 +18,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 // RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
@@ -59,7 +59,8 @@ func Truncate(f float64, dec int) float64 {
 	return math.Trunc(tmp) / shift
 }
 
-func getMaxFloat(flen int, decimal int) float64 {
+// GetMaxFloat gets the max float for given flen and decimal.
+func GetMaxFloat(flen int, decimal int) float64 {
 	intPartLen := flen - decimal
 	f := math.Pow10(intPartLen)
 	f -= math.Pow10(-decimal)
@@ -71,10 +72,10 @@ func getMaxFloat(flen int, decimal int) float64 {
 func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	if math.IsNaN(f) {
 		// nan returns 0
-		return 0, ErrOverflow.GenByArgs("DOUBLE", "")
+		return 0, ErrOverflow.GenWithStackByArgs("DOUBLE", "")
 	}
 
-	maxF := getMaxFloat(flen, decimal)
+	maxF := GetMaxFloat(flen, decimal)
 
 	if !math.IsInf(f, 0) {
 		f = Round(f, decimal)
@@ -83,10 +84,10 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	var err error
 	if f > maxF {
 		f = maxF
-		err = ErrOverflow.GenByArgs("DOUBLE", "")
+		err = ErrOverflow.GenWithStackByArgs("DOUBLE", "")
 	} else if f < -maxF {
 		f = -maxF
-		err = ErrOverflow.GenByArgs("DOUBLE", "")
+		err = ErrOverflow.GenWithStackByArgs("DOUBLE", "")
 	}
 
 	return f, errors.Trace(err)

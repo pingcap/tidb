@@ -15,11 +15,11 @@ package server
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 )
 
 type tidbResultSetTestSuite struct{}
@@ -88,4 +88,26 @@ func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
 	}
 	colInfo = convertColumnInfo(&resultField)
 	c.Assert(colInfo, DeepEquals, createColumnByTypeAndLen(mysql.TypeTiny, 1))
+
+	resultField = ast.ResultField{
+		Column: &model.ColumnInfo{
+			Name:   model.NewCIStr("a"),
+			ID:     0,
+			Offset: 0,
+			FieldType: types.FieldType{
+				Tp:      mysql.TypeYear,
+				Flag:    mysql.ZerofillFlag,
+				Flen:    4,
+				Decimal: 0,
+				Charset: charset.CharsetBin,
+				Collate: charset.CollationBin,
+			},
+			Comment: "column a is the first column in table dual",
+		},
+		ColumnAsName: model.NewCIStr("a"),
+		TableAsName:  model.NewCIStr("dual"),
+		DBName:       model.NewCIStr("test"),
+	}
+	colInfo = convertColumnInfo(&resultField)
+	c.Assert(colInfo.ColumnLength, Equals, uint32(4))
 }

@@ -14,12 +14,15 @@
 package mocktikv
 
 import (
-	"github.com/juju/errors"
+	"context"
+	"time"
+
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"golang.org/x/net/context"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
@@ -35,15 +38,24 @@ type hashAggExec struct {
 	aggCtxsMap        aggCtxsMapper
 	groupByExprs      []expression.Expression
 	relatedColOffsets []int
-	row               types.DatumRow
+	row               []types.Datum
 	groups            map[string]struct{}
 	groupKeys         [][]byte
 	groupKeyRows      [][][]byte
 	executed          bool
 	currGroupIdx      int
 	count             int64
+	execDetail        *execDetail
 
 	src executor
+}
+
+func (e *hashAggExec) ExecDetails() []*execDetail {
+	var suffix []*execDetail
+	if e.src != nil {
+		suffix = e.src.ExecDetails()
+	}
+	return append(suffix, e.execDetail)
 }
 
 func (e *hashAggExec) SetSrcExec(exec executor) {
@@ -82,9 +94,12 @@ func (e *hashAggExec) Cursor() ([]byte, bool) {
 }
 
 func (e *hashAggExec) Next(ctx context.Context) (value [][]byte, err error) {
+	defer func(begin time.Time) {
+		e.execDetail.update(begin, value)
+	}(time.Now())
 	e.count++
 	if e.aggCtxsMap == nil {
-		e.aggCtxsMap = make(aggCtxsMapper, 0)
+		e.aggCtxsMap = make(aggCtxsMapper)
 	}
 	if !e.executed {
 		for {
@@ -129,7 +144,7 @@ func (e *hashAggExec) getGroupKey() ([]byte, [][]byte, error) {
 	bufLen := 0
 	row := make([][]byte, 0, length)
 	for _, item := range e.groupByExprs {
-		v, err := item.Eval(e.row)
+		v, err := item.Eval(chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -166,7 +181,7 @@ func (e *hashAggExec) aggregate(value [][]byte) error {
 	// Update aggregate expressions.
 	aggCtxs := e.getContexts(gk)
 	for i, agg := range e.aggExprs {
-		err = agg.Update(aggCtxs[i], e.evalCtx.sc, e.row)
+		err = agg.Update(aggCtxs[i], e.evalCtx.sc, chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -193,16 +208,25 @@ type streamAggExec struct {
 	aggCtxs           []*aggregation.AggEvaluateContext
 	groupByExprs      []expression.Expression
 	relatedColOffsets []int
-	row               types.DatumRow
-	tmpGroupByRow     types.DatumRow
-	currGroupByRow    types.DatumRow
-	nextGroupByRow    types.DatumRow
+	row               []types.Datum
+	tmpGroupByRow     []types.Datum
+	currGroupByRow    []types.Datum
+	nextGroupByRow    []types.Datum
 	currGroupByValues [][]byte
 	executed          bool
 	hasData           bool
 	count             int64
+	execDetail        *execDetail
 
 	src executor
+}
+
+func (e *streamAggExec) ExecDetails() []*execDetail {
+	var suffix []*execDetail
+	if e.src != nil {
+		suffix = e.src.ExecDetails()
+	}
+	return append(suffix, e.execDetail)
 }
 
 func (e *streamAggExec) SetSrcExec(exec executor) {
@@ -243,7 +267,7 @@ func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 		}
 		e.currGroupByValues = append(e.currGroupByValues, buf)
 	}
-	e.currGroupByRow = e.nextGroupByRow.Copy()
+	e.currGroupByRow = types.CopyRow(e.nextGroupByRow)
 	return append(value, e.currGroupByValues...), nil
 }
 
@@ -258,7 +282,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 		matched, firstGroup = false, true
 	}
 	for i, item := range e.groupByExprs {
-		d, err := item.Eval(e.row)
+		d, err := item.Eval(chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -272,7 +296,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 		e.tmpGroupByRow = append(e.tmpGroupByRow, d)
 	}
 	if firstGroup {
-		e.currGroupByRow = e.tmpGroupByRow.Copy()
+		e.currGroupByRow = types.CopyRow(e.tmpGroupByRow)
 	}
 	if matched {
 		return false, nil
@@ -286,6 +310,9 @@ func (e *streamAggExec) Cursor() ([]byte, bool) {
 }
 
 func (e *streamAggExec) Next(ctx context.Context) (retRow [][]byte, err error) {
+	defer func(begin time.Time) {
+		e.execDetail.update(begin, retRow)
+	}(time.Now())
 	e.count++
 	if e.executed {
 		return nil, nil
@@ -320,7 +347,7 @@ func (e *streamAggExec) Next(ctx context.Context) (retRow [][]byte, err error) {
 			}
 		}
 		for i, agg := range e.aggExprs {
-			err = agg.Update(e.aggCtxs[i], e.evalCtx.sc, e.row)
+			err = agg.Update(e.aggCtxs[i], e.evalCtx.sc, chunk.MutRowFromDatums(e.row).ToRow())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

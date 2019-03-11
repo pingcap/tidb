@@ -3,6 +3,9 @@
 # TiDB server host.
 host = "0.0.0.0"
 
+# tidb server advertise IP.
+advertise-address = ""
+
 # TiDB server port.
 port = 4000
 
@@ -40,6 +43,10 @@ enable-streaming = false
 
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
+
+# Make "kill query" behavior compatible with MySQL. It's not recommend to
+# turn on this option when TiDB server is behind a proxy.
+compatible-kill-query = false
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -112,9 +119,16 @@ metrics-addr = ""
 # Prometheus client push interval in second, set \"0\" to disable prometheus push.
 metrics-interval = 15
 
+# Record statements qps by database name if it is enabled.
+record-db-qps = false
+
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
+
+# Max memory size to use, 0 use the total usable memory in the machine.
+max-memory = 0
+
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
 
@@ -140,6 +154,10 @@ query-feedback-limit = 1024
 # row count in statistics of a table is greater than it.
 pseudo-estimate-ratio = 0.8
 
+# Force the priority of all statements in a specified priority.
+# The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
+force-priority = "NO_PRIORITY"
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.
@@ -148,14 +166,10 @@ networks = ""
 # PROXY protocol header read timeout, unit is second
 header-timeout = 5
 
-[plan-cache]
-enabled = false
-capacity = 2560
-shards = 256
-
 [prepared-plan-cache]
 enabled = false
 capacity = 100
+memory-guard-ratio = 0.1
 
 [opentracing]
 # Enable opentracing.
@@ -212,19 +226,40 @@ local-agent-host-port = ""
 # Max gRPC connections that will be established with each tikv-server.
 grpc-connection-count = 16
 
-# max time for commit command, must be twice bigger than raft election timeout.
+# After a duration of this time in seconds if the client doesn't see any activity it pings
+# the server to see if the transport is still alive.
+grpc-keepalive-time = 10
+
+# After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
+# and if no activity is seen even after that the connection is closed.
+grpc-keepalive-timeout = 3
+
+# Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
+
+# The max time a Txn may use (in seconds) from its startTS to commitTS.
+# We use it to guarantee GC worker will not influence any active txn. Please make sure that this
+# value is less than gc_life_time - 10s.
+max-txn-time-use = 590
+
+# Max batch size in gRPC.
+max-batch-size = 128
+# Overload threshold of TiKV.
+overload-threshold = 200
+# Max batch wait time in nanosecond to avoid waiting too long. 0 means disable this feature.
+max-batch-wait-time = 0
+# Batch wait size, to avoid waiting too long.
+batch-wait-size = 8
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
-enabled = false
-capacity = 10240000
+enabled = true
+capacity = 2048000
 
 [binlog]
-
-# Socket file to write binlog.
-binlog-socket = ""
+# enable to write binlog.
+enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
 write-timeout = "15s"
@@ -232,3 +267,9 @@ write-timeout = "15s"
 # If IgnoreError is true, when writting binlog meets error, TiDB would stop writting binlog,
 # but still provide service.
 ignore-error = false
+
+# use socket file to write binlog, for compatible with kafka version tidb-binlog.
+binlog-socket = ""
+
+# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
+check-mb4-value-in-utf8 = true

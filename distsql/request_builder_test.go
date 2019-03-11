@@ -19,7 +19,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -38,9 +37,7 @@ var _ = Suite(&testSuite{})
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -54,7 +51,10 @@ func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{
-			MockResponse: &mockResponse{},
+			MockResponse: &mockResponse{
+				batch: 1,
+				total: 2,
+			},
 		},
 	}
 	s.sctx = ctx
@@ -68,7 +68,10 @@ func (s *testSuite) SetUpTest(c *C) {
 	ctx := s.sctx.(*mock.Context)
 	store := ctx.Store.(*mock.Store)
 	store.Client = &mock.Client{
-		MockResponse: &mockResponse{},
+		MockResponse: &mockResponse{
+			batch: 1,
+			total: 2,
+		},
 	}
 }
 
@@ -490,13 +493,10 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		},
 	}
 
-	sv := variable.NewSessionVars()
-	sv.StmtCtx.Priority = mysql.LowPriority
-	sv.StmtCtx.NotFillCache = true
 	actual, err := (&RequestBuilder{}).SetKeyRanges(keyRanges).
 		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
 		SetKeepOrder(true).
-		SetFromSessionVars(sv).
+		SetConcurrency(15).
 		Build()
 	c.Assert(err, IsNil)
 	expect := &kv.Request{
@@ -507,7 +507,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		KeepOrder:      true,
 		Desc:           false,
 		Concurrency:    15,
-		IsolationLevel: 0,
+		IsolationLevel: kv.RC,
 		Priority:       1,
 		NotFillCache:   true,
 		SyncLog:        false,

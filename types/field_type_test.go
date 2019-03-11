@@ -15,8 +15,8 @@ package types
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -172,7 +172,7 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 		{nil, mysql.TypeNull, 0, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
 		{1, mysql.TypeLonglong, 1, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
 		{uint64(1), mysql.TypeLonglong, 1, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag},
-		{"abc", mysql.TypeVarString, 3, UnspecifiedLength, charset.CharsetUTF8, charset.CollationUTF8, 0},
+		{"abc", mysql.TypeVarString, 3, UnspecifiedLength, charset.CharsetUTF8MB4, charset.CollationUTF8MB4, 0},
 		{1.1, mysql.TypeDouble, 3, -1, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
 		{[]byte("abc"), mysql.TypeBlob, 3, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
 		{HexLiteral{}, mysql.TypeVarString, 0, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag},

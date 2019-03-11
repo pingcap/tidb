@@ -76,14 +76,12 @@ var (
 			Name:      "store_query_feedback_total",
 			Help:      "Counter of storing query feedback.",
 		}, []string{LblType})
-)
 
-func init() {
-	prometheus.MustRegister(AutoAnalyzeHistogram)
-	prometheus.MustRegister(AutoAnalyzeCounter)
-	prometheus.MustRegister(StatsInaccuracyRate)
-	prometheus.MustRegister(PseudoEstimation)
-	prometheus.MustRegister(DumpFeedbackCounter)
-	prometheus.MustRegister(UpdateStatsCounter)
-	prometheus.MustRegister(StoreQueryFeedbackCounter)
-}
+	SignificantFeedbackCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "high_error_rate_feedback_total",
+			Help:      "Counter of query feedback whose actual count is much different than calculated by current statistics",
+		})
+)

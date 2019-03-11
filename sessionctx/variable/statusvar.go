@@ -16,11 +16,13 @@ package variable
 import (
 	"bytes"
 	"crypto/tls"
+	"sync"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 var statisticsList []Statistics
+var statisticsListLock sync.RWMutex
 
 // DefaultStatusVarScopeFlag is the default scope of status variables.
 var DefaultStatusVarScopeFlag = ScopeGlobal | ScopeSession
@@ -41,13 +43,17 @@ type Statistics interface {
 
 // RegisterStatistics registers statistics.
 func RegisterStatistics(s Statistics) {
+	statisticsListLock.Lock()
 	statisticsList = append(statisticsList, s)
+	statisticsListLock.Unlock()
 }
 
 // GetStatusVars gets registered statistics status variables.
 // TODO: Refactor this function to avoid repeated memory allocation / dealloc
 func GetStatusVars(vars *SessionVars) (map[string]*StatusVal, error) {
 	statusVars := make(map[string]*StatusVal)
+	statisticsListLock.RLock()
+	defer statisticsListLock.RUnlock()
 
 	for _, statistics := range statisticsList {
 		vals, err := statistics.Stats(vars)

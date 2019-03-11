@@ -18,10 +18,10 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -65,12 +65,18 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 	dg := new(dataGen4Expr2PbTest)
 
 	funcNames := []string{ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow}
+	funcTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+	}
 	for _, funcName := range funcNames {
-		aggFunc := &AggFuncDesc{
-			Name:        funcName,
-			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
-			HasDistinct: true,
-		}
+		args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
+		aggFunc := NewAggFuncDesc(s.ctx, funcName, args, true)
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
@@ -78,20 +84,18 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 	}
 
 	jsons := []string{
-		"{\"tp\":3002,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":83,\"charset\":\"\"}}],\"sig\":0}",
-		"{\"tp\":3001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":83,\"charset\":\"\"}}],\"sig\":0}",
-		"{\"tp\":3003,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":83,\"charset\":\"\"}}],\"sig\":0}",
+		`{"tp":3002,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
+		`{"tp":3001,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":8,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
+		`{"tp":3003,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
 		"null",
-		"{\"tp\":3005,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":83,\"charset\":\"\"}}],\"sig\":0}",
-		"{\"tp\":3004,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":83,\"charset\":\"\"}}],\"sig\":0}",
-		"{\"tp\":3006,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":83,\"charset\":\"\"}}],\"sig\":0}",
+		`{"tp":3005,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
+		`{"tp":3004,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
+		`{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
 	}
 	for i, funcName := range funcNames {
-		aggFunc := &AggFuncDesc{
-			Name:        funcName,
-			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
-			HasDistinct: false,
-		}
+		args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
+		aggFunc := NewAggFuncDesc(s.ctx, funcName, args, false)
+		aggFunc.RetTp = funcTypes[i]
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)

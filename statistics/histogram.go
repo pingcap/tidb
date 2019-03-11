@@ -15,25 +15,26 @@ package statistics
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
 )
 
 // Histogram represents statistics for a column or index.
@@ -44,7 +45,7 @@ type Histogram struct {
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
 
-	tp *types.FieldType
+	Tp *types.FieldType
 
 	// Histogram elements.
 	//
@@ -63,6 +64,11 @@ type Histogram struct {
 	scalars []scalar
 	// TotColSize is the total column size for the histogram.
 	TotColSize int64
+
+	// Correlation is the statistical correlation between physical row ordering and logical ordering of
+	// the column values. This ranges from -1 to +1, and it is only valid for Column histogram, not for
+	// Index histogram.
+	Correlation float64
 }
 
 // Bucket store the bucket count and repeat.
@@ -84,7 +90,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		NDV:               ndv,
 		NullCount:         nullCount,
 		LastUpdateVersion: version,
-		tp:                tp,
+		Tp:                tp,
 		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
 		TotColSize:        totColSize,
@@ -93,13 +99,13 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 
 // GetLower gets the lower bound of bucket `idx`.
 func (hg *Histogram) GetLower(idx int) *types.Datum {
-	d := hg.Bounds.GetRow(2*idx).GetDatum(0, hg.tp)
+	d := hg.Bounds.GetRow(2*idx).GetDatum(0, hg.Tp)
 	return &d
 }
 
 // GetUpper gets the upper bound of bucket `idx`.
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
-	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.tp)
+	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.Tp)
 	return &d
 }
 
@@ -108,7 +114,7 @@ func (c *Column) AvgColSize(count int64) float64 {
 	if count == 0 {
 		return 0
 	}
-	switch c.Histogram.tp.Tp {
+	switch c.Histogram.Tp.Tp {
 	case mysql.TypeFloat:
 		return 4
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
@@ -138,11 +144,11 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
 	hg.Buckets[len-1] = Bucket{Count: count, Repeat: repeat}
 }
 
-// DecodeTo decodes the histogram bucket values into `tp`.
+// DecodeTo decodes the histogram bucket values into `Tp`.
 func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
 	oldIter := chunk.NewIterator4Chunk(hg.Bounds)
 	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, oldIter.Len())
-	hg.tp = tp
+	hg.Tp = tp
 	for row := oldIter.Begin(); row != oldIter.End(); row = oldIter.Next() {
 		datum, err := tablecodec.DecodeColumnValue(row.GetBytes(0), tp, timeZone)
 		if err != nil {
@@ -153,12 +159,12 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 	return nil
 }
 
-// ConvertTo converts the histogram bucket values into `tp`.
+// ConvertTo converts the histogram bucket values into `Tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		d := row.GetDatum(0, hg.tp)
+		d := row.GetDatum(0, hg.Tp)
 		d, err := d.ConvertTo(sc, tp)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -198,16 +204,23 @@ func isAnalyzed(flag int64) bool {
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch, isAnalyzed int64) error {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch, isAnalyzed int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(ctx, "begin")
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn := h.mu.ctx.Txn()
+	defer func() {
+		err = finishTransaction(context.Background(), exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	version := txn.StartTS()
 	var sql string
 	// If the count is less than 0, then we do not want to update the modify count and count.
@@ -218,26 +231,26 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	_, err = exec.Execute(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	data, err := encodeCMSketch(cms)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	flag := 0
 	if isAnalyzed == 1 {
 		flag = analyzeFlag
 	}
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion, flag)
+	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d, %f)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion, flag, hg.Correlation)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
 	_, err = exec.Execute(ctx, deleteSQL)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	for i := range hg.Buckets {
@@ -248,43 +261,44 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		var upperBound types.Datum
 		upperBound, err = hg.GetUpper(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 		var lowerBound types.Datum
 		lowerBound, err = hg.GetLower(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes())
 		_, err = exec.Execute(ctx, insertSQL)
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 	}
-	_, err = exec.Execute(ctx, "commit")
-	return errors.Trace(err)
+	return
 }
 
 // SaveMetaToStorage will save stats_meta to storage.
-func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) error {
+func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(ctx, "begin")
+	_, err = exec.Execute(ctx, "begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	var sql string
-	version := h.mu.ctx.Txn().StartTS()
+	version := txn.StartTS()
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
-	if _, err = exec.Execute(ctx, sql); err != nil {
-		_, err1 := exec.Execute(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(ctx, "commit")
-	return errors.Trace(err)
+	_, err = exec.Execute(ctx, sql)
+	return
 }
 
 func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
@@ -341,7 +355,7 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 	if idxCols == 0 {
 		return value.ToString()
 	}
-	decodedVals, err := codec.Decode(value.GetBytes(), idxCols)
+	decodedVals, err := codec.DecodeRange(value.GetBytes(), idxCols)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -350,6 +364,14 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 		return "", errors.Trace(err)
 	}
 	return str, nil
+}
+
+func (hg *Histogram) bucketToString(bktID, idxCols int) string {
+	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols)
+	terror.Log(errors.Trace(err))
+	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols)
+	terror.Log(errors.Trace(err))
+	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
 }
 
 // ToString gets the string representation for the histogram.
@@ -361,11 +383,7 @@ func (hg *Histogram) ToString(idxCols int) string {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d totColSize:%d", hg.ID, hg.NDV, hg.TotColSize))
 	}
 	for i := 0; i < hg.Len(); i++ {
-		upperVal, err := ValueToString(hg.GetUpper(i), idxCols)
-		terror.Log(errors.Trace(err))
-		lowerVal, err := ValueToString(hg.GetLower(i), idxCols)
-		terror.Log(errors.Trace(err))
-		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", hg.Buckets[i].Count, lowerVal, upperVal, hg.Buckets[i].Repeat))
+		strs = append(strs, hg.bucketToString(i, idxCols))
 	}
 	return strings.Join(strs, "\n")
 }
@@ -378,14 +396,14 @@ func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 		if match {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
-		return hg.totalRowCount() / float64(hg.NDV)
+		return hg.notNullCount() / float64(hg.NDV)
 	}
 	if match {
-		cmp := chunk.GetCompareFunc(hg.tp)
+		cmp := chunk.GetCompareFunc(hg.Tp)
 		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
-		return hg.totalRowCount() / float64(hg.NDV)
+		return hg.notNullCount() / float64(hg.NDV)
 	}
 	return 0
 }
@@ -405,14 +423,14 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 }
 
 // lessRowCount estimates the row count where the column less than value.
-func (hg *Histogram) lessRowCount(value types.Datum) float64 {
+func (hg *Histogram) lessRowCountWithBktIdx(value types.Datum) (float64, int) {
 	// all the values is null
-	if hg.Bounds == nil {
-		return 0
+	if hg.Bounds.NumRows() == 0 {
+		return 0, 0
 	}
 	index, match := hg.Bounds.LowerBound(0, &value)
 	if index == hg.Bounds.NumRows() {
-		return hg.totalRowCount()
+		return hg.totalRowCount(), hg.Len() - 1
 	}
 	// Since we store the lower and upper bound together, so dividing the index by 2 will get the bucket index.
 	bucketIdx := index / 2
@@ -423,11 +441,16 @@ func (hg *Histogram) lessRowCount(value types.Datum) float64 {
 	}
 	if index%2 == 1 {
 		if match {
-			return curCount - curRepeat
+			return curCount - curRepeat, bucketIdx
 		}
-		return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount)
+		return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
 	}
-	return preCount
+	return preCount, bucketIdx
+}
+
+func (hg *Histogram) lessRowCount(value types.Datum) float64 {
+	result, _ := hg.lessRowCountWithBktIdx(value)
+	return result
 }
 
 // lessAndEqRowCount estimates the row count where the column less than or equal to value.
@@ -450,16 +473,20 @@ func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 }
 
 func (hg *Histogram) totalRowCount() float64 {
+	return hg.notNullCount() + float64(hg.NullCount)
+}
+
+func (hg *Histogram) notNullCount() float64 {
 	if hg.Len() == 0 {
-		return float64(hg.NullCount)
+		return 0
 	}
-	return float64(hg.Buckets[hg.Len()-1].Count + hg.NullCount)
+	return float64(hg.Buckets[hg.Len()-1].Count)
 }
 
 // mergeBuckets is used to merge every two neighbor buckets.
 func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	curBuck := 0
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.tp}, bucketIdx)
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, bucketIdx)
 	for i := 0; i+1 <= bucketIdx; i += 2 {
 		hg.Buckets[curBuck] = hg.Buckets[i+1]
 		c.AppendDatum(0, hg.GetLower(i))
@@ -489,12 +516,20 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 
 // validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
 // the possible types of range are index key range and handle key range.
-func validRange(ran *ranger.Range) bool {
+func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) bool {
 	var low, high []byte
-	if ran.LowVal[0].Kind() == types.KindBytes {
+	if encoded {
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
-		low, high = codec.EncodeInt(nil, ran.LowVal[0].GetInt64()), codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+		var err error
+		low, err = codec.EncodeKey(sc, nil, ran.LowVal[0])
+		if err != nil {
+			return false
+		}
+		high, err = codec.EncodeKey(sc, nil, ran.HighVal[0])
+		if err != nil {
+			return false
+		}
 	}
 	if ran.LowExclude {
 		low = kv.Key(low).PrefixNext()
@@ -506,9 +541,9 @@ func validRange(ran *ranger.Range) bool {
 }
 
 // SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
-// as inf, so all the split ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
+// as inf, so all the split Ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
 // (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
-func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
+func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, ranges []*ranger.Range, encoded bool) []*ranger.Range {
 	split := make([]*ranger.Range, 0, len(ranges))
 	for len(ranges) > 0 {
 		// Find the last bound that greater or equal to the LowVal.
@@ -544,7 +579,7 @@ func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
 		// Split according to the upper bound.
 		cmp := chunk.Compare(upperBound, 0, &ranges[0].LowVal[0])
 		if cmp > 0 || (cmp == 0 && !ranges[0].LowExclude) {
-			upper := upperBound.GetDatum(0, hg.tp)
+			upper := upperBound.GetDatum(0, hg.Tp)
 			split = append(split, &ranger.Range{
 				LowExclude:  ranges[0].LowExclude,
 				LowVal:      []types.Datum{ranges[0].LowVal[0]},
@@ -552,7 +587,7 @@ func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
 				HighExclude: false})
 			ranges[0].LowVal[0] = upper
 			ranges[0].LowExclude = true
-			if !validRange(ranges[0]) {
+			if !validRange(sc, ranges[0], encoded) {
 				ranges = ranges[1:]
 			}
 		}
@@ -600,9 +635,13 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 
 func (hg *Histogram) popFirstBucket() {
 	hg.Buckets = hg.Buckets[1:]
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.tp, hg.tp}, hg.Bounds.NumRows()-2)
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp, hg.Tp}, hg.Bounds.NumRows()-2)
 	c.Append(hg.Bounds, 2, hg.Bounds.NumRows())
 	hg.Bounds = c
+}
+
+func (hg *Histogram) isIndexHist() bool {
+	return hg.Tp.Tp == mysql.TypeBlob
 }
 
 // MergeHistograms merges two histograms.
@@ -656,13 +695,23 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	return lh, nil
 }
 
-// AvgCountPerValue gets the average row count per value by the data of histogram.
-func (hg *Histogram) AvgCountPerValue(totalCount int64) float64 {
-	curNDV := float64(hg.NDV) * hg.getIncreaseFactor(totalCount)
+// AvgCountPerNotNullValue gets the average row count per value by the data of histogram.
+func (hg *Histogram) AvgCountPerNotNullValue(totalCount int64) float64 {
+	factor := hg.getIncreaseFactor(totalCount)
+	totalNotNull := hg.notNullCount() * factor
+	curNDV := float64(hg.NDV) * factor
 	if curNDV == 0 {
 		curNDV = 1
 	}
-	return float64(totalCount) / curNDV
+	return totalNotNull / curNDV
+}
+
+func (hg *Histogram) outOfRange(val types.Datum) bool {
+	if hg.Len() == 0 {
+		return true
+	}
+	return chunk.Compare(hg.Bounds.GetRow(0), 0, &val) > 0 ||
+		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
 // ErrorRate is the error rate of estimate row count by bucket and cm sketch.
@@ -676,9 +725,9 @@ type ErrorRate struct {
 // then the column is not pseudo.
 const MaxErrorRate = 0.25
 
-// IsPseudo is true when the total of query is zero or the average error
+// NotAccurate is true when the total of query is zero or the average error
 // rate is greater than MaxErrorRate.
-func (e *ErrorRate) IsPseudo() bool {
+func (e *ErrorRate) NotAccurate() bool {
 	if e.QueryTotal == 0 {
 		return true
 	}
@@ -699,8 +748,10 @@ func (e *ErrorRate) merge(rate *ErrorRate) {
 type Column struct {
 	Histogram
 	*CMSketch
-	Count int64
-	Info  *model.ColumnInfo
+	PhysicalID int64
+	Count      int64
+	Info       *model.ColumnInfo
+	isHandle   bool
 	ErrorRate
 }
 
@@ -708,23 +759,26 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
-func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
+func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
 	if val.IsNull() {
 		return float64(c.NullCount), nil
+	}
+	// all the values is null
+	if c.Histogram.Bounds.NumRows() == 0 {
+		return 0.0, nil
+	}
+	if c.NDV > 0 && c.outOfRange(val) {
+		return float64(modifyCount) / float64(c.NDV), nil
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
 		return float64(count), errors.Trace(err)
 	}
-	// all the values is null
-	if c.Histogram.Bounds == nil {
-		return 0.0, nil
-	}
 	return c.Histogram.equalRowCount(val), nil
 }
 
 // getColumnRowCount estimates the row count by a slice of Range.
-func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range) (float64, error) {
+func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
@@ -735,7 +789,7 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			// the point case.
 			if !rg.LowExclude && !rg.HighExclude {
 				var cnt float64
-				cnt, err = c.equalRowCount(sc, rg.LowVal[0])
+				cnt, err = c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
@@ -745,15 +799,18 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		}
 		// the interval case.
 		cnt := c.betweenRowCount(rg.LowVal[0], rg.HighVal[0])
+		if c.outOfRange(rg.LowVal[0]) || c.outOfRange(rg.HighVal[0]) {
+			cnt += float64(modifyCount) / outOfRangeBetweenRate
+		}
 		if rg.LowExclude {
-			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0])
+			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
 		}
 		if !rg.HighExclude {
-			highCnt, err := c.equalRowCount(sc, rg.HighVal[0])
+			highCnt, err := c.equalRowCount(sc, rg.HighVal[0], modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -782,14 +839,18 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
-func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {
-	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.queryBytes(b))
+func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) float64 {
+	val := types.NewBytesDatum(b)
+	if idx.NDV > 0 && idx.outOfRange(val) {
+		return float64(modifyCount) / (float64(idx.NDV))
 	}
-	return idx.Histogram.equalRowCount(types.NewBytesDatum(b))
+	if idx.CMSketch != nil {
+		return float64(idx.CMSketch.QueryBytes(b))
+	}
+	return idx.Histogram.equalRowCount(val)
 }
 
-func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range) (float64, error) {
+func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range, modifyCount int64) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)
@@ -803,7 +864,7 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
 		if fullLen && bytes.Equal(lb, rb) {
 			if !indexRange.LowExclude && !indexRange.HighExclude {
-				totalCount += idx.equalRowCount(sc, lb)
+				totalCount += idx.equalRowCount(sc, lb, modifyCount)
 			}
 			continue
 		}
@@ -816,9 +877,198 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
 		totalCount += idx.betweenRowCount(l, r)
+		if idx.outOfRange(l) || idx.outOfRange(r) {
+			totalCount += float64(modifyCount) / outOfRangeBetweenRate
+		}
 	}
 	if totalCount > idx.totalRowCount() {
 		totalCount = idx.totalRowCount()
 	}
 	return totalCount, nil
+}
+
+type countByRangeFunc = func(*stmtctx.StatementContext, int64, []*ranger.Range) (float64, error)
+
+// newHistogramBySelectivity fulfills the content of new histogram by the given selectivity result.
+// TODO: Datum is not efficient, try to avoid using it here.
+//  Also, there're redundant calculation with Selectivity(). We need to reduce it too.
+func newHistogramBySelectivity(sc *stmtctx.StatementContext, histID int64, oldHist, newHist *Histogram, ranges []*ranger.Range, cntByRangeFunc countByRangeFunc) error {
+	cntPerVal := int64(oldHist.AvgCountPerNotNullValue(int64(oldHist.totalRowCount())))
+	var totCnt int64 = 0
+	for boundIdx, ranIdx, highRangeIdx := 0, 0, 0; boundIdx < oldHist.Bounds.NumRows() && ranIdx < len(ranges); boundIdx, ranIdx = boundIdx+2, highRangeIdx {
+		for highRangeIdx < len(ranges) && chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &ranges[highRangeIdx].HighVal[0]) >= 0 {
+			highRangeIdx++
+		}
+		if boundIdx+2 >= oldHist.Bounds.NumRows() && highRangeIdx < len(ranges) && ranges[highRangeIdx].HighVal[0].Kind() == types.KindMaxValue {
+			highRangeIdx++
+		}
+		if ranIdx == highRangeIdx {
+			continue
+		}
+		cnt, err := cntByRangeFunc(sc, histID, ranges[ranIdx:highRangeIdx])
+		// This should not happen.
+		if err != nil {
+			return err
+		}
+		if cnt == 0 {
+			continue
+		}
+		if int64(cnt) > oldHist.bucketCount(boundIdx/2) {
+			cnt = float64(oldHist.bucketCount(boundIdx / 2))
+		}
+		newHist.Bounds.AppendRow(oldHist.Bounds.GetRow(boundIdx))
+		newHist.Bounds.AppendRow(oldHist.Bounds.GetRow(boundIdx + 1))
+		totCnt += int64(cnt)
+		bkt := Bucket{Count: totCnt}
+		if chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &ranges[highRangeIdx-1].HighVal[0]) == 0 && !ranges[highRangeIdx-1].HighExclude {
+			bkt.Repeat = cntPerVal
+		}
+		newHist.Buckets = append(newHist.Buckets, bkt)
+		switch newHist.Tp.EvalType() {
+		case types.ETString, types.ETDecimal, types.ETDatetime, types.ETTimestamp:
+			newHist.scalars = append(newHist.scalars, oldHist.scalars[boundIdx/2])
+		}
+	}
+	return nil
+}
+
+func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Index, error) {
+	var (
+		ranLowEncode, ranHighEncode []byte
+		err                         error
+	)
+	newIndexHist := &Index{Info: idx.Info, statsVer: idx.statsVer, CMSketch: idx.CMSketch}
+	newIndexHist.Histogram = *NewHistogram(idx.ID, int64(float64(idx.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
+
+	lowBucketIdx, highBucketIdx := 0, 0
+	var totCnt int64 = 0
+
+	// Bucket bound of index is encoded one, so we need to decode it if we want to calculate the fraction accurately.
+	// TODO: enhance its calculation.
+	// Now just remove the bucket that no range fell in.
+	for _, ran := range statsNode.Ranges {
+		lowBucketIdx = highBucketIdx
+		ranLowEncode, ranHighEncode, err = ran.Encode(sc, ranLowEncode, ranHighEncode)
+		if err != nil {
+			return nil, err
+		}
+		for ; highBucketIdx < idx.Len(); highBucketIdx++ {
+			// Encoded value can only go to its next quickly. So ranHighEncode is actually range.HighVal's PrefixNext value.
+			// So the Bound should also go to its PrefixNext.
+			bucketLowerEncoded := idx.Bounds.GetRow(highBucketIdx * 2).GetBytes(0)
+			if bytes.Compare(ranHighEncode, kv.Key(bucketLowerEncoded).PrefixNext()) < 0 {
+				break
+			}
+		}
+		for ; lowBucketIdx < highBucketIdx; lowBucketIdx++ {
+			bucketUpperEncoded := idx.Bounds.GetRow(lowBucketIdx*2 + 1).GetBytes(0)
+			if bytes.Compare(ranLowEncode, bucketUpperEncoded) <= 0 {
+				break
+			}
+		}
+		if lowBucketIdx >= idx.Len() {
+			break
+		}
+		for i := lowBucketIdx; i < highBucketIdx; i++ {
+			newIndexHist.Bounds.AppendRow(idx.Bounds.GetRow(i * 2))
+			newIndexHist.Bounds.AppendRow(idx.Bounds.GetRow(i*2 + 1))
+			totCnt += idx.bucketCount(i)
+			newIndexHist.Buckets = append(newIndexHist.Buckets, Bucket{Repeat: idx.Buckets[i].Repeat, Count: totCnt})
+			newIndexHist.scalars = append(newIndexHist.scalars, idx.scalars[i])
+		}
+	}
+	return newIndexHist, nil
+}
+
+// NewHistCollBySelectivity creates new HistColl by the given statsNodes.
+func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, statsNodes []*StatsNode) *HistColl {
+	newColl := &HistColl{
+		Columns:       make(map[int64]*Column),
+		Indices:       make(map[int64]*Index),
+		Idx2ColumnIDs: coll.Idx2ColumnIDs,
+		ColID2IdxID:   coll.ColID2IdxID,
+		Count:         coll.Count,
+	}
+	for _, node := range statsNodes {
+		if node.Tp == indexType {
+			idxHist, ok := coll.Indices[node.ID]
+			if !ok {
+				continue
+			}
+			newIdxHist, err := idxHist.newIndexBySelectivity(sc, node)
+			if err != nil {
+				log.Warnf("[Histogram-in-plan]: error happened when calculating row count: %v, failed to build histogram for index %v of table %v", err, idxHist.Info.Name, idxHist.Info.Table)
+				continue
+			}
+			newColl.Indices[node.ID] = newIdxHist
+			continue
+		}
+		oldCol, ok := coll.Columns[node.ID]
+		if !ok {
+			continue
+		}
+		newCol := &Column{
+			PhysicalID: oldCol.PhysicalID,
+			Info:       oldCol.Info,
+			isHandle:   oldCol.isHandle,
+			CMSketch:   oldCol.CMSketch,
+		}
+		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
+		var err error
+		splitRanges := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
+		// Deal with some corner case.
+		if len(splitRanges) > 0 {
+			// Deal with NULL values.
+			if splitRanges[0].LowVal[0].IsNull() {
+				newCol.NullCount = oldCol.NullCount
+				if splitRanges[0].HighVal[0].IsNull() {
+					splitRanges = splitRanges[1:]
+				} else {
+					splitRanges[0].LowVal[0].SetMinNotNull()
+				}
+			}
+		}
+		if oldCol.isHandle {
+			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByIntColumnRanges)
+		} else {
+			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByColumnRanges)
+		}
+		if err != nil {
+			log.Warnf("[Histogram-in-plan]: error happened when calculating row count: %v", err)
+			continue
+		}
+		newColl.Columns[node.ID] = newCol
+	}
+	for id, idx := range coll.Indices {
+		_, ok := newColl.Indices[id]
+		if !ok {
+			newColl.Indices[id] = idx
+		}
+	}
+	for id, col := range coll.Columns {
+		_, ok := newColl.Columns[id]
+		if !ok {
+			newColl.Columns[id] = col
+		}
+	}
+	return newColl
+}
+
+func (idx *Index) outOfRange(val types.Datum) bool {
+	if idx.Histogram.Len() == 0 {
+		return true
+	}
+	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
+		matchPrefix(idx.Bounds.GetRow(0), 0, &val)
+	withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
+	return !withInLowBoundOrPrefixMatch || !withInHighBound
+}
+
+// matchPrefix checks whether ad is the prefix of value
+func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
+	switch ad.Kind() {
+	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
+		return strings.HasPrefix(row.GetString(colIdx), ad.GetString())
+	}
+	return false
 }

@@ -14,7 +14,7 @@
 package aggregation
 
 import (
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -43,7 +43,7 @@ func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
 	var err error
 	d.key, err = codec.EncodeValue(d.sc, d.key, values...)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	d.vals = d.existingKeys.Get(d.key, d.vals[:0])
 	if len(d.vals) > 0 {
@@ -78,7 +78,7 @@ func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.
 	}
 
 	if err != nil {
-		return data, errors.Trace(err)
+		return data, err
 	}
 	if data.IsNull() {
 		return sum, nil

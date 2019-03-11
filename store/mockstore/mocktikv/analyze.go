@@ -14,22 +14,20 @@
 package mocktikv
 
 import (
-	"time"
+	"context"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coprocessor.Response {
@@ -73,6 +71,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		IndexScan:      &tipb.IndexScan{Desc: false},
+		execDetail:     new(execDetail),
 	}
 	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob))
 	var cms *statistics.CMSketch
@@ -118,9 +117,13 @@ type analyzeColumnsExec struct {
 	fields  []*ast.ResultField
 }
 
-func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
+func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	sc.TimeZone, err = constructTimeZone("", int(analyzeReq.TimeZoneOffset))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
@@ -136,13 +139,14 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 			startTS:        analyzeReq.GetStartTs(),
 			isolationLevel: h.isolationLevel,
 			mvccStore:      h.mvccStore,
+			execDetail:     new(execDetail),
 		},
 	}
 	e.fields = make([]*ast.ResultField, len(columns))
 	for i := range e.fields {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}
+		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: mysql.DefaultCharset, Collate: mysql.DefaultCollationName}
 		e.fields[i] = rf
 	}
 
@@ -186,7 +190,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	return &coprocessor.Response{Data: data}, nil
 }
 
-// Fields implements the ast.RecordSet Fields interface.
+// Fields implements the sqlexec.RecordSet Fields interface.
 func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
 	return e.fields
 }
@@ -210,27 +214,27 @@ func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error)
 	return datumRow, nil
 }
 
-func (e *analyzeColumnsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	row, err := e.getNext(ctx)
 	if row == nil || err != nil {
 		return errors.Trace(err)
 	}
 	for i := 0; i < len(row); i++ {
-		chk.AppendDatum(i, &row[i])
+		req.AppendDatum(i, &row[i])
 	}
 	return nil
 }
 
-func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
+func (e *analyzeColumnsExec) NewRecordBatch() *chunk.RecordBatch {
 	fields := make([]*types.FieldType, 0, len(e.fields))
 	for _, field := range e.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunkWithCapacity(fields, 1)
+	return chunk.NewRecordBatch(chunk.NewChunkWithCapacity(fields, 1))
 }
 
-// Close implements the ast.RecordSet Close interface.
+// Close implements the sqlexec.RecordSet Close interface.
 func (e *analyzeColumnsExec) Close() error {
 	return nil
 }

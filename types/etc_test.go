@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -122,7 +122,7 @@ func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
 	}
 
 	for _, t := range tbl {
-		f := getMaxFloat(t.Flen, t.Decimal)
+		f := GetMaxFloat(t.Flen, t.Decimal)
 		c.Assert(f, Equals, t.Expect)
 	}
 }
@@ -190,6 +190,6 @@ func (s *testTypeEtcSuite) TestTruncate(c *C) {
 	for _, t := range tbl {
 		f, err := TruncateFloat(t.Input, t.Flen, t.Decimal)
 		c.Assert(f, Equals, t.Expect)
-		c.Assert(terror.ErrorEqual(err, t.Err), IsTrue)
+		c.Assert(terror.ErrorEqual(err, t.Err), IsTrue, Commentf("err %v", err))
 	}
 }

@@ -178,25 +178,32 @@ var (
 			Name:      "region_cache_operations_total",
 			Help:      "Counter of region cache.",
 		}, []string{LblType, LblResult})
-)
 
-func init() {
-	prometheus.MustRegister(TiKVTxnCounter)
-	prometheus.MustRegister(TiKVSnapshotCounter)
-	prometheus.MustRegister(TiKVTxnCmdHistogram)
-	prometheus.MustRegister(TiKVBackoffCounter)
-	prometheus.MustRegister(TiKVBackoffHistogram)
-	prometheus.MustRegister(TiKVSendReqHistogram)
-	prometheus.MustRegister(TiKVConnPoolHistogram)
-	prometheus.MustRegister(TiKVCoprocessorHistogram)
-	prometheus.MustRegister(TiKVLockResolverCounter)
-	prometheus.MustRegister(TiKVRegionErrorCounter)
-	prometheus.MustRegister(TiKVTxnWriteKVCountHistogram)
-	prometheus.MustRegister(TiKVTxnWriteSizeHistogram)
-	prometheus.MustRegister(TiKVRawkvCmdHistogram)
-	prometheus.MustRegister(TiKVRawkvSizeHistogram)
-	prometheus.MustRegister(TiKVTxnRegionsNumHistogram)
-	prometheus.MustRegister(TiKVLoadSafepointCounter)
-	prometheus.MustRegister(TiKVSecondaryLockCleanupFailureCounter)
-	prometheus.MustRegister(TiKVRegionCacheCounter)
-}
+	TiKVLocalLatchWaitTimeHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "local_latch_wait_seconds",
+			Help:      "Wait time of a get local latch.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
+		})
+
+	// TiKVPendingBatchRequests indicates the number of requests pending in the batch channel.
+	TiKVPendingBatchRequests = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "pending_batch_requests",
+			Help:      "Pending batch requests",
+		})
+
+	TiKVBatchWaitDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_wait_duration",
+			// Min bucket is [0, 1ns).
+			Buckets: prometheus.ExponentialBuckets(1, 2, 30),
+			Help:    "batch wait duration",
+		})
+)

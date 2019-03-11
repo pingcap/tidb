@@ -17,15 +17,16 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -69,8 +70,8 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("\"%s\"", sf)), nil
 }
 
-// NewFunction creates a new scalar function or constant.
-func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+// newFunctionImpl creates a new scalar function or constant.
+func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
@@ -79,13 +80,13 @@ func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldTy
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)
+		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
 		retType = builtinRetTp
@@ -95,13 +96,26 @@ func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldTy
 		RetType:  retType,
 		Function: f,
 	}
-	return FoldConstant(sf), nil
+	if fold {
+		return FoldConstant(sf), nil
+	}
+	return sf, nil
+}
+
+// NewFunction creates a new scalar function or constant via a constant folding.
+func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, true, funcName, retType, args...)
+}
+
+// NewFunctionBase creates a new scalar function with no constant folding.
+func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, false, funcName, retType, args...)
 }
 
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
 func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	return expr
 }
 
@@ -160,7 +174,7 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 }
 
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(row types.Row) (d types.Datum, err error) {
+func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	var (
 		res    interface{}
 		isNull bool
@@ -190,44 +204,44 @@ func (sf *ScalarFunction) Eval(row types.Row) (d types.Datum, err error) {
 
 	if isNull || err != nil {
 		d.SetValue(nil)
-		return d, errors.Trace(err)
+		return d, err
 	}
 	d.SetValue(res)
 	return
 }
 
 // EvalInt implements Expression interface.
-func (sf *ScalarFunction) EvalInt(ctx sessionctx.Context, row types.Row) (int64, bool, error) {
+func (sf *ScalarFunction) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	return sf.Function.evalInt(row)
 }
 
 // EvalReal implements Expression interface.
-func (sf *ScalarFunction) EvalReal(ctx sessionctx.Context, row types.Row) (float64, bool, error) {
+func (sf *ScalarFunction) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
 	return sf.Function.evalReal(row)
 }
 
 // EvalDecimal implements Expression interface.
-func (sf *ScalarFunction) EvalDecimal(ctx sessionctx.Context, row types.Row) (*types.MyDecimal, bool, error) {
+func (sf *ScalarFunction) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
 	return sf.Function.evalDecimal(row)
 }
 
 // EvalString implements Expression interface.
-func (sf *ScalarFunction) EvalString(ctx sessionctx.Context, row types.Row) (string, bool, error) {
+func (sf *ScalarFunction) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
 	return sf.Function.evalString(row)
 }
 
 // EvalTime implements Expression interface.
-func (sf *ScalarFunction) EvalTime(ctx sessionctx.Context, row types.Row) (types.Time, bool, error) {
+func (sf *ScalarFunction) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
 	return sf.Function.evalTime(row)
 }
 
 // EvalDuration implements Expression interface.
-func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Duration, bool, error) {
+func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
 	return sf.Function.evalDuration(row)
 }
 
 // EvalJSON implements Expression interface.
-func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row types.Row) (json.BinaryJSON, bool, error) {
+func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
 }
 
@@ -245,14 +259,18 @@ func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (sf *ScalarFunction) ResolveIndices(schema *Schema) Expression {
+func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
 	newSf := sf.Clone()
-	newSf.resolveIndices(schema)
-	return newSf
+	err := newSf.resolveIndices(schema)
+	return newSf, err
 }
 
-func (sf *ScalarFunction) resolveIndices(schema *Schema) {
+func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 	for _, arg := range sf.GetArgs() {
-		arg.resolveIndices(schema)
+		err := arg.resolveIndices(schema)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }

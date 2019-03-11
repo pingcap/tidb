@@ -22,44 +22,24 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 const eps = 1e-9
 
-var _ = Suite(&testSelectivitySuite{})
-
-type testSelectivitySuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-}
-
-func (s *testSelectivitySuite) SetUpSuite(c *C) {
-	store, dom, err := newStoreWithBootstrap(0)
-	c.Assert(err, IsNil)
-	s.dom = dom
-	s.store = store
-}
-
-func (s *testSelectivitySuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-
 // generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
 // If dimension is x, num is y, the total number of datum is y^x. And This slice is sorted.
-func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Datum, error) {
+func (s *testStatsSuite) generateIntDatum(dimension, num int) ([]types.Datum, error) {
 	length := int(math.Pow(float64(num), float64(dimension)))
 	ret := make([]types.Datum, length)
 	if dimension == 1 {
@@ -97,21 +77,25 @@ func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.
 }
 
 func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
+	histColl := statistics.HistColl{
+		PhysicalID:     tbl.ID,
+		HavePhysicalID: true,
+		Count:          rowCount,
+		Columns:        make(map[int64]*statistics.Column, len(tbl.Columns)),
+		Indices:        make(map[int64]*statistics.Index, len(tbl.Indices)),
+	}
 	statsTbl := &statistics.Table{
-		TableID: tbl.ID,
-		Count:   rowCount,
-		Columns: make(map[int64]*statistics.Column, len(tbl.Columns)),
-		Indices: make(map[int64]*statistics.Index, len(tbl.Indices)),
+		HistColl: histColl,
 	}
 	return statsTbl
 }
 
-func (s *testSelectivitySuite) prepareSelectivity(testKit *testkit.TestKit, c *C) *statistics.Table {
+func (s *testStatsSuite) prepareSelectivity(testKit *testkit.TestKit, c *C) *statistics.Table {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx_cd(c, d), index idx_de(d, e))")
 
-	is := s.dom.InfoSchema()
+	is := s.do.InfoSchema()
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tbl := tb.Meta()
@@ -134,10 +118,11 @@ func (s *testSelectivitySuite) prepareSelectivity(testKit *testkit.TestKit, c *C
 	return statsTbl
 }
 
-func (s *testSelectivitySuite) TestSelectivity(c *C) {
+func (s *testStatsSuite) TestSelectivity(c *C) {
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	statsTbl := s.prepareSelectivity(testKit, c)
-	is := s.dom.InfoSchema()
+	is := s.do.InfoSchema()
 
 	tests := []struct {
 		exprs       string
@@ -183,41 +168,32 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		stmts, err := session.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
-		err = plan.Preprocess(ctx, stmts[0], is, false)
+
+		err = plannercore.Preprocess(ctx, stmts[0], is)
 		c.Assert(err, IsNil, comment)
-		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
-		ratio, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+
+		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		ds := sel.Children()[0].(*plannercore.DataSource)
+
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
+
+		ratio, _, err := histColl.Selectivity(ctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 
-		statsTbl.Count *= 10
-		ratio, err = statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+		histColl.Count *= 10
+		ratio, _, err = histColl.Selectivity(ctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
-		statsTbl.Count /= 10
 	}
-}
-
-func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
-	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t, t1")
-	testKit.MustExec("create table t(a int, b int, unique key idx(a,b))")
-	testKit.MustQuery("explain select * from t where a = 1 and b = 1").Check(testkit.Rows(
-		"IndexReader_6 1.00 root index:IndexScan_5",
-		"└─IndexScan_5 1.00 cop table:t, index:a, b, range:[1 1,1 1], keep order:false"))
-
-	testKit.MustExec("create table t1(a int, b int, primary key(a))")
-	testKit.MustQuery("explain select b from t1 where a = 1").Check(testkit.Rows(
-		"Projection_4 1.00 root test.t1.b",
-		"└─TableReader_6 1.00 root data:TableScan_5",
-		"  └─TableScan_5 1.00 cop table:t1, range:[1,1], keep order:false"))
 }
 
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
 // consists several columns, and the first column has small NDV.
-func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
+func (s *testStatsSuite) TestDiscreteDistribution(c *C) {
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -230,19 +206,134 @@ func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
 	}
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where a = 'tw' and b < 0").Check(testkit.Rows(
-		"IndexReader_9 0.00 root index:IndexScan_8",
-		"└─IndexScan_8 0.00 cop table:t, index:a, b, range:[tw -inf,tw 0), keep order:false"))
+		"IndexReader_6 0.00 root index:IndexScan_5",
+		"└─IndexScan_5 0.00 cop table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
+}
+
+func (s *testStatsSuite) TestSelectCombinedLowBound(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(id int auto_increment, kid int, pid int, primary key(id), key(kid, pid))")
+	testKit.MustExec("insert into t (kid, pid) values (1,2), (1,3), (1,4),(1, 11), (1, 12), (1, 13), (1, 14), (2, 2), (2, 3), (2, 4)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("explain select * from t where kid = 1").Check(testkit.Rows(
+		"IndexReader_6 7.00 root index:IndexScan_5",
+		"└─IndexScan_5 7.00 cop table:t, index:kid, pid, range:[1,1], keep order:false"))
+}
+
+func getRange(start, end int64) []*ranger.Range {
+	ran := &ranger.Range{
+		LowVal:  []types.Datum{types.NewIntDatum(start)},
+		HighVal: []types.Datum{types.NewIntDatum(end)},
+	}
+	return []*ranger.Range{ran}
+}
+
+func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
+	testKit.MustExec("analyze table t")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	h := s.do.StatsHandle()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	testKit.MustExec("analyze table t")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
+	}
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl := h.GetTableStats(table.Meta())
+
+	sc := &stmtctx.StatementContext{}
+	colID := table.Meta().Columns[0].ID
+	count, err := statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(30, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2.0)
+
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 4.2)
+
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 4.2)
+
+	idxID := table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.2)
+
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2.2)
+
+	testKit.MustExec("truncate table t")
+	testKit.MustExec("insert into t values (null, null)")
+	testKit.MustExec("analyze table t")
+	table, err = s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(1, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int, b int, index idx(b))")
+	testKit.MustExec("insert into t values (1,1)")
+	testKit.MustExec("analyze table t")
+	table, err = s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(2, 2))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+
+	idxID = table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(2, 2))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+}
+
+func (s *testStatsSuite) TestPrimaryKeySelectivity(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a char(10) primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > "t"`).Check(testkit.Rows(
+		"IndexLookUp_10 3333.33 root ",
+		"├─IndexScan_8 3333.33 cop table:t, index:a, range:(\"t\",+inf], keep order:false, stats:pseudo",
+		"└─TableScan_9 3333.33 cop table:t, keep order:false, stats:pseudo"))
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > 1`).Check(testkit.Rows(
+		"TableReader_6 3333.33 root data:TableScan_5",
+		"└─TableScan_5 3333.33 cop table:t, range:(1,+inf], keep order:false, stats:pseudo"))
 }
 
 func BenchmarkSelectivity(b *testing.B) {
 	c := &C{}
-	s := &testSelectivitySuite{}
+	s := &testStatsSuite{}
 	s.SetUpSuite(c)
 	defer s.TearDownSuite(c)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	statsTbl := s.prepareSelectivity(testKit, c)
-	is := s.dom.InfoSchema()
+	is := s.do.InfoSchema()
 	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
 	sql := "select * from t where " + exprs
 	comment := Commentf("for %s", exprs)
@@ -250,19 +341,19 @@ func BenchmarkSelectivity(b *testing.B) {
 	stmts, err := session.Parse(ctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = plan.Preprocess(ctx, stmts[0], is, false)
+	err = plannercore.Preprocess(ctx, stmts[0], is)
 	c.Assert(err, IsNil, comment)
-	p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+	p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
 	file, _ := os.Create("cpu.profile")
 	defer file.Close()
 	pprof.StartCPUProfile(file)
 
-	b.Run("selectivity", func(b *testing.B) {
+	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+			_, _, err := statsTbl.Selectivity(ctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions)
 			c.Assert(err, IsNil)
 		}
 		b.ReportAllocs()

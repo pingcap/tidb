@@ -14,24 +14,21 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/gcutil"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // SetExecutor executes set statement.
@@ -43,8 +40,8 @@ type SetExecutor struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *SetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
@@ -54,7 +51,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames {
 			// This is set charset stmt.
-			dt, err := v.Expr.(*expression.Constant).Eval(nil)
+			dt, err := v.Expr.(*expression.Constant).Eval(chunk.Row{})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -72,7 +69,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
-			value, err := v.Expr.Eval(nil)
+			value, err := v.Expr.Eval(chunk.Row{})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -115,7 +112,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
-		return variable.UnknownSystemVar.GenByArgs(name)
+		return variable.UnknownSystemVar.GenWithStackByArgs(name)
 	}
 	if sysVar.Scope == variable.ScopeNone {
 		return errors.Errorf("Variable '%s' is a read only variable", name)
@@ -159,7 +156,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
 		if newSnapshotIsSet {
-			err = validateSnapshot(e.ctx, sessionVars.SnapshotTS)
+			err = gcutil.ValidateSnapshot(e.ctx, sessionVars.SnapshotTS)
 			if err != nil {
 				sessionVars.SnapshotTS = oldSnapshotTS
 				return errors.Trace(err)
@@ -178,39 +175,9 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			valStr, err = value.ToString()
 			terror.Log(errors.Trace(err))
 		}
-		log.Infof("[con:%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
+		log.Infof("con:%d %s=%s", sessionVars.ConnectionID, name, valStr)
 	}
 
-	if name == variable.TxnIsolation {
-		isoLevel, _ := sessionVars.GetSystemVar(variable.TxnIsolation)
-		if isoLevel == ast.ReadCommitted {
-			e.ctx.Txn().SetOption(kv.IsolationLevel, kv.RC)
-		}
-	}
-
-	return nil
-}
-
-// validateSnapshot checks that the newly set snapshot time is after GC safe point time.
-func validateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
-	sql := "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_safe_point'"
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) != 1 {
-		return errors.New("can not get 'tikv_gc_safe_point'")
-	}
-	safePointString := rows[0].GetString(0)
-	const gcTimeFormat = "20060102-15:04:05 -0700 MST"
-	safePointTime, err := time.Parse(gcTimeFormat, safePointString)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	safePointTS := variable.GoTimeToTS(safePointTime)
-	if safePointTS > snapshotTS {
-		return variable.ErrSnapshotTooOld.GenByArgs(safePointString)
-	}
 	return nil
 }
 
@@ -246,7 +213,7 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		}
 		return
 	}
-	value, err = v.Expr.Eval(nil)
+	value, err = v.Expr.Eval(chunk.Row{})
 	return value, errors.Trace(err)
 }
 
@@ -259,7 +226,7 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
 		vars.SnapshotInfoschema = nil
 		return nil
 	}
-	log.Infof("[con:%d] loadSnapshotInfoSchema, SnapshotTS:%d", vars.ConnectionID, vars.SnapshotTS)
+	log.Infof("con:%d loadSnapshotInfoSchema, SnapshotTS:%d", vars.ConnectionID, vars.SnapshotTS)
 	dom := domain.GetDomain(e.ctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
 	if err != nil {

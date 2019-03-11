@@ -14,7 +14,10 @@
 package latch
 
 import (
+	"bytes"
+	"math/rand"
 	"sync"
+	"time"
 
 	. "github.com/pingcap/check"
 )
@@ -28,28 +31,64 @@ func (s *testSchedulerSuite) SetUpTest(c *C) {
 }
 
 func (s *testSchedulerSuite) TestWithConcurrency(c *C) {
-	txns := [][][]byte{
-		{[]byte("a"), []byte("a"), []byte("b"), []byte("c")},
-		{[]byte("a"), []byte("d"), []byte("e"), []byte("f")},
-		{[]byte("e"), []byte("f"), []byte("g"), []byte("h")},
-	}
-	sched := NewScheduler(1024)
+	sched := NewScheduler(7)
 	defer sched.Close()
+	rand.Seed(time.Now().Unix())
 
+	ch := make(chan [][]byte, 100)
+	const workerCount = 10
 	var wg sync.WaitGroup
-	wg.Add(len(txns))
-	for _, txn := range txns {
-		go func(txn [][]byte, wg *sync.WaitGroup) {
-			lock := sched.Lock(getTso(), txn)
-			defer sched.UnLock(lock)
-			if lock.IsStale() {
-				// Should restart the transaction or return error
-			} else {
-				lock.SetCommitTS(getTso())
-				// Do 2pc
+	wg.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func(ch <-chan [][]byte, wg *sync.WaitGroup) {
+			for txn := range ch {
+				lock := sched.Lock(getTso(), txn)
+				if lock.IsStale() {
+					// Should restart the transaction or return error
+				} else {
+					lock.SetCommitTS(getTso())
+					// Do 2pc
+				}
+				sched.UnLock(lock)
 			}
 			wg.Done()
-		}(txn, &wg)
+		}(ch, &wg)
 	}
+
+	for i := 0; i < 999; i++ {
+		ch <- generate()
+	}
+	close(ch)
+
 	wg.Wait()
+}
+
+// generate generates something like:
+// {[]byte("a"), []byte("b"), []byte("c")}
+// {[]byte("a"), []byte("d"), []byte("e"), []byte("f")}
+// {[]byte("e"), []byte("f"), []byte("g"), []byte("h")}
+// The data should not repeat in the sequence.
+func generate() [][]byte {
+	table := []byte{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'}
+	ret := make([][]byte, 0, 5)
+	chance := []int{100, 60, 40, 20}
+	for i := 0; i < len(chance); i++ {
+		needMore := rand.Intn(100) < chance[i]
+		if needMore {
+			randBytes := []byte{table[rand.Intn(len(table))]}
+			if !contains(randBytes, ret) {
+				ret = append(ret, randBytes)
+			}
+		}
+	}
+	return ret
+}
+
+func contains(x []byte, set [][]byte) bool {
+	for _, y := range set {
+		if bytes.Equal(x, y) {
+			return true
+		}
+	}
+	return false
 }

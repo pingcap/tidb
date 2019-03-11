@@ -19,18 +19,22 @@ package table
 
 import (
 	"strings"
+	"time"
 	"unicode/utf8"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -91,7 +95,7 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error
 			col.ColumnInfo.Offset = len(cols)
 			rcols = append(rcols, col)
 		} else {
-			return nil, errUnknownColumn.Gen("unknown column %s", name)
+			return nil, errUnknownColumn.GenWithStack("unknown column %s", name)
 		}
 	}
 
@@ -122,7 +126,8 @@ func truncateTrailingSpaces(v *types.Datum) {
 		length--
 	}
 	b = b[:length]
-	v.SetString(hack.String(b))
+	str := string(hack.String(b))
+	v.SetString(str)
 }
 
 // CastValues casts values based on columns type.
@@ -142,6 +147,16 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 		rec[c.Offset] = converted
 	}
 	return nil
+}
+
+func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	err := ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
+	log.Errorf("con:%d %v", ctx.GetSessionVars().ConnectionID, err)
+	// Truncate to valid utf8 string.
+	truncateVal := types.NewStringDatum(str[:i])
+	err = sc.HandleTruncate(err)
+	return truncateVal, err
 }
 
 // CastValue casts a value based on column type.
@@ -165,18 +180,22 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 		return casted, nil
 	}
 	str := casted.GetString()
-	for i, r := range str {
-		if r == utf8.RuneError {
+	utf8Charset := col.Charset == mysql.UTF8Charset
+	for i, w := 0, 0; i < len(str); i += w {
+		runeValue, width := utf8.DecodeRuneInString(str[i:])
+		if runeValue == utf8.RuneError {
 			if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
+				w = width
 				continue
 			}
-			err = ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-			log.Errorf("[con:%d] %v", ctx.GetSessionVars().ConnectionID, err)
-			// Truncate to valid utf8 string.
-			casted = types.NewStringDatum(str[:i])
-			err = sc.HandleTruncate(err)
+			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
+			break
+		} else if width > 3 && utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUtf8 {
+			// Handle non-BMP characters.
+			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
 		}
+		w = width
 	}
 
 	return casted, errors.Trace(err)
@@ -203,6 +222,9 @@ func (c *Column) GetTypeDesc() string {
 	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
 		desc += " UNSIGNED"
 	}
+	if mysql.HasZerofillFlag(c.Flag) && c.Tp != mysql.TypeYear {
+		desc += " ZEROFILL"
+	}
 	return desc
 }
 
@@ -227,7 +249,7 @@ func NewColDesc(col *Column) *ColDesc {
 	}
 	var defaultValue interface{}
 	if !mysql.HasNoDefaultValueFlag(col.Flag) {
-		defaultValue = col.DefaultValue
+		defaultValue = col.GetDefaultValue()
 	}
 
 	extra := ""
@@ -271,7 +293,7 @@ func CheckOnce(cols []*Column) error {
 		name := col.Name
 		_, ok := m[name.L]
 		if ok {
-			return errDuplicateColumn.Gen("column specified twice - %s", name)
+			return errDuplicateColumn.GenWithStack("column specified twice - %s", name)
 		}
 
 		m[name.L] = struct{}{}
@@ -282,10 +304,23 @@ func CheckOnce(cols []*Column) error {
 
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
 func (c *Column) CheckNotNull(data types.Datum) error {
-	if mysql.HasNotNullFlag(c.Flag) && data.IsNull() {
-		return ErrColumnCantNull.GenByArgs(c.Name)
+	if (mysql.HasNotNullFlag(c.Flag) || mysql.HasPreventNullInsertFlag(c.Flag)) && data.IsNull() {
+		return ErrColumnCantNull.GenWithStackByArgs(c.Name)
 	}
 	return nil
+}
+
+// HandleBadNull handles the bad null error.
+// If BadNullAsWarning is true, it will append the error as a warning, else return the error.
+func (c *Column) HandleBadNull(d types.Datum, sc *stmtctx.StatementContext) (types.Datum, error) {
+	if err := c.CheckNotNull(d); err != nil {
+		if sc.BadNullAsWarning {
+			sc.AppendWarning(err)
+			return GetZeroValue(c.ToInfo()), nil
+		}
+		return types.Datum{}, errors.Trace(err)
+	}
+	return d, nil
 }
 
 // IsPKHandleColumn checks if the column is primary key handle column.
@@ -310,7 +345,7 @@ func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (ty
 
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	return getColDefaultValue(ctx, col, col.DefaultValue)
+	return getColDefaultValue(ctx, col, col.GetDefaultValue())
 }
 
 func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {
@@ -318,18 +353,34 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 		return getColDefaultValueFromNil(ctx, col)
 	}
 
-	// Check and get timestamp/datetime default value.
-	if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-		value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
+	if col.Tp != mysql.TypeTimestamp && col.Tp != mysql.TypeDatetime {
+		value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
 		if err != nil {
-			return types.Datum{}, errGetDefaultFailed.Gen("Field '%s' get default value fail - %s",
-				col.Name, errors.Trace(err))
+			return types.Datum{}, errors.Trace(err)
 		}
 		return value, nil
 	}
-	value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
+	// Check and get timestamp/datetime default value.
+	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
+			col.Name, errors.Trace(err))
+	}
+	// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
+	if col.Tp == mysql.TypeTimestamp {
+		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+			t := value.GetMysqlTime()
+			// For col.Version = 0, the timezone information of default value is already lost, so use the system timezone as the default value timezone.
+			defaultTimeZone := timeutil.SystemLocation()
+			if col.Version >= model.ColumnInfoVersion1 {
+				defaultTimeZone = time.UTC
+			}
+			err = t.ConvertTimeZone(defaultTimeZone, ctx.GetSessionVars().Location())
+			if err != nil {
+				return value, errors.Trace(err)
+			}
+			value.SetMysqlTime(t)
+		}
 	}
 	return value, nil
 }
@@ -341,18 +392,25 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	if col.Tp == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
-		return types.NewDatum(col.FieldType.Elems[0]), nil
+		defEnum, err := types.ParseEnumValue(col.FieldType.Elems, 1)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		return types.NewMysqlEnumDatum(defEnum), nil
 	}
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		// Auto increment column doesn't has default value and we should not return error.
+		return GetZeroValue(col), nil
+	}
+	if col.IsGenerated() {
 		return types.Datum{}, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	if sc.BadNullAsWarning {
-		sc.AppendWarning(ErrColumnCantNull.GenByArgs(col.Name))
+		sc.AppendWarning(ErrColumnCantNull.GenWithStackByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-	return types.Datum{}, ErrNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)
+	return types.Datum{}, ErrNoDefaultValue.GenWithStackByArgs(col.Name)
 }
 
 // GetZeroValue gets zero value for given column type.

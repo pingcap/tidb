@@ -19,11 +19,11 @@ import (
 	"math"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -42,9 +42,11 @@ var (
 )
 
 const (
-	idLen           = 8
-	prefixLen       = 1 + idLen /*tableID*/ + 2
-	recordRowKeyLen = prefixLen + idLen /*handle*/
+	idLen                 = 8
+	prefixLen             = 1 + idLen /*tableID*/ + 2
+	recordRowKeyLen       = prefixLen + idLen /*handle*/
+	tablePrefixLength     = 1
+	recordPrefixSepLength = 2
 )
 
 // TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
@@ -84,25 +86,36 @@ func EncodeRecordKey(recordPrefix kv.Key, h int64) kv.Key {
 	return buf
 }
 
+func hasTablePrefix(key kv.Key) bool {
+	return key[0] == tablePrefix[0]
+}
+
+func hasRecordPrefixSep(key kv.Key) bool {
+	return key[0] == recordPrefixSep[0] && key[1] == recordPrefixSep[1]
+}
+
 // DecodeRecordKey decodes the key and gets the tableID, handle.
 func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
-	k := key
-	if !key.HasPrefix(tablePrefix) {
-		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
+	if len(key) <= prefixLen {
+		return 0, 0, errInvalidRecordKey.GenWithStack("invalid record key - %q", key)
 	}
 
-	key = key[len(tablePrefix):]
+	k := key
+	if !hasTablePrefix(key) {
+		return 0, 0, errInvalidRecordKey.GenWithStack("invalid record key - %q", k)
+	}
+
+	key = key[tablePrefixLength:]
 	key, tableID, err = codec.DecodeInt(key)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	if !key.HasPrefix(recordPrefixSep) {
-		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
+	if !hasRecordPrefixSep(key) {
+		return 0, 0, errInvalidRecordKey.GenWithStack("invalid record key - %q", k)
 	}
 
-	key = key[len(recordPrefixSep):]
-
+	key = key[recordPrefixSepLength:]
 	key, handle, err = codec.DecodeInt(key)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -119,7 +132,7 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		return 0, 0, nil, errors.Trace(err)
 	}
 	if isRecord {
-		return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q", k)
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
 	}
 	key = key[prefixLen+idLen:]
 
@@ -128,11 +141,11 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		// the column. For instance, MysqlTime is internally saved as uint64.
 		remain, d, e := codec.DecodeOne(key)
 		if e != nil {
-			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e)
+			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e)
 		}
 		str, e1 := d.ToString()
 		if e1 != nil {
-			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e1)
+			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e1)
 		}
 		indexValues = append(indexValues, str)
 		key = remain
@@ -145,7 +158,7 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 	isRecordKey = false
 	k := key
 	if !key.HasPrefix(tablePrefix) {
-		err = errInvalidKey.Gen("invalid key - %q", k)
+		err = errInvalidKey.GenWithStack("invalid key - %q", k)
 		return
 	}
 
@@ -161,7 +174,7 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 		return
 	}
 	if !key.HasPrefix(indexPrefixSep) {
-		err = errInvalidKey.Gen("invalid key - %q", k)
+		err = errInvalidKey.GenWithStack("invalid key - %q", k)
 		return
 	}
 
@@ -189,8 +202,11 @@ func DecodeTableID(key kv.Key) int64 {
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (int64, error) {
-	_, handle, err := DecodeRecordKey(key)
-	return handle, errors.Trace(err)
+	if len(key) != recordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
+		return 0, errInvalidKey.GenWithStack("invalid key - %q", key)
+	}
+	u := binary.BigEndian.Uint64(key[prefixLen:])
+	return codec.DecodeCmpUintToInt(u), nil
 }
 
 // EncodeValue encodes a go value to bytes.
@@ -206,7 +222,7 @@ func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) 
 
 // EncodeRow encode row data and column ids into a slice of byte.
 // Row layout: colID1, value1, colID2, value2, .....
-// valBuf and values pass by caller, for reducing EncodeRow allocates tempory bufs. If you pass valBuf and values as nil,
+// valBuf and values pass by caller, for reducing EncodeRow allocates temporary bufs. If you pass valBuf and values as nil,
 // EncodeRow will allocate it.
 func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
 	if len(row) != len(colIDs) {
@@ -289,10 +305,10 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 		row = make(map[int64]types.Datum, len(cols))
 	}
 	if b == nil {
-		return nil, nil
+		return row, nil
 	}
 	if len(b) == 1 && b[0] == codec.NilFlag {
-		return nil, nil
+		return row, nil
 	}
 	cnt := 0
 	var (
@@ -425,6 +441,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 				return datum, errors.Trace(err)
 			}
 		}
+		datum.SetUint64(0)
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration: //duration should read fsp from column meta data
@@ -449,6 +466,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	case mysql.TypeBit:
 		val := datum.GetUint64()
 		byteSize := (ft.Flen + 7) >> 3
+		datum.SetUint64(0)
 		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize))
 	}
 	return datum, nil

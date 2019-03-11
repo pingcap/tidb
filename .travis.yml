@@ -3,9 +3,8 @@ language: go
 go_import_path: github.com/pingcap/tidb
 
 go:
-  - "1.10"
+  - "1.12"
 
-# https://docs.travis-ci.com/user/customizing-the-build/#Rows-that-are-Allowed-to-Fail
 env:
     - TRAVIS_COVERAGE=0
     - TRAVIS_COVERAGE=1
@@ -14,7 +13,7 @@ env:
 matrix:
   fast_finish: true
   allow_failures:
-    - go: "1.10"
+    - go: "1.12"
       env: TRAVIS_COVERAGE=1
 
 before_install:  
@@ -24,4 +23,4 @@ before_install:
   # See https://github.com/golang/go/issues/12933
   - bash gitcookie.sh
 script:
-  - make dev
+  - make dev upload-coverage

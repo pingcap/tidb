@@ -14,10 +14,11 @@
 package ddl
 
 import (
+	"context"
+
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"golang.org/x/net/context"
 )
 
 // Interceptor is used for DDL.

@@ -14,8 +14,10 @@
 package kv
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/execdetails"
 )
 
 // Transaction options
@@ -30,8 +32,6 @@ const (
 	PresumeKeyNotExistsError
 	// BinlogInfo contains the binlog data and client.
 	BinlogInfo
-	// Skip existing check when "prewrite".
-	SkipCheckForWrite
 	// SchemaChecker is used for checking schema-validity.
 	SchemaChecker
 	// IsolationLevel sets isolation level for current transaction. The default level is SI.
@@ -42,9 +42,8 @@ const (
 	NotFillCache
 	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
 	SyncLog
-	// BypassLatch option tells 2PC commit to bypass latches, it would be true when the
-	// transaction is not conflict-retryable, for example: 'select for update', 'load data'.
-	BypassLatch
+	// KeyOnly retrieve only keys, it can be used in scan now.
+	KeyOnly
 )
 
 // Priority value for transaction priority.
@@ -79,15 +78,17 @@ type Retriever interface {
 	// Get gets the value for key k from kv store.
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
 	Get(k Key) ([]byte, error)
-	// Seek creates an Iterator positioned on the first entry that k <= entry's key.
+	// Iter creates an Iterator positioned on the first entry that k <= entry's key.
 	// If such entry is not found, it returns an invalid Iterator with no error.
+	// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 	// The Iterator must be Closed after use.
-	Seek(k Key) (Iterator, error)
+	Iter(k Key, upperBound Key) (Iterator, error)
 
-	// SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+	// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 	// The returned iterator will iterate from greater key to smaller key.
 	// If k is nil, the returned iterator will be positioned at the last key.
-	SeekReverse(k Key) (Iterator, error)
+	// TODO: Add lower bound limit
+	IterReverse(k Key) (Iterator, error)
 }
 
 // Mutator is the interface wraps the basic Set and Delete methods.
@@ -145,10 +146,12 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
-	// GetSnapshot returns the snapshot of this transaction.
-	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
+	// SetAssertion sets an assertion for an operation on the key.
+	SetAssertion(key Key, assertion AssertionType)
+	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+	BatchGet(keys []Key) (map[string][]byte, error)
 }
 
 // Client is used to send request to KV layer.
@@ -212,6 +215,8 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
+	// GetExecDetails gets the detail information.
+	GetExecDetails() *execdetails.ExecDetails
 }
 
 // Response represents the response returned from KV layer.

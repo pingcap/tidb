@@ -16,8 +16,8 @@ package kv
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 )
 
 // KV error codes.
@@ -99,9 +99,5 @@ func IsRetryableError(err error) bool {
 
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
-	if ErrNotExist.Equal(err) {
-		return true
-	}
-
-	return false
+	return ErrNotExist.Equal(err)
 }

@@ -14,8 +14,8 @@
 package tikv
 
 import (
-	"github.com/juju/errors"
-	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/twinj/uuid"
 )

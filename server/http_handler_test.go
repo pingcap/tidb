@@ -30,12 +30,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -46,7 +47,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/printer"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type HTTPHandlerTestSuite struct {
@@ -569,18 +572,30 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 
 	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb/abc"))
 	c.Assert(err, IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/db-table/5"))
+	c.Assert(err, IsNil)
+	var dbtbl *dbTableInfo
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&dbtbl)
+	c.Assert(err, IsNil)
+	c.Assert(dbtbl.TableInfo.Name.L, Equals, "user")
+	c.Assert(dbtbl.DBInfo.Name.L, Equals, "mysql")
+	se, err := session.CreateSession(ts.store.(kv.Storage))
+	c.Assert(err, IsNil)
+	c.Assert(dbtbl.SchemaVersion, Equals, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion())
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=3"))
+	_, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=3"))
 	c.Assert(err, IsNil)
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=-1"))
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=-1"))
 	c.Assert(err, IsNil)
 
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history"))
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history"))
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
 
@@ -609,6 +624,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
+	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
 	form = make(url.Values)
@@ -619,7 +635,46 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
 	c.Assert(log.GetLevel(), Equals, log.InfoLevel)
+	c.Assert(zaplog.GetLevel(), Equals, zap.InfoLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "info")
+
+	// test ddl_slow_threshold
+	form = make(url.Values)
+	form.Set("ddl_slow_threshold", "200")
+	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(atomic.LoadUint32(&variable.DDLSlowOprThreshold), Equals, uint32(200))
+
+	// test check_mb4_value_in_utf8
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	dbt.mustExec("create database tidb_test;")
+	dbt.mustExec("use tidb_test;")
+	dbt.mustExec("drop table if exists t2;")
+	dbt.mustExec("create table t2(a varchar(100) charset utf8);")
+	form.Set("check_mb4_value_in_utf8", "1")
+	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, true)
+	txn1, err := dbt.db.Begin()
+	c.Assert(err, IsNil)
+	_, err = txn1.Exec("insert t2 values (unhex('F0A48BAE'));")
+	c.Assert(err, NotNil)
+	txn1.Commit()
+
+	// Disable CheckMb4ValueInUtf8.
+	form = make(url.Values)
+	form.Set("check_mb4_value_in_utf8", "0")
+	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, false)
+	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
 }
 
 func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
@@ -636,4 +691,65 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 		time.Sleep(time.Millisecond * 10)
 	}
 	log.Fatalf("Failed to get profile for %d retries in every 10 ms", retryTime)
+}
+
+func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/info")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	decoder := json.NewDecoder(resp.Body)
+
+	info := serverInfo{}
+	err = decoder.Decode(&info)
+	c.Assert(err, IsNil)
+
+	cfg := config.GetGlobalConfig()
+	c.Assert(info.IsOwner, IsTrue)
+	c.Assert(info.IP, Equals, cfg.AdvertiseAddress)
+	c.Assert(info.StatusPort, Equals, cfg.Status.StatusPort)
+	c.Assert(info.Lease, Equals, cfg.Lease)
+	c.Assert(info.Version, Equals, mysql.ServerVersion)
+	c.Assert(info.GitHash, Equals, printer.TiDBGitHash)
+
+	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
+	do, err := session.GetDomain(store.(kv.Storage))
+	c.Assert(err, IsNil)
+	ddl := do.DDL()
+	c.Assert(info.ID, Equals, ddl.GetID())
+}
+
+func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/info/all")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	decoder := json.NewDecoder(resp.Body)
+
+	clusterInfo := clusterServerInfo{}
+	err = decoder.Decode(&clusterInfo)
+	c.Assert(err, IsNil)
+
+	c.Assert(clusterInfo.IsAllServerVersionConsistent, IsTrue)
+	c.Assert(clusterInfo.ServersNum, Equals, 1)
+
+	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
+	do, err := session.GetDomain(store.(kv.Storage))
+	c.Assert(err, IsNil)
+	ddl := do.DDL()
+	c.Assert(clusterInfo.OwnerID, Equals, ddl.GetID())
+	serverInfo, ok := clusterInfo.AllServersInfo[ddl.GetID()]
+	c.Assert(ok, Equals, true)
+
+	cfg := config.GetGlobalConfig()
+	c.Assert(serverInfo.IP, Equals, cfg.AdvertiseAddress)
+	c.Assert(serverInfo.StatusPort, Equals, cfg.Status.StatusPort)
+	c.Assert(serverInfo.Lease, Equals, cfg.Lease)
+	c.Assert(serverInfo.Version, Equals, mysql.ServerVersion)
+	c.Assert(serverInfo.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(serverInfo.ID, Equals, ddl.GetID())
 }

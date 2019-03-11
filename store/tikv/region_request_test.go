@@ -14,20 +14,20 @@
 package tikv
 
 import (
+	"context"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -87,6 +87,23 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	resp, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	c.Assert(resp.RawPut, NotNil)
+}
+
+func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdRawPut,
+		RawPut: &kvrpcpb.RawPutRequest{
+			Key:   []byte("key"),
+			Value: []byte("value"),
+		},
+	}
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second)
+	c.Assert(err, IsNil)
+	c.Assert(resp.RawPut, NotNil)
+	c.Assert(ctx, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
@@ -159,7 +176,7 @@ func (c *cancelContextClient) SendRequest(ctx context.Context, addr string, req 
 // mockTikvGrpcServer mock a tikv gprc server for testing.
 type mockTikvGrpcServer struct{}
 
-// KV commands with mvcc/txn supported.
+// KvGet commands with mvcc/txn supported.
 func (s *mockTikvGrpcServer) KvGet(context.Context, *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
 	return nil, errors.New("unreachable")
 }
@@ -223,10 +240,16 @@ func (s *mockTikvGrpcServer) RawDeleteRange(context.Context, *kvrpcpb.RawDeleteR
 func (s *mockTikvGrpcServer) RawBatchScan(context.Context, *kvrpcpb.RawBatchScanRequest) (*kvrpcpb.RawBatchScanResponse, error) {
 	return nil, errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) UnsafeDestroyRange(context.Context, *kvrpcpb.UnsafeDestroyRangeRequest) (*kvrpcpb.UnsafeDestroyRangeResponse, error) {
+	return nil, errors.New("unreachable")
+}
 func (s *mockTikvGrpcServer) Coprocessor(context.Context, *coprocessor.Request) (*coprocessor.Response, error) {
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) Raft(tikvpb.Tikv_RaftServer) error {
+	return errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) BatchRaft(tikvpb.Tikv_BatchRaftServer) error {
 	return errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) Snapshot(tikvpb.Tikv_SnapshotServer) error {
@@ -243,6 +266,10 @@ func (s *mockTikvGrpcServer) SplitRegion(context.Context, *kvrpcpb.SplitRegionRe
 }
 
 func (s *mockTikvGrpcServer) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv_CoprocessorStreamServer) error {
+	return errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) BatchCommands(tikvpb.Tikv_BatchCommandsServer) error {
 	return errors.New("unreachable")
 }
 

@@ -2,13 +2,13 @@
 
 [![Build Status](https://travis-ci.org/pingcap/tidb.svg?branch=master)](https://travis-ci.org/pingcap/tidb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
-![GitHub release](https://img.shields.io/github/release/pingcap/tidb.svg)
+![GitHub release](https://img.shields.io/github/tag/pingcap/tidb.svg?label=release)
 [![CircleCI Status](https://circleci.com/gh/pingcap/tidb.svg?style=shield)](https://circleci.com/gh/pingcap/tidb)
-[![Coverage Status](https://coveralls.io/repos/github/pingcap/tidb/badge.svg?branch=master)](https://coveralls.io/github/pingcap/tidb?branch=master)
+[![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 
 ## What is TiDB?
 
-TiDB (The pronunciation is: /'taɪdiːbi:/ tai-D-B, etymology: titanium) is an open-source distributed scalable Hybrid Transactional and Analytical Processing (HTAP) database. It features infinite horizontal scalability, strong consistency, and high availability. TiDB is MySQL compatible and serves as a one-stop data warehouse for both OLTP (Online Transactional Processing) and OLAP (Online Analytical Processing) workloads.
+TiDB (The pronunciation is: /'taɪdiːbi:/ tai-D-B, etymology: titanium) is an open-source distributed scalable Hybrid Transactional and Analytical Processing (HTAP) database. It features horizontal scalability, strong consistency, and high availability. TiDB is MySQL compatible and serves as a one-stop data warehouse for both OLTP (Online Transactional Processing) and OLAP (Online Analytical Processing) workloads.
 
 - __Horizontal scalability__
 
@@ -26,7 +26,7 @@ TiDB (The pronunciation is: /'taɪdiːbi:/ tai-D-B, etymology: titanium) is an o
 
     TiDB is designed to work in the cloud -- public, private, or hybrid -- making deployment, provisioning, and maintenance drop-dead simple.
 
-- __No more ETL__
+- __Minimize ETL__
 
     ETL (Extract, Transform and Load) is no longer necessary with TiDB's hybrid OLTP/OLAP architecture, enabling you to create new values for your users, easier and faster.
 
@@ -34,19 +34,19 @@ TiDB (The pronunciation is: /'taɪdiːbi:/ tai-D-B, etymology: titanium) is an o
 
     With TiDB, your data and applications are always on and continuously available, so your users are never disappointed.
 
-For more details, see [How we build TiDB](https://pingcap.github.io/blog/2016/10/17/how-we-build-tidb/).
+For more details, see [How we build TiDB](https://pingcap.com/blog/2016-10-17-how-we-build-tidb/).
 
 ## Adopters
 
-You can view the list of TiDB adopters [here](https://github.com/pingcap/docs/blob/master/adopters.md).
+You can view the list of TiDB adopters [here](https://pingcap.com/docs/adopters/).
 
 ## Roadmap
 
-Read the [Roadmap](https://github.com/pingcap/docs/blob/master/ROADMAP.md).
+Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
 
 ## Quick start
 
-Read the [Quick Start](https://pingcap.com/doc-QUICKSTART).
+Read the [Quick Start](https://pingcap.com/docs/QUICKSTART).
 
 ## Documentation
 

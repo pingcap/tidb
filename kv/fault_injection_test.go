@@ -14,8 +14,8 @@
 package kv_test
 
 import (
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 )
 

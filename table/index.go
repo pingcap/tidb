@@ -14,8 +14,8 @@
 package table
 
 import (
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -27,14 +27,20 @@ type IndexIterator interface {
 	Close()
 }
 
+// CreateIdxOpt contains the options will be used when creating an index.
+type CreateIdxOpt struct {
+	SkipHandleCheck bool // If true, skip the handle constraint check.
+	SkipCheck       bool // If true, skip all the unique indices constraint check.
+}
+
 // Index is the interface for index data on KV store.
 type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
 	// Create supports insert into statement.
-	Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error)
+	Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...*CreateIdxOpt) (int64, error)
 	// Delete supports delete from statement.
-	Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error
+	Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64, ss kv.Transaction) error
 	// Drop supports drop table, drop index statements.
 	Drop(rm kv.RetrieverMutator) error
 	// Exist supports check index exists or not.

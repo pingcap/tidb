@@ -14,11 +14,17 @@
 package executor
 
 import (
-	"github.com/juju/errors"
+	"context"
+	"sync/atomic"
+	"time"
+
+	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
 )
 
 // This file contains the implementation of the physical Projection Operator:
@@ -47,15 +53,23 @@ type projectionOutput struct {
 type ProjectionExec struct {
 	baseExecutor
 
-	evaluatorSuit    *expression.EvaluatorSuit
+	evaluatorSuit    *expression.EvaluatorSuite
 	calculateNoDelay bool
 
-	prepared   bool
-	finishCh   chan struct{}
-	outputCh   chan *projectionOutput
-	fetcher    projectionInputFetcher
-	numWorkers int64
-	workers    []*projectionWorker
+	prepared    bool
+	finishCh    chan struct{}
+	outputCh    chan *projectionOutput
+	fetcher     projectionInputFetcher
+	numWorkers  int64
+	workers     []*projectionWorker
+	childResult *chunk.Chunk
+
+	// parentReqRows indicates how many rows the parent executor is
+	// requiring. It is set when parallelExecute() is called and used by the
+	// concurrent projectionInputFetcher.
+	//
+	// NOTE: It should be protected by atomic operations.
+	parentReqRows int64
 }
 
 // Open implements the Executor Open interface.
@@ -65,12 +79,17 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
+	e.parentReqRows = int64(e.maxChunkSize)
 
 	// For now a Projection can not be executed vectorially only because it
 	// contains "SetVar" or "GetVar" functions, in this scenario this
 	// Projection can not be executed parallelly.
 	if e.numWorkers > 0 && !e.evaluatorSuit.Vectorizable() {
 		e.numWorkers = 0
+	}
+
+	if e.isUnparallelExec() {
+		e.childResult = e.children[0].newFirstChunk()
 	}
 
 	return nil
@@ -133,25 +152,41 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  |                              |       |                      |
 //  +------------------------------+       +----------------------+
 //
-func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	if e.numWorkers <= 0 {
-		return errors.Trace(e.unParallelExecute(ctx, chk))
+func (e *ProjectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("projection.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
 	}
-	return errors.Trace(e.parallelExecute(ctx, chk))
+
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
+	}
+	req.GrowAndReset(e.maxChunkSize)
+	if e.isUnparallelExec() {
+		return errors.Trace(e.unParallelExecute(ctx, req.Chunk))
+	}
+	return errors.Trace(e.parallelExecute(ctx, req.Chunk))
 
 }
 
+func (e *ProjectionExec) isUnparallelExec() bool {
+	return e.numWorkers <= 0
+}
+
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
-	err := e.children[0].Next(ctx, e.childrenResults[0])
+	// transmit the requiredRows
+	e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
+	err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk)
+	err = e.evaluatorSuit.Run(e.ctx, e.childResult, chk)
 	return errors.Trace(err)
 }
 
 func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) error {
+	atomic.StoreInt64(&e.parentReqRows, int64(chk.RequiredRows()))
 	if !e.prepared {
 		e.prepare(ctx)
 		e.prepared = true
@@ -178,6 +213,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 	// Initialize projectionInputFetcher.
 	e.fetcher = projectionInputFetcher{
+		proj:           e,
 		child:          e.children[0],
 		globalFinishCh: e.finishCh,
 		globalOutputCh: e.outputCh,
@@ -198,11 +234,11 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 		})
 
 		e.fetcher.inputCh <- &projectionInput{
-			chk:          e.children[0].newChunk(),
+			chk:          e.children[0].newFirstChunk(),
 			targetWorker: e.workers[i],
 		}
 		e.fetcher.outputCh <- &projectionOutput{
-			chk:  e.newChunk(),
+			chk:  e.newFirstChunk(),
 			done: make(chan error, 1),
 		}
 	}
@@ -216,6 +252,9 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 // Close implements the Executor Close interface.
 func (e *ProjectionExec) Close() error {
+	if e.isUnparallelExec() {
+		e.childResult = nil
+	}
 	if e.outputCh != nil {
 		close(e.finishCh)
 		// Wait for "projectionInputFetcher" to finish and exit.
@@ -227,6 +266,7 @@ func (e *ProjectionExec) Close() error {
 }
 
 type projectionInputFetcher struct {
+	proj           *ProjectionExec
 	child          Executor
 	globalFinishCh <-chan struct{}
 	globalOutputCh chan<- *projectionOutput
@@ -246,7 +286,11 @@ type projectionInputFetcher struct {
 //   a. There is no more input from child.
 //   b. "ProjectionExec" close the "globalFinishCh"
 func (f *projectionInputFetcher) run(ctx context.Context) {
+	var output *projectionOutput
 	defer func() {
+		if r := recover(); r != nil {
+			recoveryProjection(output, r)
+		}
 		close(f.globalOutputCh)
 	}()
 
@@ -257,14 +301,16 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 		}
 		targetWorker := input.targetWorker
 
-		output := readProjectionOutput(f.outputCh, f.globalFinishCh)
+		output = readProjectionOutput(f.outputCh, f.globalFinishCh)
 		if output == nil {
 			return
 		}
 
 		f.globalOutputCh <- output
 
-		err := f.child.Next(ctx, input.chk)
+		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
+		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
+		err := f.child.Next(ctx, chunk.NewRecordBatch(input.chk))
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- errors.Trace(err)
 			return
@@ -277,7 +323,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 type projectionWorker struct {
 	sctx            sessionctx.Context
-	evaluatorSuit   *expression.EvaluatorSuit
+	evaluatorSuit   *expression.EvaluatorSuite
 	globalFinishCh  <-chan struct{}
 	inputGiveBackCh chan<- *projectionInput
 
@@ -299,13 +345,19 @@ type projectionWorker struct {
 // It is finished and exited once:
 //   a. "ProjectionExec" closes the "globalFinishCh".
 func (w *projectionWorker) run(ctx context.Context) {
+	var output *projectionOutput
+	defer func() {
+		if r := recover(); r != nil {
+			recoveryProjection(output, r)
+		}
+	}()
 	for {
 		input := readProjectionInput(w.inputCh, w.globalFinishCh)
 		if input == nil {
 			return
 		}
 
-		output := readProjectionOutput(w.outputCh, w.globalFinishCh)
+		output = readProjectionOutput(w.outputCh, w.globalFinishCh)
 		if output == nil {
 			return
 		}
@@ -319,6 +371,14 @@ func (w *projectionWorker) run(ctx context.Context) {
 
 		w.inputGiveBackCh <- input
 	}
+}
+
+func recoveryProjection(output *projectionOutput, r interface{}) {
+	if output != nil {
+		output.done <- errors.Errorf("%v", r)
+	}
+	buf := util.GetStack()
+	log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
 }
 
 func readProjectionInput(inputCh <-chan *projectionInput, finishCh <-chan struct{}) *projectionInput {

@@ -14,16 +14,16 @@
 package tikv
 
 import (
+	"context"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )
@@ -60,31 +60,37 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout)
+	return resp, err
+}
+
+// SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
+func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, *RPCContext, error) {
 
 	// gofail: var tikvStoreSendReqResult string
 	// switch tikvStoreSendReqResult {
 	// case "timeout":
-	// 	 return nil, errors.New("timeout")
+	// 	 return nil, nil, errors.New("timeout")
 	// case "GCNotLeader":
 	// 	 if req.Type == tikvrpc.CmdGC {
 	//		 return &tikvrpc.Response{
 	//			 Type:   tikvrpc.CmdGC,
 	//			 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-	//		 }, nil
+	//		 }, nil, nil
 	//	 }
 	// case "GCServerIsBusy":
 	//	 if req.Type == tikvrpc.CmdGC {
 	//		 return &tikvrpc.Response{
 	//			 Type: tikvrpc.CmdGC,
 	//			 GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
-	//		 }, nil
+	//		 }, nil, nil
 	//	 }
 	// }
 
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		if ctx == nil {
 			// If the region is not found in cache, it must be out
@@ -92,14 +98,15 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 			// RPC by returning RegionError directly.
 
 			// TODO: Change the returned error to something like "region missing in cache",
-			// and handle this error like StaleEpoch, which means to re-split the request and retry.
-			return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}})
+			// and handle this error like EpochNotMatch, which means to re-split the request and retry.
+			resp, err := tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
+			return resp, nil, err
 		}
 
 		s.storeAddr = ctx.Addr
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		if retry {
 			continue
@@ -107,18 +114,18 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
 			retry, err := s.onRegionError(bo, ctx, regionErr)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, errors.Trace(err)
 			}
 			if retry {
 				continue
 			}
 		}
-		return resp, nil
+		return resp, ctx, nil
 	}
 }
 
@@ -171,8 +178,8 @@ func regionErrorToLabel(e *errorpb.Error) string {
 		return "region_not_found"
 	} else if e.GetKeyNotInRegion() != nil {
 		return "key_not_in_region"
-	} else if e.GetStaleEpoch() != nil {
-		return "stale_epoch"
+	} else if e.GetEpochNotMatch() != nil {
+		return "epoch_not_match"
 	} else if e.GetServerIsBusy() != nil {
 		return "server_is_busy"
 	} else if e.GetStaleCommand() != nil {
@@ -211,9 +218,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		return true, nil
 	}
 
-	if staleEpoch := regionErr.GetStaleEpoch(); staleEpoch != nil {
-		log.Debugf("tikv reports `StaleEpoch`, ctx: %v, retry later", ctx)
-		err = s.regionCache.OnRegionStale(ctx, staleEpoch.NewRegions)
+	if epochNotMatch := regionErr.GetEpochNotMatch(); epochNotMatch != nil {
+		log.Debugf("tikv reports `EpochNotMatch`, ctx: %v, retry later", ctx)
+		err = s.regionCache.OnRegionEpochNotMatch(bo, ctx, epochNotMatch.CurrentRegions)
 		return false, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {

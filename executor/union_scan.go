@@ -14,15 +14,19 @@
 package executor
 
 import (
+	"context"
 	"sort"
+	"time"
 
-	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.
@@ -32,37 +36,13 @@ type DirtyDB struct {
 	tables map[int64]*DirtyTable
 }
 
-// AddRow adds a row to the DirtyDB.
-func (udb *DirtyDB) AddRow(tid, handle int64, row []types.Datum) {
-	dt := udb.GetDirtyTable(tid)
-	for i := range row {
-		if row[i].Kind() == types.KindString {
-			row[i].SetBytes(row[i].GetBytes())
-		}
-	}
-	dt.addedRows[handle] = row
-}
-
-// DeleteRow deletes a row from the DirtyDB.
-func (udb *DirtyDB) DeleteRow(tid int64, handle int64) {
-	dt := udb.GetDirtyTable(tid)
-	delete(dt.addedRows, handle)
-	dt.deletedRows[handle] = struct{}{}
-}
-
-// TruncateTable truncates a table.
-func (udb *DirtyDB) TruncateTable(tid int64) {
-	dt := udb.GetDirtyTable(tid)
-	dt.addedRows = make(map[int64]types.DatumRow)
-	dt.truncated = true
-}
-
 // GetDirtyTable gets the DirtyTable by id from the DirtyDB.
 func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 	dt, ok := udb.tables[tid]
 	if !ok {
 		dt = &DirtyTable{
-			addedRows:   make(map[int64]types.DatumRow),
+			tid:         tid,
+			addedRows:   make(map[int64]struct{}),
 			deletedRows: make(map[int64]struct{}),
 		}
 		udb.tables[tid] = dt
@@ -72,11 +52,29 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 
 // DirtyTable stores uncommitted write operation for a transaction.
 type DirtyTable struct {
+	tid int64
 	// addedRows ...
 	// the key is handle.
-	addedRows   map[int64]types.DatumRow
+	addedRows   map[int64]struct{}
 	deletedRows map[int64]struct{}
 	truncated   bool
+}
+
+// AddRow adds a row to the DirtyDB.
+func (dt *DirtyTable) AddRow(handle int64, row []types.Datum) {
+	dt.addedRows[handle] = struct{}{}
+}
+
+// DeleteRow deletes a row from the DirtyDB.
+func (dt *DirtyTable) DeleteRow(handle int64) {
+	delete(dt.addedRows, handle)
+	dt.deletedRows[handle] = struct{}{}
+}
+
+// TruncateTable truncates a table.
+func (dt *DirtyTable) TruncateTable() {
+	dt.addedRows = make(map[int64]struct{})
+	dt.truncated = true
 }
 
 // GetDirtyDB returns the DirtyDB bind to the context.
@@ -92,7 +90,7 @@ func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
 	return udb
 }
 
-// UnionScanExec merges the rows from dirty table and the rows from XAPI request.
+// UnionScanExec merges the rows from dirty table and the rows from distsql request.
 type UnionScanExec struct {
 	baseExecutor
 
@@ -106,10 +104,10 @@ type UnionScanExec struct {
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 
-	addedRows           []types.DatumRow
+	addedRows           [][]types.Datum
 	cursor4AddRows      int
 	sortErr             error
-	snapshotRows        []types.DatumRow
+	snapshotRows        [][]types.Datum
 	cursor4SnapshotRows int
 	snapshotChunkBuffer *chunk.Chunk
 }
@@ -119,15 +117,24 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	us.snapshotChunkBuffer = us.newChunk()
+	us.snapshotChunkBuffer = us.newFirstChunk()
 	return nil
 }
 
 // Next implements the Executor Next interface.
-func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (us *UnionScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("unionScan.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
+	if us.runtimeStats != nil {
+		start := time.Now()
+		defer func() { us.runtimeStats.Record(time.Since(start), req.NumRows()) }()
+	}
+	req.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
-	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
+	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -137,20 +144,20 @@ func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return nil
 		}
 		mutableRow.SetDatums(row...)
-		chk.AppendRow(mutableRow.ToRow())
+		req.AppendRow(mutableRow.ToRow())
 	}
 	return nil
 }
 
 // getOneRow gets one result row from dirty table or child.
-func (us *UnionScanExec) getOneRow(ctx context.Context) (types.DatumRow, error) {
+func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	for {
 		snapshotRow, err := us.getSnapshotRow(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		addedRow := us.getAddedRow()
-		var row types.DatumRow
+		var row []types.Datum
 		var isSnapshotRow bool
 		if addedRow == nil {
 			row = snapshotRow
@@ -181,7 +188,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) (types.DatumRow, error) 
 	}
 }
 
-func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (types.DatumRow, error) {
+func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {
 	if us.dirty.truncated {
 		return nil, nil
 	}
@@ -192,7 +199,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (types.DatumRow, er
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		err = us.children[0].Next(ctx, us.snapshotChunkBuffer)
+		err = us.children[0].Next(ctx, chunk.NewRecordBatch(us.snapshotChunkBuffer))
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, errors.Trace(err)
 		}
@@ -213,8 +220,8 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (types.DatumRow, er
 	return us.snapshotRows[0], nil
 }
 
-func (us *UnionScanExec) getAddedRow() types.DatumRow {
-	var addedRow types.DatumRow
+func (us *UnionScanExec) getAddedRow() []types.Datum {
+	var addedRow []types.Datum
 	if us.cursor4AddRows < len(us.addedRows) {
 		addedRow = us.addedRows[us.cursor4AddRows]
 	}
@@ -223,7 +230,7 @@ func (us *UnionScanExec) getAddedRow() types.DatumRow {
 
 // shouldPickFirstRow picks the suitable row in order.
 // The value returned is used to determine whether to pick the first input row.
-func (us *UnionScanExec) shouldPickFirstRow(a, b types.DatumRow) (bool, error) {
+func (us *UnionScanExec) shouldPickFirstRow(a, b []types.Datum) (bool, error) {
 	var isFirstRow bool
 	addedCmpSrc, err := us.compare(a, b)
 	if err != nil {
@@ -242,7 +249,7 @@ func (us *UnionScanExec) shouldPickFirstRow(a, b types.DatumRow) (bool, error) {
 	return isFirstRow, nil
 }
 
-func (us *UnionScanExec) compare(a, b types.DatumRow) (int, error) {
+func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	sc := us.ctx.GetSessionVars().StmtCtx
 	for _, colOff := range us.usedIndex {
 		aColumn := a[colOff]
@@ -268,10 +275,34 @@ func (us *UnionScanExec) compare(a, b types.DatumRow) (int, error) {
 	return cmp, nil
 }
 
-func (us *UnionScanExec) buildAndSortAddedRows() error {
-	us.addedRows = make([]types.DatumRow, 0, len(us.dirty.addedRows))
-	for h, data := range us.dirty.addedRows {
-		newData := make(types.DatumRow, 0, us.schema.Len())
+// rowWithColsInTxn gets the row from the transaction buffer.
+func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {
+	key := t.RecordKey(h)
+	txn, err := us.ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	value, err := txn.GetMemBuffer().Get(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	v, _, err := tables.DecodeRawRowData(us.ctx, t.Meta(), h, cols, value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return v, nil
+}
+
+func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
+	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
+	mutableRow := chunk.MutRowFromTypes(us.retTypes())
+	cols := t.WritableCols()
+	for h := range us.dirty.addedRows {
+		newData := make([]types.Datum, 0, us.schema.Len())
+		data, err := us.rowWithColsInTxn(t, h, cols)
+		if err != nil {
+			return err
+		}
 		for _, col := range us.columns {
 			if col.ID == model.ExtraHandleID {
 				newData = append(newData, types.NewIntDatum(h))
@@ -279,7 +310,8 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 				newData = append(newData, data[col.Offset])
 			}
 		}
-		matched, err := expression.EvalBool(us.ctx, us.conditions, newData)
+		mutableRow.SetDatums(newData...)
+		matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}

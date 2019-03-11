@@ -18,9 +18,11 @@ import (
 	"math"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 // Range represents a range generated in physical plan building phase.
@@ -67,6 +69,10 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 		if cmp != 0 {
 			return false
 		}
+
+		if a.IsNull() {
+			return false
+		}
 	}
 	return !ran.LowExclude && !ran.HighExclude
 }
@@ -91,6 +97,26 @@ func (ran *Range) String() string {
 	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
 }
 
+// Encode encodes the range to its encoded value.
+func (ran *Range) Encode(sc *stmtctx.StatementContext, lowBuffer, highBuffer []byte) ([]byte, []byte, error) {
+	var err error
+	lowBuffer, err = codec.EncodeKey(sc, lowBuffer[:0], ran.LowVal...)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ran.LowExclude {
+		lowBuffer = kv.Key(lowBuffer).PrefixNext()
+	}
+	highBuffer, err = codec.EncodeKey(sc, highBuffer[:0], ran.HighVal...)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ran.HighExclude {
+		highBuffer = kv.Key(highBuffer).PrefixNext()
+	}
+	return lowBuffer, highBuffer, nil
+}
+
 // PrefixEqualLen tells you how long the prefix of the range is a point.
 // e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
 func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
@@ -110,7 +136,7 @@ func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 func formatDatum(d types.Datum, isLeftSide bool) string {
 	switch d.Kind() {
 	case types.KindNull:
-		return "<nil>"
+		return "NULL"
 	case types.KindMinNotNull:
 		return "-inf"
 	case types.KindMaxValue:
@@ -130,6 +156,9 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 		if d.GetUint64() == math.MaxUint64 && !isLeftSide {
 			return "+inf"
 		}
+	case types.KindString, types.KindBytes, types.KindMysqlEnum, types.KindMysqlSet,
+		types.KindMysqlJSON, types.KindBinaryLiteral, types.KindMysqlBit:
+		return fmt.Sprintf("\"%v\"", d.GetValue())
 	}
 	return fmt.Sprintf("%v", d.GetValue())
 }

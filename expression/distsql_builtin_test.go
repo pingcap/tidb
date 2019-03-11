@@ -17,9 +17,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
@@ -27,14 +29,25 @@ import (
 
 var _ = Suite(&testEvalSuite{})
 
-type testEvalSuite struct{}
+type testEvalSuite struct {
+	colID int64
+}
+
+func (s *testEvalSuite) SetUpSuite(c *C) {
+	s.colID = 0
+}
+
+func (s *testEvalSuite) allocColID() int64 {
+	s.colID++
+	return s.colID
+}
 
 // TestEval test expr.Eval().
 // TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
-	row := types.DatumRow{types.NewDatum(100)}
+	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(100)}).ToRow()
 	fieldTps := make([]*types.FieldType, 1)
-	fieldTps[0] = types.NewFieldType(mysql.TypeDouble)
+	fieldTps[0] = types.NewFieldType(mysql.TypeLonglong)
 	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
@@ -76,9 +89,25 @@ func (s *testEvalSuite) TestEval(c *C) {
 			datumExpr(types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
 			types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1)),
 		},
+		// Columns.
 		{
 			columnExpr(0),
 			types.NewIntDatum(100),
+		},
+		// Scalar Functions.
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_JsonDepthSig,
+				toPBFieldType(newIntFieldType()),
+				jsonDatumExpr(`true`),
+			),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_JsonDepthSig,
+				toPBFieldType(newIntFieldType()),
+				jsonDatumExpr(`[10, {"a": 20}]`),
+			),
+			types.NewIntDatum(3),
 		},
 	}
 	sc := new(stmtctx.StatementContext)
@@ -140,10 +169,28 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		if err != nil {
 			log.Warnf("err happened when EncodeDecimal in datumExpr:%s", err.Error())
 		}
+	case types.KindMysqlJSON:
+		expr.Tp = tipb.ExprType_MysqlJson
+		var err error
+		expr.Val = make([]byte, 0, 1024)
+		expr.Val, err = codec.EncodeValue(nil, expr.Val, d)
+		if err != nil {
+			log.Warnf("err happened when EncodeValue of JSON in datumExpr:%s", err.Error())
+		}
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
 	return expr
+}
+
+func jsonDatumExpr(s string) *tipb.Expr {
+	var d types.Datum
+	j, err := json.ParseBinaryFromString(s)
+	if err != nil {
+		log.Warnf("err happened when json.ParseBinaryFromString in jsonDatumExpr:%s", err.Error())
+	}
+	d.SetMysqlJSON(j)
+	return datumExpr(d)
 }
 
 func columnExpr(columnID int64) *tipb.Expr {
@@ -151,4 +198,34 @@ func columnExpr(columnID int64) *tipb.Expr {
 	expr.Tp = tipb.ExprType_ColumnRef
 	expr.Val = codec.EncodeInt(nil, columnID)
 	return expr
+}
+
+// toPBFieldType converts *types.FieldType to *tipb.FieldType.
+func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
+	return &tipb.FieldType{
+		Tp:      int32(ft.Tp),
+		Flag:    uint32(ft.Flag),
+		Flen:    int32(ft.Flen),
+		Decimal: int32(ft.Decimal),
+		Charset: ft.Charset,
+		Collate: collationToProto(ft.Collate),
+	}
+}
+
+func newIntFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeLonglong,
+		Flen:    mysql.MaxIntWidth,
+		Decimal: 0,
+		Flag:    mysql.BinaryFlag,
+	}
+}
+
+func scalarFunctionExpr(sigCode tipb.ScalarFuncSig, retType *tipb.FieldType, args ...*tipb.Expr) *tipb.Expr {
+	return &tipb.Expr{
+		Tp:        tipb.ExprType_ScalarFunc,
+		Sig:       sigCode,
+		Children:  args,
+		FieldType: retType,
+	}
 }

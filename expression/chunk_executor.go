@@ -16,9 +16,8 @@ package expression
 import (
 	"strconv"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -27,15 +26,15 @@ import (
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
 func Vectorizable(exprs []Expression) bool {
 	for _, expr := range exprs {
-		if hasUnVectorizableFunc(expr) {
+		if HasGetSetVarFunc(expr) {
 			return false
 		}
 	}
 	return true
 }
 
-// hasUnVectorizableFunc checks whether an expression contains functions that can not utilize the vectorized execution.
-func hasUnVectorizableFunc(expr Expression) bool {
+// HasGetSetVarFunc checks whether an expression contains SetVar/GetVar function.
+func HasGetSetVarFunc(expr Expression) bool {
 	scalaFunc, ok := expr.(*ScalarFunction)
 	if !ok {
 		return false
@@ -47,7 +46,7 @@ func hasUnVectorizableFunc(expr Expression) bool {
 		return true
 	}
 	for _, arg := range scalaFunc.GetArgs() {
-		if hasUnVectorizableFunc(arg) {
+		if HasGetSetVarFunc(arg) {
 			return true
 		}
 	}
@@ -59,7 +58,7 @@ func VectorizedExecute(ctx sessionctx.Context, exprs []Expression, iterator *chu
 	for colID, expr := range exprs {
 		err := evalOneColumn(ctx, expr, iterator, output, colID)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -96,7 +95,7 @@ func evalOneColumn(ctx sessionctx.Context, expr Expression, iterator *chunk.Iter
 			err = executeToString(ctx, expr, fieldType, row, output, colID)
 		}
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func evalOneCell(ctx sessionctx.Context, expr Expression, row chunk.Row, output *chunk.Chunk, colID int) (err error) {
@@ -116,58 +115,64 @@ func evalOneCell(ctx sessionctx.Context, expr Expression, row chunk.Row, output 
 	case types.ETString:
 		err = executeToString(ctx, expr, fieldType, row, output, colID)
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalInt(ctx, row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if isNull {
 		output.AppendNull(colID)
-	} else if fieldType.Tp == mysql.TypeBit {
-		output.AppendBytes(colID, strconv.AppendUint(make([]byte, 0, 8), uint64(res), 10))
-	} else if mysql.HasUnsignedFlag(fieldType.Flag) {
-		output.AppendUint64(colID, uint64(res))
-	} else {
-		output.AppendInt64(colID, res)
+		return nil
 	}
+	if fieldType.Tp == mysql.TypeBit {
+		output.AppendBytes(colID, strconv.AppendUint(make([]byte, 0, 8), uint64(res), 10))
+		return nil
+	}
+	if mysql.HasUnsignedFlag(fieldType.Flag) {
+		output.AppendUint64(colID, uint64(res))
+		return nil
+	}
+	output.AppendInt64(colID, res)
 	return nil
 }
 
 func executeToReal(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalReal(ctx, row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if isNull {
 		output.AppendNull(colID)
-	} else if fieldType.Tp == mysql.TypeFloat {
-		output.AppendFloat32(colID, float32(res))
-	} else {
-		output.AppendFloat64(colID, res)
+		return nil
 	}
+	if fieldType.Tp == mysql.TypeFloat {
+		output.AppendFloat32(colID, float32(res))
+		return nil
+	}
+	output.AppendFloat64(colID, res)
 	return nil
 }
 
 func executeToDecimal(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalDecimal(ctx, row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if isNull {
 		output.AppendNull(colID)
-	} else {
-		output.AppendMyDecimal(colID, res)
+		return nil
 	}
+	output.AppendMyDecimal(colID, res)
 	return nil
 }
 
 func executeToDatetime(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalTime(ctx, row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if isNull {
 		output.AppendNull(colID)
@@ -180,7 +185,7 @@ func executeToDatetime(ctx sessionctx.Context, expr Expression, fieldType *types
 func executeToDuration(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalDuration(ctx, row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if isNull {
 		output.AppendNull(colID)
@@ -193,7 +198,7 @@ func executeToDuration(ctx sessionctx.Context, expr Expression, fieldType *types
 func executeToJSON(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalJSON(ctx, row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if isNull {
 		output.AppendNull(colID)
@@ -206,7 +211,7 @@ func executeToJSON(ctx sessionctx.Context, expr Expression, fieldType *types.Fie
 func executeToString(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalString(ctx, row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if isNull {
 		output.AppendNull(colID)
@@ -242,14 +247,14 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 			if isIntType {
 				filterResult, isNull, err := filter.EvalInt(ctx, row)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
 			} else {
 				// TODO: should rewrite the filter to `cast(expr as SIGNED) != 0` and always use `EvalInt`.
-				bVal, err := EvalBool(ctx, []Expression{filter}, row)
+				bVal, _, err := EvalBool(ctx, []Expression{filter}, row)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				selected[row.Idx()] = selected[row.Idx()] && bVal
 			}

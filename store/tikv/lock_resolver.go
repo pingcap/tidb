@@ -15,18 +15,18 @@ package tikv
 
 import (
 	"container/list"
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // ResolvedCacheSize is max number of cached txn status.
@@ -52,8 +52,11 @@ func newLockResolver(store Storage) *LockResolver {
 	return r
 }
 
+// NewLockResolver is exported for other pkg to use, suppress unused warning.
+var _ = NewLockResolver
+
 // NewLockResolver creates a LockResolver.
-// It is exported for other services to use. For instance, binlog service needs
+// It is exported for other pkg to use. For instance, binlog service needs
 // to determine a transaction's commit state.
 func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolver, error) {
 	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{

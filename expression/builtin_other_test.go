@@ -14,16 +14,16 @@
 package expression
 
 import (
-	"fmt"
 	"math"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -60,7 +60,7 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		count, err := evalBuiltinFunc(f, nil)
+		count, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		if count.IsNull() {
 			c.Assert(test.count, IsNil)
@@ -123,7 +123,7 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
+		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		c.Assert(err, IsNil)
 		c.Assert(d.GetValue(), Equals, tc.res, Commentf("%v", types.MakeDatums(tc.args)))
 	}
@@ -152,7 +152,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
+		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
 		if tc.args[1] != nil {
@@ -193,7 +193,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
+		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
 	}
@@ -201,20 +201,35 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 
 func (s *testEvaluatorSuite) TestValues(c *C) {
 	defer testleak.AfterTest(c)()
+
+	origin := s.ctx.GetSessionVars().StmtCtx.InInsertStmt
+	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = false
+	defer func() {
+		s.ctx.GetSessionVars().StmtCtx.InInsertStmt = origin
+	}()
+
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
 	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("")))
 	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
+
 	sig, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums()))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(sig, nil)
-	c.Assert(err.Error(), Equals, "Session current insert values is nil")
-	s.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(types.MakeDatums("1"))
-	_, err = evalBuiltinFunc(sig, nil)
-	c.Assert(err.Error(), Equals, fmt.Sprintf("Session current insert values len %d and column's offset %v don't match", 1, 1))
-	currInsertValues := types.MakeDatums("1", "2")
-	s.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(currInsertValues)
-	ret, err := evalBuiltinFunc(sig, nil)
+
+	ret, err := evalBuiltinFunc(sig, chunk.Row{})
 	c.Assert(err, IsNil)
+	c.Assert(ret.IsNull(), IsTrue)
+
+	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
+	ret, err = evalBuiltinFunc(sig, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(ret.IsNull(), IsTrue)
+
+	currInsertValues := types.MakeDatums("1", "2")
+	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
+	ret, err = evalBuiltinFunc(sig, chunk.Row{})
+	c.Assert(err, IsNil)
+
 	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)

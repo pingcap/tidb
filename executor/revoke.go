@@ -14,18 +14,18 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 /***
@@ -51,7 +51,7 @@ type RevokeExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *RevokeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *RevokeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.done {
 		return nil
 	}
@@ -135,7 +135,7 @@ func (e *RevokeExec) revokeGlobalPriv(priv *ast.PrivElem, user, host string) err
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s"`, mysql.SystemDB, mysql.UserTable, asgns, user, host)
+	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s'`, mysql.SystemDB, mysql.UserTable, asgns, user, host)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
@@ -149,7 +149,7 @@ func (e *RevokeExec) revokeDBPriv(priv *ast.PrivElem, userName, host string) err
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s" AND DB="%s";`, mysql.SystemDB, mysql.DBTable, asgns, userName, host, dbName)
+	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s';`, mysql.SystemDB, mysql.DBTable, asgns, userName, host, dbName)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
@@ -163,7 +163,7 @@ func (e *RevokeExec) revokeTablePriv(priv *ast.PrivElem, user, host string) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s";`, mysql.SystemDB, mysql.TablePrivTable, asgns, user, host, dbName, tbl.Meta().Name.O)
+	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s';`, mysql.SystemDB, mysql.TablePrivTable, asgns, user, host, dbName, tbl.Meta().Name.O)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
@@ -182,7 +182,7 @@ func (e *RevokeExec) revokeColumnPriv(priv *ast.PrivElem, user, host string) err
 		if err != nil {
 			return errors.Trace(err)
 		}
-		sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s" AND Column_name="%s";`, mysql.SystemDB, mysql.ColumnPrivTable, asgns, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
+		sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s' AND Column_name='%s';`, mysql.SystemDB, mysql.ColumnPrivTable, asgns, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
 		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 		if err != nil {
 			return errors.Trace(err)

@@ -19,13 +19,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -115,7 +115,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeBlob
 	ft = NewFieldType(mysql.TypeBlob)
-	v, err = Convert(&invalidMockType{}, ft)
+	_, err = Convert(&invalidMockType{}, ft)
 	c.Assert(err, NotNil)
 
 	// Nil
@@ -238,20 +238,20 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("3.1415926", ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("99999", ft)
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "9999.9999")
 	v, err = Convert("-10000", ft)
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "-9999.9999")
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
 	sc := new(stmtctx.StatementContext)
-	v, err = d.ToDecimal(sc)
-	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue)
+	_, err = d.ToDecimal(sc)
+	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
 
 	sc.IgnoreTruncate = true
 	v, err = d.ToDecimal(sc)
@@ -266,13 +266,15 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(2015, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(2015))
-	v, err = Convert(1800, ft)
+	_, err = Convert(1800, ft)
 	c.Assert(err, NotNil)
 	dt, err := ParseDate(nil, "2015-11-11")
 	c.Assert(err, IsNil)
 	v, err = Convert(dt, ft)
+	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(ZeroDuration, ft)
+	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(time.Now().Year()))
 
 	// For enum
@@ -288,7 +290,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	_, err = Convert("d", ft)
 	c.Assert(err, NotNil)
 	v, err = Convert(4, ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
 	c.Assert(v, DeepEquals, Enum{})
 
 	ft = NewFieldType(mysql.TypeSet)
@@ -335,7 +337,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	c.Assert(err, IsNil)
 	testToString(c, t, "2011-11-10 11:11:11.999999")
 
-	td, err := ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration(nil, "11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testToString(c, td, "11:11:11.999999")
 
@@ -343,7 +345,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
 	testToString(c, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
@@ -385,7 +387,7 @@ func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr 
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToInt(sc, str)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, expect)
@@ -397,7 +399,7 @@ func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectEr
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToUint(sc, str)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, expect)
@@ -409,7 +411,7 @@ func testStrToFloat(c *C, str string, expect float64, truncateAsErr bool, expect
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToFloat(sc, str)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, expect)
@@ -464,7 +466,7 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
 	defer testleak.AfterTest(c)()
 	v := TypeToStr(mysql.TypeUnspecified, "not binary")
-	c.Assert(v, Equals, type2Str[mysql.TypeUnspecified])
+	c.Assert(v, Equals, TypeStr(mysql.TypeUnspecified))
 	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin)
 	c.Assert(v, Equals, "blob")
 	v = TypeToStr(mysql.TypeString, charset.CharsetBin)
@@ -589,8 +591,10 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeLong, " .002e3  ", "2")
 	signedAccept(c, mysql.TypeLong, " 20e-2  ", "0")
 	signedAccept(c, mysql.TypeLong, " -20e-2  ", "0")
-	signedAccept(c, mysql.TypeLong, " +2.51 ", "2")
-	signedAccept(c, mysql.TypeLong, " -3.58", "-3")
+	signedAccept(c, mysql.TypeLong, " +2.51 ", "3")
+	signedAccept(c, mysql.TypeLong, " -9999.5 ", "-10000")
+	signedAccept(c, mysql.TypeLong, " 999.4", "999")
+	signedAccept(c, mysql.TypeLong, " -3.58", "-4")
 	signedDeny(c, mysql.TypeLong, " 1a ", "1")
 	signedDeny(c, mysql.TypeLong, " +1+ ", "1")
 
@@ -684,10 +688,15 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
 	}
-	_, err := floatStrToIntStr("1e9223372036854775807")
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
-	_, err = floatStrToIntStr("1e21")
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	floatStr, err := floatStrToIntStr(sc, "1e9223372036854775807", "1e9223372036854775807")
+	c.Assert(err, IsNil)
+	c.Assert(floatStr, Equals, "1")
+	floatStr, err = floatStrToIntStr(sc, "125e342", "125e342.83")
+	c.Assert(err, IsNil)
+	c.Assert(floatStr, Equals, "125")
+	floatStr, err = floatStrToIntStr(sc, "1e21", "1e21")
+	c.Assert(err, IsNil)
+	c.Assert(floatStr, Equals, "1")
 }
 
 // TestConvertTime tests time related conversion.
@@ -696,7 +705,7 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 func (s *testTypeConvertSuite) TestConvertTime(c *C) {
 	timezones := []*time.Location{
 		time.UTC,
-		time.FixedZone("UTC", 3*3600),
+		time.FixedZone("", 3*3600),
 		time.Local,
 	}
 
@@ -796,6 +805,27 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 		c.Assert(err, IsNil)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)
+	}
+}
+
+func (s *testTypeConvertSuite) TestConvertJSONToDecimal(c *C) {
+	var tests = []struct {
+		In  string
+		Out *MyDecimal
+	}{
+		{`{}`, NewDecFromStringForTest("0")},
+		{`[]`, NewDecFromStringForTest("0")},
+		{`3`, NewDecFromStringForTest("3")},
+		{`-3`, NewDecFromStringForTest("-3")},
+		{`4.5`, NewDecFromStringForTest("4.5")},
+		{`"1234"`, NewDecFromStringForTest("1234")},
+		{`"1234567890123456789012345678901234567890123456789012345"`, NewDecFromStringForTest("1234567890123456789012345678901234567890123456789012345")},
+	}
+	for _, tt := range tests {
+		j, err := json.ParseBinaryFromString(tt.In)
+		c.Assert(err, IsNil)
+		casted, _ := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
+		c.Assert(casted.Compare(tt.Out), Equals, 0)
 	}
 }
 

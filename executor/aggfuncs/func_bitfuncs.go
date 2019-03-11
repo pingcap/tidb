@@ -14,17 +14,15 @@
 package aggfuncs
 
 import (
-	"github.com/juju/errors"
+	"math"
+
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 type baseBitAggFunc struct {
 	baseAggFunc
-}
-
-type bitOrUint64 struct {
-	baseBitAggFunc
 }
 
 type partialResult4BitFunc = uint64
@@ -44,6 +42,10 @@ func (e *baseBitAggFunc) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	return nil
 }
 
+type bitOrUint64 struct {
+	baseBitAggFunc
+}
+
 func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
@@ -56,5 +58,72 @@ func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		}
 		*p |= uint64(inputValue)
 	}
+	return nil
+}
+
+func (*bitOrUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
+	*p2 |= uint64(*p1)
+	return nil
+}
+
+type bitXorUint64 struct {
+	baseBitAggFunc
+}
+
+func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4BitFunc)(pr)
+	for _, row := range rowsInGroup {
+		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			continue
+		}
+		*p ^= uint64(inputValue)
+	}
+	return nil
+}
+
+func (*bitXorUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
+	*p2 ^= uint64(*p1)
+	return nil
+}
+
+type bitAndUint64 struct {
+	baseBitAggFunc
+}
+
+func (e *bitAndUint64) AllocPartialResult() PartialResult {
+	p := new(partialResult4BitFunc)
+	*p = math.MaxUint64
+	return PartialResult(p)
+}
+
+func (e *bitAndUint64) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4BitFunc)(pr)
+	*p = math.MaxUint64
+}
+
+func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4BitFunc)(pr)
+	for _, row := range rowsInGroup {
+		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			continue
+		}
+		*p &= uint64(inputValue)
+	}
+	return nil
+}
+
+func (*bitAndUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
+	*p2 &= uint64(*p1)
 	return nil
 }

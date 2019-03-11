@@ -18,8 +18,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/israce"
 	log "github.com/sirupsen/logrus"
 )
@@ -43,6 +43,7 @@ func PrintTiDBInfo() {
 	log.Infof("UTC Build Time:  %s", TiDBBuildTS)
 	log.Infof("GoVersion:  %s", GoVersion)
 	log.Infof("Race Enabled: %v", israce.RaceEnabled)
+	log.Infof("Check Table Before Drop: %v", config.CheckTableBeforeDrop)
 	log.Infof("TiKV Min Version: %s", TiKVMinVersion)
 	configJSON, err := json.Marshal(config.GetGlobalConfig())
 	if err != nil {
@@ -59,14 +60,16 @@ func GetTiDBInfo() string {
 		"UTC Build Time: %s\n"+
 		"GoVersion: %s\n"+
 		"Race Enabled: %v\n"+
-		"TiKV Min Version: %s",
+		"TiKV Min Version: %s\n"+
+		"Check Table Before Drop: %v",
 		mysql.TiDBReleaseVersion,
 		TiDBGitHash,
 		TiDBGitBranch,
 		TiDBBuildTS,
 		GoVersion,
 		israce.RaceEnabled,
-		TiKVMinVersion)
+		TiKVMinVersion,
+		config.CheckTableBeforeDrop)
 }
 
 // checkValidity checks whether cols and every data have the same length.

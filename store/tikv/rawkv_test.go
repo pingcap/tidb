@@ -15,10 +15,11 @@ package tikv
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"golang.org/x/net/context"
 )
 
 type testRawKVSuite struct {
@@ -54,6 +55,16 @@ func (s *testRawKVSuite) mustNotExist(c *C, key []byte) {
 	c.Assert(v, IsNil)
 }
 
+func (s *testRawKVSuite) mustBatchNotExist(c *C, keys [][]byte) {
+	values, err := s.client.BatchGet(keys)
+	c.Assert(err, IsNil)
+	c.Assert(values, NotNil)
+	c.Assert(len(keys), Equals, len(values))
+	for _, value := range values {
+		c.Assert([]byte{}, BytesEquals, value)
+	}
+}
+
 func (s *testRawKVSuite) mustGet(c *C, key, value []byte) {
 	v, err := s.client.Get(key)
 	c.Assert(err, IsNil)
@@ -61,8 +72,23 @@ func (s *testRawKVSuite) mustGet(c *C, key, value []byte) {
 	c.Assert(v, BytesEquals, value)
 }
 
+func (s *testRawKVSuite) mustBatchGet(c *C, keys, values [][]byte) {
+	checkValues, err := s.client.BatchGet(keys)
+	c.Assert(err, IsNil)
+	c.Assert(checkValues, NotNil)
+	c.Assert(len(keys), Equals, len(checkValues))
+	for i := range keys {
+		c.Check(values[i], BytesEquals, checkValues[i])
+	}
+}
+
 func (s *testRawKVSuite) mustPut(c *C, key, value []byte) {
 	err := s.client.Put(key, value)
+	c.Assert(err, IsNil)
+}
+
+func (s *testRawKVSuite) mustBatchPut(c *C, keys, values [][]byte) {
+	err := s.client.BatchPut(keys, values)
 	c.Assert(err, IsNil)
 }
 
@@ -71,8 +97,43 @@ func (s *testRawKVSuite) mustDelete(c *C, key []byte) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testRawKVSuite) mustBatchDelete(c *C, keys [][]byte) {
+	err := s.client.BatchDelete(keys)
+	c.Assert(err, IsNil)
+}
+
 func (s *testRawKVSuite) mustScan(c *C, startKey string, limit int, expect ...string) {
-	keys, values, err := s.client.Scan([]byte(startKey), limit)
+	keys, values, err := s.client.Scan([]byte(startKey), nil, limit)
+	c.Assert(err, IsNil)
+	c.Assert(len(keys)*2, Equals, len(expect))
+	for i := range keys {
+		c.Assert(string(keys[i]), Equals, expect[i*2])
+		c.Assert(string(values[i]), Equals, expect[i*2+1])
+	}
+}
+
+func (s *testRawKVSuite) mustScanRange(c *C, startKey string, endKey string, limit int, expect ...string) {
+	keys, values, err := s.client.Scan([]byte(startKey), []byte(endKey), limit)
+	c.Assert(err, IsNil)
+	c.Assert(len(keys)*2, Equals, len(expect))
+	for i := range keys {
+		c.Assert(string(keys[i]), Equals, expect[i*2])
+		c.Assert(string(values[i]), Equals, expect[i*2+1])
+	}
+}
+
+func (s *testRawKVSuite) mustReverseScan(c *C, startKey []byte, limit int, expect ...string) {
+	keys, values, err := s.client.ReverseScan(startKey, nil, limit)
+	c.Assert(err, IsNil)
+	c.Assert(len(keys)*2, Equals, len(expect))
+	for i := range keys {
+		c.Assert(string(keys[i]), Equals, expect[i*2])
+		c.Assert(string(values[i]), Equals, expect[i*2+1])
+	}
+}
+
+func (s *testRawKVSuite) mustReverseScanRange(c *C, startKey, endKey []byte, limit int, expect ...string) {
+	keys, values, err := s.client.ReverseScan(startKey, endKey, limit)
 	c.Assert(err, IsNil)
 	c.Assert(len(keys)*2, Equals, len(expect))
 	for i := range keys {
@@ -96,7 +157,7 @@ func (s *testRawKVSuite) mustDeleteRange(c *C, startKey, endKey []byte, expected
 }
 
 func (s *testRawKVSuite) checkData(c *C, expected map[string]string) {
-	keys, values, err := s.client.Scan([]byte(""), len(expected)+1)
+	keys, values, err := s.client.Scan([]byte(""), nil, len(expected)+1)
 	c.Assert(err, IsNil)
 
 	c.Assert(len(expected), Equals, len(keys))
@@ -126,6 +187,29 @@ func (s *testRawKVSuite) TestSimple(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testRawKVSuite) TestRawBatch(c *C) {
+	testNum := 0
+	size := 0
+	var testKeys [][]byte
+	var testValues [][]byte
+	for i := 0; size/rawBatchPutSize < 4; i++ {
+		key := fmt.Sprint("key", i)
+		size += len(key)
+		testKeys = append(testKeys, []byte(key))
+		value := fmt.Sprint("value", i)
+		size += len(value)
+		testValues = append(testValues, []byte(value))
+		s.mustNotExist(c, []byte(key))
+		testNum = i
+	}
+	err := s.split(c, "", fmt.Sprint("key", testNum/2))
+	c.Assert(err, IsNil)
+	s.mustBatchPut(c, testKeys, testValues)
+	s.mustBatchGet(c, testKeys, testValues)
+	s.mustBatchDelete(c, testKeys)
+	s.mustBatchNotExist(c, testKeys)
+}
+
 func (s *testRawKVSuite) TestSplit(c *C) {
 	s.mustPut(c, []byte("k1"), []byte("v1"))
 	s.mustPut(c, []byte("k3"), []byte("v3"))
@@ -149,6 +233,43 @@ func (s *testRawKVSuite) TestScan(c *C) {
 		s.mustScan(c, "", 10, "k1", "v1", "k3", "v3", "k5", "v5", "k7", "v7")
 		s.mustScan(c, "k2", 2, "k3", "v3", "k5", "v5")
 		s.mustScan(c, "k2", 3, "k3", "v3", "k5", "v5", "k7", "v7")
+		s.mustScanRange(c, "", "k1", 1)
+		s.mustScanRange(c, "k1", "k3", 2, "k1", "v1")
+		s.mustScanRange(c, "k1", "k5", 10, "k1", "v1", "k3", "v3")
+		s.mustScanRange(c, "k1", "k5\x00", 10, "k1", "v1", "k3", "v3", "k5", "v5")
+		s.mustScanRange(c, "k5\x00", "k5\x00\x00", 10)
+	}
+
+	check()
+
+	err := s.split(c, "k", "k2")
+	c.Assert(err, IsNil)
+	check()
+
+	err = s.split(c, "k2", "k5")
+	c.Assert(err, IsNil)
+	check()
+}
+
+func (s *testRawKVSuite) TestReverseScan(c *C) {
+	s.mustPut(c, []byte("k1"), []byte("v1"))
+	s.mustPut(c, []byte("k3"), []byte("v3"))
+	s.mustPut(c, []byte("k5"), []byte("v5"))
+	s.mustPut(c, []byte("k7"), []byte("v7"))
+
+	check := func() {
+		s.mustReverseScan(c, []byte(""), 10)
+		s.mustReverseScan(c, []byte("z"), 1, "k7", "v7")
+		s.mustReverseScan(c, []byte("z"), 2, "k7", "v7", "k5", "v5")
+		s.mustReverseScan(c, []byte("z"), 10, "k7", "v7", "k5", "v5", "k3", "v3", "k1", "v1")
+		s.mustReverseScan(c, []byte("k2"), 10, "k1", "v1")
+		s.mustReverseScan(c, []byte("k6"), 2, "k5", "v5", "k3", "v3")
+		s.mustReverseScan(c, []byte("k5"), 1, "k3", "v3")
+		s.mustReverseScan(c, append([]byte("k5"), 0), 1, "k5", "v5")
+		s.mustReverseScan(c, []byte("k6"), 3, "k5", "v5", "k3", "v3", "k1", "v1")
+
+		s.mustReverseScanRange(c, []byte("z"), []byte("k3"), 10, "k7", "v7", "k5", "v5", "k3", "v3")
+		s.mustReverseScanRange(c, []byte("k7"), append([]byte("k3"), 0), 10, "k5", "v5")
 	}
 
 	check()

@@ -17,30 +17,30 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // Session metrics.
 var (
-	SessionExecuteParseDuration = prometheus.NewHistogram(
+	SessionExecuteParseDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "parse_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
 			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
-		})
-	SessionExecuteCompileDuration = prometheus.NewHistogram(
+		}, []string{LblSQLType})
+	SessionExecuteCompileDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "compile_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in query optimize.",
 			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
-		})
-	SessionExecuteRunDuration = prometheus.NewHistogram(
+		}, []string{LblSQLType})
+	SessionExecuteRunDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "execute_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in running executor.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 13),
-		})
+		}, []string{LblSQLType})
 	SchemaLeaseErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -62,14 +62,14 @@ var (
 			Subsystem: "session",
 			Name:      "retry_error_total",
 			Help:      "Counter of session retry error.",
-		}, []string{LblType})
+		}, []string{LblSQLType, LblType})
 	TransactionCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "transaction_total",
 			Help:      "Counter of transactions.",
-		}, []string{LblType})
+		}, []string{LblSQLType, LblType})
 
 	SessionRestrictedSQLCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -86,7 +86,7 @@ var (
 			Name:      "transaction_statement_num",
 			Help:      "Buckated histogram of statements count in each transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 12),
-		}, []string{LblType})
+		}, []string{LblSQLType, LblType})
 
 	TransactionDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -95,7 +95,7 @@ var (
 			Name:      "transaction_duration_seconds",
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 16), // range 1ms ~ 64s
-		}, []string{LblType})
+		}, []string{LblSQLType, LblType})
 )
 
 // Label constants.
@@ -106,18 +106,9 @@ const (
 	LblError       = "error"
 	LblRollback    = "rollback"
 	LblType        = "type"
+	LblDb          = "db"
 	LblResult      = "result"
+	LblSQLType     = "sql_type"
+	LblGeneral     = "general"
+	LblInternal    = "internal"
 )
-
-func init() {
-	prometheus.MustRegister(SessionExecuteParseDuration)
-	prometheus.MustRegister(SessionExecuteCompileDuration)
-	prometheus.MustRegister(SessionExecuteRunDuration)
-	prometheus.MustRegister(SchemaLeaseErrorCounter)
-	prometheus.MustRegister(SessionRetry)
-	prometheus.MustRegister(SessionRetryErrorCounter)
-	prometheus.MustRegister(TransactionCounter)
-	prometheus.MustRegister(SessionRestrictedSQLCounter)
-	prometheus.MustRegister(StatementPerTransaction)
-	prometheus.MustRegister(TransactionDuration)
-}

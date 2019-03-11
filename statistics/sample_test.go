@@ -17,18 +17,18 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 var _ = Suite(&testSampleSuite{})
 
 type testSampleSuite struct {
 	count int
-	rs    ast.RecordSet
+	rs    sqlexec.RecordSet
 }
 
 func (s *testSampleSuite) SetUpSuite(c *C) {

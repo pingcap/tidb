@@ -14,10 +14,10 @@
 package privilege
 
 import (
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 )
 
 type keyType int
@@ -31,14 +31,21 @@ type Manager interface {
 	// ShowGrants shows granted privileges for user.
 	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) ([]string, error)
 
+	// GetEncodedPassword shows the encoded password for user.
+	GetEncodedPassword(user, host string) string
+
 	// RequestVerification verifies user privilege for the request.
 	// If table is "", only check global/db scope privileges.
 	// If table is not "", check global/db/table scope privileges.
 	// priv should be a defined constant like CreatePriv, if pass AllPrivMask to priv,
 	// this means any privilege would be OK.
 	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
+
+	// RequestVerificationWithUser verifies specific user privilege for the request.
+	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
+
 	// ConnectionVerification verifies user privilege for connection.
-	ConnectionVerification(user, host string, auth, salt []byte) bool
+	ConnectionVerification(user, host string, auth, salt []byte) (string, string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(db string) bool

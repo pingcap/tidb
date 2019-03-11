@@ -14,25 +14,30 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/meta/autoid"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testSuite) TestTruncateTable(c *C) {
+func (s *testSuite3) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists truncate_test;`)
@@ -45,7 +50,24 @@ func (s *testSuite) TestTruncateTable(c *C) {
 	result.Check(nil)
 }
 
-func (s *testSuite) TestCreateTable(c *C) {
+// TestInTxnExecDDLFail tests the following case:
+//  1. Execute the SQL of "begin";
+//  2. A SQL that will fail to execute;
+//  3. Execute DDL.
+func (s *testSuite3) TestInTxnExecDDLFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1);")
+	_, err := tk.Exec("truncate table t;")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	result := tk.MustQuery("select count(*) from t")
+	result.Check(testkit.Rows("1"))
+}
+
+func (s *testSuite3) TestCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -67,12 +89,12 @@ func (s *testSuite) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	chk := rs.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
+	req := rs.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err1 := rs.Next(ctx, chk)
+		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -81,16 +103,16 @@ func (s *testSuite) TestCreateTable(c *C) {
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
-	chk = rs.NewChunk()
-	it = chunk.NewIterator4Chunk(chk)
+	req = rs.NewRecordBatch()
+	it = chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err1 := rs.Next(ctx, chk)
+		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			c.Assert(chk.GetRow(0).GetString(1), Equals, "double")
+			c.Assert(req.GetRow(0).GetString(1), Equals, "double")
 		}
 	}
 
@@ -116,7 +138,57 @@ func (s *testSuite) TestCreateTable(c *C) {
 	r.Check(testkit.Rows("1000 aa"))
 }
 
-func (s *testSuite) TestCreateDropDatabase(c *C) {
+func (s *testSuite3) TestCreateView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	//create an source table
+	tk.MustExec("CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+	//test create a exist view
+	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
+	defer tk.MustExec("DROP VIEW IF EXISTS view_t")
+	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
+	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.view_t' already exists")
+	//create view on nonexistent table
+	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.t1' doesn't exist")
+	//simple view
+	tk.MustExec("create table t1 (a int ,b int)")
+	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
+	//view with colList and SelectFieldExpr
+	tk.MustExec("create view v1 (c) as select b+1 from t1")
+	//view with SelectFieldExpr
+	tk.MustExec("create view v2 as select b+1 from t1")
+	//view with SelectFieldExpr and AsName
+	tk.MustExec("create view v3 as select b+1 as c from t1")
+	//view with colList , SelectField and AsName
+	tk.MustExec("create view v4 (c) as select b+1 as d from t1")
+	//view with select wild card
+	tk.MustExec("create view v5 as select * from t1")
+	tk.MustExec("create view v6 (c,d) as select * from t1")
+	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
+	//drop multiple views in a statement
+	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
+	//view with variable
+	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
+	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
+	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.v1' already exists")
+	tk.MustExec("drop view v1")
+	//view with different col counts
+	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
+	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
+	//view with or_replace flag
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create view v1 (c,d) as select a,b from t1")
+	tk.MustExec("create or replace view v1 (c,d) as select a,b from t1 ")
+	tk.MustExec("create table if not exists t1 (a int ,b int)")
+	_, err = tk.Exec("create or replace view t1 as select * from t1")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error())
+}
+
+func (s *testSuite3) TestCreateDropDatabase(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists drop_test;")
 	tk.MustExec("drop database if exists drop_test;")
@@ -124,21 +196,45 @@ func (s *testSuite) TestCreateDropDatabase(c *C) {
 	tk.MustExec("use drop_test;")
 	tk.MustExec("drop database drop_test;")
 	_, err := tk.Exec("drop table t;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
-	_, err = tk.Exec("select * from t;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
+	err = tk.ExecToErr("select * from t;")
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
+
+	_, err = tk.Exec("drop database mysql")
+	c.Assert(err, NotNil)
 }
 
-func (s *testSuite) TestCreateDropTable(c *C) {
+func (s *testSuite3) TestCreateDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
 	tk.MustExec("drop table if exists drop_test")
 	tk.MustExec("create table drop_test (a int)")
 	tk.MustExec("drop table drop_test")
+
+	_, err := tk.Exec("drop table mysql.gc_delete_range")
+	c.Assert(err, NotNil)
 }
 
-func (s *testSuite) TestCreateDropIndex(c *C) {
+func (s *testSuite3) TestCreateDropView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create or replace view drop_test as select 1,2")
+	_, err := tk.Exec("drop view if exists drop_test")
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec("drop view mysql.gc_delete_range")
+	c.Assert(err.Error(), Equals, "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
+
+	_, err = tk.Exec("drop view drop_test")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
+
+	tk.MustExec("create table t_v(a int)")
+	_, err = tk.Exec("drop view t_v")
+	c.Assert(err.Error(), Equals, "[ddl:1347]'test.t_v' is not VIEW")
+}
+
+func (s *testSuite3) TestCreateDropIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -147,27 +243,32 @@ func (s *testSuite) TestCreateDropIndex(c *C) {
 	tk.MustExec("drop table drop_test")
 }
 
-func (s *testSuite) TestAlterTableAddColumn(c *C) {
+func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
 	tk.MustExec("insert into alter_test values(1)")
 	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp")
-	time.Sleep(1 * time.Second)
-	now := time.Now().Add(-time.Duration(1 * time.Second)).Format(types.TimeFormat)
+	time.Sleep(1 * time.Millisecond)
+	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	chk := r.NewChunk()
-	err = r.Next(context.Background(), chk)
+	req := r.NewRecordBatch()
+	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	row := chk.GetRow(0)
+	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
+	r.Close()
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
+	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
+	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
+	tk.MustExec("drop view alter_view")
 }
 
-func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
+func (s *testSuite3) TestAddNotNullColumnNoDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table nn (c1 int)")
@@ -188,7 +289,7 @@ func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0", "3 0"))
 }
 
-func (s *testSuite) TestAlterTableModifyColumn(c *C) {
+func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists mc")
@@ -207,11 +308,15 @@ func (s *testSuite) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("alter table mc modify column c2 text")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
+	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
+	_, err = tk.Exec("alter table alter_view modify column c2 text")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
+	tk.MustExec("drop view alter_view")
 }
 
-func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
+func (s *testSuite3) TestDefaultDBAfterDropCurDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	testSQL := `create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
@@ -230,7 +335,7 @@ func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_unicode_ci"))
 }
 
-func (s *testSuite) TestRenameTable(c *C) {
+func (s *testSuite3) TestRenameTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database rename1")
@@ -286,7 +391,7 @@ func (s *testSuite) TestRenameTable(c *C) {
 	tk.MustExec("drop database rename2")
 }
 
-func (s *testSuite) TestUnsupportedCharset(c *C) {
+func (s *testSuite3) TestUnsupportedCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	dbName := "unsupported_charset"
 	tk.MustExec("create database " + dbName)
@@ -314,7 +419,7 @@ func (s *testSuite) TestUnsupportedCharset(c *C) {
 	tk.MustExec("drop database " + dbName)
 }
 
-func (s *testSuite) TestTooLargeIdentifierLength(c *C) {
+func (s *testSuite3) TestTooLargeIdentifierLength(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// for database.
@@ -349,7 +454,7 @@ func (s *testSuite) TestTooLargeIdentifierLength(c *C) {
 	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 }
 
-func (s *testSuite) TestShardRowIDBits(c *C) {
+func (s *testSuite3) TestShardRowIDBits(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -361,7 +466,7 @@ func (s *testSuite) TestShardRowIDBits(c *C) {
 	c.Assert(err, IsNil)
 	var hasShardedID bool
 	var count int
-	c.Assert(tk.Se.NewTxn(), IsNil)
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
 	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
 		c.Assert(h, GreaterEqual, int64(0))
 		first8bits := h >> 56
@@ -382,9 +487,27 @@ func (s *testSuite) TestShardRowIDBits(c *C) {
 	_, err = tk.Exec("alter table auto shard_row_id_bits = 4")
 	c.Assert(err, NotNil)
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
+
+	// Test overflow
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int) shard_row_id_bits = 15")
+	defer tk.MustExec("drop table if exists t1")
+
+	tbl, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	maxID := 1<<(64-15-1) - 1
+	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t1 values(1)")
+
+	// continue inserting will fail.
+	_, err = tk.Exec("insert into t1 values(2)")
+	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
+	_, err = tk.Exec("insert into t1 values(3)")
+	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 }
 
-func (s *testSuite) TestMaxHandleAddIndex(c *C) {
+func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -401,30 +524,204 @@ func (s *testSuite) TestMaxHandleAddIndex(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
-func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
+func (s *testSuite3) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 1")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = invalid_val")
-	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = -1")
-	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
-	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows("-1"))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
-	res = tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	res := tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
 
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLReorgWorkerCount)))
+	res.Check(testkit.Rows("100"))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
+}
+
+func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.DefTiDBDDLReorgBatchSize))
+
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MinDDLReorgBatchSize))
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MaxDDLReorgBatchSize))
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_batch_size = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = -1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '-1'"))
+
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
+	res := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	res.Check(testkit.Rows("100"))
+
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	res.Check(testkit.Rows(fmt.Sprintf("%v", 100)))
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	res.Check(testkit.Rows("1000"))
+}
+
+func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("b").Error())
+
+	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
+
+	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
+
+	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("drop table t1;")
+}
+
+func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(variable.DefTiDBDDLErrorCountLimit))
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = -1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '-1'"))
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(0))
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", uint64(math.MaxInt64)+1))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '%d'", uint64(math.MaxInt64)+1)))
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(math.MaxInt64))
+	_, err = tk.Exec("set @@global.tidb_ddl_error_count_limit = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(100))
+	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
+	res.Check(testkit.Rows("100"))
+}
+
+// Test issue #9205, fix the precision problem for time type default values
+// See https://github.com/pingcap/tidb/issues/9205 for details
+func (s *testSuite3) TestIssue9205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(c time DEFAULT '12:12:12.8');`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`alter table t add column c1 time default '12:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t alter column c1 set default '2019-02-01 12:12:10.4';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:10'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t modify c1 time DEFAULT '770:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '770:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+}
+
+func (s *testSuite3) TestCheckDefaultFsp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+
+	_, err := tk.Exec("create table t (  tt timestamp default now(1));")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("create table t (  tt timestamp(1) default current_timestamp);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("create table t (  tt timestamp(1) default now(2));")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	tk.MustExec("create table t (  tt timestamp(1) default now(1));")
+	tk.MustExec("create table t2 (  tt timestamp default current_timestamp());")
+	tk.MustExec("create table t3 (  tt timestamp default current_timestamp(0));")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp default now(2);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp(5) default current_timestamp;")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp(5) default now(2);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t modify column tt timestamp(1) default now();")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("alter table t modify column tt timestamp(4) default now(5);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("alter table t change column tt tttt timestamp(4) default now(5);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
+
+	_, err = tk.Exec("alter table t change column tt tttt timestamp(1) default now();")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
 }

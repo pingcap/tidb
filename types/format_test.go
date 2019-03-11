@@ -15,7 +15,7 @@ package types_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -103,6 +103,17 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`10:13 PM`, `%l:%i %p`, types.FromDate(0, 0, 0, 22, 13, 0, 0)},
 		{`12:00:00 AM`, `%h:%i:%s %p`, types.FromDate(0, 0, 0, 0, 0, 0, 0)},
 		{`12:00:00 PM`, `%h:%i:%s %p`, types.FromDate(0, 0, 0, 12, 0, 0, 0)},
+		{`18/10/22`, `%y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
+		{`8/10/22`, `%y/%m/%d`, types.FromDate(2008, 10, 22, 0, 0, 0, 0)},
+		{`69/10/22`, `%y/%m/%d`, types.FromDate(2069, 10, 22, 0, 0, 0, 0)},
+		{`70/10/22`, `%y/%m/%d`, types.FromDate(1970, 10, 22, 0, 0, 0, 0)},
+		{`18/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
+		{`2018/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
+		{`8/10/22`, `%Y/%m/%d`, types.FromDate(2008, 10, 22, 0, 0, 0, 0)},
+		{`69/10/22`, `%Y/%m/%d`, types.FromDate(2069, 10, 22, 0, 0, 0, 0)},
+		{`70/10/22`, `%Y/%m/%d`, types.FromDate(1970, 10, 22, 0, 0, 0, 0)},
+		{`18/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
+		{`100/10/22`, `%Y/%m/%d`, types.FromDate(100, 10, 22, 0, 0, 0, 0)},
 	}
 	for i, tt := range tests {
 		var t types.Time
@@ -121,6 +132,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`23:60:12`, `%T`}, // invalid minute
 		{`18`, `%l`},
 		{`00:21:22 AM`, `%h:%i:%s %p`},
+		{`100/10/22`, `%y/%m/%d`},
 	}
 	for _, tt := range errTests {
 		var t types.Time

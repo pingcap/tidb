@@ -8,8 +8,8 @@ create table t3 (a bigint, b bigint, c bigint, d bigint);
 load stats 's/explain_easy_stats_t3.json';
 create table index_prune(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c tinyint(4) NOT NULL, primary key(a, b), index idx_b_c_a(b, c, a));
 load stats 's/explain_easy_stats_index_prune.json';
-set @@session.tidb_opt_insubquery_unfold = 1;
 set @@session.tidb_opt_agg_push_down = 1;
+set @@session.tidb_opt_insubq_to_join_and_agg=1;
 
 
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
@@ -38,7 +38,7 @@ explain select * from information_schema.columns;
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 explain select * from t1 order by c1 desc limit 1;
 
-set @@session.tidb_opt_insubquery_unfold = 0;
+set @@session.tidb_opt_insubq_to_join_and_agg=0;
 
 # explain select sum(t1.c1 in (select c1 from t2)) from t1;
 explain select 1 in (select c2 from t2) from t1;
@@ -48,5 +48,18 @@ explain select 1 in (select c2 from t2) from t1;
 explain format="dot" select 1 in (select c2 from t2) from t1;
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 ORDER BY a;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b ORDER BY a limit 1;
 
 drop table if exists t1, t2, t3, index_prune;
+set @@session.tidb_opt_insubq_to_join_and_agg=1;
+
+drop table if exists tbl;
+create table tbl(column1 int, column2 int, index idx(column1, column2));
+load stats 's/explain_easy_stats_tbl_dnf.json';
+explain select * from tbl where (column1=0 and column2=1) or (column1=1 and column2=3) or (column1=2 and column2=5);

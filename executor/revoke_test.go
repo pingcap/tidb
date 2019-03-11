@@ -18,11 +18,11 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestRevokeGlobal(c *C) {
+func (s *testSuite1) TestRevokeGlobal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	_, err := tk.Exec(`REVOKE ALL PRIVILEGES ON *.* FROM 'nonexistuser'@'host'`)
@@ -50,7 +50,7 @@ func (s *testSuite) TestRevokeGlobal(c *C) {
 	}
 }
 
-func (s *testSuite) TestRevokeDBScope(c *C) {
+func (s *testSuite1) TestRevokeDBScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testDBRevoke'@'localhost' IDENTIFIED BY '123';`)
@@ -70,7 +70,7 @@ func (s *testSuite) TestRevokeDBScope(c *C) {
 	}
 }
 
-func (s *testSuite) TestRevokeTableScope(c *C) {
+func (s *testSuite1) TestRevokeTableScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testTblRevoke'@'localhost' IDENTIFIED BY '123';`)
@@ -101,7 +101,7 @@ func (s *testSuite) TestRevokeTableScope(c *C) {
 	tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`).Check(testkit.Rows(""))
 }
 
-func (s *testSuite) TestRevokeColumnScope(c *C) {
+func (s *testSuite1) TestRevokeColumnScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testColRevoke'@'localhost' IDENTIFIED BY '123';`)

@@ -15,8 +15,9 @@ package server
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/types"
 )
 
 func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
@@ -120,7 +121,7 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 				[]byte{0x00},
 			},
 			nil,
-			"0",
+			types.ZeroDatetimeStr,
 		},
 		// Tests for time
 		{
@@ -193,7 +194,7 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 	}
 	for _, tt := range tests {
 		err := parseStmtArgs(tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
+		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("err %v", err))
 		c.Assert(tt.args.args[0], Equals, tt.expect)
 	}
 }

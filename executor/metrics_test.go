@@ -17,14 +17,15 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/planner"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestStmtLabel(c *C) {
+func (s *testSuite2) TestStmtLabel(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table label (c1 int primary key, c2 int, c3 int, index (c2))")
@@ -60,9 +61,9 @@ func (s *testSuite) TestStmtLabel(c *C) {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
 		is := executor.GetInfoSchema(tk.Se)
-		err = plan.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is, false)
+		err = plannercore.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is)
 		c.Assert(err, IsNil)
-		_, err = plan.Optimize(tk.Se, stmtNode, is)
+		_, err = planner.Optimize(tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
 		c.Assert(executor.GetStmtLabel(stmtNode), Equals, tt.label)
 	}

@@ -19,13 +19,12 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	stats "github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -39,8 +38,7 @@ func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	handle := stats.NewHandle(mock.NewContext(), 0)
-	return handle.LoadStatsFromJSONToTable(tblInfo, jsTable)
+	return stats.TableStatsFromJSON(tblInfo, tblInfo.ID, jsTable)
 }
 
 type histogram struct {

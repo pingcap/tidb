@@ -16,8 +16,10 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"sort"
 
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // ExplainInfo implements the Expression interface.
@@ -41,21 +43,22 @@ func (expr *Column) ExplainInfo() string {
 
 // ExplainInfo implements the Expression interface.
 func (expr *Constant) ExplainInfo() string {
-	dt, err := expr.Eval(nil)
+	dt, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		if expr.Value.Kind() == types.KindNull {
-			return "null"
-		}
 		return "not recognized const vanue"
 	}
-	valStr, err := dt.ToString()
-	if err != nil {
-		if expr.Value.Kind() == types.KindNull {
-			return "null"
-		}
-		return "not recognized const vanue"
+	return expr.format(dt)
+}
+
+func (expr *Constant) format(dt types.Datum) string {
+	switch dt.Kind() {
+	case types.KindNull:
+		return "NULL"
+	case types.KindString, types.KindBytes, types.KindMysqlEnum, types.KindMysqlSet,
+		types.KindMysqlJSON, types.KindBinaryLiteral, types.KindMysqlBit:
+		return fmt.Sprintf("\"%v\"", dt.GetValue())
 	}
-	return valStr
+	return fmt.Sprintf("%v", dt.GetValue())
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
@@ -64,6 +67,25 @@ func ExplainExpressionList(exprs []Expression) []byte {
 	for i, expr := range exprs {
 		buffer.WriteString(expr.ExplainInfo())
 		if i+1 < len(exprs) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.Bytes()
+}
+
+// SortedExplainExpressionList generates explain information for a list of expressions in order.
+// In some scenarios, the expr's order may not be stable when executing multiple times.
+// So we add a sort to make its explain result stable.
+func SortedExplainExpressionList(exprs []Expression) []byte {
+	buffer := bytes.NewBufferString("")
+	exprInfos := make([]string, 0, len(exprs))
+	for _, expr := range exprs {
+		exprInfos = append(exprInfos, expr.ExplainInfo())
+	}
+	sort.Strings(exprInfos)
+	for i, info := range exprInfos {
+		buffer.WriteString(info)
+		if i+1 < len(exprInfos) {
 			buffer.WriteString(", ")
 		}
 	}

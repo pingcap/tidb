@@ -14,6 +14,7 @@
 package owner
 
 import (
+	"context"
 	"math"
 	"net"
 	"os"
@@ -21,22 +22,18 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/terror"
+	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level:  logLevel,
-		Format: "highlight",
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, "highlight", "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -53,8 +50,10 @@ func (s *testSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	err := s.ln.Close()
-	c.Assert(err, IsNil)
+	if s.ln != nil {
+		err := s.ln.Close()
+		c.Assert(err, IsNil)
+	}
 }
 
 var (
@@ -66,21 +65,38 @@ var (
 func (s *testSuite) TestFailNewSession(c *C) {
 	defer testleak.AfterTest(c)()
 
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
-		DialTimeout: dialTimeout,
-	})
-	gofail.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`)
-	_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
-	isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
-	c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	func() {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints:   endpoints,
+			DialTimeout: dialTimeout,
+		})
+		c.Assert(err, IsNil)
+		defer func() {
+			if cli != nil {
+				cli.Close()
+			}
+		}()
+		gofail.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`)
+		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
+		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	}()
 
-	cli, err = clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
-		DialTimeout: dialTimeout,
-	})
-	gofail.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`)
-	_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
-	isContextDone = terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
-	c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	func() {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints:   endpoints,
+			DialTimeout: dialTimeout,
+		})
+		c.Assert(err, IsNil)
+		defer func() {
+			if cli != nil {
+				cli.Close()
+			}
+		}()
+		gofail.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`)
+		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
+		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	}()
+
 }

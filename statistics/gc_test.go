@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testStatsUpdateSuite) TestGCStats(c *C) {
+func (s *testStatsSuite) TestGCStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -47,6 +47,42 @@ func (s *testStatsUpdateSuite) TestGCStats(c *C) {
 	testKit.MustExec("drop table t")
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("1"))
+	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
+	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
+	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
+}
+
+func (s *testStatsSuite) TestGCPartition(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec(`create table t (a bigint(64), b bigint(64), index idx(a, b))
+			    partition by range (a) (
+			    partition p0 values less than (3),
+			    partition p1 values less than (6))`)
+	testKit.MustExec("insert into t values (1,2),(2,3),(3,4),(4,5),(5,6)")
+	testKit.MustExec("analyze table t")
+
+	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
+	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))
+	h := s.do.StatsHandle()
+	h.SetLastUpdateVersion(math.MaxUint64)
+	ddlLease := time.Duration(0)
+	testKit.MustExec("alter table t drop index idx")
+	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
+	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("10"))
+
+	testKit.MustExec("alter table t drop column b")
+	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))
+	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("5"))
+
+	testKit.MustExec("drop table t")
+	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("2"))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)

@@ -14,7 +14,7 @@
 package aggregation
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -62,5 +62,5 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		}
 		children = append(children, pbArg)
 	}
-	return &tipb.Expr{Tp: tp, Children: children}
+	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp)}
 }

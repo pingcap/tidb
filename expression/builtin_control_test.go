@@ -18,8 +18,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -37,18 +38,20 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 		{[]interface{}{nil, 1, nil, 2, 3}, 3},
 		{[]interface{}{false, 1, nil, 2, 3}, 3},
 		{[]interface{}{nil, 1, false, 2, 3}, 3},
+		{[]interface{}{1, jsonInt.GetMysqlJSON(), nil}, 3},
+		{[]interface{}{0, jsonInt.GetMysqlJSON(), nil}, nil},
 	}
 	fc := funcs[ast.Case]
 	for _, t := range tbl {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Arg...)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(f, nil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, nil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 }
 
@@ -82,13 +85,13 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 	for _, t := range tbl {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(f, nil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, nil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1, 2)))
 	c.Assert(err, NotNil)
@@ -119,7 +122,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 	for _, t := range tbl {
 		f, err := newFunctionForTest(s.ctx, ast.Ifnull, s.primitiveValsToConstants([]interface{}{t.arg1, t.arg2})...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {

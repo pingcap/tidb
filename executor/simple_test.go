@@ -14,20 +14,22 @@
 package executor_test
 
 import (
+	"context"
+	"github.com/pingcap/tidb/planner/core"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
-func (s *testSuite) TestCharsetDatabase(c *C) {
+func (s *testSuite3) TestCharsetDatabase(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
 	tk.MustExec(testSQL)
@@ -46,13 +48,13 @@ func (s *testSuite) TestCharsetDatabase(c *C) {
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
 }
 
-func (s *testSuite) TestDo(c *C) {
+func (s *testSuite3) TestDo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestTransaction(c *C) {
+func (s *testSuite3) TestTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("begin")
 	ctx := tk.Se.(sessionctx.Context)
@@ -85,7 +87,7 @@ func inTxn(ctx sessionctx.Context) bool {
 	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
 }
 
-func (s *testSuite) TestUser(c *C) {
+func (s *testSuite3) TestUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
 	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
@@ -172,21 +174,15 @@ func (s *testSuite) TestUser(c *C) {
 	// Test 'identified by password'
 	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password 'xxx';`
 	_, err = tk.Exec(createUserSQL)
-	c.Assert(terror.ErrorEqual(executor.ErrPasswordFormat, err), IsTrue)
+	c.Assert(terror.ErrorEqual(executor.ErrPasswordFormat, err), IsTrue, Commentf("err %v", err))
 	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password '*3D56A309CD04FA2EEF181462E59011F075C89548';`
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
 	tk.MustExec(dropUserSQL)
-	tk.MustQuery("select * from mysql.db").Check(testkit.Rows(
-		"localhost test testDB Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
-		"localhost test testDB1 Y Y Y Y Y Y Y N Y Y N N N N N N Y N N] [% dddb_% dduser Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
-		"% test test Y N N N N N N N N N N N N N N N N N N",
-		"localhost test testDBRevoke N N N N N N N N N N N N N N N N N N N",
-	))
 
 	// Test drop user meet error
 	_, err = tk.Exec(dropUserSQL)
-	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenByArgs("DROP USER", "")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
 
 	createUserSQL = `CREATE USER 'test1'@'localhost'`
 	tk.MustExec(createUserSQL)
@@ -195,10 +191,10 @@ func (s *testSuite) TestUser(c *C) {
 
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
-	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenByArgs("DROP USER", "")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
 }
 
-func (s *testSuite) TestSetPwd(c *C) {
+func (s *testSuite3) TestSetPwd(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	createUserSQL := `CREATE USER 'testpwd'@'localhost' IDENTIFIED BY '';`
@@ -219,18 +215,19 @@ func (s *testSuite) TestSetPwd(c *C) {
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(sessionctx.Context)
-	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost"}
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost", AuthUsername: "testpwd1", AuthHostname: "localhost"}
 	// Session user doesn't exist.
 	_, err = tk.Exec(setPwdSQL)
-	c.Check(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue)
+	c.Check(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue, Commentf("err %v", err))
 	// normal
-	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd", Hostname: "localhost"}
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd", Hostname: "localhost", AuthUsername: "testpwd", AuthHostname: "localhost"}
 	tk.MustExec(setPwdSQL)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
+
 }
 
-func (s *testSuite) TestKillStmt(c *C) {
+func (s *testSuite3) TestKillStmt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("kill 1")
@@ -239,7 +236,7 @@ func (s *testSuite) TestKillStmt(c *C) {
 	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
 }
 
-func (s *testSuite) TestFlushPrivileges(c *C) {
+func (s *testSuite3) TestFlushPrivileges(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';`)
@@ -264,7 +261,7 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	c.Check(err, IsNil)
 }
 
-func (s *testSuite) TestDropStats(c *C) {
+func (s *testSuite3) TestDropStats(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -294,4 +291,24 @@ func (s *testSuite) TestDropStats(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	h.Lease = 0
+}
+
+func (s *testSuite3) TestFlushTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	_, err := tk.Exec("FLUSH TABLES")
+	c.Check(err, IsNil)
+
+	_, err = tk.Exec("FLUSH TABLES WITH READ LOCK")
+	c.Check(err, NotNil)
+
+}
+
+func (s *testSuite3) TestUseDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	_, err := tk.Exec("USE test")
+	c.Check(err, IsNil)
+
+	_, err = tk.Exec("USE ``")
+	c.Assert(terror.ErrorEqual(core.ErrNoDB, err), IsTrue, Commentf("err %v", err))
 }

@@ -17,11 +17,13 @@ import (
 	"math"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testleak"
@@ -33,11 +35,11 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	ctx := mock.NewContext()
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 	ctx.GetSessionVars().CurrentDB = "test"
-	d, err = evalBuiltinFunc(f, nil)
+	d, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 
@@ -46,7 +48,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	c.Assert(fc, NotNil)
 	f, err = fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err = evalBuiltinFunc(f, types.DatumRow(types.MakeDatums()))
+	d, err = evalBuiltinFunc(f, chunk.MutRowFromDatums(types.MakeDatums()).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 }
@@ -60,7 +62,7 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	fc := funcs[ast.FoundRows]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(2))
 }
@@ -74,7 +76,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	fc := funcs[ast.User]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -83,12 +85,12 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}
 
 	fc := funcs[ast.CurrentUser]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -102,7 +104,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	fc := funcs[ast.ConnectionID]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(1))
 }
@@ -112,17 +114,47 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 	fc := funcs[ast.Version]
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	v, err := evalBuiltinFunc(f, nil)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
 }
 
 func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.Benchmark]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, nil)))
-	c.Assert(f, IsNil)
-	c.Assert(err, ErrorMatches, "*FUNCTION BENCHMARK does not exist")
+
+	cases := []struct {
+		LoopCount  int
+		Expression interface{}
+		Expected   int64
+		IsNil      bool
+	}{
+		{-3, 1, 0, true},
+		{0, 1, 0, false},
+		{3, 1, 0, false},
+		{3, 1.234, 0, false},
+		{3, types.NewDecFromFloatForTest(1.234), 0, false},
+		{3, "abc", 0, false},
+		{3, types.CurrentTime(mysql.TypeDatetime), 0, false},
+		{3, types.CurrentTime(mysql.TypeTimestamp), 0, false},
+		{3, types.CurrentTime(mysql.TypeDuration), 0, false},
+		{3, json.CreateBinary("[1]"), 0, false},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Benchmark, s.primitiveValsToConstants([]interface{}{
+			t.LoopCount,
+			t.Expression,
+		})...)
+		c.Assert(err, IsNil)
+
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		if t.IsNil {
+			c.Assert(d.IsNull(), IsTrue)
+		} else {
+			c.Assert(d.GetInt64(), Equals, t.Expected)
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestCharset(c *C) {
@@ -153,7 +185,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.PrevAffectedRows = 10
+	sessionVars.StmtCtx.PrevAffectedRows = 10
 
 	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
 	c.Assert(err, IsNil)
@@ -161,18 +193,18 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	sig, ok := f.(*builtinRowCountSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(sig, NotNil)
-	intResult, isNull, err := sig.evalInt(nil)
+	intResult, isNull, err := sig.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
 	c.Assert(intResult, Equals, int64(10))
 }
 
-// Test case for tidb_server().
+// TestTiDBVersion for tidb_server().
 func (s *testEvaluatorSuite) TestTiDBVersion(c *C) {
 	defer testleak.AfterTest(c)()
 	f, err := newFunctionForTest(s.ctx, ast.TiDBVersion, s.primitiveValsToConstants([]interface{}{})...)
 	c.Assert(err, IsNil)
-	v, err := f.Eval(nil)
+	v, err := f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, printer.GetTiDBInfo())
 }
@@ -202,7 +234,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 			err error
 		)
 		if t.insertID > 0 {
-			s.ctx.GetSessionVars().PrevLastInsertID = t.insertID
+			s.ctx.GetSessionVars().StmtCtx.PrevLastInsertID = t.insertID
 		}
 
 		if t.args != nil {
@@ -217,7 +249,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
 		c.Assert(tp.Flag&mysql.BinaryFlag, Equals, uint(mysql.BinaryFlag))
 		c.Assert(tp.Flen, Equals, mysql.MaxIntWidth)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {

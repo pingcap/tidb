@@ -14,18 +14,18 @@
 package tikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 var errStopped = errors.New("stopped")
@@ -138,6 +138,16 @@ func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Regio
 	return c.client.GetRegion(ctx, key)
 }
 
+func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return nil, nil, errors.Trace(errStopped)
+	}
+	return c.client.GetPrevRegion(ctx, key)
+}
+
 func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
@@ -156,6 +166,20 @@ func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.St
 		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetStore(ctx, storeID)
+}
+
+func (c *mockPDClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
+	c.RLock()
+	defer c.Unlock()
+
+	if c.stop {
+		return nil, errors.Trace(errStopped)
+	}
+	return c.client.GetAllStores(ctx)
+}
+
+func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
 }
 
 func (c *mockPDClient) Close() {}
@@ -211,7 +235,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	// Cover Seek request.
 	client.priority = pb.CommandPri_High
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
-	iter, err := txn.Seek([]byte("key"))
+	iter, err := txn.Iter([]byte("key"), nil)
 	c.Assert(err, IsNil)
 	for iter.Valid() {
 		c.Assert(iter.Next(), IsNil)

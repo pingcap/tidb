@@ -17,8 +17,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -103,7 +103,7 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		f(&opt)
 	}
 
-	client, pdClient, err := mocktikv.NewTestClient(opt.cluster, opt.mvccStore, opt.path)
+	client, pdClient, err := mocktikv.NewTiKVAndPDClient(opt.cluster, opt.mvccStore, opt.path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

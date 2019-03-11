@@ -22,10 +22,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -106,7 +106,11 @@ func ConvertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 }
 
 // ConvertIntToUint converts an int value to an uint value.
-func ConvertIntToUint(val int64, upperBound uint64, tp byte) (uint64, error) {
+func ConvertIntToUint(sc *stmtctx.StatementContext, val int64, upperBound uint64, tp byte) (uint64, error) {
+	if sc.ShouldClipToZero() && val < 0 {
+		return 0, overflow(val, tp)
+	}
+
 	if uint64(val) > upperBound {
 		return upperBound, overflow(val, tp)
 	}
@@ -124,9 +128,12 @@ func ConvertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 }
 
 // ConvertFloatToUint converts a float value to an uint value.
-func ConvertFloatToUint(fval float64, upperBound uint64, tp byte) (uint64, error) {
+func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound uint64, tp byte) (uint64, error) {
 	val := RoundFloat(fval)
 	if val < 0 {
+		if sc.ShouldClipToZero() {
+			return 0, overflow(val, tp)
+		}
 		return uint64(int64(val)), overflow(val, tp)
 	}
 
@@ -142,7 +149,7 @@ func StrToInt(sc *stmtctx.StatementContext, str string) (int64, error) {
 	validPrefix, err := getValidIntPrefix(sc, str)
 	iVal, err1 := strconv.ParseInt(validPrefix, 10, 64)
 	if err1 != nil {
-		return iVal, ErrOverflow.GenByArgs("BIGINT", validPrefix)
+		return iVal, ErrOverflow.GenWithStackByArgs("BIGINT", validPrefix)
 	}
 	return iVal, errors.Trace(err)
 }
@@ -156,7 +163,7 @@ func StrToUint(sc *stmtctx.StatementContext, str string) (uint64, error) {
 	}
 	uVal, err1 := strconv.ParseUint(validPrefix, 10, 64)
 	if err1 != nil {
-		return uVal, ErrOverflow.GenByArgs("BIGINT UNSIGNED", validPrefix)
+		return uVal, ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", validPrefix)
 	}
 	return uVal, errors.Trace(err)
 }
@@ -185,7 +192,7 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 		}
 	}
 
-	d, err = ParseDuration(str, fsp)
+	d, err = ParseDuration(sc, str, fsp)
 	if ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
@@ -204,12 +211,12 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 		}
 		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
 		terror.Log(err1)
-		return dur, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
+		return dur, ErrOverflow.GenWithStackByArgs("Duration", strconv.Itoa(int(number)))
 	} else if number < -TimeMaxValue {
 		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
 		terror.Log(err1)
 		dur.Duration = -dur.Duration
-		return dur, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
+		return dur, ErrOverflow.GenWithStackByArgs("Duration", strconv.Itoa(int(number)))
 	}
 	var neg bool
 	if neg = number < 0; neg {
@@ -217,7 +224,7 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat.GenByArgs(number))
+		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(number))
 	}
 	t := Time{Time: FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp}
 	dur, err := t.ConvertToDuration()
@@ -236,13 +243,35 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 	if err != nil {
 		return floatPrefix, errors.Trace(err)
 	}
-	return floatStrToIntStr(floatPrefix)
+	return floatStrToIntStr(sc, floatPrefix, str)
+}
+
+// roundIntStr is to round int string base on the number following dot.
+func roundIntStr(numNextDot byte, intStr string) string {
+	if numNextDot < '5' {
+		return intStr
+	}
+	retStr := []byte(intStr)
+	for i := len(intStr) - 1; i >= 0; i-- {
+		if retStr[i] != '9' {
+			retStr[i]++
+			break
+		}
+		if i == 0 {
+			retStr[i] = '1'
+			retStr = append(retStr, '0')
+			break
+		}
+		retStr[i] = '0'
+	}
+	return string(retStr)
 }
 
 // floatStrToIntStr converts a valid float string into valid integer string which can be parsed by
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
-// be lost.
-func floatStrToIntStr(validFloat string) (string, error) {
+// be lost. For example, the string value "18446744073709551615" which is the max number of unsigned
+// int will cause some precision to lose. intStr[0] may be a positive and negative sign like '+' or '-'.
+func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
 	for i := 0; i < len(validFloat); i++ {
@@ -257,7 +286,25 @@ func floatStrToIntStr(validFloat string) (string, error) {
 		if dotIdx == -1 {
 			return validFloat, nil
 		}
-		return validFloat[:dotIdx], nil
+		var digits []byte
+		if validFloat[0] == '-' || validFloat[0] == '+' {
+			dotIdx--
+			digits = []byte(validFloat[1:])
+		} else {
+			digits = []byte(validFloat)
+		}
+		if dotIdx == 0 {
+			intStr = "0"
+		} else {
+			intStr = string(digits)[:dotIdx]
+		}
+		if len(digits) > dotIdx+1 {
+			intStr = roundIntStr(digits[dotIdx+1], intStr)
+		}
+		if (len(intStr) > 1 || intStr[0] != '0') && validFloat[0] == '-' {
+			intStr = "-" + intStr
+		}
+		return intStr, nil
 	}
 	var intCnt int
 	digits := make([]byte, 0, len(validFloat))
@@ -275,28 +322,43 @@ func floatStrToIntStr(validFloat string) (string, error) {
 	}
 	if exp > 0 && int64(intCnt) > (math.MaxInt64-int64(exp)) {
 		// (exp + incCnt) overflows MaxInt64.
-		return validFloat, ErrOverflow.GenByArgs("BIGINT", validFloat)
+		sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
+		return validFloat[:eIdx], nil
 	}
 	intCnt += exp
 	if intCnt <= 0 {
-		return "0", nil
+		intStr = "0"
+		if intCnt == 0 && len(digits) > 0 {
+			intStr = roundIntStr(digits[0], intStr)
+		}
+		return intStr, nil
 	}
 	if intCnt == 1 && (digits[0] == '-' || digits[0] == '+') {
-		return "0", nil
+		intStr = "0"
+		if len(digits) > 1 {
+			intStr = roundIntStr(digits[1], intStr)
+		}
+		if intStr[0] == '1' {
+			intStr = string(digits[:1]) + intStr
+		}
+		return intStr, nil
 	}
-	var validInt string
 	if intCnt <= len(digits) {
-		validInt = string(digits[:intCnt])
+		intStr = string(digits[:intCnt])
+		if intCnt < len(digits) {
+			intStr = roundIntStr(digits[intCnt], intStr)
+		}
 	} else {
 		// convert scientific notation decimal number
 		extraZeroCount := intCnt - len(digits)
 		if extraZeroCount > 20 {
-			// Return overflow to avoid allocating too much memory.
-			return validFloat, ErrOverflow.GenByArgs("BIGINT", validFloat)
+			// Append overflow warning and return to avoid allocating too much memory.
+			sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
+			return validFloat[:eIdx], nil
 		}
-		validInt = string(digits) + strings.Repeat("0", extraZeroCount)
+		intStr = string(digits) + strings.Repeat("0", extraZeroCount)
 	}
-	return validInt, nil
+	return intStr, nil
 }
 
 // StrToFloat converts a string to a float64 at the best-effort.
@@ -308,7 +370,7 @@ func StrToFloat(sc *stmtctx.StatementContext, str string) (float64, error) {
 		if err2, ok := err1.(*strconv.NumError); ok {
 			// value will truncate to MAX/MIN if out of range.
 			if err2.Err == strconv.ErrRange {
-				err1 = sc.HandleTruncate(ErrTruncatedWrongVal.GenByArgs("DOUBLE", str))
+				err1 = sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", str))
 				if math.IsInf(f, 1) {
 					f = math.MaxFloat64
 				} else if math.IsInf(f, -1) {
@@ -343,10 +405,11 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeDouble)
 		}
 		bound := UnsignedUpperBound[mysql.TypeLonglong]
-		u, err := ConvertFloatToUint(f, bound, mysql.TypeDouble)
+		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
-		return StrToInt(sc, hack.String(j.GetString()))
+		str := string(hack.String(j.GetString()))
+		return StrToInt(sc, str)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
@@ -366,14 +429,30 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 	case json.TypeCodeInt64:
 		return float64(j.GetInt64()), nil
 	case json.TypeCodeUint64:
-		u, err := ConvertIntToUint(j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		u, err := ConvertIntToUint(sc, j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		return float64(u), errors.Trace(err)
 	case json.TypeCodeFloat64:
 		return j.GetFloat64(), nil
 	case json.TypeCodeString:
-		return StrToFloat(sc, hack.String(j.GetString()))
+		str := string(hack.String(j.GetString()))
+		return StrToFloat(sc, str)
 	}
 	return 0, errors.New("Unknown type code in JSON")
+}
+
+// ConvertJSONToDecimal casts JSON into decimal.
+func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyDecimal, error) {
+	res := new(MyDecimal)
+	if j.TypeCode != json.TypeCodeString {
+		f64, err := ConvertJSONToFloat(sc, j)
+		if err != nil {
+			return res, errors.Trace(err)
+		}
+		err = res.FromFloat64(f64)
+		return res, errors.Trace(err)
+	}
+	err := sc.HandleTruncate(res.FromString([]byte(j.GetString())))
+	return res, errors.Trace(err)
 }
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.

@@ -18,12 +18,12 @@
 package table
 
 import (
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -39,6 +39,15 @@ const (
 	MemoryTable
 )
 
+const (
+	// DirtyTableAddRow is the constant for dirty table operation type.
+	DirtyTableAddRow = iota
+	// DirtyTableDeleteRow is the constant for dirty table operation type.
+	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constant for dirty table operation type.
+	DirtyTableTruncate
+)
+
 var (
 	// ErrColumnCantNull is used for inserting null to a not null column.
 	ErrColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, mysql.MySQLErrName[mysql.ErrBadNull])
@@ -49,7 +58,7 @@ var (
 
 	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
 	// and it doesn't have a default value.
-	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, "field doesn't have a default value")
+	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, mysql.MySQLErrName[mysql.ErrNoDefaultForField])
 	// ErrIndexOutBound returns for index column offset out of bound.
 	ErrIndexOutBound = terror.ClassTable.New(codeIndexOutBound, "index column offset out of bound")
 	// ErrUnsupportedOp returns for unsupported operation.
@@ -68,12 +77,23 @@ var (
 	ErrInvalidRecordKey = terror.ClassTable.New(codeInvalidRecordKey, "invalid record key")
 	// ErrTruncateWrongValue returns for truncate wrong value for field.
 	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "incorrect value")
-	// ErrTrgInvalidCreationCtx happens when inserting a value outside the table partitions.
-	ErrTrgInvalidCreationCtx = terror.ClassTable.New(codeTrgInvalidCreationCtx, "locate partition failed")
+	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
+	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
+
+	// ErrUnknownPartition returns unknown partition error.
+	ErrUnknownPartition = terror.ClassTable.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
+	// ErrNoPartitionForGivenValue returns table has no partition for value.
+	ErrNoPartitionForGivenValue = terror.ClassTable.New(codeNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
 )
 
 // RecordIterFunc is used for low-level record iteration.
 type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool, err error)
+
+// AddRecordOpt contains the options will be used when adding a record.
+type AddRecordOpt struct {
+	CreateIdxOpt
+	IsUpdate bool
+}
 
 // Table is used to retrieve and modify rows in table.
 type Table interface {
@@ -115,8 +135,7 @@ type Table interface {
 	RecordKey(h int64) kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	// skipHandleCheck indicates that recordID in r has been checked as not duplicate already.
-	AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error)
+	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*AddRecordOpt) (recordID int64, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
 	UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error
@@ -145,6 +164,22 @@ type Table interface {
 	Type() Type
 }
 
+// PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
+// PhysicalID is a ID that can be used to construct a key ranges, all the data in the key range belongs to the corresponding PhysicalTable.
+// For a non-partitioned table, its PhysicalID equals to its TableID; For a partition of a partitioned table, its PhysicalID is the partition's ID.
+type PhysicalTable interface {
+	Table
+	GetPhysicalID() int64
+}
+
+// PartitionedTable is a Table, and it has a GetPartition() method.
+// GetPartition() gets the partition from a partition table by a physical table ID,
+type PartitionedTable interface {
+	Table
+	GetPartition(physicalID int64) PhysicalTable
+	GetPartitionByRow(sessionctx.Context, []types.Datum) (Table, error)
+}
+
 // TableFromMeta builds a table.Table from *model.TableInfo.
 // Currently, it is assigned to tables.TableFromMeta in tidb package's init function.
 var TableFromMeta func(alloc autoid.Allocator, tblInfo *model.TableInfo) (Table, error)
@@ -171,7 +206,9 @@ const (
 	codeTruncateWrongValue = 1366
 	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
 	// It may happen when inserting some data outside of all table partitions.
-	codeTrgInvalidCreationCtx = 1604
+
+	codeUnknownPartition         = mysql.ErrUnknownPartition
+	codeNoPartitionForGivenValue = mysql.ErrNoPartitionForGivenValue
 )
 
 // Slice is used for table sorting.
@@ -187,12 +224,13 @@ func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeColumnCantNull:        mysql.ErrBadNull,
-		codeUnknownColumn:         mysql.ErrBadField,
-		codeDuplicateColumn:       mysql.ErrFieldSpecifiedTwice,
-		codeNoDefaultValue:        mysql.ErrNoDefaultForField,
-		codeTruncateWrongValue:    mysql.ErrTruncatedWrongValueForField,
-		codeTrgInvalidCreationCtx: mysql.ErrTrgInvalidCreationCtx,
+		codeColumnCantNull:           mysql.ErrBadNull,
+		codeUnknownColumn:            mysql.ErrBadField,
+		codeDuplicateColumn:          mysql.ErrFieldSpecifiedTwice,
+		codeNoDefaultValue:           mysql.ErrNoDefaultForField,
+		codeTruncateWrongValue:       mysql.ErrTruncatedWrongValueForField,
+		codeUnknownPartition:         mysql.ErrUnknownPartition,
+		codeNoPartitionForGivenValue: mysql.ErrNoPartitionForGivenValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }

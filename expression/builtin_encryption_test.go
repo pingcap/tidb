@@ -18,67 +18,183 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
+var cryptTests = []struct {
+	origin   interface{}
+	password interface{}
+	crypt    interface{}
+}{
+	{"", "", ""},
+	{"pingcap", "1234567890123456", "2C35B5A4ADF391"},
+	{"pingcap", "asdfjasfwefjfjkj", "351CC412605905"},
+	{"pingcap123", "123456789012345678901234", "7698723DC6DFE7724221"},
+	{"pingcap#%$%^", "*^%YTu1234567", "8634B9C55FF55E5B6328F449"},
+	{"pingcap", "", "4A77B524BD2C5C"},
+	{"分布式データベース", "pass1234@#$%%^^&", "80CADC8D328B3026D04FB285F36FED04BBCA0CC685BF78B1E687CE"},
+	{"分布式データベース", "分布式7782734adgwy1242", "0E24CFEF272EE32B6E0BFBDB89F29FB43B4B30DAA95C3F914444BC"},
+	{"pingcap", "密匙", "CE5C02A5010010"},
+	{"pingcap数据库", "数据库passwd12345667", "36D5F90D3834E30E396BE3226E3B4ED3"},
+	{"数据库5667", 123.435, "B22196D0569386237AE12F8AAB"},
+	{nil, "数据库passwd12345667", nil},
+}
+
+func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Decode]
+	for _, tt := range cryptTests {
+		str := types.NewDatum(tt.origin)
+		password := types.NewDatum(tt.password)
+
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, password}))
+		c.Assert(err, IsNil)
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
+	}
+	s.testNullInput(c, ast.Decode)
+}
+
+func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Encode]
+	for _, test := range cryptTests {
+		password := types.NewDatum(test.password)
+		cryptStr := fromHex(test.crypt)
+
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, password}))
+		c.Assert(err, IsNil)
+		str, err := evalBuiltinFunc(f, chunk.Row{})
+
+		c.Assert(err, IsNil)
+		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
+	}
+	s.testNullInput(c, ast.Encode)
+}
+
 var aesTests = []struct {
+	mode   string
 	origin interface{}
-	key    interface{}
+	params []interface{}
 	crypt  interface{}
 }{
-	{"pingcap", "1234567890123456", "697BFE9B3F8C2F289DD82C88C7BC95C4"},
-	{"pingcap123", "1234567890123456", "CEC348F4EF5F84D3AA6C4FA184C65766"},
-	{"pingcap", "123456789012345678901234", "6F1589686860C8E8C7A40A78B25FF2C0"},
-	{"pingcap", "123", "996E0CA8688D7AD20819B90B273E01C6"},
-	{"pingcap", 123, "996E0CA8688D7AD20819B90B273E01C6"},
-	{nil, 123, nil},
+	// test for ecb
+	{"aes-128-ecb", "pingcap", []interface{}{"1234567890123456"}, "697BFE9B3F8C2F289DD82C88C7BC95C4"},
+	{"aes-128-ecb", "pingcap123", []interface{}{"1234567890123456"}, "CEC348F4EF5F84D3AA6C4FA184C65766"},
+	{"aes-128-ecb", "pingcap", []interface{}{"123456789012345678901234"}, "6F1589686860C8E8C7A40A78B25FF2C0"},
+	{"aes-128-ecb", "pingcap", []interface{}{"123"}, "996E0CA8688D7AD20819B90B273E01C6"},
+	{"aes-128-ecb", "pingcap", []interface{}{123}, "996E0CA8688D7AD20819B90B273E01C6"},
+	{"aes-128-ecb", nil, []interface{}{123}, nil},
+	{"aes-192-ecb", "pingcap", []interface{}{"1234567890123456"}, "9B139FD002E6496EA2D5C73A2265E661"},
+	{"aes-256-ecb", "pingcap", []interface{}{"1234567890123456"}, "F80DCDEDDBE5663BDB68F74AEDDB8EE3"},
+	// test for cbc
+	{"aes-128-cbc", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "2ECA0077C5EA5768A0485AA522774792"},
+	{"aes-128-cbc", "pingcap", []interface{}{"123456789012345678901234", "1234567890123456"}, "483788634DA8817423BA0934FD2C096E"},
+	{"aes-192-cbc", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "516391DB38E908ECA93AAB22870EC787"},
+	{"aes-256-cbc", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "5D0E22C1E77523AEF5C3E10B65653C8F"},
+	{"aes-256-cbc", "pingcap", []interface{}{"12345678901234561234567890123456", "1234567890123456"}, "A26BA27CA4BE9D361D545AA84A17002D"},
+	{"aes-256-cbc", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "5D0E22C1E77523AEF5C3E10B65653C8F"},
+	// test for ofb
+	{"aes-128-ofb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "0515A36BBF3DE0"},
+	{"aes-128-ofb", "pingcap", []interface{}{"123456789012345678901234", "1234567890123456"}, "C2A93A93818546"},
+	{"aes-192-ofb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "FE09DCCF14D458"},
+	{"aes-256-ofb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "2E70FCAC0C0834"},
+	{"aes-256-ofb", "pingcap", []interface{}{"12345678901234561234567890123456", "1234567890123456"}, "83E2B30A71F011"},
+	{"aes-256-ofb", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
+	// test for cfb
+	{"aes-128-cfb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "0515A36BBF3DE0"},
+	{"aes-128-cfb", "pingcap", []interface{}{"123456789012345678901234", "1234567890123456"}, "C2A93A93818546"},
+	{"aes-192-cfb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "FE09DCCF14D458"},
+	{"aes-256-cfb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "2E70FCAC0C0834"},
+	{"aes-256-cfb", "pingcap", []interface{}{"12345678901234561234567890123456", "1234567890123456"}, "83E2B30A71F011"},
+	{"aes-256-cfb", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
 }
 
 func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesEncrypt]
 	for _, tt := range aesTests {
-		str := types.NewDatum(tt.origin)
-		key := types.NewDatum(tt.key)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, key}))
-		crypt, err := evalBuiltinFunc(f, nil)
+		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum(tt.mode))
+		args := []types.Datum{types.NewDatum(tt.origin)}
+		for _, param := range tt.params {
+			args = append(args, types.NewDatum(param))
+		}
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
 	}
-	s.testNullInput(c, ast.AesDecrypt)
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-ecb"))
+	s.testNullInput(c, ast.AesEncrypt)
+	s.testAmbiguousInput(c, ast.AesEncrypt)
 }
 
 func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesDecrypt]
-	for _, test := range aesTests {
-		cryptStr := fromHex(test.crypt)
-		key := types.NewDatum(test.key)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, key}))
-		str, err := evalBuiltinFunc(f, nil)
+	for _, tt := range aesTests {
+		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum(tt.mode))
+		args := []types.Datum{fromHex(tt.crypt)}
+		for _, param := range tt.params {
+			args = append(args, types.NewDatum(param))
+		}
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
+		str, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(str, DeepEquals, types.NewDatum(tt.origin))
 	}
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-ecb"))
 	s.testNullInput(c, ast.AesDecrypt)
+	s.testAmbiguousInput(c, ast.AesDecrypt)
 }
 
 func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-ecb"))
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, argNull}))
-	crypt, err := evalBuiltinFunc(f, nil)
+	c.Assert(err, IsNil)
+	crypt, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull, arg}))
-	crypt, err = evalBuiltinFunc(f, nil)
+	c.Assert(err, IsNil)
+	crypt, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) testAmbiguousInput(c *C, fnName string) {
+	fc := funcs[fnName]
+	arg := types.NewStringDatum("str")
+	// test for modes that require init_vector
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-cbc"))
+	_, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg}))
+	c.Assert(err, NotNil)
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
+	c.Assert(err, IsNil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, NotNil)
+
+	// test for modes that do not require init_vector
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-ecb"))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg, arg}))
+	c.Assert(err, IsNil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), GreaterEqual, 1)
 }
 
 func toHex(d types.Datum) (h types.Datum) {
@@ -119,7 +235,7 @@ func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
 	for _, tt := range sha1Tests {
 		in := types.NewDatum(tt.origin)
 		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
-		crypt, err := evalBuiltinFunc(f, nil)
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		res, err := crypt.ToString()
 		c.Assert(err, IsNil)
@@ -128,7 +244,7 @@ func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
 	// test NULL input for sha
 	var argNull types.Datum
 	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	crypt, err := evalBuiltinFunc(f, nil)
+	crypt, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
 }
@@ -161,7 +277,8 @@ func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
 		str := types.NewDatum(tt.origin)
 		hashLength := types.NewDatum(tt.hashLength)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, hashLength}))
-		crypt, err := evalBuiltinFunc(f, nil)
+		c.Assert(err, IsNil)
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		if tt.validCase {
 			res, err := crypt.ToString()
@@ -194,7 +311,7 @@ func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.MD5, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -216,26 +333,26 @@ func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	fc := funcs[ast.RandomBytes]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(32)}))
 	c.Assert(err, IsNil)
-	out, err := evalBuiltinFunc(f, nil)
+	out, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(len(out.GetBytes()), Equals, 32)
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(1025)}))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, nil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(-32)}))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, nil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(0)}))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, nil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(nil)}))
 	c.Assert(err, IsNil)
-	out, err = evalBuiltinFunc(f, nil)
+	out, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(len(out.GetBytes()), Equals, 0)
 }
@@ -264,7 +381,7 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
 		c.Assert(err, IsNil, Commentf("%v", test))
-		out, err := evalBuiltinFunc(f, nil)
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", test))
 		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
 	}
@@ -278,6 +395,7 @@ func (s *testEvaluatorSuite) TestUncompress(c *C) {
 	}{
 		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), "hello world"},         // zlib result from MySQL
 		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), "hello world"}, // zlib result from TiDB
+		{decodeHex("02000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), nil},                   // wrong length in the first four bytes
 		{decodeHex(""), ""},
 		{"1", nil},
 		{"1234", nil},
@@ -294,7 +412,7 @@ func (s *testEvaluatorSuite) TestUncompress(c *C) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
 		c.Assert(err, IsNil, Commentf("%v", test))
-		out, err := evalBuiltinFunc(f, nil)
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", test))
 		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
 	}
@@ -324,7 +442,7 @@ func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
 		c.Assert(err, IsNil, Commentf("%v", test))
-		out, err := evalBuiltinFunc(f, nil)
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", test))
 		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
 	}
@@ -351,7 +469,7 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		c.Assert(err, IsNil)
 		if t.isNil {
 			c.Assert(d.Kind(), Equals, types.KindNull)
@@ -364,7 +482,7 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 			c.Assert(len(warnings), Equals, warnCount+1)
 
 			lastWarn := warnings[len(warnings)-1]
-			c.Assert(terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn.Err), IsTrue)
+			c.Assert(terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 			warnCount = len(warnings)
 		} else {

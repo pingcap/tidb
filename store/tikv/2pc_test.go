@@ -14,17 +14,17 @@
 package tikv
 
 import (
+	"context"
 	"math"
 	"math/rand"
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 type testCommitterSuite struct {
@@ -52,6 +52,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
 	CommitMaxBackoff = 20000
+	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
@@ -182,6 +183,21 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 }
 
+func (s *testCommitterSuite) TestContextCancel2(c *C) {
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("a"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("b"), []byte("b"))
+	c.Assert(err, IsNil)
+	ctx, cancel := context.WithCancel(context.Background())
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	cancel()
+	// Secondary keys should not be canceled.
+	time.Sleep(time.Millisecond * 20)
+	c.Assert(s.isKeyLocked(c, []byte("b")), IsFalse)
+}
+
 func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	txn1, txn2, txn3 := s.begin(c), s.begin(c), s.begin(c)
 	// txn1 locks "b"
@@ -303,6 +319,7 @@ func (s *testCommitterSuite) TestIllegalTso(c *C) {
 	txn.startTS = uint64(math.MaxUint64)
 	err := txn.Commit(context.Background())
 	c.Assert(err, NotNil)
+	errMsgMustContain(c, err, "invalid startTS")
 }
 
 func errMsgMustContain(c *C, err error, msg string) {
