@@ -263,12 +263,9 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, ot
 			// Currently, we just add it when building cartesianJoinGroup.
 			mergedSchema := expression.MergeSchema(cartesianJoinGroup[i].Schema(), cartesianJoinGroup[i+1].Schema())
 			var usedOtherConds []expression.Expression
-			for i := len(otherConds) - 1; i >= 0; i-- {
-				if expression.ExprFromSchema(otherConds[i], mergedSchema) {
-					usedOtherConds = append(usedOtherConds, otherConds[i])
-					otherConds = append(otherConds[:i], otherConds[i+1:]...)
-				}
-			}
+			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
+				return expression.ExprFromSchema(expr, mergedSchema)
+			})
 			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds))
 		}
 		cartesianJoinGroup = resultJoinGroup

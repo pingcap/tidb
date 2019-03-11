@@ -41,6 +41,19 @@ func Filter(result []Expression, input []Expression, filter func(Expression) boo
 	return result
 }
 
+// FilterOutInPlace do the filtering out in place.
+// The remained are the ones who doesn't match the filter, storing in the original slice.
+// The filteredOut are the ones match the filter, storing in a new slice.
+func FilterOutInPlace(input []Expression, filter func(Expression) bool) (remained, filteredOut []Expression) {
+	for i := len(input) - 1; i >= 0; i-- {
+		if filter(input[i]) {
+			filteredOut = append(filteredOut, input[i])
+			input = append(input[:i], input[i+1:]...)
+		}
+	}
+	return input, filteredOut
+}
+
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) (cols []*Column) {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
