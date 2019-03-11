@@ -2017,6 +2017,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Assert(fields[1].Column.Name.L, Equals, "num")
 	c.Assert(fields[1].ColumnAsName.L, Equals, "num")
 	tk.MustExec("set @@tidb_enable_window_function = 0")
+	rs.Close()
 }
 
 func (s *testSuite) TestSelectVar(c *C) {

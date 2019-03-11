@@ -664,23 +664,19 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		// When `considerWindow` is false, we will only build fields for non-window functions, so we add fake placeholders.
 		// for window functions. These fake placeholders will be erased in column pruning.
 		// When `considerWindow` is true, all the non-window fields have been built, so we just use the schema columns.
-		if (considerWindow && !isWindowFuncField) || (!considerWindow && isWindowFuncField) {
-			var expr expression.Expression
-			if isWindowFuncField {
-				expr = expression.Zero
-			} else {
-				expr = p.Schema().Columns[i]
-			}
+		if considerWindow && !isWindowFuncField {
+			col := p.Schema().Columns[i]
+			proj.Exprs = append(proj.Exprs, col)
+			schema.Append(col)
+			continue
+		} else if !considerWindow && isWindowFuncField {
+			expr := expression.Zero
 			proj.Exprs = append(proj.Exprs, expr)
-			if isWindowFuncField {
-				col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
-				if err != nil {
-					return nil, 0, errors.Trace(err)
-				}
-				schema.Append(col)
-			} else {
-				schema.Append(p.Schema().Columns[i])
+			col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
+			if err != nil {
+				return nil, 0, errors.Trace(err)
 			}
+			schema.Append(col)
 			continue
 		}
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
