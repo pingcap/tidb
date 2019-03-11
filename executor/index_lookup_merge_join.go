@@ -223,17 +223,6 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 		return nil
 	}
 
-	task = e.task
-	if task.doneErr != nil {
-		return errors.Trace(task.doneErr)
-	}
-	if task.done {
-		task, err = e.getFinishedTask(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	chk := <-task.results
 	req.Append(chk, 0, chk.NumRows())
 
