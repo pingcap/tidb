@@ -7,16 +7,10 @@ matrix:
   include:
     - go: "1.12"
       env: TRAVIS_COVERAGE=0 TEST_SUITE="check"
-    - go: "1.11.3"
-      env: TRAVIS_COVERAGE=0 TEST_SUITE="check"
     - go: "1.12"
       env: TRAVIS_COVERAGE=0 TEST_SUITE="check-fail"
   fast_finish: true
   allow_failures:
-    - go: "1.12"
-      env: TRAVIS_COVERAGE=0 TEST_SUITE="check"
-    - go: "1.11.3"
-      env: TRAVIS_COVERAGE=0 TEST_SUITE="check"
     - go: "1.12"
       env: TRAVIS_COVERAGE=0 TEST_SUITE="check-fail"
 
