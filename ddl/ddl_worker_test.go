@@ -720,7 +720,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
 	c.Assert(changedTable.Meta().Partition.Definitions[0].ID == partitionTblInfo.Partition.Definitions[0].ID, IsTrue)
 
-	// // test truncate table partition charset successful.
+	// test truncate table partition charset successfully.
 	test = &tests[25]
 	doDDLJobSuccess(ctx, d, c, dbInfo.ID, partitionTblInfo.ID, test.act, truncateTblPartitionArgs)
 	c.Check(checkErr, IsNil)
