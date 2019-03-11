@@ -146,9 +146,10 @@ func main() {
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
-	setupBinlogClient()
 	setupMetrics()
 	createStoreAndDomain()
+	// setupBinlogClient should run after bootstrap
+	setupBinlogClient()
 	createServer()
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()

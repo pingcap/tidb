@@ -1319,6 +1319,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 
+	// get global system tidb_log_bin from mysql.GLOBAL_VARIABLES
+	tidbLogBin, err := se1.GetGlobalSysVar(variable.TiDBLogBin)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	variable.SysVars[variable.TiDBLogBin].Value = tidbLogBin
+
+
 	if len(cfg.Plugin.Load) > 0 {
 		plugin.InitWatchLoops(dom.GetEtcdClient())
 	}
