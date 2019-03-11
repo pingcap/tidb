@@ -15,8 +15,8 @@ package core
 
 import (
 	"math"
-
 	"context"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
