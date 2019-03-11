@@ -43,34 +43,22 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 	innerPlan := p.children[innerChildIdx]
 	// outer join elimination with duplicate agnostic aggregate functions
 	matched, err := o.isAggColsAllFromOuterTable(outerPlan, aggCols)
-	if err != nil {
-		return nil, err
-	}
-	if matched {
-		return outerPlan, nil
+	if err != nil || matched {
+		return outerPlan, err
 	}
 	// outer join elimination without duplicate agnostic aggregate functions
 	matched, err = o.isParentColsAllFromOuterTable(outerPlan, parentSchema)
-	if err != nil {
-		return nil, err
-	}
-	if !matched {
-		return p, nil
+	if err != nil || !matched {
+		return p, err
 	}
 	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
 	contain, err := o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys)
-	if err != nil {
-		return nil, err
-	}
-	if contain {
-		return outerPlan, nil
+	if err != nil || contain {
+		return outerPlan, err
 	}
 	contain, err = o.isInnerJoinKeysContainIndex(innerPlan, innerJoinKeys)
-	if err != nil {
-		return nil, err
-	}
-	if contain {
-		return outerPlan, nil
+	if err != nil || contain {
+		return outerPlan, err
 	}
 
 	return p, nil
