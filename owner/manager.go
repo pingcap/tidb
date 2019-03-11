@@ -28,10 +28,11 @@ import (
 	"github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
