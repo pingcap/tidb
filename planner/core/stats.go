@@ -277,14 +277,8 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		}
 		return p.stats, nil
 	}
-	leftKeys := make([]*expression.Column, 0, len(p.EqualConditions))
-	rightKeys := make([]*expression.Column, 0, len(p.EqualConditions))
-	for _, eqCond := range p.EqualConditions {
-		leftKeys = append(leftKeys, eqCond.GetArgs()[0].(*expression.Column))
-		rightKeys = append(rightKeys, eqCond.GetArgs()[1].(*expression.Column))
-	}
-	leftKeyCardinality := getCardinality(leftKeys, p.children[0].Schema(), leftProfile)
-	rightKeyCardinality := getCardinality(rightKeys, p.children[1].Schema(), rightProfile)
+	leftKeyCardinality := getCardinality(p.LeftJoinKeys, p.children[0].Schema(), leftProfile)
+	rightKeyCardinality := getCardinality(p.RightJoinKeys, p.children[1].Schema(), rightProfile)
 	count := leftProfile.RowCount * rightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
 	if p.JoinType == LeftOuterJoin {
 		count = math.Max(count, leftProfile.RowCount)

@@ -111,21 +111,24 @@ func (s *testLogSuite) TestSlowQueryLogger(c *C) {
 		if err != nil {
 			break
 		}
-		c.Assert(str, Matches, logPattern)
+		if strings.HasPrefix(str, "# ") {
+			c.Assert(str, Matches, `# Time: .*?\n`)
+		} else {
+			c.Assert(str, Matches, `.*? message\n`)
+		}
 	}
 	c.Assert(err, Equals, io.EOF)
 }
 
-func (s *testLogSuite) TestSlowQueryLoggerKeepOrder(c *C) {
-	fileName := "slow_query"
-	conf := NewLogConfig("warn", DefaultLogFormat, fileName, EmptyFileLogConfig, true)
+func (s *testLogSuite) TestLoggerKeepOrder(c *C) {
+	conf := NewLogConfig("warn", DefaultLogFormat, "", EmptyFileLogConfig, true)
 	c.Assert(InitLogger(conf), IsNil)
-	defer os.Remove(fileName)
-	ft, ok := SlowQueryLogger.Formatter.(*textFormatter)
+	logger := log.StandardLogger()
+	ft, ok := logger.Formatter.(*textFormatter)
 	c.Assert(ok, IsTrue)
-	c.Assert(ft.EnableEntryOrder, IsTrue)
-	SlowQueryLogger.Out = s.buf
-	logEntry := log.NewEntry(SlowQueryLogger)
+	ft.EnableEntryOrder = true
+	logger.Out = s.buf
+	logEntry := log.NewEntry(logger)
 	logEntry.Data = log.Fields{
 		"connectionId": 1,
 		"costTime":     "1",
