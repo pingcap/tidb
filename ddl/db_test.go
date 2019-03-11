@@ -1659,6 +1659,7 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.tk.MustExec("drop database ctwl_db1")
 }
 
+// TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
 func (s *testDBSuite) TestCreateTableWithLike2(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
@@ -1666,14 +1667,14 @@ func (s *testDBSuite) TestCreateTableWithLike2(c *C) {
 	defer s.tk.MustExec("drop table if exists t1,t2;")
 	s.tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
 
-	t1Info := testGetTableByName(c, s.s, "test_db", "t1")
+	tbl1 := testGetTableByName(c, s.s, "test_db", "t1")
 	doneCh := make(chan error, 2)
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn && job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
 			return
 		}
-		if job.TableID != t1Info.Meta().ID {
+		if job.TableID != tbl1.Meta().ID {
 			return
 		}
 		if job.SchemaState == model.StateDeleteOnly {
@@ -1686,46 +1687,40 @@ func (s *testDBSuite) TestCreateTableWithLike2(c *C) {
 
 	// create table when refer table add column
 	s.tk.MustExec("alter table t1 add column d int")
-	checkTableT2Info := func() {
+	checkTbl2 := func() {
 		err := <-doneCh
 		c.Assert(err, IsNil)
 		s.tk.MustExec("alter table t2 add column e int")
 		t2Info := testGetTableByName(c, s.s, "test_db", "t2")
 		c.Assert(len(t2Info.Meta().Columns), Equals, 4)
-		for _, col := range t2Info.Meta().Columns {
-			c.Assert(col, NotNil)
-			c.Assert(col.State, Equals, model.StatePublic)
-		}
+		c.Assert(len(t2Info.Meta().Columns), Equals, len(t2Info.Cols()))
 	}
-	checkTableT2Info()
+	checkTbl2()
 
 	// create table when refer table drop column
 	s.tk.MustExec("drop table t2;")
 	s.tk.MustExec("alter table t1 drop column b;")
-	checkTableT2Info()
+	checkTbl2()
 
 	// create table when refer table add index
 	s.tk.MustExec("drop table t2;")
 	s.tk.MustExec("alter table t1 add index idx2(a);")
-	checkTableT2Info = func() {
+	checkTbl2 = func() {
 		err := <-doneCh
 		c.Assert(err, IsNil)
 		s.tk.MustExec("alter table t2 add column e int")
-		t2Info := testGetTableByName(c, s.s, "test_db", "t2")
-		c.Assert(len(t2Info.Meta().Columns), Equals, 4)
-		for _, col := range t2Info.Meta().Columns {
-			c.Assert(col, NotNil)
-			c.Assert(col.State, Equals, model.StatePublic)
-		}
-		c.Assert(len(t2Info.Meta().Indices), Equals, 1)
-		c.Assert(t2Info.Meta().Indices[0].Name.L, Equals, "idx1")
+		tbl2 := testGetTableByName(c, s.s, "test_db", "t2")
+		c.Assert(len(tbl2.Meta().Columns), Equals, 4)
+		c.Assert(len(tbl2.Meta().Columns), Equals, len(tbl2.Cols()))
+		c.Assert(len(tbl2.Meta().Indices), Equals, 1)
+		c.Assert(tbl2.Meta().Indices[0].Name.L, Equals, "idx1")
 	}
-	checkTableT2Info()
+	checkTbl2()
 
 	// create table when refer table drop index.
 	s.tk.MustExec("drop table t2;")
 	s.tk.MustExec("alter table t1 drop index idx2;")
-	checkTableT2Info()
+	checkTbl2()
 
 }
 
