@@ -131,6 +131,12 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 		mergeJoin.SetSchema(p.schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
+			// Adjust expected count for children nodes.
+			if prop.expectedCnt < p.stats.count {
+				expCntScale := prop.expectedCnt / p.stats.count
+				reqProps[0].expectedCnt = p.children[0].StatsInfo().count * expCntScale
+				reqProps[1].expectedCnt = p.children[1].StatsInfo().count * expCntScale
+			}
 			mergeJoin.childrenReqProps = reqProps
 			joins = append(joins, mergeJoin)
 		}
@@ -158,7 +164,11 @@ func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
 func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) *PhysicalHashJoin {
 	chReqProps := make([]*requiredProp, 2)
 	chReqProps[innerIdx] = &requiredProp{expectedCnt: math.MaxFloat64}
-	chReqProps[1-innerIdx] = &requiredProp{expectedCnt: prop.expectedCnt}
+	chReqProps[1-innerIdx] = &requiredProp{expectedCnt: math.MaxFloat64}
+	if prop.expectedCnt < p.stats.count {
+		expCntScale := prop.expectedCnt / p.stats.count
+		chReqProps[1-innerIdx].expectedCnt = p.children[1-innerIdx].StatsInfo().count * expCntScale
+	}
 	hashJoin := PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -212,7 +222,11 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 		return nil
 	}
 	chReqProps := make([]*requiredProp, 2)
-	chReqProps[outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
+	chReqProps[outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64, cols: prop.cols, desc: prop.desc}
+	if prop.expectedCnt < p.stats.count {
+		expCntScale := prop.expectedCnt / p.stats.count
+		chReqProps[outerIdx].expectedCnt = p.children[outerIdx].StatsInfo().count * expCntScale
+	}
 	join := PhysicalIndexJoin{
 		OuterIndex:      outerIdx,
 		LeftConditions:  p.LeftConditions,
