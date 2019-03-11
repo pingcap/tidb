@@ -15,6 +15,7 @@ package logutil
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -356,4 +357,41 @@ func SetLevel(level string) error {
 	}
 	zaplog.SetLevel(l.Level())
 	return nil
+}
+
+type ctxKeyType int
+
+const ctxLogKey ctxKeyType = iota
+
+// Logger gets a contextual logger from current context.
+// contextual logger will output common fields from context.
+func Logger(ctx context.Context) *zap.Logger {
+	if ctxlogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		return ctxlogger
+	}
+	return zaplog.L()
+}
+
+// WithConnID attaches connId to context.
+func WithConnID(ctx context.Context, connID uint32) context.Context {
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = zaplog.L()
+	}
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
+}
+
+// WithRecvTs attaches current packet received timestamp to context.
+// it's common that each SQL has a packet receive timestamp in MySQL Protocol,
+// so we can use recvTs to gather log for some sql request on one connection.
+func WithRecvTs(ctx context.Context, recvTs int64) context.Context {
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = zaplog.L()
+	}
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Int64("recvTs", recvTs)))
 }
