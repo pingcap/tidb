@@ -38,13 +38,14 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+
 	// For pprof
 	_ "net/http/pprof"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/blacktear23/go-proxyprotocol"
+	proxyprotocol "github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -129,6 +130,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
 				log.Error("failed to set tcp keep alive option:", err)
 			}
+			tcpConn.SetWriteBuffer(0)
 		}
 	}
 	cc.setConn(conn)
