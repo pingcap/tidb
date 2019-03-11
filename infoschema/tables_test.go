@@ -261,6 +261,10 @@ select * from t_slim;`))
 	c.Assert(err, IsNil)
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
+	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0|0|1|100001|100000|test||0|select * from t_slim;"))
+	tk.MustExec("set time_zone = '+00:00';")
+	re = tk.MustQuery("select * from information_schema.slow_query")
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0|0|1|100001|100000|test||0|select * from t_slim;"))
 }

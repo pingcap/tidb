@@ -32,7 +32,7 @@ import (
 )
 
 var slowQueryCols = []columnInfo{
-	{variable.SlowLogTimeStr, mysql.TypeDatetime, -1, 0, nil, nil},
+	{variable.SlowLogTimeStr, mysql.TypeTimestamp, -1, 0, nil, nil},
 	{variable.SlowLogTxnStartTSStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogUserStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogConnIDStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
@@ -50,12 +50,12 @@ var slowQueryCols = []columnInfo{
 }
 
 func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
-	return parseSlowLogFile(ctx.GetSessionVars().SlowQueryFile)
+	return parseSlowLogFile(ctx.GetSessionVars().Location(), ctx.GetSessionVars().SlowQueryFile)
 }
 
 // TODO: Support parse multiple log-files.
 // parseSlowLogFile uses to parse slow log file.
-func parseSlowLogFile(filePath string) ([][]types.Datum, error) {
+func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -66,11 +66,12 @@ func parseSlowLogFile(filePath string) ([][]types.Datum, error) {
 		}
 	}()
 
-	return parseSlowLog(bufio.NewScanner(file))
+	return ParseSlowLog(tz, bufio.NewScanner(file))
 }
 
+// ParseSlowLog exports for testing.
 // TODO: optimize for parse huge log-file.
-func parseSlowLog(scanner *bufio.Scanner) ([][]types.Datum, error) {
+func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, error) {
 	var rows [][]types.Datum
 	startFlag := false
 	var st *slowQueryTuple
@@ -80,7 +81,7 @@ func parseSlowLog(scanner *bufio.Scanner) ([][]types.Datum, error) {
 		// Check slow log entry start flag.
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
-			err = st.setFieldValue(variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
+			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
 			if err != nil {
 				return rows, err
 			}
@@ -98,14 +99,14 @@ func parseSlowLog(scanner *bufio.Scanner) ([][]types.Datum, error) {
 					if strings.HasSuffix(field, ":") {
 						field = field[:len(field)-1]
 					}
-					err = st.setFieldValue(field, fieldValues[i+1])
+					err = st.setFieldValue(tz, field, fieldValues[i+1])
 					if err != nil {
 						return rows, err
 					}
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				// Get the sql string, and mark the start flag to false.
-				err = st.setFieldValue(variable.SlowLogQuerySQLStr, string(hack.Slice(line)))
+				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)))
 				if err != nil {
 					return rows, err
 				}
@@ -138,12 +139,15 @@ type slowQueryTuple struct {
 	sql          string
 }
 
-func (st *slowQueryTuple) setFieldValue(field, value string) error {
+func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
 	switch field {
 	case variable.SlowLogTimeStr:
-		t, err := parseTime(value)
+		t, err := ParseTime(value)
 		if err != nil {
 			return err
+		}
+		if t.Location() != tz {
+			t = t.In(tz)
 		}
 		st.time = t
 	case variable.SlowLogTxnStartTSStr:
@@ -238,7 +242,8 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	return record
 }
 
-func parseTime(s string) (time.Time, error) {
+// ParseTime exports for testing.
+func ParseTime(s string) (time.Time, error) {
 	t, err := time.Parse(logutil.SlowLogTimeFormat, s)
 	if err != nil {
 		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\", err: %v", s, logutil.SlowLogTimeFormat, err)
