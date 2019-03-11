@@ -14,8 +14,8 @@
 package core
 
 import (
-	"math"
 	"context"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
