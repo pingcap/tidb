@@ -224,13 +224,15 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 		return
 	}
 
+	dbName = strings.Replace(dbName, "`", "``", -1)
+
 	se.SetConnectionID(atomic.AddUint64(&mockConnID, 1))
-	_, err = se.Execute(context.Background(), fmt.Sprintf("create database if not exists %s", dbName))
+	_, err = se.Execute(context.Background(), fmt.Sprintf("create database if not exists `%s`", dbName))
 	if err != nil {
 		err = errors.Trace(err)
 		return
 	}
-	_, err = se.Execute(context.Background(), fmt.Sprintf("use %s", dbName))
+	_, err = se.Execute(context.Background(), fmt.Sprintf("use `%s`", dbName))
 	if err != nil {
 		err = errors.Trace(err)
 		return

@@ -91,12 +91,15 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4Avg(ctx)
 	case ast.AggFuncGroupConcat:
 		a.typeInfer4GroupConcat(ctx)
-	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
+	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow,
+		ast.WindowFuncFirstValue, ast.WindowFuncLastValue:
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank:
 		a.typeInfer4NumberFuncs()
+	case ast.WindowFuncCumeDist:
+		a.typeInfer4CumeDist()
 	default:
 		panic("unsupported agg function: " + a.Name)
 	}
@@ -190,6 +193,11 @@ func (a *baseFuncDesc) typeInfer4NumberFuncs() {
 	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	a.RetTp.Flen = 21
 	types.SetBinChsClnFlag(a.RetTp)
+}
+
+func (a *baseFuncDesc) typeInfer4CumeDist() {
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
 }
 
 // GetDefaultValue gets the default value when the function's input is null.

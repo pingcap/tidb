@@ -2001,9 +2001,22 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	for i := 0; i < 5; i++ {
-		c.Check(fields[0].Column.Name.L, Equals, "c")
-		c.Check(fields[0].ColumnAsName.L, Equals, "c")
+		c.Check(fields[i].Column.Name.L, Equals, "c")
+		c.Check(fields[i].ColumnAsName.L, Equals, "c")
 	}
+	rs.Close()
+
+	// Test issue https://github.com/pingcap/tidb/issues/9639 .
+	// Both window function and expression appear in final result field.
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	rs, err = tk.Exec("select 1+1, row_number() over() num from t")
+	c.Check(err, IsNil)
+	fields = rs.Fields()
+	c.Assert(fields[0].Column.Name.L, Equals, "1+1")
+	c.Assert(fields[0].ColumnAsName.L, Equals, "1+1")
+	c.Assert(fields[1].Column.Name.L, Equals, "num")
+	c.Assert(fields[1].ColumnAsName.L, Equals, "num")
+	tk.MustExec("set @@tidb_enable_window_function = 0")
 	rs.Close()
 }
 
@@ -2210,6 +2223,7 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	is := domain.GetDomain(sctx).InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
 	tb.Cols()[1].Version = model.ColumnInfoVersion1 + 1
 	tk.MustExec("insert into t set a=3")
 	r = tk.MustQuery(`select a,b from t order by a`)
@@ -2945,9 +2959,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3, nil)
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2, nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3487,6 +3501,17 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("drop view view1,view2,view3;")
+
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_window_function = 0")
+	}()
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1,1),(1,2),(2,1),(2,2)")
+	tk.MustExec("create definer='root'@'localhost' view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t")
+	result := tk.MustQuery("select * from v")
+	result.Check(testkit.Rows("1 1 1", "1 1 2", "2 1 2", "2 2 2"))
+	tk.MustExec("drop view v;")
 }
 
 type testSuite2 struct {

@@ -14,6 +14,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -82,6 +83,18 @@ func (info *tableHintInfo) matchTableName(tables []*model.CIStr, tablesInHints [
 		}
 	}
 	return false
+}
+
+func (info *tableHintInfo) restore2IndexJoinHint() string {
+	buffer := bytes.NewBufferString("/*+ TIDB_INLJ(")
+	for i, tableName := range info.indexNestedLoopJoinTables {
+		buffer.WriteString(tableName.O)
+		if i < len(info.indexNestedLoopJoinTables)-1 {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(") */")
+	return buffer.String()
 }
 
 // clauseCode indicates in which clause the column is currently.
@@ -1750,6 +1763,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
+	case ast.ShowDrainerStatus:
+		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowGrants:
 		if s.User != nil {
 			names = []string{fmt.Sprintf("Grants for %s", s.User)}
@@ -1773,6 +1789,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+	case ast.ShowPumpStatus:
+		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowStatsMeta:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
