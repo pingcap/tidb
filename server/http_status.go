@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
@@ -139,6 +140,8 @@ func (s *Server) startHTTPServer() {
 
 	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
+
+		// dump goroutine/heap/mutex
 		items := []struct {
 			name   string
 			gc     int
@@ -167,6 +170,7 @@ func (s *Server) startHTTPServer() {
 			p.WriteTo(fw, item.debug)
 		}
 
+		// dump profile
 		fw, err := zw.Create("profile")
 		if err != nil {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "profile", err))
@@ -183,6 +187,27 @@ func (s *Server) startHTTPServer() {
 		}
 		sleep(w, time.Duration(sec)*time.Second)
 		rpprof.StopCPUProfile()
+
+		// dump config
+		fw, err = zw.Create("config")
+		if err != nil {
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "config", err))
+			return
+		}
+		js, err := json.MarshalIndent(config.GetGlobalConfig(), "", " ")
+		if err != nil {
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("get config info fail%v", err))
+			return
+		}
+		fw.Write(js)
+
+		// dump version
+		fw, err = zw.Create("version")
+		if err != nil {
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "version", err))
+			return
+		}
+		fw.Write([]byte(printer.GetTiDBInfo()))
 
 		zw.Close()
 	})
