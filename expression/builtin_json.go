@@ -707,12 +707,16 @@ type builtinJSONArrayAppendSig struct {
 	baseBuiltinFunc
 }
 
+func (c *jsonArrayAppendFunctionClass) verifyArgs(args []Expression) error {
+	if len(args) < 3 || (len(args)&1 != 1) {
+		return ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
+	}
+	return nil
+}
+
 func (c *jsonArrayAppendFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
-	}
-	if len(args)&1 != 1 {
-		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETJson)
@@ -734,11 +738,18 @@ func (b *builtinJSONArrayAppendSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinJSONArrayAppendSig) checkError(err error) error {
+	if err == nil || b.ctx.GetSessionVars().StrictSQLMode {
+		return err
+	}
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	return nil
+}
+
 func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if err != nil {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(json.ErrInvalidJSONPath.FastGen("Syntax error in JSON text in argument 1 to function 'json_set'"))
-		return res, true, nil
+		return res, true, b.checkError(err)
 	}
 	if isNull {
 		return res, true, nil
@@ -749,18 +760,19 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		// NOTE: mysql does not report error
 		// also they does not ignore it, they just return NULL
 		s, isNull, err := b.args[i].EvalString(b.ctx, row)
-		if isNull || err != nil {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(json.ErrInvalidJSONPath.FastGen("Syntax error in JSON path in argument %d to function 'json_array_append'", i+1))
-			return res, true, nil
+		if isNull {
+			return res, true, b.checkError(json.ErrInvalidJSONPath.GenWithStackByArgs(s))
+		}
+		err = b.checkError(err)
+		if err != nil {
+			return res, true, err
 		}
 		pathExpr, err := json.ParseJSONPathExpr(s)
 		if err != nil {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(json.ErrInvalidJSONPath.FastGen("Syntax error in JSON path in argument %d to function 'json_array_append'", i+1))
-			return res, true, nil
+			return res, true, b.checkError(json.ErrInvalidJSONPath.GenWithStackByArgs(s))
 		}
 		if pathExpr.ContainsAnyAsterisk() {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(json.ErrInvalidJSONPath.FastGen("Wildcard path expression is not allowed in function 'json_array_append' at position %d", i+1))
-			return res, true, nil
+			return res, true, b.checkError(json.ErrInvalidJSONPathWildcard.GenWithStackByArgs(s))
 		}
 
 		var exists bool
@@ -792,8 +804,9 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 
 		obj = json.MergeBinary([]json.BinaryJSON{obj, value})
 		res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
+		err = b.checkError(err)
 		if err != nil {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return res, true, err
 		}
 		// we have done same checks where res.Modify might return with error before, thus ignore it
 	}

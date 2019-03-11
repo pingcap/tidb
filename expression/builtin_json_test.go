@@ -16,6 +16,7 @@ package expression
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -695,53 +696,65 @@ func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
 	tbl := []struct {
 		input    []interface{}
 		expected interface{}
-		success  bool
-		warning  bool
+		success  int // 0 always success, 1 success on non-strict, 2 always fail
+		warning  *terror.Error
 	}{
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, true, false},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, `w`}, `[{"a": 1, "b": [2, 3], "c": 4}, "w"]`, true, false},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, nil}, `[{"a": 1, "b": [2, 3], "c": 4}, null]`, true, false},
-		{[]interface{}{`{"a": 1}`, `$`, `{"b": 2}`}, `[{"a": 1}, "{\"b\": 2}"]`, true, false},
-		{[]interface{}{`{"a": 1}`, `$`, sampleJSON}, `[{"a": 1}, {"b": 2}]`, true, false},
-		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON}, `{"a": [1, {"b": 2}]}`, true, false},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, 0, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, `w`}, `[{"a": 1, "b": [2, 3], "c": 4}, "w"]`, 0, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, nil}, `[{"a": 1, "b": [2, 3], "c": 4}, null]`, 0, nil},
+		{[]interface{}{`{"a": 1}`, `$`, `{"b": 2}`}, `[{"a": 1}, "{\"b\": 2}"]`, 0, nil},
+		{[]interface{}{`{"a": 1}`, `$`, sampleJSON}, `[{"a": 1}, {"b": 2}]`, 0, nil},
+		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON}, `{"a": [1, {"b": 2}]}`, 0, nil},
 		// explains hy call res.Modify every path-value pair and not do as JSON_SET do?
-		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON, `$.a[1]`, sampleJSON}, `{"a": [1, [{"b": 2}, {"b": 2}]]}`, true, false},
-		{[]interface{}{nil, `$`, nil}, nil, true, false},
-		{[]interface{}{nil, `$`, `a`}, nil, true, false},
-		{[]interface{}{`null`, `$`, nil}, `[null, null]`, true, false},
+		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON, `$.a[1]`, sampleJSON}, `{"a": [1, [{"b": 2}, {"b": 2}]]}`, 0, nil},
+		{[]interface{}{nil, `$`, nil}, nil, 0, nil},
+		{[]interface{}{nil, `$`, `a`}, nil, 0, nil},
+		{[]interface{}{`null`, `$`, nil}, `[null, null]`, 0, nil},
 		// bad arguments
-		{[]interface{}{`asdf`, `$`, nil}, nil, true, true},
-		{[]interface{}{``, `$`, nil}, nil, true, true},
-		{[]interface{}{`[]`, `$`, nil}, `[null]`, true, false},
-		{[]interface{}{`{}`, `$`, nil}, `[{}, null]`, true, false},
+		{[]interface{}{`asdf`, `$`, nil}, nil, 1, json.ErrInvalidJSONText},
+		{[]interface{}{``, `$`, nil}, nil, 1, json.ErrInvalidJSONText},
+		{[]interface{}{`[]`, `$`, nil}, `[null]`, 0, nil},
+		{[]interface{}{`{}`, `$`, nil}, `[{}, null]`, 0, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, 2, ErrIncorrectParameterCount},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, 2, ErrIncorrectParameterCount},
 		// following tests comes from MySQL doc
-		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1]`, 1}, `["a", ["b", "c", 1], "d"]`, true, false},
-		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[0]`, 2}, `[["a", 2], ["b", "c"], "d"]`, true, false},
-		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1][0]`, 3}, `["a", [["b", 3], "c"], "d"]`, true, false},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b`, `x`}, `{"a": 1, "b": [2, 3, "x"], "c": 4}`, true, false},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`}, `{"a": 1, "b": [2, 3], "c": [4, "y"]}`, true, false},
+		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1]`, 1}, `["a", ["b", "c", 1], "d"]`, 0, nil},
+		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[0]`, 2}, `[["a", 2], ["b", "c"], "d"]`, 0, nil},
+		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1][0]`, 3}, `["a", [["b", 3], "c"], "d"]`, 0, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b`, `x`}, `{"a": 1, "b": [2, 3, "x"], "c": 4}`, 0, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`}, `{"a": 1, "b": [2, 3], "c": [4, "y"]}`, 0, nil},
 		// following tests comes from MySQL test
-		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, true, false},
-		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].a`, 3.14}, `[1, 2, 3, {"a": [4, 5, 6, 3.14]}, 7]`, true, false},
-		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].b`, 8}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, true, false},
+		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, 0, nil},
+		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].a`, 3.14}, `[1, 2, 3, {"a": [4, 5, 6, 3.14]}, 7]`, 0, nil},
+		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].b`, 8}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, 0, nil},
 		// warning instead of error for illegal params
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, true, true},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, true, true},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, true, true},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, true, true},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, 1, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, 1, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, 1, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, 1, json.ErrInvalidJSONPathWildcard},
 	}
+
+	// non-strict mode
 	for i, t := range tbl {
 		args := types.MakeDatums(t.input...)
+		s.ctx.GetSessionVars().StrictSQLMode = false
 		s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		// if t.success <= 1, no error should return in getFunction
+		if t.success == 2 && err != nil {
+			c.Assert(t.warning.Equal(err), Equals, true)
+			// won't execute f
+			continue
+		}
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		comment := Commentf("case:%v \n input:%v \n output: %s \n expected: %v \n warnings: %v \n should return warnings? %v", i, t.input, d.GetMysqlJSON(), t.expected, s.ctx.GetSessionVars().StmtCtx.GetWarnings(), t.warning)
-		if t.success {
+		comment := Commentf("case:%v \n input:%v \n output: %s \n expected: %v \n warnings: %v \n expected error %v", i, t.input, d.GetMysqlJSON(), t.expected, s.ctx.GetSessionVars().StmtCtx.GetWarnings(), t.warning)
+		if t.success <= 1 {
 			c.Assert(err, IsNil, comment)
 
-			if t.warning {
-				c.Assert(int(s.ctx.GetSessionVars().StmtCtx.WarningCount()), Greater, 0, comment)
+			if t.warning != nil {
+				c.Assert(int(s.ctx.GetSessionVars().StmtCtx.WarningCount()), Equals, 1, comment)
+				c.Assert(t.warning.Equal(s.ctx.GetSessionVars().StmtCtx.GetWarnings()[0].Err), Equals, true)
 			} else {
 				c.Assert(int(s.ctx.GetSessionVars().StmtCtx.WarningCount()), Equals, 0, comment)
 			}
@@ -759,7 +772,42 @@ func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
 				c.Assert(cmp, Equals, 0, comment)
 			}
 		} else {
-			c.Assert(err, NotNil, comment)
+			c.Assert(t.warning.Equal(err), Equals, true)
+		}
+	}
+
+	// strict mode
+	for i, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		s.ctx.GetSessionVars().StrictSQLMode = true
+		s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		if t.warning != nil && err != nil {
+			c.Assert(t.warning.Equal(err), Equals, true)
+			// won't execute f
+			continue
+		}
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		comment := Commentf("case:%v \n input:%v \n output: %s \n expected: %v \n warnings: %v \n expected error %v", i, t.input, d.GetMysqlJSON(), t.expected, s.ctx.GetSessionVars().StmtCtx.GetWarnings(), t.warning)
+		if t.success == 0 {
+			c.Assert(err, IsNil, comment)
+			c.Assert(int(s.ctx.GetSessionVars().StmtCtx.WarningCount()), Equals, 0, comment)
+
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue, comment)
+			} else {
+				var j1 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(t.expected.(string))
+				c.Assert(err, IsNil)
+				j2 := d.GetMysqlJSON()
+				var cmp int
+				cmp = json.CompareBinary(j1, j2)
+				c.Assert(err, IsNil, comment)
+				c.Assert(cmp, Equals, 0, comment)
+			}
+		} else {
+			c.Assert(t.warning.Equal(err), Equals, true)
 		}
 	}
 }
