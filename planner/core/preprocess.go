@@ -14,6 +14,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -408,11 +409,21 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 
 func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
 	if ts, ok := node.(*ast.TableSource); ok {
-		_, exists := tableAliases[ts.AsName.L]
-		if len(ts.AsName.L) != 0 && exists {
-			return ErrNonUniqTable.GenWithStackByArgs(ts.AsName)
+		tabName := ts.AsName
+		if tabName.L == "" {
+			if tableNode, ok := ts.Source.(*ast.TableName); ok {
+				if tableNode.Schema.L != "" {
+					tabName = model.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
+				} else {
+					tabName = tableNode.Name
+				}
+			}
 		}
-		tableAliases[ts.AsName.L] = nil
+		_, exists := tableAliases[tabName.L]
+		if len(tabName.L) != 0 && exists {
+			return ErrNonUniqTable.GenWithStackByArgs(tabName)
+		}
+		tableAliases[tabName.L] = nil
 	}
 	return nil
 }
