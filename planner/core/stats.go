@@ -196,7 +196,7 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo) (*property.
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
-		logutil.Logger(context.Background()).Error("cannot find columns in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
+		logutil.Logger(context.Background()).Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
 		return 0
 	}
 	var cardinality = 1.0
