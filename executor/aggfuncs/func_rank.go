@@ -85,7 +85,7 @@ func buildRowComparer(cols []*expression.Column) rowComparer {
 	return rc
 }
 
-func (rc rowComparer) compareRows(prev, curr chunk.Row) int {
+func (rc *rowComparer) compareRows(prev, curr chunk.Row) int {
 	for i, idx := range rc.colIdx {
 		res := rc.cmpFuncs[i](prev, idx, curr, idx)
 		if res != 0 {
