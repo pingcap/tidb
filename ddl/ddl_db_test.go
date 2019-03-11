@@ -1677,7 +1677,7 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
 func (s *testDBSuite) TestCreateTableWithLike2(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use %s", s.schemaName)
+	s.tk.MustExec(fmt.Sprintf("use %s", s.schemaName))
 	s.tk.MustExec("drop table if exists t1,t2;")
 	defer s.tk.MustExec("drop table if exists t1,t2;")
 	s.tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
