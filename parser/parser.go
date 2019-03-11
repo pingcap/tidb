@@ -10441,7 +10441,7 @@ yynewstate:
 		}
 	case 915:
 		{
-			parser.yyVAL.item = ast.WindowSpec{Ref: yyS[yypt-0].item.(model.CIStr)}
+			parser.yyVAL.item = ast.WindowSpec{Name: yyS[yypt-0].item.(model.CIStr), OnlyAlias: true}
 		}
 	case 916:
 		{
