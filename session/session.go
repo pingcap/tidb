@@ -1303,11 +1303,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	timeutil.SetSystemTZ(tz)
-
 	dom := domain.GetDomain(se)
-	err = dom.LoadPrivilegeLoop(se)
-	if err != nil {
-		return nil, errors.Trace(err)
+
+	if !config.GetGlobalConfig().Security.SkipGrantTable {
+		err = dom.LoadPrivilegeLoop(se)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	se1, err := createSession(store)
