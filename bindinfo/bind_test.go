@@ -114,21 +114,15 @@ func (s *testSuite) TestBindParse(c *C) {
 	collation := "utf8mb4_bin"
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s')`,
 		originSQL, bindSQL, defaultDb, status, charset, collation)
-
 	tk.MustExec(sql)
-
 	bindHandle := bindinfo.NewHandler()
-
 	bindCacheUpdater := bindinfo.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser)
-
 	err := bindCacheUpdater.Update(true)
 	c.Check(err, IsNil)
-
 	c.Check(len(bindHandle.Get()), Equals, 1)
 
 	hash := parser.DigestHash("select * from t")
 	bindData := bindHandle.Get()[hash]
-
 	c.Check(bindData, NotNil)
 	c.Check(len(bindData), Equals, 1)
 	c.Check(bindData[0].OriginalSQL, Equals, "select * from t")

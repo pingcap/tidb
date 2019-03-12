@@ -89,11 +89,9 @@ func NewHandler() *Handle {
 // Get gets cache from a Handle.
 func (h *Handle) Get() cache {
 	bc := h.Load()
-
 	if bc != nil {
 		return bc.(map[string][]*bindMeta)
 	}
-
 	return make(map[string][]*bindMeta)
 }
 
@@ -109,13 +107,10 @@ func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
 	chkBatch := rs.NewRecordBatch()
 	for {
 		err = rs.Next(context.TODO(), chkBatch)
-		if err != nil {
+		if err != nil || chkBatch.NumRows() == 0 {
 			return errors.Trace(err)
 		}
 
-		if chkBatch.NumRows() == 0 {
-			return nil
-		}
 		it := chunk.NewIterator4Chunk(chkBatch.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			record := newBindMeta(row)
@@ -123,7 +118,6 @@ func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
 			if err != nil {
 				return err
 			}
-
 			if record.UpdateTime.Compare(bindCacheUpdater.lastUpdateTime) == 1 {
 				bindCacheUpdater.lastUpdateTime = record.UpdateTime
 			}
@@ -169,7 +163,6 @@ func newBindMeta(row chunk.Row) *bindRecord {
 
 func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) error {
 	hash := parser.DigestHash(newBindRecord.OriginalSQL)
-
 	if bindArr, ok := b[hash]; ok {
 		for idx, v := range bindArr {
 			if v.OriginalSQL == newBindRecord.OriginalSQL && v.Db == newBindRecord.Db {
@@ -181,22 +174,18 @@ func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) err
 			}
 		}
 	}
-
 	if newBindRecord.Status == deleted {
 		return nil
 	}
-
 	stmtNodes, _, err := sparser.Parse(newBindRecord.BindSQL, newBindRecord.Charset, newBindRecord.Collation)
 	if err != nil {
 		log.Warnf("parse error:\n%v\n%s", err, newBindRecord.BindSQL)
 		return errors.Trace(err)
 	}
-
 	newNode := &bindMeta{
 		bindRecord: newBindRecord,
 		ast:        stmtNodes[0],
 	}
-
 	b[hash] = append(b[hash], newNode)
 	return nil
 }
