@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -39,20 +40,30 @@ var (
 )
 
 type testSlowClient struct {
+	sync.RWMutex
 	tikv.Client
 	regionDelay map[uint64]time.Duration
 }
 
 func (c *testSlowClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	regionID := req.RegionId
-	if req.Type == tikvrpc.CmdCop && c.regionDelay[regionID] > 0 {
-		time.Sleep(c.regionDelay[regionID])
+	delay := c.GetDelay(regionID)
+	if req.Type == tikvrpc.CmdCop && delay > 0 {
+		time.Sleep(delay)
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
 func (c *testSlowClient) SetDelay(regionID uint64, dur time.Duration) {
+	c.Lock()
+	defer c.Unlock()
 	c.regionDelay[regionID] = dur
+}
+
+func (c *testSlowClient) GetDelay(regionID uint64) time.Duration {
+	c.RLock()
+	defer c.RUnlock()
+	return c.regionDelay[regionID]
 }
 
 // manipulateCluster splits this cluster's region by splitKeys and returns regionIDs after split
