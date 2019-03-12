@@ -56,6 +56,7 @@ type IndexLookUpMergeJoin struct {
 
 type outerMergeCtx struct {
 	rowTypes []*types.FieldType
+	joinKeys []*expression.Column
 	keyCols  []int
 	filter   expression.CNFExprs
 }
@@ -63,7 +64,9 @@ type outerMergeCtx struct {
 type innerMergeCtx struct {
 	readerBuilder *dataReaderBuilder
 	rowTypes      []*types.FieldType
+	joinKeys      []*expression.Column
 	keyCols       []int
+	compareFuncs  []expression.CompareFunc
 }
 
 type lookUpMergeJoinTask struct {
@@ -534,12 +537,8 @@ func (imw *innerMergeWorker) fetchNextOuterRows(task *lookUpMergeJoinTask, key c
 }
 
 func (imw *innerMergeWorker) compare(outerRow, innerRow chunk.Row) (int, error) {
-	outerKeyCols := imw.outerMergeCtx.keyCols
-	innerKeyCols := imw.innerMergeCtx.keyCols
-	for i := 0; i < len(outerKeyCols); i++ {
-		outerValue := outerRow.GetDatum(outerKeyCols[i], imw.outerMergeCtx.rowTypes[outerKeyCols[i]])
-		innerValue := innerRow.GetDatum(innerKeyCols[i], imw.innerMergeCtx.rowTypes[innerKeyCols[i]])
-		cmp, err := outerValue.CompareDatum(nil, &innerValue)
+	for i := 0; i < len(imw.outerMergeCtx.joinKeys); i++ {
+		cmp, _, err := imw.innerMergeCtx.compareFuncs[i](nil, imw.outerMergeCtx.joinKeys[i], imw.innerMergeCtx.joinKeys[i], outerRow, innerRow)
 		if err != nil {
 			return 0, err
 		}

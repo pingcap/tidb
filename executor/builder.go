@@ -1574,17 +1574,24 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			}
 			if isInnerKeysSuffix {
 				is.KeepOrder = true
+				compareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
+				for i := range v.OuterJoinKeys {
+					compareFuncs = append(compareFuncs, expression.GetCmpFunction(v.OuterJoinKeys[i], v.InnerJoinKeys[i]))
+				}
 				return &IndexLookUpMergeJoin{
 					baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 					outerMergeCtx: outerMergeCtx{
 						rowTypes: outerTypes,
 						filter:   outerFilter,
+						joinKeys: v.OuterJoinKeys,
 						keyCols:  outerKeyCols,
 					},
 					innerMergeCtx: innerMergeCtx{
 						readerBuilder: &dataReaderBuilder{innerPlan, b},
 						rowTypes:      innerTypes,
+						joinKeys:      v.InnerJoinKeys,
 						keyCols:       innerKeyCols,
+						compareFuncs:  compareFuncs,
 					},
 					workerWg:      new(sync.WaitGroup),
 					joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
