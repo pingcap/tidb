@@ -76,7 +76,7 @@ type lookUpMergeJoinTask struct {
 	sameKeyRows []chunk.Row
 	sameKeyIter chunk.Iterator
 
-	doneErr     error
+	doneErr     chan error
 	done        bool
 	cursor      int
 	innerCursor int
@@ -215,43 +215,47 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 		}()
 	}
 	req.Reset()
-	task, err := e.getFinishedTask(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if task == nil {
-		return nil
-	}
-
-	select {
-	case chk := <-task.results:
-		req.Append(chk, 0, chk.NumRows())
-	case <-ctx.Done():
+	task := e.getFinishedTask(ctx)
+	breakFlag := false
+	for task != nil && !breakFlag {
+		select {
+		case chk := <-task.results:
+			req.Append(chk, 0, chk.NumRows())
+			breakFlag = true
+		case err := <-task.doneErr:
+			task.done = true
+			if err != nil {
+				return errors.Trace(err)
+			}
+			task = e.getFinishedTask(ctx)
+		case <-ctx.Done():
+			breakFlag = true
+		}
 	}
 
 	return nil
 }
 
-func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
+func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) *lookUpMergeJoinTask {
 	task := e.task
-	if task != nil && (!task.done || len(task.results) > 0 || task.doneErr != nil) {
-		return task, task.doneErr
+	if task != nil && (!task.done || len(task.results) > 0) {
+		return task
 	}
 
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
-		return nil, nil
+		return nil
 	}
 	if task == nil {
-		return nil, nil
+		return nil
 	}
 
 	if e.task != nil {
 		e.task.memTracker.Detach()
 	}
 	e.task = task
-	return task, task.doneErr
+	return task
 }
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
@@ -263,9 +267,10 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			log.Errorf("outerWorker panic stack is:\n%s", buf)
 			task := &lookUpMergeJoinTask{
 				results: make(chan *chunk.Chunk, 1),
-				doneErr: errors.Errorf("%v", r),
+				doneErr: make(chan error, 1),
 				done:    true,
 			}
+			task.doneErr <- errors.Errorf("%v", r)
 			omw.pushToChan(ctx, task, omw.resultCh)
 		}
 		close(omw.resultCh)
@@ -275,8 +280,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	for {
 		task, err := omw.buildTask(ctx)
 		if err != nil {
-			task.doneErr = errors.Trace(err)
-			task.done = true
+			task.doneErr <- errors.Trace(err)
 			omw.pushToChan(ctx, task, omw.resultCh)
 			return
 		}
@@ -310,6 +314,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 
 	task := &lookUpMergeJoinTask{
 		results:     make(chan *chunk.Chunk, 1),
+		doneErr:     make(chan error, 1),
 		outerResult: omw.executor.newFirstChunk(),
 	}
 	task.memTracker = memory.NewTracker(fmt.Sprintf("lookup join task %p", task), -1)
@@ -365,8 +370,8 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			log.Errorf("innerMergeWorker panic stack is:\n%s", buf)
-			task.doneErr = errors.Errorf("%v", r)
-			task.done = true
+			task.doneErr = make(chan error, 1)
+			task.doneErr <- errors.Errorf("%v", r)
 		}
 		wg.Done()
 	}()
@@ -382,8 +387,7 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		}
 
 		err := imw.handleTask(ctx, task)
-		task.doneErr = err
-		task.done = true
+		task.doneErr <- err
 	}
 }
 
