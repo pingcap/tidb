@@ -119,4 +119,13 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 2", "1 2", "2 2", "2 2"))
 	result = tk.MustQuery("select a, nth_value(a, 5) over() from t")
 	result.Check(testkit.Rows("1 <nil>", "1 <nil>", "2 <nil>", "2 <nil>"))
+
+	result = tk.MustQuery("select a, lead(a) over (), lag(a) over() from t")
+	result.Check(testkit.Rows("1 1 <nil>", "1 2 1", "2 2 1", "2 <nil> 2"))
+	result = tk.MustQuery("select a, lead(a, 0) over(), lag(a, 0) over() from t")
+	result.Check(testkit.Rows("1 1 1", "1 1 1", "2 2 2", "2 2 2"))
+	result = tk.MustQuery("select a, lead(a, 1, a) over(), lag(a, 1, a) over() from t")
+	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 2 1", "2 2 2"))
+	result = tk.MustQuery("select a, lead(a, 1, 'lead') over(), lag(a, 1, 'lag') over() from t")
+	result.Check(testkit.Rows("1 1 lag", "1 2 1", "2 2 1", "2 lead 2"))
 }
