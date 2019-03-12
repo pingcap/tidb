@@ -2207,6 +2207,14 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select nth_value(a, 0) over() from t",
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
+		{
+			sql:    "select ntile(0) over() from t",
+			result: "[planner:1210]Incorrect arguments to ntile",
+		},
+		{
+			sql:    "select ntile(null) over() from t",
+			result: "TableReader(Table(t))->Window(ntile(null) over())->Projection",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)

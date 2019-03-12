@@ -119,4 +119,11 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 2", "1 2", "2 2", "2 2"))
 	result = tk.MustQuery("select a, nth_value(a, 5) over() from t")
 	result.Check(testkit.Rows("1 <nil>", "1 <nil>", "2 <nil>", "2 <nil>"))
+
+	result = tk.MustQuery("select ntile(3) over() from t")
+	result.Check(testkit.Rows("1", "1", "2", "3"))
+	result = tk.MustQuery("select ntile(2) over() from t")
+	result.Check(testkit.Rows("1", "1", "2", "2"))
+	result = tk.MustQuery("select ntile(null) over() from t")
+	result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
 }
