@@ -405,6 +405,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		return errors.Trace(err)
 	}
 
+	task.results = make(chan *chunk.Chunk, task.innerResult.NumChunks()+1)
 	err = imw.handleMergeJoin(ctx, task)
 	return err
 }
