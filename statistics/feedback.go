@@ -1152,9 +1152,9 @@ func getMaxValue(ft *types.FieldType) (max types.Datum) {
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.Flag) {
-			max.SetUint64(types.ByteToUnsignedUpperBound(ft.Tp))
+			max.SetUint64(types.IntergerUnsignedUpperBound(ft.Tp))
 		} else {
-			max.SetInt64(types.ByteToSignedUpperBound(ft.Tp))
+			max.SetInt64(types.IntergerSignedUpperBound(ft.Tp))
 		}
 	case mysql.TypeFloat:
 		max.SetFloat32(float32(types.GetMaxFloat(ft.Flen, ft.Decimal)))
@@ -1188,7 +1188,7 @@ func getMinValue(ft *types.FieldType) (min types.Datum) {
 		if mysql.HasUnsignedFlag(ft.Flag) {
 			min.SetUint64(0)
 		} else {
-			min.SetInt64(types.ByteToSignedLowerBound(ft.Tp))
+			min.SetInt64(types.IntergerSignedLowerBound(ft.Tp))
 		}
 	case mysql.TypeFloat:
 		min.SetFloat32(float32(-types.GetMaxFloat(ft.Flen, ft.Decimal)))
