@@ -329,7 +329,7 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	if err := s.SplitRegion(tableStartKey); err != nil {
 		// It will be automatically split by TiKV later.
-		log.Warn("ddl splitting table region failed", zap.Error(err))
+		log.Warn("split table region failed", zap.Error(err))
 	}
 }
 

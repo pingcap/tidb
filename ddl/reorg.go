@@ -136,13 +136,13 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 	select {
 	case err := <-w.reorgCtx.doneCh:
 		rowCount, _ := w.reorgCtx.getRowCountAndHandle()
-		log.Info("ddl run reorg job done", zap.Int64("backRowCount", rowCount))
+		log.Info("run reorg job done", zap.Int64("backRowCount", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		w.reorgCtx.clean()
 		return errors.Trace(err)
 	case <-w.quitCh:
-		log.Info("ddl run reorg job quit")
+		log.Info("run reorg job quit")
 		w.reorgCtx.setNextHandle(0)
 		w.reorgCtx.setRowCount(0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
@@ -153,7 +153,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		job.SetRowCount(rowCount)
 		// Update a reorgInfo's handle.
 		err := t.UpdateDDLReorgStartHandle(job, doneHandle)
-		log.Info("ddl run reorg job wait timeout", zap.String("waitTime", waitTimeout.String()),
+		log.Info("run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
 			zap.Int64("totalAddedRowCount", rowCount), zap.Int64("doneHandle", doneHandle), zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
@@ -173,7 +173,7 @@ func (w *worker) isReorgRunnable(d *ddlCtx) error {
 
 	if !d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		log.Info("ddl worker is not the ddl owner", zap.String("ID", d.uuid))
+		log.Info("DDL worker is not the DDL owner", zap.String("ID", d.uuid))
 		return errors.Trace(errNotOwner)
 	}
 	return nil

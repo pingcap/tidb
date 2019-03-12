@@ -577,7 +577,6 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 			if err := c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp)); err != nil {
 				log.Error("set default value failed", zap.Error(err))
 			}
-
 		}
 	}
 }

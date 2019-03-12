@@ -290,7 +290,7 @@ type ddlCtx struct {
 
 func (dc *ddlCtx) isOwner() bool {
 	isOwner := dc.ownerManager.IsOwner()
-	log.Debug("it's the DDL owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
+	log.Debug("[ddl] check is owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
 	if isOwner {
 		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
@@ -319,7 +319,7 @@ func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 			case d.ddlEventCh <- e:
 				return
 			default:
-				log.Warn("fail to notify event", zap.String("event", e.String()))
+				log.Warn("fail to notify ddl event", zap.String("event", e.String()))
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
@@ -388,7 +388,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	var delRangeMgr delRangeManager
 	if !mock {
 		delRangeMgr = newDelRangeManager(d.store, d.sessPool)
-		log.Info("start delRangeManager OK", zap.Bool("withEmulator", !d.store.SupportDeleteRange()))
+		log.Info("[ddl] start delRangeManager OK", zap.Bool("withEmulator", !d.store.SupportDeleteRange()))
 	} else {
 		delRangeMgr = newMockDelRangeManager()
 	}
@@ -421,7 +421,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 				func() { w.start(d.ddlCtx) },
 				func(r interface{}) {
 					if r != nil {
-						log.Error("DDL meet panic", zap.String("ID", d.uuid))
+						log.Error("ddl-worker meet panic", zap.String("worker", w.String()), zap.String("ID", d.uuid))
 						metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 					}
 				})
@@ -444,7 +444,7 @@ func (d *ddl) close() {
 	d.ownerManager.Cancel()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
-		log.Error("remove self version path failed", zap.Error(err))
+		log.Error("[ddl] remove self version path failed", zap.Error(err))
 	}
 
 	for _, worker := range d.workers {
@@ -457,7 +457,7 @@ func (d *ddl) close() {
 		d.delRangeMgr.clear()
 	}
 
-	log.Info("closing DDL", zap.String("ID", d.uuid), zap.String("takeTime", time.Since(startTime).String()))
+	log.Info("closing DDL", zap.String("ID", d.uuid), zap.Duration("takeTime", time.Since(startTime)))
 }
 
 // GetLease implements DDL.GetLease interface.
@@ -546,7 +546,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(job.Type)
-	log.Info("start do DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
+	log.Info("start to do DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
 	jobID := job.ID

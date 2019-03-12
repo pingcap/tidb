@@ -95,7 +95,7 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 	if !dr.storeSupport {
 		dr.emulatorCh <- struct{}{}
 	}
-	log.Info("add job into delete-range table", zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()))
+	log.Info("delRange add job into delete-range table", zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()))
 	return nil
 }
 
@@ -120,7 +120,7 @@ func (dr *delRange) start() {
 
 // clear implements delRangeManager interface.
 func (dr *delRange) clear() {
-	log.Info("closing delRange")
+	log.Info("delRange closing")
 	close(dr.quitCh)
 	dr.wait.Wait()
 }
@@ -130,7 +130,7 @@ func (dr *delRange) clear() {
 // deletes all keys in each DelRangeTask.
 func (dr *delRange) startEmulator() {
 	defer dr.wait.Done()
-	log.Info("start delRange emulator")
+	log.Info("delRange start emulator")
 	for {
 		select {
 		case <-dr.emulatorCh:

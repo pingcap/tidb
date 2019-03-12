@@ -365,7 +365,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 			}
 			if int64(ver) < latestVer {
 				if notMatchVerCnt%intervalCnt == 0 {
-					log.Info("syncer check all versions, ddl is not synced, continue checking",
+					log.Info("syncer check all versions, someone is not synced, continue checking",
 						zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
 				}
 				succ = false
