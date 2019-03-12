@@ -156,7 +156,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 			break
 		}
 		if failedCnt%logIntervalCnt == 0 {
-			log.Warn("Failed to new session to etcd", zap.String("logPrefix", logPrefix), zap.Error(err))
+			log.Warn("failed to new session to etcd", zap.String("logPrefix", logPrefix), zap.Error(err))
 		}
 
 		time.Sleep(newSessionRetryInterval)
@@ -190,7 +190,7 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	log.Warn("Resign ddl owner success!", zap.String("logPrefix", m.logPrefix))
+	log.Warn("resign ddl owner success!", zap.String("logPrefix", m.logPrefix))
 	return nil
 }
 
@@ -210,7 +210,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		cancel()
 		if r := recover(); r != nil {
 			buf := util.GetStack()
-			log.Error("Recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.String("buf", string(buf)))
+			log.Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.String("buf", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
 		}
 	}()
@@ -228,7 +228,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 			leaseID := etcdSession.Lease()
 			etcdSession, err = NewSession(ctx, logPrefix, m.etcdCli, NewSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
-				log.Info("Break campaign loop, NewSession err", zap.String("logPrefix", logPrefix), zap.Error(err))
+				log.Info("break campaign loop, NewSession err", zap.String("logPrefix", logPrefix), zap.Error(err))
 				m.revokeSession(logPrefix, leaseID)
 				return
 			}
@@ -251,7 +251,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		elec := concurrency.NewElection(etcdSession, m.key)
 		err = elec.Campaign(ctx, m.id)
 		if err != nil {
-			log.Info("Failed to campaign.", zap.String("logPrefix", logPrefix), zap.Error(err))
+			log.Info("failed to campaign.", zap.String("logPrefix", logPrefix), zap.Error(err))
 			continue
 		}
 
@@ -265,7 +265,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		m.RetireOwner()
 
 		metrics.CampaignOwnerCounter.WithLabelValues(m.prompt, metrics.NoLongerOwner).Inc()
-		log.Warn("Is not the owner", zap.String("logPrefix", logPrefix))
+		log.Warn("is not the owner", zap.String("logPrefix", logPrefix))
 	}
 }
 
@@ -276,7 +276,7 @@ func (m *ownerManager) revokeSession(logPrefix string, leaseID clientv3.LeaseID)
 		time.Duration(ManagerSessionTTL)*time.Second)
 	_, err := m.etcdCli.Revoke(cancelCtx, leaseID)
 	cancel()
-	log.Info("Break campaign loop, revoke err.", zap.String("logPrefix", logPrefix), zap.Error(err))
+	log.Info("break campaign loop, revoke err.", zap.String("logPrefix", logPrefix), zap.Error(err))
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.
@@ -296,13 +296,13 @@ func GetOwnerInfo(ctx context.Context, elec *concurrency.Election, logPrefix, id
 	resp, err := elec.Leader(ctx)
 	if err != nil {
 		// If no leader elected currently, it returns ErrElectionNoLeader.
-		log.Info("Failed to get leader.", zap.String("logPrefix", logPrefix), zap.Error(err))
+		log.Info("failed to get leader.", zap.String("logPrefix", logPrefix), zap.Error(err))
 		return "", errors.Trace(err)
 	}
 	ownerID := string(resp.Kvs[0].Value)
-	log.Info("Found owner", zap.String("logPrefix", logPrefix), zap.String("ownerID", ownerID))
+	log.Info("found owner", zap.String("logPrefix", logPrefix), zap.String("ownerID", ownerID))
 	if ownerID != id {
-		log.Warn("Is not the owner", zap.String("logPrefix", logPrefix))
+		log.Warn("is not the owner", zap.String("logPrefix", logPrefix))
 		return "", errors.New("ownerInfoNotMatch")
 	}
 
@@ -318,19 +318,19 @@ func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.
 		case resp, ok := <-watchCh:
 			if !ok {
 				metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.WatcherClosed).Inc()
-				log.Info("Watcher is closed, no owner", zap.String("logPrefix", logPrefix))
+				log.Info("watcher is closed, no owner", zap.String("logPrefix", logPrefix))
 				return
 			}
 			if resp.Canceled {
 				metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.Cancelled).Inc()
-				log.Info("Watch canceled, no owner", zap.String("logPrefix", logPrefix))
+				log.Info("watch canceled, no owner", zap.String("logPrefix", logPrefix))
 				return
 			}
 
 			for _, ev := range resp.Events {
 				if ev.Type == mvccpb.DELETE {
 					metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.Deleted).Inc()
-					log.Info("Watch failed, owner is deleted", zap.String("logPrefix", logPrefix))
+					log.Info("watch failed, owner is deleted", zap.String("logPrefix", logPrefix))
 					return
 				}
 			}
@@ -347,7 +347,7 @@ func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.
 func init() {
 	err := setManagerSessionTTL()
 	if err != nil {
-		log.Warn("Set manager session TTL failed", zap.Error(err))
+		log.Warn("set manager session TTL failed", zap.Error(err))
 	}
 }
 
