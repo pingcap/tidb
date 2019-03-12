@@ -887,13 +887,18 @@ func (n *AlterUserStmt) Accept(v Visitor) (Node, bool) {
 type DropUserStmt struct {
 	stmtNode
 
-	IfExists bool
-	UserList []*auth.UserIdentity
+	IfExists   bool
+	IsDropRole bool
+	UserList   []*auth.UserIdentity
 }
 
 // Restore implements Node interface.
 func (n *DropUserStmt) Restore(ctx *RestoreCtx) error {
-	ctx.WriteKeyWord("DROP USER ")
+	if n.IsDropRole {
+		ctx.WriteKeyWord("DROP ROLE ")
+	} else {
+		ctx.WriteKeyWord("DROP USER ")
+	}
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
