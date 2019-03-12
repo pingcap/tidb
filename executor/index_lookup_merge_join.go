@@ -262,7 +262,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			buf = buf[:stackSize]
 			log.Errorf("outerWorker panic stack is:\n%s", buf)
 			task := &lookUpMergeJoinTask{
-				results: make(chan *chunk.Chunk, 3),
+				results: make(chan *chunk.Chunk, 1),
 				doneErr: errors.Errorf("%v", r),
 				done:    true,
 			}
@@ -309,7 +309,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 	omw.executor.newFirstChunk()
 
 	task := &lookUpMergeJoinTask{
-		results:     make(chan *chunk.Chunk, 3),
+		results:     make(chan *chunk.Chunk, 1),
 		outerResult: omw.executor.newFirstChunk(),
 	}
 	task.memTracker = memory.NewTracker(fmt.Sprintf("lookup join task %p", task), -1)
