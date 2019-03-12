@@ -250,7 +250,7 @@ type TiKVClient struct {
 
 // Binlog is the config for binlog.
 type Binlog struct {
-	Enable       bool   `toml:"enable" json:"enable"`
+	Enable       string `toml:"enable" json:"enable"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
 	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
@@ -343,6 +343,7 @@ var defaultConf = Config{
 		BatchWaitSize:     8,
 	},
 	Binlog: Binlog{
+		Enable:       "auto",
 		WriteTimeout: "15s",
 	},
 }
