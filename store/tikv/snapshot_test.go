@@ -20,8 +20,9 @@ import (
 
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type testSnapshotSuite struct {
@@ -99,7 +100,8 @@ func (s *testSnapshotSuite) deleteKeys(keys []kv.Key, c *C) {
 
 func (s *testSnapshotSuite) TestBatchGet(c *C) {
 	for _, rowNum := range s.rowNums {
-		log.Debugf("Test BatchGet with length[%d]", rowNum)
+		log.Debug("Test BatchGet",
+			zap.Int("length", rowNum))
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
 			k := encodeKey(s.prefix, s08d("key", i))
@@ -117,7 +119,8 @@ func (s *testSnapshotSuite) TestBatchGet(c *C) {
 
 func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
 	for _, rowNum := range s.rowNums {
-		log.Debugf("Test BatchGetNotExist with length[%d]", rowNum)
+		log.Debug("Test BatchGetNotExist",
+			zap.Int("length", rowNum))
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
 			k := encodeKey(s.prefix, s08d("key", i))

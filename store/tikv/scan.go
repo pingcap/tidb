@@ -19,9 +19,10 @@ import (
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // Scanner support tikv scan
@@ -144,7 +145,9 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 }
 
 func (s *Scanner) getData(bo *Backoffer) error {
-	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
+	log.Debug("txn getData",
+		zap.Binary("nextStartKey", s.nextStartKey),
+		zap.Uint64("start ts", s.startTS()))
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 
 	for {
@@ -181,7 +184,8 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			log.Debugf("scanner getData failed: %s", regionErr)
+			log.Debug("scanner getData failed",
+				zap.String("regionErr", regionErr.String()))
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)

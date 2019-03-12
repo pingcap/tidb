@@ -22,11 +22,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -64,7 +66,9 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
 		case DecorrJitter:
 			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
 		}
-		log.Debugf("backoff base %d, sleep %d", base, sleep)
+		log.Debug("backoff",
+			zap.Int("base", base),
+			zap.Int("sleep", sleep))
 		select {
 		case <-time.After(time.Duration(sleep) * time.Millisecond):
 		case <-ctx.Done():
@@ -209,7 +213,7 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	if strings.Contains(err.Error(), mismatchClusterID) {
-		log.Fatalf("critical error %v", err)
+		log.Fatal("critical error", zap.Error(err))
 	}
 	select {
 	case <-b.ctx.Done():
@@ -235,14 +239,19 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
 		startTs = ts
 	}
-	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms), type: %s, txn_start_ts: %v", err, b.totalSleep, b.maxSleep, typ.String(), startTs)
+	log.Debug("retry later",
+		zap.Error(err),
+		zap.Int("totalsleep", b.totalSleep),
+		zap.Int("maxsleep", b.maxSleep),
+		zap.String("type", typ.String()),
+		zap.Reflect("start ts", startTs))
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
 		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
-			if log.GetLevel() == log.DebugLevel || i >= len(b.errors)-3 {
+			if log.GetLevel() == zapcore.DebugLevel || i >= len(b.errors)-3 {
 				errMsg += "\n" + err.Error()
 			}
 		}

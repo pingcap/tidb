@@ -23,11 +23,12 @@ import (
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -132,7 +133,9 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 	}
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			log.Debugf("snapshot batchGet failed: %v, tid: %d", e, s.version.Ver)
+			log.Debug("snapshot batchGet failed",
+				zap.Error(e),
+				zap.Uint64("start ts", s.version.Ver))
 			err = e
 		}
 	}
@@ -304,12 +307,12 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	}
 	if keyErr.Retryable != "" {
 		err := errors.Errorf("tikv restarts txn: %s", keyErr.GetRetryable())
-		log.Debug(err)
+		log.Debug("error", zap.Error(err))
 		return nil, errors.Annotate(err, txnRetryableMark)
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
-		log.Warn(err)
+		log.Warn("error", zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return nil, errors.Errorf("unexpected KeyError: %s", keyErr.String())
@@ -317,7 +320,10 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 
 func conflictToString(conflict *pb.WriteConflict) string {
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "WriteConflict: startTS=%d, conflictTS=%d, key=", conflict.StartTs, conflict.ConflictTs)
+	_, err := fmt.Fprintf(&buf, "WriteConflict: startTS=%d, conflictTS=%d, key=", conflict.StartTs, conflict.ConflictTs)
+	if err != nil {
+		log.Error("error", zap.Error(err))
+	}
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
@@ -327,9 +333,15 @@ func conflictToString(conflict *pb.WriteConflict) string {
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
 	if err == nil {
-		fmt.Fprintf(buf, "{tableID=%d, indexID=%d, indexValues={", tableID, indexID)
+		_, err1 := fmt.Fprintf(buf, "{tableID=%d, indexID=%d, indexValues={", tableID, indexID)
+		if err1 != nil {
+			log.Error("error", zap.Error(err1))
+		}
 		for _, v := range indexValues {
-			fmt.Fprintf(buf, "%s, ", v)
+			_, err2 := fmt.Fprintf(buf, "%s, ", v)
+			if err2 != nil {
+				log.Error("error", zap.Error(err2))
+			}
 		}
 		buf.WriteString("}}")
 		return
@@ -337,9 +349,15 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 
 	tableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
-		fmt.Fprintf(buf, "{tableID=%d, handle=%d}", tableID, handle)
+		_, err3 := fmt.Fprintf(buf, "{tableID=%d, handle=%d}", tableID, handle)
+		if err3 != nil {
+			log.Error("error", zap.Error(err3))
+		}
 		return
 	}
 
-	fmt.Fprintf(buf, "%#v", key)
+	_, err4 := fmt.Fprintf(buf, "%#v", key)
+	if err4 != nil {
+		log.Error("error", zap.Error(err4))
+	}
 }

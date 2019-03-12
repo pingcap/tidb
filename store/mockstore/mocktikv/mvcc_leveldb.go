@@ -25,9 +25,10 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/storage"
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/codec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // MVCCLevelDB implements the MVCCStore interface.
@@ -375,7 +376,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
-		log.Error("scan new iterator fail:", errors.ErrorStack(err))
+		log.Error("scan new iterator fail", zap.Error(err))
 		return nil
 	}
 
@@ -399,7 +400,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 		skip := skipDecoder{currKey}
 		ok, err = skip.Decode(iter)
 		if err != nil {
-			log.Error("seek to next key error:", errors.ErrorStack(err))
+			log.Error("seek to next key error", zap.Error(err))
 			break
 		}
 		currKey = skip.currKey
@@ -454,7 +455,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 			helper.entry.values = append(helper.entry.values, value)
 		}
 		if err != nil {
-			log.Error("Unmarshal fail:", errors.Trace(err))
+			log.Error("Unmarshal fail", zap.Error(errors.Trace(err)))
 			break
 		}
 		succ = iter.Prev()
@@ -592,7 +593,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	// Check assertions.
 	if (ok && mutation.Assertion == kvrpcpb.Assertion_NotExist) ||
 		(!ok && mutation.Assertion == kvrpcpb.Assertion_Exist) {
-		log.Error("ASSERTION FAIL!!!", mutation)
+		log.Error("ASSERTION FAIL!!!", zap.String("mutation", mutation.String()))
 	}
 
 	batch.Put(writeKey, writeValue)

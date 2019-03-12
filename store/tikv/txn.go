@@ -20,11 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/execdetails"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -77,6 +79,10 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 type assertionPair struct {
 	key       kv.Key
 	assertion kv.AssertionType
+}
+
+func (a *assertionPair) String() string {
+	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
 }
 
 // SetAssertion sets a assertion for the key operation.
@@ -249,7 +255,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// latches disabled
 	if txn.store.txnLatches == nil {
 		err = committer.executeAndWriteFinishBinlog(ctx)
-		log.Debug("[kv]", connID, " txnLatches disabled, 2pc directly:", err)
+		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
 
@@ -270,7 +276,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
-	log.Debug("[kv]", connID, " txnLatches enabled while txn retryable:", err)
+	logutil.Logger(ctx).Debug("[kv] txnLatches enabled while txn retryable", zap.Error(err))
 	return errors.Trace(err)
 }
 
@@ -283,7 +289,7 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	log.Debugf("[kv] Rollback txn %d", txn.StartTS())
+	log.Debug("[kv] Rollback txn", zap.Uint64("start ts", txn.StartTS()))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil

@@ -28,13 +28,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // CopClient is coprocessor client.
@@ -271,7 +271,10 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		reverseTasks(tasks)
 	}
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
+		log.Warn("buildCopTasks takes too much time",
+			zap.Duration("elapsed", elapsed),
+			zap.Int("range len", rangesLen),
+			zap.Int("task len", len(tasks)))
 	}
 	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
 	return tasks, nil
@@ -567,8 +570,9 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	defer func() {
 		r := recover()
 		if r != nil {
-			buf := util.GetStack()
-			log.Errorf("copIteratorWork meet panic: %v, stack trace:\n%s", r, buf)
+			log.Error("copIteratorWork meet panic",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
 			resp := &copResponse{err: errors.Errorf("%v", r)}
 			worker.sendToRespCh(resp, task.respChan)
 		}
@@ -709,7 +713,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
-			log.Info("stream recv timeout:", err)
+			log.Info("stream recv timeout", zap.Error(err))
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
 		lastRange = resp.Range
@@ -729,7 +733,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		log.Debugf("coprocessor encounters lock: %v", lockErr)
+		log.Debug("coprocessor encounters",
+			zap.String("lock", lockErr.String()))
 		ok, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
@@ -743,7 +748,11 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
-		log.Warnf("txn_start_ts:%d region_id:%d store_addr:%s, coprocessor err: %v", worker.req.StartTs, task.region.id, task.storeAddr, err)
+		log.Warn("",
+			zap.Uint64("txn_start_ts", worker.req.StartTs),
+			zap.Uint64("region_id", task.region.id),
+			zap.String("store_addr", task.storeAddr),
+			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	// When the request is using streaming API, the `Range` is not nil.
