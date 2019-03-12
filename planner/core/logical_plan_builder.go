@@ -2122,12 +2122,13 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	for _, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		newCol := &expression.Column{
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			DBName:   dbName,
-			TblName:  tableInfo.Name,
-			ColName:  col.Name,
-			ID:       col.ID,
-			RetType:  &col.FieldType,
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     col.Name,
+			OrigColName: col.Name,
+			ID:          col.ID,
+			RetType:     &col.FieldType,
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
