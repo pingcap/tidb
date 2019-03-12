@@ -537,7 +537,7 @@ func (imw *innerMergeWorker) fetchNextOuterRows(task *lookUpMergeJoinTask, key c
 
 func (imw *innerMergeWorker) compare(outerRow, innerRow chunk.Row) (int, error) {
 	for i := 0; i < len(imw.outerMergeCtx.joinKeys); i++ {
-		cmp, _, err := imw.innerMergeCtx.compareFuncs[i](nil, imw.outerMergeCtx.joinKeys[i], imw.innerMergeCtx.joinKeys[i], outerRow, innerRow)
+		cmp, _, err := imw.innerMergeCtx.compareFuncs[i](imw.ctx, imw.outerMergeCtx.joinKeys[i], imw.innerMergeCtx.joinKeys[i], outerRow, innerRow)
 		if err != nil {
 			return 0, err
 		}
