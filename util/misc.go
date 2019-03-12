@@ -19,8 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -70,8 +71,9 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 			recoverFn(r)
 		}
 		if r != nil {
-			buf := GetStack()
-			log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
+			log.Error("panic in the recoverable goroutine",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
 		}
 	}()
 	exec()
@@ -107,7 +109,7 @@ func SyntaxError(err error) error {
 	if err == nil {
 		return nil
 	}
-	log.Errorf("%+v", err)
+	log.Error(err.Error())
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 

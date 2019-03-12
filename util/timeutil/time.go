@@ -22,7 +22,7 @@ import (
 	"syscall"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/log"
 )
 
 // init initializes `locCache`.
@@ -74,9 +74,9 @@ func InferSystemTZ() string {
 			if err2 == nil {
 				return name
 			}
-			log.Errorln(err2)
+			log.Error(err2.Error())
 		}
-		log.Errorln(err1)
+		log.Error(err1.Error())
 	case tz != "" && tz != "UTC":
 		for _, source := range zoneSources {
 			if _, err := os.Stat(source + tz); err == nil {
