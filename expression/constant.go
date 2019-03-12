@@ -14,9 +14,9 @@
 package expression
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -61,7 +62,7 @@ func (c *Constant) String() string {
 	if c.DeferredExpr != nil {
 		dt, err := c.Eval(chunk.Row{})
 		if err != nil {
-			log.Error("Eval constant to string", zap.Error(err))
+			logutil.Logger(context.Background()).Error("eval constant failed", zap.Error(err))
 			return ""
 		}
 		c.Value.SetValue(dt.GetValue())

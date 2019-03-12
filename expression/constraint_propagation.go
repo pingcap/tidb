@@ -15,14 +15,15 @@ package expression
 
 import (
 	"bytes"
+	"context"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -151,7 +152,7 @@ func ruleConstantFalse(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	if cons, ok := cond.(*Constant); ok {
 		v, isNull, err := cons.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			log.Warn("[constraint_propagation]ruleConstantFalse", zap.Error(err))
+			logutil.Logger(context.Background()).Warn("eval constant", zap.Error(err))
 			return
 		}
 		if !isNull && v == 0 {
@@ -248,7 +249,7 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 		var err error
 		fc1, err = NewFunction(ctx, scalarFunc.FuncName.L, scalarFunc.RetType, con1)
 		if err != nil {
-			log.Warn("[constraint_propagation]ruleColumnOPConst", zap.Error(err))
+			logutil.Logger(context.Background()).Warn("build new function in ruleColumnOPConst", zap.Error(err))
 			return
 		}
 	}
@@ -271,7 +272,7 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	}
 	v, isNull, err := compareConstant(ctx, negOP(OP2), fc1, con2)
 	if err != nil {
-		log.Warn("[constraint_propagation]ruleColumnOPConst", zap.Error(err))
+		logutil.Logger(context.Background()).Warn("comparing constant in ruleColumnOPConst", zap.Error(err))
 		return
 	}
 	if !isNull && v > 0 {

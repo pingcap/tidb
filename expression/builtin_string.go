@@ -19,6 +19,7 @@ package expression
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -28,7 +29,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/text/transform"
 )
@@ -265,7 +266,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			log.Warn("Unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
+			logutil.Logger(context.Background()).Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
@@ -323,7 +324,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
-				log.Warn("Unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index in CONCAT_WS", i))
+				logutil.Logger(context.Background()).Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
 			bf.tp.Flen += argType.Flen
 		}
@@ -1771,7 +1772,7 @@ func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			log.Error("Eval `Flen` for LAPD/RPAD", zap.Error(err))
+			logutil.Logger(context.Background()).Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
 		}
 		if isNull || err != nil || length > mysql.MaxBlobWidth {
 			return mysql.MaxBlobWidth
@@ -2151,7 +2152,7 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	oldStr := result
 	result, _, err = transform.String(encoding.NewDecoder(), result)
 	if err != nil {
-		log.Warn("Change charset of string",
+		logutil.Logger(context.Background()).Warn("change charset of string",
 			zap.String("string", oldStr),
 			zap.String("charset", charsetName),
 			zap.Error(err))
