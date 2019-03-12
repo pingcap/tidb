@@ -253,7 +253,10 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 		}
 
 		if config.CheckTableBeforeDrop {
-			logutil.Logger(context.Background()).Warn("admin check table before drop", zap.String("tableName", fmt.Sprintf("`%s`.`%s`", fullti.Schema.O, fullti.Name.O)))
+			logutil.Logger(context.Background()).Warn("admin check table before drop",
+				zap.String("database", fullti.Schema.O),
+				zap.String("table", fullti.Name.O),
+			)
 			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 			if err != nil {
