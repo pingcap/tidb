@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// percentRank is the window function to calculate the percentile ranking of rows in a result set.
+// percentRank calculates the percentage of partition values less than the value in the current row, excluding the highest value.
 // It can be calculated as `(rank - 1) / (total_rows_in_set - 1).
 type percentRank struct {
 	baseAggFunc
