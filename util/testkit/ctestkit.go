@@ -68,8 +68,8 @@ func (tk *CTestKit) OpenSession(ctx context.Context) context.Context {
 	return ctx
 }
 
-// OpenSessionWitDB opens new session ctx if no exists one and use db.
-func (tk *CTestKit) OpenSessionWitDB(ctx context.Context, db string) context.Context {
+// OpenSessionWithDB opens new session ctx if no exists one and use db.
+func (tk *CTestKit) OpenSessionWithDB(ctx context.Context, db string) context.Context {
 	ctx = tk.OpenSession(ctx)
 	tk.MustExec(ctx, "use "+db)
 	return ctx
@@ -182,7 +182,7 @@ func (tk *CTestKit) ConcurrentRun(c *check.C, concurrent int, loops int,
 		w := i
 		channel[w] = make(chan [][]interface{}, 1)
 		ctxs[w], dones[w] = context.WithCancel(context.Background())
-		ctxs[w] = tk.OpenSessionWitDB(ctxs[w], "test")
+		ctxs[w] = tk.OpenSessionWithDB(ctxs[w], "test")
 		go func() {
 			defer func() {
 				r := recover()
@@ -202,7 +202,7 @@ func (tk *CTestKit) ConcurrentRun(c *check.C, concurrent int, loops int,
 		}
 	}()
 
-	ctx := tk.OpenSessionWitDB(context.Background(), "test")
+	ctx := tk.OpenSessionWithDB(context.Background(), "test")
 	defer tk.CloseSession(ctx)
 	tk.MustExec(ctx, "use test")
 
