@@ -103,10 +103,8 @@ func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	ok, roleName := checker.ActiveRoles(e.ctx, roleList)
 	if !ok {
-		errCode := mysql.ErrRoleNotGranted
-		errRoleNotGranted := terror.ClassPrivilege.New(terror.ErrCode(errCode), mysql.MySQLErrName[uint16(errCode)])
 		u := e.ctx.GetSessionVars().User
-		return errRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 	}
 	return nil
 }

@@ -106,12 +106,12 @@ type columnsPrivRecord struct {
 }
 
 // RoleGraphEdgesTable is used to cache relationship between and role.
-type RoleGraphEdgesTable struct {
+type roleGraphEdgesTable struct {
 	roleList map[string]bool
 }
 
 // Find method is used to find role from table
-func (g RoleGraphEdgesTable) Find(user, host string) bool {
+func (g roleGraphEdgesTable) Find(user, host string) bool {
 	if host == "" {
 		host = "%"
 	}
@@ -120,10 +120,7 @@ func (g RoleGraphEdgesTable) Find(user, host string) bool {
 		return false
 	}
 	_, ok := g.roleList[key]
-	if ok {
-		return true
-	}
-	return false
+	return ok
 }
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
@@ -132,10 +129,10 @@ type MySQLPrivilege struct {
 	DB          []dbRecord
 	TablesPriv  []tablesPrivRecord
 	ColumnsPriv []columnsPrivRecord
-	RoleGraph   map[string]RoleGraphEdgesTable
+	RoleGraph   map[string]roleGraphEdgesTable
 }
 
-// FindRole is used to detect whether this is an edge between user and role
+// FindRole is used to detect whether there is edges between users and roles.
 func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdentity) bool {
 	rec := p.matchUser(user, host)
 	r := p.matchUser(role.Username, role.Hostname)
@@ -199,7 +196,7 @@ func noSuchTable(err error) bool {
 
 // LoadRoleGraph loads the mysql.role_edges table from database.
 func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
-	p.RoleGraph = make(map[string]RoleGraphEdgesTable)
+	p.RoleGraph = make(map[string]roleGraphEdgesTable)
 	err := p.loadTable(ctx, "select FROM_USER, FROM_HOST, TO_USER, TO_HOST from mysql.role_edges;", p.decodeRoleEdgesTable)
 	if err != nil {
 		return errors.Trace(err)
@@ -449,12 +446,12 @@ func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*ast.ResultFie
 	}
 	fromKey := fromUser + "@" + fromHost
 	toKey := toUser + "@" + toHost
-	if _, ok := p.RoleGraph[toKey]; ok {
-		p.RoleGraph[toKey].roleList[fromKey] = true
-	} else {
-		p.RoleGraph[toKey] = RoleGraphEdgesTable{roleList: make(map[string]bool)}
-		p.RoleGraph[toKey].roleList[fromKey] = true
+	roleGraph, ok := p.RoleGraph[toKey]
+	if !ok {
+		roleGraph = roleGraphEdgesTable{roleList: make(map[string]bool)}
+		p.RoleGraph[toKey] = roleGraph
 	}
+	roleGraph.roleList[fromKey] = true
 	return nil
 }
 
