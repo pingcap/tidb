@@ -714,20 +714,20 @@ and n_name = 'MOZAMBIQUE'
 order by
 value desc;
 id	count	task	operator info
-Projection_63	1304801.67	root	tpch.partsupp.ps_partkey, value
-└─Sort_64	1304801.67	root	value:desc
-  └─Selection_66	1304801.67	root	gt(sel_agg_4, NULL)
-    └─HashAgg_69	1631002.09	root	group by:col_2, funcs:sum(col_0), firstrow(col_1)
-      └─Projection_88	1631002.09	root	mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty)), tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
-        └─HashRightJoin_73	1631002.09	root	inner join, inner:HashRightJoin_79, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
-          ├─HashRightJoin_79	20000.00	root	inner join, inner:TableReader_84, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
-          │ ├─TableReader_84	1.00	root	data:Selection_83
-          │ │ └─Selection_83	1.00	cop	eq(tpch.nation.n_name, "MOZAMBIQUE")
-          │ │   └─TableScan_82	25.00	cop	table:nation, range:[-inf,+inf], keep order:false
-          │ └─TableReader_81	500000.00	root	data:TableScan_80
-          │   └─TableScan_80	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
-          └─TableReader_86	40000000.00	root	data:TableScan_85
-            └─TableScan_85	40000000.00	cop	table:partsupp, range:[-inf,+inf], keep order:false
+Projection_50	1304801.67	root	tpch.partsupp.ps_partkey, value
+└─Sort_51	1304801.67	root	value:desc
+  └─Selection_53	1304801.67	root	gt(sel_agg_4, NULL)
+    └─HashAgg_56	1631002.09	root	group by:col_2, funcs:sum(col_0), firstrow(col_1)
+      └─Projection_75	1631002.09	root	mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty)), tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
+        └─HashRightJoin_60	1631002.09	root	inner join, inner:HashRightJoin_66, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
+          ├─HashRightJoin_66	20000.00	root	inner join, inner:TableReader_71, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+          │ ├─TableReader_71	1.00	root	data:Selection_70
+          │ │ └─Selection_70	1.00	cop	eq(tpch.nation.n_name, "MOZAMBIQUE")
+          │ │   └─TableScan_69	25.00	cop	table:nation, range:[-inf,+inf], keep order:false
+          │ └─TableReader_68	500000.00	root	data:TableScan_67
+          │   └─TableScan_67	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
+          └─TableReader_73	40000000.00	root	data:TableScan_72
+            └─TableScan_72	40000000.00	cop	table:partsupp, range:[-inf,+inf], keep order:false
 /*
 Q12 Shipping Modes and Order Priority Query
 This query determines whether selecting less expensive modes of shipping is negatively affecting the critical-priority
@@ -842,11 +842,11 @@ and l_shipdate < date_add('1996-12-01', interval '1' month);
 id	count	task	operator info
 Projection_8	1.00	root	div(mul(100.00, 5_col_0), 5_col_1)
 └─StreamAgg_13	1.00	root	funcs:sum(col_0), sum(col_1)
-  └─Projection_34	4121984.49	root	case(like(tpch.part.p_type, "PROMO%", 92), mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), 0), mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))
+  └─Projection_29	4121984.49	root	case(like(tpch.part.p_type, "PROMO%", 92), mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), 0), mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))
     └─IndexJoin_26	4121984.49	root	inner join, inner:TableReader_25, outer key:tpch.lineitem.l_partkey, inner key:tpch.part.p_partkey
-      ├─TableReader_31	4121984.49	root	data:Selection_30
-      │ └─Selection_30	4121984.49	cop	ge(tpch.lineitem.l_shipdate, 1996-12-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1997-01-01)
-      │   └─TableScan_29	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
+      ├─TableReader_21	4121984.49	root	data:Selection_20
+      │ └─Selection_20	4121984.49	cop	ge(tpch.lineitem.l_shipdate, 1996-12-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1997-01-01)
+      │   └─TableScan_19	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
       └─TableReader_25	1.00	root	data:TableScan_24
         └─TableScan_24	1.00	cop	table:part, range: decided by [tpch.lineitem.l_partkey], keep order:false
 /*
@@ -981,9 +981,9 @@ Projection_14	1.00	root	div(11_col_0, 7.0)
       │ │   └─TableScan_31	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
       │ └─TableReader_30	300005811.00	root	data:TableScan_29
       │   └─TableScan_29	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
-      └─HashAgg_59	9943040.00	root	group by:col_3, funcs:avg(col_0, col_1), firstrow(col_2)
-        └─TableReader_60	9943040.00	root	data:HashAgg_56
-          └─HashAgg_56	9943040.00	cop	group by:tpch.lineitem.l_partkey, funcs:avg(tpch.lineitem.l_quantity), firstrow(tpch.lineitem.l_partkey)
+      └─HashAgg_38	9943040.00	root	group by:col_3, funcs:avg(col_0, col_1), firstrow(col_2)
+        └─TableReader_39	9943040.00	root	data:HashAgg_34
+          └─HashAgg_34	9943040.00	cop	group by:tpch.lineitem.l_partkey, funcs:avg(tpch.lineitem.l_quantity), firstrow(tpch.lineitem.l_partkey)
             └─TableScan_37	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
 /*
 Q18 Large Volume Customer Query
@@ -1093,11 +1093,11 @@ and l_shipinstruct = 'DELIVER IN PERSON'
 );
 id	count	task	operator info
 StreamAgg_13	1.00	root	funcs:sum(col_0)
-└─Projection_38	6286493.79	root	mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))
+└─Projection_32	6286493.79	root	mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))
   └─IndexJoin_29	6286493.79	root	inner join, inner:TableReader_28, outer key:tpch.lineitem.l_partkey, inner key:tpch.part.p_partkey, other cond:or(and(and(eq(tpch.part.p_brand, "Brand#52"), in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG")), and(ge(tpch.lineitem.l_quantity, 4), and(le(tpch.lineitem.l_quantity, 14), le(tpch.part.p_size, 5)))), or(and(and(eq(tpch.part.p_brand, "Brand#11"), in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK")), and(ge(tpch.lineitem.l_quantity, 18), and(le(tpch.lineitem.l_quantity, 28), le(tpch.part.p_size, 10)))), and(and(eq(tpch.part.p_brand, "Brand#51"), in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG")), and(ge(tpch.lineitem.l_quantity, 29), and(le(tpch.lineitem.l_quantity, 39), le(tpch.part.p_size, 15))))))
-    ├─TableReader_34	6286493.79	root	data:Selection_33
-    │ └─Selection_33	6286493.79	cop	eq(tpch.lineitem.l_shipinstruct, "DELIVER IN PERSON"), in(tpch.lineitem.l_shipmode, "AIR", "AIR REG"), or(and(ge(tpch.lineitem.l_quantity, 4), le(tpch.lineitem.l_quantity, 14)), or(and(ge(tpch.lineitem.l_quantity, 18), le(tpch.lineitem.l_quantity, 28)), and(ge(tpch.lineitem.l_quantity, 29), le(tpch.lineitem.l_quantity, 39))))
-    │   └─TableScan_32	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
+    ├─TableReader_22	6286493.79	root	data:Selection_21
+    │ └─Selection_21	6286493.79	cop	eq(tpch.lineitem.l_shipinstruct, "DELIVER IN PERSON"), in(tpch.lineitem.l_shipmode, "AIR", "AIR REG"), or(and(ge(tpch.lineitem.l_quantity, 4), le(tpch.lineitem.l_quantity, 14)), or(and(ge(tpch.lineitem.l_quantity, 18), le(tpch.lineitem.l_quantity, 28)), and(ge(tpch.lineitem.l_quantity, 29), le(tpch.lineitem.l_quantity, 39))))
+    │   └─TableScan_20	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
     └─TableReader_28	8000000.00	root	data:Selection_27
       └─Selection_27	8000000.00	cop	ge(tpch.part.p_size, 1), or(and(eq(tpch.part.p_brand, "Brand#52"), and(in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(tpch.part.p_size, 5))), or(and(eq(tpch.part.p_brand, "Brand#11"), and(in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(tpch.part.p_size, 10))), and(eq(tpch.part.p_brand, "Brand#51"), and(in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(tpch.part.p_size, 15)))))
         └─TableScan_26	1.00	cop	table:part, range: decided by [tpch.lineitem.l_partkey], keep order:false
