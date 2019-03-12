@@ -1008,10 +1008,7 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 
-	tblInfo := *referTbl.Meta()
-	tblInfo.Name = ident.Name
-	tblInfo.AutoIncID = 0
-	tblInfo.ForeignKeys = nil
+	tblInfo := buildTableInfoWithLike(ident, referTbl.Meta())
 	tblInfo.ID, err = d.genGlobalID()
 	if err != nil {
 		return errors.Trace(err)
@@ -1027,6 +1024,24 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) model.TableInfo {
+	tblInfo := *referTblInfo
+	// Check non-public column and adjust column offset.
+	newColumns := referTblInfo.Cols()
+	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StatePublic {
+			newIndices = append(newIndices, idx)
+		}
+	}
+	tblInfo.Columns = newColumns
+	tblInfo.Indices = newIndices
+	tblInfo.Name = ident.Name
+	tblInfo.AutoIncID = 0
+	tblInfo.ForeignKeys = nil
+	return tblInfo
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
