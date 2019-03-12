@@ -48,8 +48,8 @@ require (
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20190215154024-7f2fc73ef562
-	github.com/pingcap/log v0.0.0-20190214045112-b37da76f67a7
-	github.com/pingcap/parser v0.0.0-20190305083139-b478256a6451
+	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
+	github.com/pingcap/parser v0.0.0-20190311093336-9fca026d9c49
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
 	github.com/pingcap/tipb v0.0.0-20190107072121-abbec73437b7
