@@ -55,7 +55,6 @@ func NewTracker(label string, bytesLimit int64) *Tracker {
 		label:          label,
 		bytesLimit:     bytesLimit,
 		actionOnExceed: &LogOnExceed{},
-		parent:         nil,
 	}
 }
 
