@@ -945,20 +945,11 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", p.hintInfo.restore2IndexJoinHint())
 			}
 
-			// Append inapplicable reason.
-			if len(p.EqualConditions) == 0 {
-				errMsg += " without column equal ON condition"
-			}
-
 			// Generate warning message to client.
 			warning := ErrInternal.GenWithStack(errMsg)
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}()
-
-	if len(p.EqualConditions) == 0 {
-		return nil, false
-	}
 
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:

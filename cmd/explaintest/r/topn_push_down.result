@@ -227,7 +227,7 @@ Limit_11	5.00	root	offset:0, count:5
   ├─TableReader_17	4.00	root	data:TableScan_16
   │ └─TableScan_16	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─IndexReader_14	10.00	root	index:IndexScan_13
-    └─IndexScan_13	10.00	cop	table:t2, index:a, range: decided by [t1.a], keep order:false, stats:pseudo
+    └─IndexScan_13	10.00	cop	table:t2, index:a, range: decided by [eq(t2.a, t1.a)], keep order:false, stats:pseudo
 explain select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
@@ -236,7 +236,7 @@ Limit_12	5.00	root	offset:0, count:5
     ├─TableReader_19	4.00	root	data:TableScan_18
     │ └─TableScan_18	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
     └─IndexReader_16	10.00	root	index:IndexScan_15
-      └─IndexScan_15	10.00	cop	table:t2, index:a, range: decided by [t1.a], keep order:false, stats:pseudo
+      └─IndexScan_15	10.00	cop	table:t2, index:a, range: decided by [eq(t2.a, t1.a)], keep order:false, stats:pseudo
 explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5
