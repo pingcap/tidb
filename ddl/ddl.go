@@ -290,7 +290,7 @@ type ddlCtx struct {
 
 func (dc *ddlCtx) isOwner() bool {
 	isOwner := dc.ownerManager.IsOwner()
-	log.Debug("[ddl] check is owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
+	log.Debug("DDL check is owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
 	if isOwner {
 		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
@@ -388,7 +388,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	var delRangeMgr delRangeManager
 	if !mock {
 		delRangeMgr = newDelRangeManager(d.store, d.sessPool)
-		log.Info("[ddl] start delRangeManager OK", zap.Bool("withEmulator", !d.store.SupportDeleteRange()))
+		log.Info("DDL start delRangeManager OK", zap.Bool("withEmulator", !d.store.SupportDeleteRange()))
 	} else {
 		delRangeMgr = newMockDelRangeManager()
 	}
@@ -444,7 +444,7 @@ func (d *ddl) close() {
 	d.ownerManager.Cancel()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
-		log.Error("[ddl] remove self version path failed", zap.Error(err))
+		log.Error("DDL remove self version path failed", zap.Error(err))
 	}
 
 	for _, worker := range d.workers {
