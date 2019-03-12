@@ -745,7 +745,7 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 	}
 
 	for i := 1; i < len(b.args)-1; i += 2 {
-		// if JSON path is Null, then mysql break and return null
+		// If JSON path is NULL, MySQL breaks and returns NULL.
 		s, isNull, err := b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return res, true, err
@@ -761,13 +761,13 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		var exists bool
 		obj, exists := res.Extract([]json.PathExpression{pathExpr})
 		if !exists {
-			// just do nothing for this
+			// If path not exists, just do nothing and no errors.
 			continue
 		}
 
 		if obj.TypeCode != json.TypeCodeArray {
 			// JSON_ARRAY_APPEND({"a": "b"}, "$", "c") => [{"a": "b"}, "c"]
-			// We should convert them to a single array first
+			// We should convert them to a single array first.
 			obj = json.CreateBinary([]interface{}{obj})
 		}
 
@@ -788,11 +788,11 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		obj = json.MergeBinary([]json.BinaryJSON{obj, value})
 		res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
 		if err != nil {
-			// err should always be nil, the function should never return here
+			// err should always be nil, the function should never return here.
 			return res, true, err
 		}
 	}
-	// res won't be nil, error should be nil
+	// res won't be nil, error should be nil.
 	return res, false, nil
 }
 

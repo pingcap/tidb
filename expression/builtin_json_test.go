@@ -704,44 +704,41 @@ func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
 		{[]interface{}{`{"a": 1}`, `$`, `{"b": 2}`}, `[{"a": 1}, "{\"b\": 2}"]`, nil},
 		{[]interface{}{`{"a": 1}`, `$`, sampleJSON}, `[{"a": 1}, {"b": 2}]`, nil},
 		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON}, `{"a": [1, {"b": 2}]}`, nil},
-		// explains hy call res.Modify every path-value pair and not do as JSON_SET do?
+
 		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON, `$.a[1]`, sampleJSON}, `{"a": [1, [{"b": 2}, {"b": 2}]]}`, nil},
 		{[]interface{}{nil, `$`, nil}, nil, nil},
 		{[]interface{}{nil, `$`, `a`}, nil, nil},
 		{[]interface{}{`null`, `$`, nil}, `[null, null]`, nil},
-		// bad arguments
-		{[]interface{}{`asdf`, `$`, nil}, nil, json.ErrInvalidJSONText},
-		{[]interface{}{``, `$`, nil}, nil, json.ErrInvalidJSONText},
 		{[]interface{}{`[]`, `$`, nil}, `[null]`, nil},
 		{[]interface{}{`{}`, `$`, nil}, `[{}, null]`, nil},
+		// Bad arguments.
+		{[]interface{}{`asdf`, `$`, nil}, nil, json.ErrInvalidJSONText},
+		{[]interface{}{``, `$`, nil}, nil, json.ErrInvalidJSONText},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, ErrIncorrectParameterCount},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, ErrIncorrectParameterCount},
-		// following tests comes from MySQL doc
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, json.ErrInvalidJSONPathWildcard},
+		// Following tests come from MySQL doc.
 		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1]`, 1}, `["a", ["b", "c", 1], "d"]`, nil},
 		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[0]`, 2}, `[["a", 2], ["b", "c"], "d"]`, nil},
 		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1][0]`, 3}, `["a", [["b", 3], "c"], "d"]`, nil},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b`, `x`}, `{"a": 1, "b": [2, 3, "x"], "c": 4}`, nil},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`}, `{"a": 1, "b": [2, 3], "c": [4, "y"]}`, nil},
-		// following tests comes from MySQL test
+		// Following tests come from MySQL test.
 		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, nil},
 		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].a`, 3.14}, `[1, 2, 3, {"a": [4, 5, 6, 3.14]}, 7]`, nil},
 		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].b`, 8}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, nil},
-		// warning instead of error for illegal params
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, json.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, json.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, json.ErrInvalidJSONPathWildcard},
 	}
 
-	// non-strict mode
 	for i, t := range tbl {
 		args := types.MakeDatums(t.input...)
 		s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
-		// if t.success <= 1, no error should return in getFunction
+		// No error should return in getFunction if t.err is nil.
 		if err != nil {
 			c.Assert(t.err.Equal(err), Equals, true)
-			// won't execute f
 			continue
 		}
 		c.Assert(f, NotNil)
