@@ -182,6 +182,10 @@ const (
 	GlobalStatusTable = "GLOBAL_STATUS"
 	// TiDBTable is the table contains tidb info.
 	TiDBTable = "tidb"
+	//  RoleEdgesTable is the table contains role relation info
+	RoleEdgeTable = "role_edges"
+	// DefaultRoleTable is the table contain default active role info
+	DefaultRoleTable = "default_roles"
 )
 
 // PrivilegeType  privilege
