@@ -867,7 +867,7 @@ func (d *Datum) convertToInt(sc *stmtctx.StatementContext, target *FieldType) (D
 
 func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	tp := target.Tp
-	upperBound := UnsignedUpperBound[tp]
+	upperBound := ByteToUnsignedUpperBound(tp)
 	var (
 		val uint64
 		err error

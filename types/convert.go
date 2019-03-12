@@ -37,34 +37,28 @@ func truncateStr(str string, flen int) string {
 	return str
 }
 
-// UnsignedUpperBound indicates the max uint64 values of different mysql types.
-var UnsignedUpperBound = map[byte]uint64{
-	mysql.TypeTiny:     math.MaxUint8,
-	mysql.TypeShort:    math.MaxUint16,
-	mysql.TypeInt24:    mysql.MaxUint24,
-	mysql.TypeLong:     math.MaxUint32,
-	mysql.TypeLonglong: math.MaxUint64,
-	mysql.TypeBit:      math.MaxUint64,
-	mysql.TypeEnum:     math.MaxUint64,
-	mysql.TypeSet:      math.MaxUint64,
-}
-
-// SignedUpperBound indicates the max int64 values of different mysql types.
-var SignedUpperBound = map[byte]int64{
-	mysql.TypeTiny:     math.MaxInt8,
-	mysql.TypeShort:    math.MaxInt16,
-	mysql.TypeInt24:    mysql.MaxInt24,
-	mysql.TypeLong:     math.MaxInt32,
-	mysql.TypeLonglong: math.MaxInt64,
-}
-
-// SignedLowerBound indicates the min int64 values of different mysql types.
-var SignedLowerBound = map[byte]int64{
-	mysql.TypeTiny:     math.MinInt8,
-	mysql.TypeShort:    math.MinInt16,
-	mysql.TypeInt24:    mysql.MinInt24,
-	mysql.TypeLong:     math.MinInt32,
-	mysql.TypeLonglong: math.MinInt64,
+// ByteToUnsignedUpperBound indicates the max uint64 values of different mysql types.
+func ByteToUnsignedUpperBound(b byte) uint64 {
+	switch b {
+	case mysql.TypeTiny:
+		return math.MaxUint8
+	case mysql.TypeShort:
+		return math.MaxUint16
+	case mysql.TypeInt24:
+		return mysql.MaxUint24
+	case mysql.TypeLong:
+		return math.MaxUint32
+	case mysql.TypeLonglong:
+		return math.MaxUint64
+	case mysql.TypeBit:
+		return math.MaxUint64
+	case mysql.TypeEnum:
+		return math.MaxUint64
+	case mysql.TypeSet:
+		return math.MaxUint64
+	default:
+		panic("Input byte is not a mysql type")
+	}
 }
 
 // ByteToSignedUpperBound indicates the max int64 values of different mysql types.
@@ -436,11 +430,11 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 	case json.TypeCodeFloat64:
 		f := j.GetFloat64()
 		if !unsigned {
-			lBound := SignedLowerBound[mysql.TypeLonglong]
-			uBound := SignedUpperBound[mysql.TypeLonglong]
+			lBound := ByteToSignedLowerBound(mysql.TypeLonglong)
+			uBound := ByteToSignedUpperBound(mysql.TypeLonglong)
 			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeDouble)
 		}
-		bound := UnsignedUpperBound[mysql.TypeLonglong]
+		bound := ByteToUnsignedUpperBound(mysql.TypeLonglong)
 		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
@@ -465,7 +459,7 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 	case json.TypeCodeInt64:
 		return float64(j.GetInt64()), nil
 	case json.TypeCodeUint64:
-		u, err := ConvertIntToUint(sc, j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		u, err := ConvertIntToUint(sc, j.GetInt64(), ByteToUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		return float64(u), errors.Trace(err)
 	case json.TypeCodeFloat64:
 		return j.GetFloat64(), nil
