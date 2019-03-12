@@ -2372,6 +2372,8 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	)
 	partition by range columns (a)
 	(partition p0 values less than (0));`)
+
+	s.testErrorCode(c, `create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
 }
 
 func (s *testDBSuite) TestCreateTableWithHashPartition(c *C) {

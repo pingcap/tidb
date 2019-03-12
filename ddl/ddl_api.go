@@ -1047,6 +1047,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				return errors.Trace(err)
 			}
 
+			if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
+				return errors.Trace(err)
+			}
+
 			if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
 				return errors.Trace(err)
 			}
