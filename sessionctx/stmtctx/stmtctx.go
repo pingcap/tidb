@@ -115,6 +115,8 @@ type StatementContext struct {
 	NowTs            time.Time
 	SysTs            time.Time
 	StmtType         string
+	Normalized       string
+	SQLDigest        string
 }
 
 // AddAffectedRows adds affected rows.

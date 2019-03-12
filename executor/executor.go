@@ -617,6 +617,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		} else {
 			req.AppendInt64(11, 1)
 		}
+		req.AppendString(12, slow.Digest)
 		e.cursor++
 	}
 	return nil

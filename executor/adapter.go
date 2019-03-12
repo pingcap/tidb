@@ -386,11 +386,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	if len(sessVars.StmtCtx.IndexIDs) > 0 {
 		indexIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 	}
+	digest := sessVars.StmtCtx.SQLDigest
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
-		logutil.SlowQueryLogger.Debugf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, sql))
+		logutil.SlowQueryLogger.Debugf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
 	} else {
-		logutil.SlowQueryLogger.Warnf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, sql))
+		logutil.SlowQueryLogger.Warnf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -400,6 +401,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
+			Digest:   digest,
 			Start:    a.StartTime,
 			Duration: costTime,
 			Detail:   sessVars.StmtCtx.GetExecDetails(),
