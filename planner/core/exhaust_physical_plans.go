@@ -769,14 +769,6 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 	accesses := make([]expression.Expression, 0, len(idxCols))
 	ijHelper.checkIndex(innerJoinKeys, idxCols, colLengths)
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
-	// If no index column appears in join key, we just break.
-	// TODO: It may meet this case: There's no join key condition, but have compare filters.
-	//  e.g. select * from t1, t2 on t1.a=t2.a and t2.b > t1.b-10 and t2.b < t1.b where t1.a=1 and t2.a=1.
-	//       After constant propagation. The t1.a=t2.a is removed. And if we have index (t2.a, t2.b). It can apply index join
-	//       to speed up.
-	if matchedKeyCnt <= 0 {
-		return nil
-	}
 	keyMatchedLen := len(idxCols)
 	for ; keyMatchedLen > 0; keyMatchedLen-- {
 		if ijHelper.curIdxOff2KeyOff[keyMatchedLen-1] != -1 {
