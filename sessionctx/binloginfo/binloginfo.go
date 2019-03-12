@@ -24,9 +24,11 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -91,6 +93,11 @@ func SetIgnoreError(on bool) {
 	} else {
 		atomic.StoreUint32(&ignoreError, 0)
 	}
+}
+
+// ShouldEnableBinlog returns true if binlog.enable is "on", or binlog.enable is "auto" and tidb_log_bin's value is "1"
+func ShouldEnableBinlog() bool {
+	return config.GetGlobalConfig().Binlog.Enable == "on" || (config.GetGlobalConfig().Binlog.Enable == "auto" && variable.SysVars[variable.TiDBLogBin].Value == "1")
 }
 
 // WriteBinlog writes a binlog to Pump.
