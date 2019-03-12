@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -293,6 +293,11 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsIndexInner
+	}
+
+	// set hintInfo for further usage if this hint info can be used.
+	if p.preferJoinType != 0 {
+		p.hintInfo = hintInfo
 	}
 
 	// If there're multiple join types and one of them is not index join hint,
@@ -659,13 +664,13 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		// When `considerWindow` is false, we will only build fields for non-window functions, so we add fake placeholders.
 		// for window functions. These fake placeholders will be erased in column pruning.
 		// When `considerWindow` is true, all the non-window fields have been built, so we just use the schema columns.
-		if (considerWindow && !isWindowFuncField) || (!considerWindow && isWindowFuncField) {
-			var expr expression.Expression
-			if isWindowFuncField {
-				expr = expression.Zero
-			} else {
-				expr = p.Schema().Columns[i]
-			}
+		if considerWindow && !isWindowFuncField {
+			col := p.Schema().Columns[i]
+			proj.Exprs = append(proj.Exprs, col)
+			schema.Append(col)
+			continue
+		} else if !considerWindow && isWindowFuncField {
+			expr := expression.Zero
 			proj.Exprs = append(proj.Exprs, expr)
 			col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
 			if err != nil {
@@ -1693,6 +1698,8 @@ func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 			c.firstNonAggCol, c.firstNonAggColIdx = t.Name, c.exprIdx
 		}
 		return node, true
+	case *ast.SubqueryExpr:
+		return node, true
 	}
 	return node, false
 }
@@ -2053,7 +2060,11 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	}
 
 	tableInfo := tbl.Meta()
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", nil)
+	var authErr error = nil
+	if b.ctx.GetSessionVars().User != nil {
+		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Hostname, b.ctx.GetSessionVars().User.Username, tableInfo.Name.L)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
 	if tableInfo.IsView() {
 		return b.BuildDataSourceFromView(dbName, tableInfo)
@@ -2111,12 +2122,13 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	for _, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		newCol := &expression.Column{
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			DBName:   dbName,
-			TblName:  tableInfo.Name,
-			ColName:  col.Name,
-			ID:       col.ID,
-			RetType:  &col.FieldType,
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     col.Name,
+			OrigColName: col.Name,
+			ID:          col.ID,
+			RetType:     &col.FieldType,
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
@@ -2171,7 +2183,9 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 // BuildDataSourceFromView is used to build LogicalPlan from view
 func (b *PlanBuilder) BuildDataSourceFromView(dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
-	selectNode, err := parser.New().ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
+	viewParser := parser.New()
+	viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
+	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err
 	}
@@ -2702,6 +2716,15 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 	b.optFlag |= flagEliminateProjection
 
 	var items []*ast.ByItem
+	if expr.Spec.Name.L != "" {
+		ref, ok := b.windowSpecs[expr.Spec.Name.L]
+		if !ok {
+			return nil, nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(expr.Spec.Name.O)
+		}
+		expr.Spec = ref
+	} else {
+		expr.Spec.Name = model.NewCIStr("<unnamed window>")
+	}
 	spec := expr.Spec
 	if spec.Ref.L != "" {
 		ref, ok := b.windowSpecs[spec.Ref.L]
@@ -2713,6 +2736,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 			return nil, nil, nil, nil, err
 		}
 	}
+
 	lenPartition := 0
 	if spec.PartitionBy != nil {
 		items = append(items, spec.PartitionBy.Items...)
@@ -2760,8 +2784,9 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 			return nil, nil, nil, nil, err
 		}
 		p = np
-		if col, ok := newArg.(*expression.Column); ok {
-			newArgList = append(newArgList, col)
+		switch newArg.(type) {
+		case *expression.Column, *expression.Constant:
+			newArgList = append(newArgList, newArg)
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, newArg)
@@ -2805,14 +2830,19 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 		return bound, nil
 	}
 
-	if len(orderByItems) != 1 {
-		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
+	bound.CalcFuncs = make([]expression.Expression, len(orderByItems))
+	bound.CmpFuncs = make([]expression.CompareFunc, len(orderByItems))
+	if bound.Type == ast.CurrentRow {
+		for i, item := range orderByItems {
+			col := item.Col
+			bound.CalcFuncs[i] = col
+			bound.CmpFuncs[i] = expression.GetCmpFunction(col, col)
+		}
+		return bound, nil
 	}
 
-	if bound.Type == ast.CurrentRow {
-		bound.CalcFunc = orderByItems[0].Col
-		bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, orderByItems[0].Col)
-		return bound, nil
+	if len(orderByItems) != 1 {
+		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
 	}
 	col := orderByItems[0].Col
 	isNumeric, isTemporal := types.IsTypeNumeric(col.RetType.Tp), types.IsTypeTemporal(col.RetType.Tp)
@@ -2857,11 +2887,11 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
 			funcName = ast.DateSub
 		}
-		bound.CalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
+		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
 		if err != nil {
 			return nil, err
 		}
-		bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFunc)
+		bound.CmpFuncs[0] = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFuncs[0])
 		return bound, nil
 	}
 	// When the order is asc:
@@ -2871,11 +2901,11 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 	if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
 		funcName = ast.Minus
 	}
-	bound.CalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
+	bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
 	if err != nil {
 		return nil, err
 	}
-	bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFunc)
+	bound.CmpFuncs[0] = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFuncs[0])
 	return bound, nil
 }
 
@@ -2909,18 +2939,38 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 }
 
 func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
-	if expr.Spec.Name.O == "" {
-		expr.Spec.Name = model.NewCIStr("<unnamed window>")
-	}
 	p, partitionBy, orderBy, args, err := b.buildProjectionForWindow(p, expr, aggMap)
 	if err != nil {
 		return nil, err
+	}
+
+	needFrame := aggregation.NeedFrame(expr.F)
+	// According to MySQL, In the absence of a frame clause, the default frame depends on whether an ORDER BY clause is present:
+	//   (1) With order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW";
+	//   (2) Without order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING",
+	//       which is the same as an empty frame.
+	if needFrame && expr.Spec.Frame == nil && len(orderBy) > 0 {
+		expr.Spec.Frame = &ast.FrameClause{
+			Type: ast.Ranges,
+			Extent: ast.FrameExtent{
+				Start: ast.FrameBound{Type: ast.Preceding, UnBounded: true},
+				End:   ast.FrameBound{Type: ast.CurrentRow},
+			},
+		}
+	}
+	// For functions that operate on the entire partition, the frame clause will be ignored.
+	if !needFrame && expr.Spec.Frame != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(expr.F, expr.Spec.Name.O))
+		expr.Spec.Frame = nil
 	}
 	frame, err := b.buildWindowFunctionFrame(&expr.Spec, orderBy)
 	if err != nil {
 		return nil, err
 	}
 	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, args)
+	if desc == nil {
+		return nil, ErrWrongArguments.GenWithStackByArgs(expr.F)
+	}
 	// TODO: Check if the function is aggregation function after we support more functions.
 	desc.WrapCastForAggArgs(b.ctx)
 	window := LogicalWindow{

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
@@ -1306,6 +1307,12 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("create table t(a varchar(50) primary key, b int, c int, index idx(b))")
 	tk.MustExec("insert into t values('aa', 1, 1)")
 	tk.MustQuery("select * from t use index(idx) where a > 'a'").Check(testkit.Rows("aa 1 1"))
+
+	// fix issue9636
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (a int, KEY (a))")
+	result = tk.MustQuery(`SELECT * FROM (SELECT * FROM (SELECT a as d FROM t WHERE a IN ('100')) AS x WHERE x.d < "123" ) tmp_count"`)
+	result.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
@@ -1487,7 +1494,9 @@ func (s *testSuite) TestMultiUpdate(c *C) {
 func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (a+8) virtual)`)
+	_, err := tk.Exec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (a+8) virtual)`)
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("c").Error())
+	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (b+8) virtual)`)
 	tk.MustExec(`CREATE TABLE test_gc_write_1 (a int primary key, b int, c int)`)
 
 	tests := []struct {
@@ -1877,7 +1886,7 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plannercore.Preprocess(ctx, stmtNode, infoSchema, false)
+		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
 		p, err := planner.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
@@ -1998,9 +2007,22 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	for i := 0; i < 5; i++ {
-		c.Check(fields[0].Column.Name.L, Equals, "c")
-		c.Check(fields[0].ColumnAsName.L, Equals, "c")
+		c.Check(fields[i].Column.Name.L, Equals, "c")
+		c.Check(fields[i].ColumnAsName.L, Equals, "c")
 	}
+	rs.Close()
+
+	// Test issue https://github.com/pingcap/tidb/issues/9639 .
+	// Both window function and expression appear in final result field.
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	rs, err = tk.Exec("select 1+1, row_number() over() num from t")
+	c.Check(err, IsNil)
+	fields = rs.Fields()
+	c.Assert(fields[0].Column.Name.L, Equals, "1+1")
+	c.Assert(fields[0].ColumnAsName.L, Equals, "1+1")
+	c.Assert(fields[1].Column.Name.L, Equals, "num")
+	c.Assert(fields[1].ColumnAsName.L, Equals, "num")
+	tk.MustExec("set @@tidb_enable_window_function = 0")
 	rs.Close()
 }
 
@@ -2207,6 +2229,7 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	is := domain.GetDomain(sctx).InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
 	tb.Cols()[1].Version = model.ColumnInfoVersion1 + 1
 	tk.MustExec("insert into t set a=3")
 	r = tk.MustQuery(`select a,b from t order by a`)
@@ -2942,9 +2965,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3, nil)
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2, nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3484,6 +3507,17 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("drop view view1,view2,view3;")
+
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_window_function = 0")
+	}()
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1,1),(1,2),(2,1),(2,2)")
+	tk.MustExec("create definer='root'@'localhost' view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t")
+	result := tk.MustQuery("select * from v")
+	result.Check(testkit.Rows("1 1 1", "1 1 2", "2 1 2", "2 2 2"))
+	tk.MustExec("drop view v;")
 }
 
 type testSuite2 struct {
@@ -3626,4 +3660,21 @@ func (s *testSuite) TestStrToDateBuiltin(c *C) {
 	tk.MustQuery(`select str_to_date('18+10+22','%y+%m+%d') from dual`).Check(testkit.Rows("2018-10-22"))
 	tk.MustQuery(`select str_to_date('18=10=22','%y=%m=%d') from dual`).Check(testkit.Rows("2018-10-22"))
 	tk.MustQuery(`select str_to_date('18_10_22','%y_%m_%d') from dual`).Check(testkit.Rows("2018-10-22"))
+}
+
+func (s *testSuite) TestReadPartitionedTable(c *C) {
+	// Test three reader on partitioned table.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec("create table pt (a int, b int, index i_b(b)) partition by range (a) (partition p1 values less than (2), partition p2 values less than (4), partition p3 values less than (6))")
+	for i := 0; i < 6; i++ {
+		tk.MustExec(fmt.Sprintf("insert into pt values(%d, %d)", i, i))
+	}
+	// Table reader
+	tk.MustQuery("select * from pt order by a").Check(testkit.Rows("0 0", "1 1", "2 2", "3 3", "4 4", "5 5"))
+	// Index reader
+	tk.MustQuery("select b from pt where b = 3").Check(testkit.Rows("3"))
+	// Index lookup
+	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
 }

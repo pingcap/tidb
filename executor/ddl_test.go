@@ -595,6 +595,29 @@ func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	res.Check(testkit.Rows("1000"))
 }
 
+func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("b").Error())
+
+	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
+
+	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
+
+	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("drop table t1;")
+}
+
 func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -661,4 +684,44 @@ func (s *testSuite3) TestIssue9205(c *C) {
 			"  `c1` time DEFAULT '770:12:12'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+}
+
+func (s *testSuite3) TestCheckDefaultFsp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+
+	_, err := tk.Exec("create table t (  tt timestamp default now(1));")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("create table t (  tt timestamp(1) default current_timestamp);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("create table t (  tt timestamp(1) default now(2));")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	tk.MustExec("create table t (  tt timestamp(1) default now(1));")
+	tk.MustExec("create table t2 (  tt timestamp default current_timestamp());")
+	tk.MustExec("create table t3 (  tt timestamp default current_timestamp(0));")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp default now(2);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp(5) default current_timestamp;")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp(5) default now(2);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t modify column tt timestamp(1) default now();")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("alter table t modify column tt timestamp(4) default now(5);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("alter table t change column tt tttt timestamp(4) default now(5);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
+
+	_, err = tk.Exec("alter table t change column tt tttt timestamp(1) default now();")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
 }
