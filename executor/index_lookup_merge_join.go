@@ -16,7 +16,6 @@ package executor
 import (
 	"fmt"
 	"runtime"
-	"sort"
 	"sync"
 	"time"
 
@@ -399,7 +398,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dLookUpKeys = imw.sortAndDedupDatumLookUpKeys(dLookUpKeys)
+	dLookUpKeys = imw.dedupDatumLookUpKeys(dLookUpKeys)
 	err = imw.fetchInnerResults(ctx, task, dLookUpKeys)
 	if err != nil {
 		return errors.Trace(err)
@@ -600,15 +599,11 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 	return dLookupKey, nil
 }
 
-func (imw *innerMergeWorker) sortAndDedupDatumLookUpKeys(dLookUpKeys [][]types.Datum) [][]types.Datum {
+func (imw *innerMergeWorker) dedupDatumLookUpKeys(dLookUpKeys [][]types.Datum) [][]types.Datum {
 	if len(dLookUpKeys) < 2 {
 		return dLookUpKeys
 	}
 	sc := imw.ctx.GetSessionVars().StmtCtx
-	sort.Slice(dLookUpKeys, func(i, j int) bool {
-		cmp := compareRow(sc, dLookUpKeys[i], dLookUpKeys[j])
-		return cmp < 0
-	})
 	deDupedLookupKeys := dLookUpKeys[:1]
 	for i := 1; i < len(dLookUpKeys); i++ {
 		cmp := compareRow(sc, dLookUpKeys[i], dLookUpKeys[i-1])
