@@ -19,6 +19,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"regexp"
 	"strconv"
@@ -1285,7 +1286,16 @@ func (b *builtinWeekWithoutModeSig) evalInt(row chunk.Row) (int64, bool, error) 
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
 	}
 
-	week := date.Time.Week(0)
+	mode := 0
+	modeStr, ok := b.ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
+	if ok {
+		mode, err = strconv.Atoi(modeStr)
+		if err != nil {
+			return 0, true, handleInvalidTimeError(b.ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))
+		}
+	}
+
+	week := date.Time.Week(mode)
 	return int64(week), false, nil
 }
 
