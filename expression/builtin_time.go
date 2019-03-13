@@ -19,7 +19,6 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"regexp"
 	"strconv"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
