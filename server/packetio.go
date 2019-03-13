@@ -71,11 +71,6 @@ func (p *packetIO) setReadTimeout(timeout time.Duration) {
 
 func (p *packetIO) readOnePacket() ([]byte, error) {
 	var header [4]byte
-	if p.readTimeout > 0 {
-		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
-			return nil, err
-		}
-	}
 	if _, err := io.ReadFull(p.bufReadConn, header[:]); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -90,11 +85,6 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 
 	data := make([]byte, length)
-	if p.readTimeout > 0 {
-		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
-			return nil, err
-		}
-	}
 	if _, err := io.ReadFull(p.bufReadConn, data); err != nil {
 		return nil, errors.Trace(err)
 	}
