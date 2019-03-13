@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -449,7 +450,7 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 			rs.Close()
 		}
 		t := s.testGetTable(c, "t")
-		indexInfo := schemautil.FindIndexByName("idx_c2", t.Meta().Indices)
+		indexInfo := expression.FindIndexByName("idx_c2", t.Meta().Indices)
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
