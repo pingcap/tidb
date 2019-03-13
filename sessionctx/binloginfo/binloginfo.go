@@ -95,9 +95,9 @@ func SetIgnoreError(on bool) {
 	}
 }
 
-// ShouldEnableBinlog returns true if binlog.mode is not "auto" and binlog.enable is true, or binlog.mode is "auto" and tidb_log_bin's value is "1"
+// ShouldEnableBinlog returns true if Binlog.AutoMode is false and Binlog.Enable is true, or Binlog.AutoMode is true and tidb_log_bin's value is "1"
 func ShouldEnableBinlog() bool {
-	if config.GetGlobalConfig().Binlog.Mode == "auto" {
+	if config.GetGlobalConfig().Binlog.AutoMode {
 		return variable.SysVars[variable.TiDBLogBin].Value == "1"
 	}
 
