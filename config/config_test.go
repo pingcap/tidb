@@ -34,6 +34,7 @@ func TestT(t *testing.T) {
 func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
 	conf.Binlog.Enable = true
+	conf.Binlog.Mode = "auto"
 	conf.Binlog.IgnoreError = true
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.CheckMb4ValueInUtf8 = true
@@ -55,6 +56,7 @@ max-batch-size=128
 
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
+	c.Assert(conf.Binlog.Mode, Equals, "auto")
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
