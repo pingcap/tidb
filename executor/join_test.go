@@ -1407,7 +1407,7 @@ func (s *testSuite) TestScalarFuncNullSemiJoin(c *C) {
 	tk.MustQuery("select a in (select a+b from s) from t").Check(testkit.Rows("<nil>", "<nil>"))
 }
 
-func (s *testSuite2) TestInjectProjOnTopN(c *C) {
+func (s *testSuite) TestInjectProjOnTopN(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
