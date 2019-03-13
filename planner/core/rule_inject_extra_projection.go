@@ -206,8 +206,5 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
 
-	// if topProj.Schema().Len() == 0 {
-	// 	return p
-	// }
 	return topProj
 }
