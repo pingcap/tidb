@@ -606,7 +606,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 		startTime := time.Now()
 		if err = cc.dispatch(ctx, data); err != nil {
-			fmt.Println("================> ", err)
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				return
