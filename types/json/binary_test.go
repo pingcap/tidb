@@ -345,7 +345,6 @@ func (s *testJSONSuite) TestBinaryJSONCopy(c *C) {
 		c.Assert(parsedBJ.Copy().String(), Equals, parsedBJ.String())
 	}
 }
-
 func (s *testJSONSuite) TestGetKeys(c *C) {
 	c.Parallel()
 	parsedBJ := mustParseBinaryFromString(c, "[]")
@@ -406,4 +405,17 @@ func (s *testJSONSuite) TestCreateBinary(c *C) {
 		c.Assert(bj.TypeCode, Equals, bj.TypeCode)
 	}()
 
+}
+
+func (s *testJSONSuite) TestFunctions(c *C) {
+	c.Parallel()
+	testByte := []byte{'\\', 'b', 'f', 'n', 'r', 't', 'u', 'z', '0'}
+	testOutput, err := unquoteString(string(testByte))
+	c.Assert(testOutput, Equals, "\bfnrtuz0")
+	c.Assert(err, IsNil)
+	n, err := PeekBytesAsJSON(testByte)
+	c.Assert(n, Equals, 0)
+	c.Assert(err, ErrorMatches, "Invalid JSON bytes")
+	n, err = PeekBytesAsJSON([]byte(""))
+	c.Assert(err, ErrorMatches, "Cant peek from empty bytes")
 }
