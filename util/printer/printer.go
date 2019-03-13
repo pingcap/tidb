@@ -50,7 +50,7 @@ func PrintTiDBInfo() {
 	if err != nil {
 		panic(err)
 	}
-	log.Info("Loaded Config", zap.ByteString("config", configJSON))
+	log.Info("loaded config", zap.ByteString("config", configJSON))
 }
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.

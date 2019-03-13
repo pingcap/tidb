@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 // init initializes `locCache`.
@@ -74,9 +75,9 @@ func InferSystemTZ() string {
 			if err2 == nil {
 				return name
 			}
-			log.Error(err2.Error())
+			log.Error("infer timezone failed", zap.Error(err2))
 		}
-		log.Error(err1.Error())
+		log.Error("locate timezone files failed", zap.Error(err1))
 	case tz != "" && tz != "UTC":
 		for _, source := range zoneSources {
 			if _, err := os.Stat(source + tz); err == nil {

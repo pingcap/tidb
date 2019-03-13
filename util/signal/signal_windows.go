@@ -35,7 +35,7 @@ func SetupSignalHandler(shudownFunc func(bool)) {
 
 	go func() {
 		sig := <-closeSignalChan
-		log.Info("Got signal to exit", zap.String("signal", sig.String()))
+		log.Info("got signal to exit", zap.String("signal", sig.String()))
 		shudownFunc(sig == syscall.SIGQUIT)
 	}()
 }
