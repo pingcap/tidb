@@ -276,7 +276,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		panic("should never happen in baseFuncDesc.WrapCastForAggArgs")
 	}
 	for i := range a.Args {
-		// Do not cast the second args of these functions.
+		// Do not cast the second args of these functions, as they are simply non-negative numbers.
 		if i == 1 && (a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag || a.Name == ast.WindowFuncNthValue) {
 			continue
 		}
