@@ -19,7 +19,6 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"regexp"
 	"strconv"
