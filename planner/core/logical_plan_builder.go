@@ -607,15 +607,13 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 			return !unicode.IsOneOf(mysql.RangeGraph, r)
 		})
 		return model.NewCIStr(fieldName), nil
-	case types.KindNull:
-		// See #4053, #3685
-		return model.NewCIStr("NULL"), nil
-	default:
-		// Keep as it is.
-		if innerExpr.Text() != "" {
-			return model.NewCIStr(innerExpr.Text()), nil
-		}
+	case types.KindBinaryLiteral:
+		// MySQL does not trim parentheses and unary plus for Binary / Hex Literals.
 		return model.NewCIStr(field.Text()), nil
+	default:
+		// Issue #4053, #3685 is solved.
+		// TODO: For +1e23, +1E23, column names in MySQL is 1e23 and 1E23, but we lost the info that which one of e and E should output.
+		return model.NewCIStr(valueExpr.String()), nil
 	}
 }
 

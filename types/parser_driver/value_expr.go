@@ -123,9 +123,8 @@ func (n *ValueExpr) GetDatumString() string {
 	return n.GetString()
 }
 
-// Format the ExprNode into a Writer.
-func (n *ValueExpr) Format(w io.Writer) {
-	var s string
+// Format the ExprNode to a String.
+func (n *ValueExpr) String() (s string) {
 	switch n.Kind() {
 	case types.KindNull:
 		s = "NULL"
@@ -158,7 +157,12 @@ func (n *ValueExpr) Format(w io.Writer) {
 	default:
 		panic("Can't format to string")
 	}
-	fmt.Fprint(w, s)
+	return s
+}
+
+// Format the ExprNode into a Writer.
+func (n *ValueExpr) Format(w io.Writer) {
+	fmt.Fprint(w, n.String())
 }
 
 // newValueExpr creates a ValueExpr with value, and sets default field type.
@@ -168,6 +172,25 @@ func newValueExpr(value interface{}) ast.ValueExpr {
 	}
 	ve := &ValueExpr{}
 	ve.SetValue(value)
+	switch x := value.(type) {
+	case nil:
+		ve.SetText("NULL")
+	case bool:
+		if x {
+			ve.SetText("TRUE")
+		} else {
+			ve.SetText("FALSE")
+		}
+	case int:
+		ve.SetText(strconv.Itoa(x))
+	case int64:
+		ve.SetText(strconv.FormatInt(x, 10))
+	case uint64:
+		ve.SetText(strconv.FormatUint(x, 10))
+	case *types.MyDecimal:
+		ve.SetText(x.String())
+	default:
+	}
 	types.DefaultTypeForValue(value, &ve.Type)
 	ve.projectionOffset = -1
 	return ve
