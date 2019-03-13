@@ -151,7 +151,7 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// add index workers are started. need to ask them to exit.
-		log.Info("DDL worker cancelling job", zap.String("worker", w.String()), zap.String("job", job.String()))
+		log.Info("[ddl] run the cancelling DDL job", zap.String("worker", w.String()), zap.String("job", job.String()))
 		w.reorgCtx.notifyReorgCancel()
 		ver, err = w.onCreateIndex(d, t, job)
 	} else {
@@ -275,9 +275,9 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 	if err != nil {
 		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
-			log.Error("DDL worker run job failed", zap.String("worker", w.String()), zap.String("job", job.String()), zap.Error(err))
+			log.Error("[ddl] run DDL job failed", zap.String("worker", w.String()), zap.String("job", job.String()), zap.Error(err))
 		} else {
-			log.Info("the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
+			log.Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
 		}
 
 		job.Error = toTError(err)

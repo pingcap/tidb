@@ -292,7 +292,7 @@ type ddlCtx struct {
 
 func (dc *ddlCtx) isOwner() bool {
 	isOwner := dc.ownerManager.IsOwner()
-	log.Debug("check whether is the DDL owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
+	log.Debug("[ddl] check whether is the DDL owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
 	if isOwner {
 		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
@@ -321,7 +321,7 @@ func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 			case d.ddlEventCh <- e:
 				return
 			default:
-				log.Warn("fail to notify ddl event", zap.String("event", e.String()))
+				log.Warn("[ddl] fail to notify DDL event", zap.String("event", e.String()))
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
@@ -382,7 +382,7 @@ func (d *ddl) Stop() error {
 	defer d.m.Unlock()
 
 	d.close()
-	log.Info("stop DDL", zap.String("ID", d.uuid))
+	log.Info("[ddl] stop DDL", zap.String("ID", d.uuid))
 	return nil
 }
 
@@ -390,7 +390,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	var delRangeMgr delRangeManager
 	if !mock {
 		delRangeMgr = newDelRangeManager(d.store, d.sessPool)
-		log.Info("DDL start delRangeManager OK", zap.Bool("withEmulator", !d.store.SupportDeleteRange()))
+		log.Info("[ddl] start delRangeManager OK", zap.Bool("withEmulator", !d.store.SupportDeleteRange()))
 	} else {
 		delRangeMgr = newMockDelRangeManager()
 	}
@@ -402,7 +402,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // start campaigns the owner and starts workers.
 // ctxPool is used for the worker's delRangeManager and creates sessions.
 func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
-	log.Info("start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
+	log.Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.quitCh = make(chan struct{})
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
@@ -423,7 +423,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 				func() { w.start(d.ddlCtx) },
 				func(r interface{}) {
 					if r != nil {
-						log.Error("ddl-worker meet panic", zap.String("worker", w.String()), zap.String("ID", d.uuid))
+						log.Error("[ddl] DDL worker meet panic", zap.String("worker", w.String()), zap.String("ID", d.uuid))
 						metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 					}
 				})
@@ -446,7 +446,7 @@ func (d *ddl) close() {
 	d.ownerManager.Cancel()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
-		log.Error("DDL remove self version path failed", zap.Error(err))
+		log.Error("[ddl] remove self version path failed", zap.Error(err))
 	}
 
 	for _, worker := range d.workers {
@@ -459,7 +459,7 @@ func (d *ddl) close() {
 		d.delRangeMgr.clear()
 	}
 
-	log.Info("closing DDL", zap.String("ID", d.uuid), zap.Duration("takeTime", time.Since(startTime)))
+	log.Info("[ddl] closing DDL", zap.String("ID", d.uuid), zap.Duration("takeTime", time.Since(startTime)))
 }
 
 // GetLease implements DDL.GetLease interface.
@@ -548,7 +548,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(job.Type)
-	log.Info("start to do DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
+	log.Info("[ddl] start to do DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
 	jobID := job.ID
@@ -571,16 +571,16 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
 		if err != nil {
-			log.Error("get history DDL job failed, check again", zap.Error(err))
+			log.Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
 		} else if historyJob == nil {
-			log.Debug("DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
+			log.Debug("[ddl] DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
-			log.Info("DDL job is finished", zap.Int64("jobID", jobID))
+			log.Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
 		}
 

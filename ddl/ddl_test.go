@@ -84,7 +84,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 		go util.WithRecovery(func() { w.start(d.ddlCtx) },
 			func(r interface{}) {
 				if r != nil {
-					log.Error("restart ddl worker meet panic", zap.String("worker", w.String()), zap.String("ID", d.uuid))
+					log.Error("[ddl] restart DDL worker meet panic", zap.String("worker", w.String()), zap.String("ID", d.uuid))
 				}
 			})
 		asyncNotify(worker.ddlJobCh)

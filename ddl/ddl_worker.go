@@ -103,13 +103,13 @@ func (w *worker) String() string {
 func (w *worker) close() {
 	close(w.quitCh)
 	w.wg.Wait()
-	log.Info("DDL worker closed", zap.String("worker", w.String()))
+	log.Info("[ddl] close DDL worker", zap.String("worker", w.String()))
 }
 
 // start is used for async online schema changing, it will try to become the owner firstly,
 // then wait or pull the job queue to handle a schema change job.
 func (w *worker) start(d *ddlCtx) {
-	log.Info("DDL worker start", zap.String("worker", w.String()))
+	log.Info("[ddl] start DDL worker", zap.String("worker", w.String()))
 	defer w.wg.Done()
 
 	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
@@ -123,7 +123,7 @@ func (w *worker) start(d *ddlCtx) {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debug("DDL worker wait to check status again", zap.String("worker", w.String()), zap.Duration("interval", checkTime))
+			log.Debug("[ddl] wait to check DDL status again", zap.String("worker", w.String()), zap.Duration("interval", checkTime))
 		case <-w.ddlJobCh:
 		case <-w.quitCh:
 			return
@@ -131,7 +131,7 @@ func (w *worker) start(d *ddlCtx) {
 
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
-			log.Error("DDL worker handle job failed", zap.String("worker", w.String()), zap.Error(err))
+			log.Error("[ddl] handle DDL job failed", zap.String("worker", w.String()), zap.Error(err))
 		}
 	}
 }
@@ -169,7 +169,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 			return errors.Trace(err)
 		}
 		if isDependent {
-			log.Info("current DDL job depends on other job", zap.String("currentJob", curJob.String()), zap.String("dependentJob", job.String()))
+			log.Info("[ddl] current DDL job depends on other job", zap.String("currentJob", curJob.String()), zap.String("dependentJob", job.String()))
 			curJob.DependencyID = job.ID
 			break
 		}
@@ -227,7 +227,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		return nil
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
-		log.Warn("DDL worker update job failed", zap.String("worker", w.String()), zap.String("job", job.String()), zap.Error(err))
+		log.Warn("[ddl] update DDL job failed", zap.String("worker", w.String()), zap.String("job", job.String()), zap.Error(err))
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
 		job.Error = toTError(err)
@@ -245,7 +245,7 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// so we shouldn't replace RawArgs with the marshaling Args.
 	if meetErr && (job.RawArgs != nil && job.Args == nil) {
-		log.Info("DDL worker meet error before update job, shouldn't update raw args", zap.String("worker", w.String()), zap.String("job", job.String()))
+		log.Info("[ddl] meet error before update DDL job, shouldn't update raw args", zap.String("worker", w.String()), zap.String("job", job.String()))
 		updateRawArgs = false
 	}
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
@@ -296,7 +296,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
-	log.Info("DDL worker finish job", zap.String("worker", w.String()), zap.String("job", job.String()))
+	log.Info("[ddl] finish DDL job", zap.String("worker", w.String()), zap.String("job", job.String()))
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
 }
@@ -330,7 +330,7 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 	if historyJob == nil {
 		return false, nil
 	}
-	log.Info("current DDL job dependent job is finished", zap.String("currentJob", job.String()), zap.Int64("dependentJobID", job.DependencyID))
+	log.Info("[ddl] current DDL job dependent job is finished", zap.String("currentJob", job.String()), zap.Int64("dependentJobID", job.DependencyID))
 	job.DependencyID = noneDependencyJob
 	return true, nil
 }
@@ -413,7 +413,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if runJobErr != nil {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
-			log.Info("DDL worker run job error, sleeps a while then retries it.", zap.String("worker", w.String()), zap.Duration("waitTime", WaitTimeWhenErrorOccured), zap.Error(runJobErr))
+			log.Info("[ddl] run DDL job error, sleeps a while then retries it.", zap.String("worker", w.String()), zap.Duration("waitTime", WaitTimeWhenErrorOccured), zap.Error(runJobErr))
 			time.Sleep(WaitTimeWhenErrorOccured)
 		}
 
@@ -445,7 +445,7 @@ func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
 	if job.DependencyID != noneDependencyJob {
 		intervalCnt := int(3 * time.Second / waitDependencyJobInterval)
 		if *cnt%intervalCnt == 0 {
-			log.Info("DDL job need to wait dependent job, sleeps a while, then retries it.", zap.String("worker", w.String()), zap.Int64("jobID", job.ID), zap.Int64("dependentJobID", job.DependencyID), zap.Duration("waitTime", waitDependencyJobInterval))
+			log.Info("[ddl] DDL job need to wait dependent job, sleeps a while, then retries it.", zap.String("worker", w.String()), zap.Int64("jobID", job.ID), zap.Int64("dependentJobID", job.DependencyID), zap.Duration("waitTime", waitDependencyJobInterval))
 		}
 		time.Sleep(waitDependencyJobInterval)
 		*cnt++
@@ -463,7 +463,7 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	log.Info("DDL worker run job", zap.String("worker", w.String()), zap.String("job", job.String()))
+	log.Info("[ddl] run DDL job", zap.String("worker", w.String()), zap.String("job", job.String()))
 	timeStart := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
@@ -539,20 +539,20 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if err != nil {
 		// If job is not cancelled, we should log this error.
 		if job.State != model.JobStateCancelled {
-			log.Error("DDL worker run job error", zap.String("worker", w.String()), zap.Error(err))
+			log.Error("[ddl] run DDL job error", zap.String("worker", w.String()), zap.Error(err))
 		} else {
-			log.Info("DDL job is cancelled normally", zap.String("worker", w.String()), zap.Error(err))
+			log.Info("[ddl] DDL job is cancelled normally", zap.String("worker", w.String()), zap.Error(err))
 		}
 
 		job.Error = toTError(err)
 		job.ErrorCount++
 		// Load global ddl variables.
 		if err1 := loadDDLVars(w); err1 != nil {
-			log.Error("load DDL global variable failed", zap.String("worker", w.String()), zap.Error(err1))
+			log.Error("[ddl] load DDL global variable failed", zap.String("worker", w.String()), zap.Error(err1))
 		}
 		// Check error limit to avoid falling into an infinite loop.
 		if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && admin.IsJobRollbackable(job) {
-			log.Warn("DDL job error count exceed the limit, cancelling it now", zap.String("worker", w.String()), zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
+			log.Warn("[ddl] DDL job error count exceed the limit, cancelling it now", zap.String("worker", w.String()), zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
 			job.State = model.JobStateCancelling
 		}
 	}
@@ -598,7 +598,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	}()
 
 	if latestSchemaVersion == 0 {
-		log.Info("DDL worker schema version doesn't change", zap.String("worker", w.String()))
+		log.Info("[ddl] schema version doesn't change", zap.String("worker", w.String()))
 		return
 	}
 
@@ -609,7 +609,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	}
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
-		log.Info("DDL worker update latest schema version failed", zap.String("worker", w.String()), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
+		log.Info("[ddl] update latest schema version failed", zap.String("worker", w.String()), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			// If err is context.DeadlineExceeded, it means waitTime(2 * lease) is elapsed. So all the schemas are synced by ticker.
 			// There is no need to use etcd to sync. The function returns directly.
@@ -620,7 +620,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	// OwnerCheckAllVersions returns only when context is timeout(2 * lease) or all TiDB schemas are synced.
 	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
-		log.Info("DDL worker wait latest schema version to deadline", zap.String("worker", w.String()), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
+		log.Info("[ddl] wait latest schema version to deadline", zap.String("worker", w.String()), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
@@ -629,7 +629,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 			return
 		}
 	}
-	log.Info("DDL worker wait latest schema version changed", zap.String("worker", w.String()), zap.Int64("ver", latestSchemaVersion), zap.Duration("takeTime", time.Since(timeStart)), zap.String("job", job.String()))
+	log.Info("[ddl] wait latest schema version changed", zap.String("worker", w.String()), zap.Int64("ver", latestSchemaVersion), zap.Duration("takeTime", time.Since(timeStart)), zap.String("job", job.String()))
 }
 
 // waitSchemaSynced handles the following situation:
@@ -648,7 +648,7 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 
 	latestSchemaVersion, err := d.schemaSyncer.MustGetGlobalVersion(ctx)
 	if err != nil {
-		log.Warn("DDL worker get global version failed", zap.String("worker", w.String()), zap.Error(err))
+		log.Warn("[ddl] get global version failed", zap.String("worker", w.String()), zap.Error(err))
 		return
 	}
 	w.waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)

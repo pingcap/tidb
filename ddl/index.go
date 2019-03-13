@@ -276,7 +276,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		indexInfo.Unique = unique
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
-		log.Info("run add index job", zap.String("job", job.String()), zap.Any("indexInfo", indexInfo))
+		log.Info("[ddl] run add index job", zap.String("job", job.String()), zap.Any("indexInfo", indexInfo))
 	}
 	originalState := indexInfo.State
 	switch indexInfo.State {
@@ -322,7 +322,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 				return ver, nil
 			}
 			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeIndex.Equal(err) {
-				log.Warn("run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+				log.Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
@@ -676,7 +676,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 		taskDone = true
 	}
 
-	log.Debug("txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
+	log.Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.idxRecords, w.getNextHandle(taskRange, taskDone), taskDone, errors.Trace(err)
 }
 
@@ -686,7 +686,7 @@ func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string
 	}
 
 	if elapsed >= time.Duration(threshold)*time.Millisecond {
-		log.Info("ddl-reorg slow operations", zap.Duration("takeTimes", elapsed), zap.String("msg", slowMsg))
+		log.Info("[ddl] slow operations", zap.Duration("takeTimes", elapsed), zap.String("msg", slowMsg))
 	}
 }
 
@@ -848,7 +848,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
-			log.Info("add index worker back fill index", zap.Int("workerID", w.id), zap.Int("addedCount", result.addedCount),
+			log.Info("[ddl] add index worker back fill index", zap.Int("workerID", w.id), zap.Int("addedCount", result.addedCount),
 				zap.Int("scanCount", result.scanCount), zap.Int64("nextHandle", taskCtx.nextHandle), zap.Float64("speed(rows/s)", float64(num)/time.Since(lastLogTime).Seconds()))
 			lastLogTime = time.Now()
 		}
@@ -858,7 +858,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 			break
 		}
 	}
-	log.Info("add index worker finish task", zap.Int("workerID", w.id),
+	log.Info("[ddl] add index worker finish task", zap.Int("workerID", w.id),
 		zap.String("task", task.String()), zap.Int("addedCount", result.addedCount), zap.Int("scanCount", result.scanCount), zap.Int64("nextHandle", result.nextHandle), zap.String("takeTime", time.Since(startTime).String()))
 	return result
 }
@@ -866,12 +866,12 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 var gofailMockAddindexErrOnceGuard bool
 
 func (w *addIndexWorker) run(d *ddlCtx) {
-	log.Info("add index worker start", zap.Int("workerID", w.id))
+	log.Info("[ddl] add index worker start", zap.Int("workerID", w.id))
 	defer func() {
 		r := recover()
 		if r != nil {
 			buf := util.GetStack()
-			log.Error("add index worker panic", zap.Any("panic", r), zap.String("stack", string(buf)))
+			log.Error("[ddl] add index worker panic", zap.Any("panic", r), zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 		}
 		w.resultCh <- &addIndexResult{err: errReorgPanic}
@@ -882,7 +882,7 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 			break
 		}
 
-		log.Debug("add index worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
+		log.Debug("[ddl] add index worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
 		// gofail: var mockAddIndexErr bool
 		//if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
 		//	gofailMockAddindexErrOnceGuard = true
@@ -896,7 +896,7 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		result := w.handleBackfillTask(d, task)
 		w.resultCh <- result
 	}
-	log.Info("add index worker exit", zap.Int("workerID", w.id))
+	log.Info("[ddl] add index worker exit", zap.Int("workerID", w.id))
 }
 
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
@@ -933,7 +933,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endH
 	startRecordKey := t.RecordKey(startHandle)
 	endRecordKey := t.RecordKey(endHandle).Next()
 
-	log.Info("split table range from PD", zap.Int64("physicalTableID", t.GetPhysicalID()), zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
+	log.Info("[ddl] split table range from PD", zap.Int64("physicalTableID", t.GetPhysicalID()), zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
@@ -988,7 +988,7 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 		}
 
 		if result.err != nil {
-			log.Warn("add index worker return error", zap.Int("workerID", worker.id), zap.Error(result.err))
+			log.Warn("[ddl] add index worker return error", zap.Int("workerID", worker.id), zap.Error(result.err))
 		}
 
 		if firstErr == nil {
@@ -1023,7 +1023,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID))
 		})
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
-		log.Warn("add index worker handle batch tasks failed", zap.Int64("totalAddedCount", *totalAddedCount), zap.Int64("startHandle", startHandle), zap.Int64("nextHandle", nextHandle),
+		log.Warn("[ddl] add index worker handle batch tasks failed", zap.Int64("totalAddedCount", *totalAddedCount), zap.Int64("startHandle", startHandle), zap.Int64("nextHandle", nextHandle),
 			zap.Int64("batchAddedCount", taskAddedCount), zap.String("taskFailedError", err.Error()), zap.String("takeTime", elapsedTime.String()), zap.NamedError("updateHandleError", err1))
 		return errors.Trace(err)
 	}
@@ -1031,7 +1031,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	w.reorgCtx.setNextHandle(nextHandle)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
-	log.Info("add index worker handle batch tasks successful", zap.Int64("totalAddedCount", *totalAddedCount), zap.Int64("startHandle", startHandle),
+	log.Info("[ddl] add index worker handle batch tasks successful", zap.Int64("totalAddedCount", *totalAddedCount), zap.Int64("startHandle", startHandle),
 		zap.Int64("nextHandle", nextHandle), zap.Int64("batchAddedCount", taskAddedCount), zap.String("takeTime", elapsedTime.String()))
 	return nil
 }
@@ -1114,7 +1114,7 @@ func loadDDLReorgVars(w *worker) error {
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
-	log.Info("ddl-reorg start", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
+	log.Info("[ddl] start to add table index", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	totalAddedCount := job.GetRowCount()
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
@@ -1139,7 +1139,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 
 		// For dynamic adjust add index worker number.
 		if err := loadDDLReorgVars(w); err != nil {
-			log.Error("load DDL reorganization variable failed", zap.Error(err))
+			log.Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
 		}
 		workerCnt = variable.GetDDLReorgWorkerCounter()
 		// If only have 1 range, we can only start 1 worker.
@@ -1176,7 +1176,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 		//	}
 		//}
 
-		log.Info("start add index workers", zap.Int("workerCnt", len(idxWorkers)), zap.Int("regionCnt", len(kvRanges)), zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
+		log.Info("[ddl] start add index workers to reorg index", zap.Int("workerCnt", len(idxWorkers)), zap.Int("regionCnt", len(kvRanges)), zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
 		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges)
 		if err != nil {
 			return errors.Trace(err)
@@ -1230,7 +1230,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	pid, err := findNextPartitionID(reorg.PhysicalTableID, pi.Definitions)
 	if err != nil {
 		// Fatal error, should not run here.
-		log.Error("ddl-reorg find next partition id failed", zap.String("table", fmt.Sprintf("%v", t)), zap.Error(err))
+		log.Error("[ddl] find next partition id failed", zap.String("table", fmt.Sprintf("%v", t)), zap.Error(err))
 		return false, errors.Trace(err)
 	}
 	if pid == 0 {
@@ -1248,7 +1248,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	err = kv.RunInNewTxn(reorg.d.store, true, func(txn kv.Transaction) error {
 		return errors.Trace(reorg.UpdateReorgMeta(txn, reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID))
 	})
-	log.Info("ddl-reorg job update reorgInfo", zap.Int64("jobID", reorg.Job.ID), zap.Int64("partitionTableID", pid), zap.Int64("startHandle", start), zap.Int64("endHandle", end), zap.Error(err))
+	log.Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID), zap.Int64("partitionTableID", pid), zap.Int64("startHandle", start), zap.Int64("endHandle", end), zap.Error(err))
 	return false, errors.Trace(err)
 }
 

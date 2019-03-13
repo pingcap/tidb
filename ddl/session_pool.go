@@ -83,7 +83,7 @@ func (sg *sessionPool) close() {
 		return
 	}
 
-	log.Info("closing sessionPool")
+	log.Info("[ddl] closing sessionPool")
 	sg.resPool.Close()
 	sg.mu.closed = true
 }

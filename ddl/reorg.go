@@ -136,13 +136,13 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 	select {
 	case err := <-w.reorgCtx.doneCh:
 		rowCount, _ := w.reorgCtx.getRowCountAndHandle()
-		log.Info("run reorg job done", zap.Int64("backRowCount", rowCount))
+		log.Info("[ddl] run reorg job done", zap.Int64("backRowCount", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		w.reorgCtx.clean()
 		return errors.Trace(err)
 	case <-w.quitCh:
-		log.Info("run reorg job quit")
+		log.Info("[ddl] run reorg job quit")
 		w.reorgCtx.setNextHandle(0)
 		w.reorgCtx.setRowCount(0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
@@ -153,7 +153,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		job.SetRowCount(rowCount)
 		// Update a reorgInfo's handle.
 		err := t.UpdateDDLReorgStartHandle(job, doneHandle)
-		log.Info("run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
+		log.Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
 			zap.Int64("totalAddedRowCount", rowCount), zap.Int64("doneHandle", doneHandle), zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
@@ -173,7 +173,7 @@ func (w *worker) isReorgRunnable(d *ddlCtx) error {
 
 	if !d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		log.Info("DDL worker is not the DDL owner", zap.String("ID", d.uuid))
+		log.Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", d.uuid))
 		return errors.Trace(errNotOwner)
 	}
 	return nil
@@ -334,7 +334,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 		return 0, 0, errors.Trace(err)
 	}
 	if endHandle < startHandle || emptyTable {
-		log.Info("ddl-reorg get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
+		log.Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("partitionID", tbl.GetPhysicalID()), zap.Int64("endHandle", endHandle), zap.Int64("startHandle", startHandle))
 		endHandle = startHandle
 	}
@@ -373,7 +373,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Info("ddl-reorg job get table range", zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid), zap.Int64("startHandle", start), zap.Int64("endHandle", end))
+		log.Info("[ddl] job get table range", zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid), zap.Int64("startHandle", start), zap.Int64("endHandle", end))
 
 		// gofail: var errorUpdateReorgHandle bool
 		// if errorUpdateReorgHandle && !gofailOnceGuard {
