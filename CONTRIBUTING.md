@@ -283,6 +283,6 @@ review.
 
 The coding style suggested by the Golang community is used in TiDB. See the [style doc](https://github.com/golang/go/wiki/CodeReviewComments) for details.
 
-## Commit Message and Pull Request Style
+## Commit message and Pull Request style
 
 See the [Commit Message and Pull Request Style](https://github.com/pingcap/community/blob/master/commit-message-pr-style.md)
