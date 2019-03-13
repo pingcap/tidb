@@ -172,25 +172,6 @@ func newValueExpr(value interface{}) ast.ValueExpr {
 	}
 	ve := &ValueExpr{}
 	ve.SetValue(value)
-	switch x := value.(type) {
-	case nil:
-		ve.SetText("NULL")
-	case bool:
-		if x {
-			ve.SetText("TRUE")
-		} else {
-			ve.SetText("FALSE")
-		}
-	case int:
-		ve.SetText(strconv.Itoa(x))
-	case int64:
-		ve.SetText(strconv.FormatInt(x, 10))
-	case uint64:
-		ve.SetText(strconv.FormatUint(x, 10))
-	case *types.MyDecimal:
-		ve.SetText(x.String())
-	default:
-	}
 	types.DefaultTypeForValue(value, &ve.Type)
 	ve.projectionOffset = -1
 	return ve
