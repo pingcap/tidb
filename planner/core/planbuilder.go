@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
@@ -157,6 +158,15 @@ type PlanBuilder struct {
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
 func (b *PlanBuilder) GetVisitInfo() []visitInfo {
 	return b.visitInfo
+}
+
+// GetDBTableInfo gets the accessed dbs and tables info.
+func (b *PlanBuilder) GetDBTableInfo() (tables map[stmtctx.TableEntry]struct{}) {
+	tables = make(map[stmtctx.TableEntry]struct{})
+	for _, v := range b.visitInfo {
+		tables[stmtctx.TableEntry{DB: v.db, Table: v.table}] = struct{}{}
+	}
+	return
 }
 
 // GetOptFlag gets the optFlag of the PlanBuilder.

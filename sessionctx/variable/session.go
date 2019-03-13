@@ -340,6 +340,29 @@ type SessionVars struct {
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
+
+	// ConnectionInfo indicate current connection information.
+	ConnectionInfo *ConnectionInfo
+}
+
+// ConnectionInfo present connection used by audit.
+type ConnectionInfo struct {
+	ConnectionID      uint32
+	ConnectionType    string
+	Host              string
+	ClientIP          string
+	ClientPort        string
+	ServerID          int
+	ServerPort        int
+	Duration          float64
+	User              string
+	ServerOSLoginUser string
+	OSVersion         string
+	ClientVersion     string
+	ServerVersion     string
+	SSLVersion        string
+	PID               int
+	DB                string
 }
 
 // NewSessionVars creates a session vars object.

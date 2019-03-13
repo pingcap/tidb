@@ -122,6 +122,7 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
+	Tables map[TableEntry]struct{}
 }
 
 // SQLDigest gets normalized and digest for provided sql.
@@ -131,6 +132,12 @@ func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
 	})
 	return sc.digestMemo.normalized, sc.digestMemo.digest
+}
+
+// TableEntry presents table in db.
+type TableEntry struct {
+	DB    string
+	Table string
 }
 
 // AddAffectedRows adds affected rows.
