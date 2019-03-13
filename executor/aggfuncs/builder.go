@@ -69,6 +69,10 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 		return buildFirstValue(windowFuncDesc, ordinal)
 	case ast.WindowFuncLastValue:
 		return buildLastValue(windowFuncDesc, ordinal)
+	case ast.WindowFuncCumeDist:
+		return buildCumeDist(ordinal, orderByCols)
+	case ast.WindowFuncNthValue:
+		return buildNthValue(windowFuncDesc, ordinal)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -345,11 +349,7 @@ func buildRank(ordinal int, orderByCols []*expression.Column, isDense bool) AggF
 	base := baseAggFunc{
 		ordinal: ordinal,
 	}
-	r := &rank{baseAggFunc: base, isDense: isDense}
-	for _, col := range orderByCols {
-		r.cmpFuncs = append(r.cmpFuncs, chunk.GetCompareFunc(col.RetType))
-		r.colIdx = append(r.colIdx, col.Index)
-	}
+	r := &rank{baseAggFunc: base, isDense: isDense, rowComparer: buildRowComparer(orderByCols)}
 	return r
 }
 
@@ -367,4 +367,22 @@ func buildLastValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 	return &lastValue{baseAggFunc: base, tp: aggFuncDesc.RetTp}
+}
+
+func buildCumeDist(ordinal int, orderByCols []*expression.Column) AggFunc {
+	base := baseAggFunc{
+		ordinal: ordinal,
+	}
+	r := &cumeDist{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
+	return r
+}
+
+func buildNthValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	// Already checked when building the function description.
+	nth, _, _ := expression.GetUint64FromConstant(aggFuncDesc.Args[1])
+	return &nthValue{baseAggFunc: base, tp: aggFuncDesc.RetTp, nth: nth}
 }
