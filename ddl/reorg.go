@@ -200,7 +200,6 @@ func (r *reorgInfo) String() string {
 		"EndHandle:" + strconv.FormatInt(r.EndHandle, 10) + "," +
 		"first:" + strconv.FormatBool(r.first) + "," +
 		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10)
-
 }
 
 func constructDescTableScanPB(physicalTableID int64, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {

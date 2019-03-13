@@ -541,7 +541,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if job.State != model.JobStateCancelled {
 			log.Error("DDL worker run job error", zap.String("worker", w.String()), zap.Error(err))
 		} else {
-			log.Info("DDL job is normal cancelled", zap.String("worker", w.String()), zap.Error(err))
+			log.Info("DDL job is cancelled normally", zap.String("worker", w.String()), zap.Error(err))
 		}
 
 		job.Error = toTError(err)
