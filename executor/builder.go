@@ -1558,11 +1558,15 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
 
 	// If the inner join keys are the suffix set of the index, then return the IndexLookUpMergeJoin
+	var isIndexScan bool
+	var is *plannercore.PhysicalIndexScan
 	if ir, ok := innerPlan.(*plannercore.PhysicalIndexReader); ok && v.KeepOuterOrder {
-		is, ok := ir.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		if !ok {
-			return e
-		}
+		is, isIndexScan = ir.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	}
+	if ilr, ok := innerPlan.(*plannercore.PhysicalIndexLookUpReader); ok && v.KeepOuterOrder {
+		is, isIndexScan = ilr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	}
+	if isIndexScan {
 		idx := is.Index.Columns
 		if len(v.InnerJoinKeys) <= len(idx) {
 			isInnerKeysSuffix := true

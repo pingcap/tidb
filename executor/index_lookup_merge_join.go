@@ -14,8 +14,8 @@
 package executor
 
 import (
+	contxt "context"
 	"fmt"
-	"runtime"
 	"sync"
 	"time"
 
@@ -25,9 +25,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -263,16 +264,14 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) *lookUpMerge
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			log.Errorf("outerWorker panic stack is:\n%s", buf)
+			err := errors.Errorf("%v", r)
+			logutil.Logger(contxt.Background()).Error("outerMergeWorker panic in the recoverable goroutine", zap.Error(err))
 			task := &lookUpMergeJoinTask{
 				results: make(chan *chunk.Chunk, 1),
 				doneErr: make(chan error, 1),
 				done:    true,
 			}
-			task.doneErr <- errors.Errorf("%v", r)
+			task.doneErr <- err
 			omw.pushToChan(ctx, task, omw.resultCh)
 		}
 		close(omw.resultCh)
@@ -368,12 +367,10 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	var task *lookUpMergeJoinTask
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			log.Errorf("innerMergeWorker panic stack is:\n%s", buf)
+			err := errors.Errorf("%v", r)
+			logutil.Logger(contxt.Background()).Error("innerMergeWorker panic in the recoverable goroutine", zap.Error(err))
 			task.doneErr = make(chan error, 1)
-			task.doneErr <- errors.Errorf("%v", r)
+			task.doneErr <- err
 		}
 		wg.Done()
 	}()
