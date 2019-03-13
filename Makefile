@@ -131,7 +131,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
 			-ignore='.git,vendor,cmd,docs,LICENSES' \
-			-coverpkg=./... \
+			-- -coverpkg=./... \
 			-concurrency=4 \
 			|| { $(GOFAIL_DISABLE); exit 1; }
 else
