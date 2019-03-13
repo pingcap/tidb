@@ -396,7 +396,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 
 				if handle != rows[i].handle {
 					logutil.Logger(context.Background()).Warn("recover index: the constraint of unique index is broken, handle in index is not equal to handle in table",
-						zap.String("indexName", e.index.Meta().Name.O), zap.ByteString("indexKey", key),
+						zap.String("index", e.index.Meta().Name.O), zap.ByteString("indexKey", key),
 						zap.Int64("handleInTable", rows[i].handle), zap.Int64("handleInIndex", handle))
 				}
 			}
