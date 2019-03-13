@@ -28,6 +28,7 @@ func TestT(t *testing.T) {
 }
 
 func (s *testJSONSuite) TestBinaryJSONMarshalUnmarshal(c *C) {
+	c.Parallel()
 	strs := []string{
 		`{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`,
 		`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.1], "bbbbbbbbbb": true, "ccccccccc": "d"}`,
@@ -40,6 +41,7 @@ func (s *testJSONSuite) TestBinaryJSONMarshalUnmarshal(c *C) {
 }
 
 func (s *testJSONSuite) TestBinaryJSONExtract(c *C) {
+	c.Parallel()
 	bj1 := mustParseBinaryFromString(c, `{"\"hello\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
 	bj2 := mustParseBinaryFromString(c, `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
@@ -84,6 +86,7 @@ func (s *testJSONSuite) TestBinaryJSONExtract(c *C) {
 }
 
 func (s *testJSONSuite) TestBinaryJSONType(c *C) {
+	c.Parallel()
 	var tests = []struct {
 		In  string
 		Out string
@@ -130,6 +133,7 @@ func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
 }
 
 func (s *testJSONSuite) TestBinaryJSONModify(c *C) {
+	c.Parallel()
 	var tests = []struct {
 		base     string
 		setField string
@@ -183,6 +187,7 @@ func (s *testJSONSuite) TestBinaryJSONModify(c *C) {
 }
 
 func (s *testJSONSuite) TestBinaryJSONRemove(c *C) {
+	c.Parallel()
 	var tests = []struct {
 		base     string
 		path     string
@@ -218,6 +223,7 @@ func (s *testJSONSuite) TestBinaryJSONRemove(c *C) {
 }
 
 func (s *testJSONSuite) TestCompareBinary(c *C) {
+	c.Parallel()
 	jNull := mustParseBinaryFromString(c, `null`)
 	jBoolTrue := mustParseBinaryFromString(c, `true`)
 	jBoolFalse := mustParseBinaryFromString(c, `false`)
@@ -250,6 +256,7 @@ func (s *testJSONSuite) TestCompareBinary(c *C) {
 }
 
 func (s *testJSONSuite) TestBinaryJSONMerge(c *C) {
+	c.Parallel()
 	var tests = []struct {
 		suffixes []string
 		expected string
@@ -295,6 +302,7 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 }
 
 func (s *testJSONSuite) TestBinaryJSONContains(c *C) {
+	c.Parallel()
 	var tests = []struct {
 		input    string
 		target   string
@@ -325,7 +333,29 @@ func (s *testJSONSuite) TestBinaryJSONContains(c *C) {
 	}
 }
 
+func (s *testJSONSuite) TestBinaryJSONCopy(c *C) {
+	c.Parallel()
+	strs := []string{
+		`{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`,
+		`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.1], "bbbbbbbbbb": true, "ccccccccc": "d"}`,
+		`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`,
+	}
+	for _, str := range strs {
+		parsedBJ := mustParseBinaryFromString(c, str)
+		c.Assert(parsedBJ.Copy().String(), Equals, parsedBJ.String())
+	}
+}
+
+func (s *testJSONSuite) TestGetKeys(c *C) {
+	c.Parallel()
+	parsedBJ := mustParseBinaryFromString(c, "[]")
+	c.Assert(parsedBJ.GetKeys().String(), Equals, "[]")
+	parsedBJ = mustParseBinaryFromString(c, "{}")
+	c.Assert(parsedBJ.GetKeys().String(), Equals, "[]")
+}
+
 func (s *testJSONSuite) TestBinaryJSONDepth(c *C) {
+	c.Parallel()
 	var tests = []struct {
 		input    string
 		expected int
@@ -343,4 +373,37 @@ func (s *testJSONSuite) TestBinaryJSONDepth(c *C) {
 		obj := mustParseBinaryFromString(c, tt.input)
 		c.Assert(obj.GetElemDepth(), Equals, tt.expected)
 	}
+}
+
+func (s *testJSONSuite) TestParseBinaryFromString(c *C) {
+	c.Parallel()
+	obj, err := ParseBinaryFromString("")
+	c.Assert(obj.String(), Equals, "")
+	c.Assert(err, ErrorMatches, "*The document is empty*")
+}
+
+func (s *testJSONSuite) TestCreateBinary(c *C) {
+	c.Parallel()
+	bj := CreateBinary(int64(1 << 62))
+	c.Assert(bj.TypeCode, Equals, TypeCodeInt64)
+	c.Assert(bj.Value, NotNil)
+	bj = CreateBinary(123456789.1234567)
+	c.Assert(bj.TypeCode, Equals, TypeCodeFloat64)
+	bj = CreateBinary(0.00000001)
+	c.Assert(bj.TypeCode, Equals, TypeCodeFloat64)
+	bj = CreateBinary(1e-20)
+	c.Assert(bj.TypeCode, Equals, TypeCodeFloat64)
+	c.Assert(bj.Value, NotNil)
+	bj2 := CreateBinary(bj)
+	c.Assert(bj2.TypeCode, Equals, bj.TypeCode)
+	c.Assert(bj2.Value, NotNil)
+	func() {
+		defer func() {
+			r := recover()
+			c.Assert(r, ErrorMatches, "unknown type:.*")
+		}()
+		bj = CreateBinary(int8(123))
+		c.Assert(bj.TypeCode, Equals, bj.TypeCode)
+	}()
+
 }
