@@ -131,8 +131,8 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
 			-ignore='.git,vendor,cmd,docs,LICENSES' \
-			-- -coverpkg=./... \
 			-concurrency=4 \
+			-- -coverpkg=./... \
 			|| { $(GOFAIL_DISABLE); exit 1; }
 else
 	@echo "Running in native mode."
