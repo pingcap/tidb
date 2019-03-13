@@ -41,7 +41,6 @@ func NewProjInjector() *projInjector {
 func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 	for i, child := range plan.Children() {
 		plan.Children()[i] = pe.inject(child)
-		// pe.inject(child)
 	}
 
 	switch p := plan.(type) {
@@ -207,8 +206,8 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
 
-	if topProj.Schema().Len() == 0 {
-		return p
-	}
+	// if topProj.Schema().Len() == 0 {
+	// 	return p
+	// }
 	return topProj
 }

@@ -14,6 +14,7 @@
 package core
 
 import (
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -38,6 +39,18 @@ func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 
 // setChild set p as topn's child.
 func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
+	// Remove this TopN if its child is a TableDual.
+	dual, isDual := p.(*LogicalTableDual)
+	if isDual {
+		numDualRows := uint64(dual.RowCount)
+		if numDualRows < lt.Offset {
+			dual.RowCount = 0
+			return dual
+		}
+		dual.RowCount = int(mathutil.MinUint64(numDualRows-lt.Offset, lt.Count))
+		return dual
+	}
+
 	if lt.isLimit() {
 		limit := LogicalLimit{
 			Count:  lt.Count,
