@@ -74,6 +74,7 @@ gopkg.in/alecthomas/gometalinter.v2 v2.0.5/go.mod h1:NDRytsqEZyolNuAgTzJkZMkSQM7
 gopkg.in/alecthomas/gometalinter.v2 v2.0.11 h1:d00Ojg1urREwQPo+jgE7TUG6JSHnvaj5zqpGrTjFuLM=
 gopkg.in/alecthomas/gometalinter.v2 v2.0.11/go.mod h1:NDRytsqEZyolNuAgTzJkZMkSQM7FIKyzVzGhjB/qfYo=
 gopkg.in/alecthomas/gometalinter.v2 v2.0.12 h1:ogzbD8lvaBPP+R0Dk9FA1wiCRy8Zr7yvkVwb1vVoAJ0=
+gopkg.in/alecthomas/gometalinter.v2 v2.0.12 h1:/xBWwtjmOmVxn8FXfIk9noV8m2E2Id9jFfUY/Mh9QAI=
 gopkg.in/alecthomas/gometalinter.v2 v2.0.12/go.mod h1:NDRytsqEZyolNuAgTzJkZMkSQM7FIKyzVzGhjB/qfYo=
 gopkg.in/alecthomas/kingpin.v2 v2.2.6 h1:jMFz6MfLP0/4fUyZle81rXUoxOBFi19VUFKVDOQfozc=
 gopkg.in/alecthomas/kingpin.v2 v2.2.6/go.mod h1:FMv+mEhP44yOT+4EoQTLFTRgOQ1FBLkstjWtayDeSgw=

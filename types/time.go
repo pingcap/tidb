@@ -33,6 +33,7 @@ import (
 // Portable analogs of some common call errors.
 var (
 	ErrInvalidTimeFormat      = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
+	ErrInvalidWeekModeFormat  = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid week mode format: '%v'")
 	ErrInvalidYearFormat      = errors.New("invalid year format")
 	ErrInvalidYear            = errors.New("invalid year")
 	ErrZeroDate               = errors.New("datetime zero in date")
