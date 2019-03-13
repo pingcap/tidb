@@ -1464,9 +1464,35 @@ func (s *testEvaluatorSuite) TestWeek(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(result.GetInt64(), Equals, test.expect)
 	}
-
 }
 
+func (s *testEvaluatorSuite) TestWeekWithoutModeSig(c *C) {
+	tests := []struct {
+		t      string
+		expect int64
+	}{
+		{"2008-02-20", 7},
+		{"2000-12-31", 53},
+		{"2000-12-31", 1}, //set default week mode
+		{"2005-12-3", 48}, //set default week mode
+		{"2008-02-20", 7},
+	}
+
+	fc := funcs[ast.Week]
+	for i, test := range tests {
+		arg1 := types.NewStringDatum(test.t)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg1}))
+		c.Assert(err, IsNil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+		if i == 1 {
+			s.ctx.GetSessionVars().SetSystemVar("default_week_format", "6")
+		} else if i == 3 {
+			s.ctx.GetSessionVars().SetSystemVar("default_week_format", "")
+		}
+	}
+}
 func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
