@@ -865,7 +865,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	pi := util.ProcessInfo{
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
-		Command: string(command),
+		Command: mysql.Command2Str[command],
 		Time:    t,
 		State:   s.Status(),
 		Info:    sql,
@@ -1628,8 +1628,6 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	tmp := s.processInfo.Load()
 	if tmp != nil {
 		pi = tmp.(util.ProcessInfo)
-		byteCommand := []byte(pi.Command)
-		pi.Command = mysql.Command2Str[byteCommand[0]]
 	}
 	return pi
 }
