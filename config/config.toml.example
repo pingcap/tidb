@@ -258,9 +258,11 @@ enabled = true
 capacity = 2048000
 
 [binlog]
-# Enable to write binlog. Values can be "on", "off" or "auto".
-# If value is "auto", will enable binlog according to the system variables 'tidb_log_bin'.
-enable = "auto"
+# Enable to write binlog. This config will be disabled if mode is "auto".
+enable = false
+
+# If mode is "auto", will enable binlog according to the system variables 'tidb_log_bin'.
+# mode = "auto"
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
 write-timeout = "15s"

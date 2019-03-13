@@ -95,9 +95,13 @@ func SetIgnoreError(on bool) {
 	}
 }
 
-// ShouldEnableBinlog returns true if binlog.enable is "on", or binlog.enable is "auto" and tidb_log_bin's value is "1"
+// ShouldEnableBinlog returns true if binlog.mode is not "auto" and binlog.enable is true, or binlog.mode is "auto" and tidb_log_bin's value is "1"
 func ShouldEnableBinlog() bool {
-	return config.GetGlobalConfig().Binlog.Enable == "on" || (config.GetGlobalConfig().Binlog.Enable == "auto" && variable.SysVars[variable.TiDBLogBin].Value == "1")
+	if config.GetGlobalConfig().Binlog.Mode == "auto" {
+		return variable.SysVars[variable.TiDBLogBin].Value == "1"
+	}
+
+	return config.GetGlobalConfig().Binlog.Enable
 }
 
 // WriteBinlog writes a binlog to Pump.
