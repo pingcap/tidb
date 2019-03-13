@@ -2213,7 +2213,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select ntile(null) over() from t",
-			result: "TableReader(Table(t))->Window(ntile(null) over())->Projection",
+			result: "TableReader(Table(t))->Window(ntile(<nil>) over())->Projection",
 		},
 	}
 
