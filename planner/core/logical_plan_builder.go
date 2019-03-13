@@ -610,12 +610,27 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 	case types.KindNull:
 		// See #4053, #3685
 		return model.NewCIStr("NULL"), nil
-	default:
-		// Keep as it is.
-		if innerExpr.Text() != "" {
-			return model.NewCIStr(innerExpr.Text()), nil
-		}
+	case types.KindBinaryLiteral:
+		// Don't rewrite BIT literal or HEX literals
 		return model.NewCIStr(field.Text()), nil
+	case types.KindInt64:
+		// See #9683
+		// TRUE or FALSE can be a int64
+		if mysql.HasIsBooleanFlag(valueExpr.Type.Flag) {
+			i, _ := valueExpr.GetValue().(int64)
+			if i == 0 {
+				return model.NewCIStr("FALSE"), nil
+			}
+			return model.NewCIStr("TRUE"), nil
+		}
+		// Let default deal with it
+		fallthrough
+
+	default:
+		fieldName := field.Text()
+		fieldName = strings.TrimLeft(fieldName, "+(")
+		fieldName = strings.TrimRight(fieldName, ")")
+		return model.NewCIStr(fieldName), nil
 	}
 }
 
