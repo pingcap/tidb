@@ -119,4 +119,11 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 2", "1 2", "2 2", "2 2"))
 	result = tk.MustQuery("select a, nth_value(a, 5) over() from t")
 	result.Check(testkit.Rows("1 <nil>", "1 <nil>", "2 <nil>", "2 <nil>"))
+
+	result = tk.MustQuery("select a, percent_rank() over() from t")
+	result.Check(testkit.Rows("1 0", "1 0", "2 0", "2 0"))
+	result = tk.MustQuery("select a, percent_rank() over(order by a) from t")
+	result.Check(testkit.Rows("1 0", "1 0", "2 0.6666666666666666", "2 0.6666666666666666"))
+	result = tk.MustQuery("select a, b, percent_rank() over(order by a, b) from t")
+	result.Check(testkit.Rows("1 1 0", "1 2 0.3333333333333333", "2 1 0.6666666666666666", "2 2 1"))
 }
