@@ -56,7 +56,7 @@ const (
 	// MaxDuration is the maximum for duration.
 	MaxDuration int64 = 838*10000 + 59*100 + 59
 	// MinTime is the minimum for mysql time type.
-	MinTime = -gotime.Duration(838*3600+59*60+59) * gotime.Second
+	MinTime = -gotime.Duration(838*3600 + 59*60 + 59) * gotime.Second
 	// MaxTime is the maximum for mysql time type.
 	MaxTime = gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// ZeroDatetimeStr is the string representation of a zero datetime.
@@ -2156,8 +2156,8 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%e": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%f": microSeconds,          // Microseconds (000000..999999)
 	"%h": hour24TwoDigits,       // Hour (01..12)
-	"%H": hour24TwoDigits,       // Hour (01..12)
-	"%I": hour24TwoDigits,       // Hour (01..12)
+	"%H": hour24Numeric,         // Hour (00..23)
+	"%I": hour12Numeric,         // Hour (01..12)
 	"%i": minutesNumeric,        // Minutes, numeric (00..59)
 	"%j": dayOfYearThreeDigits,  // Day of year (001..366)
 	"%k": hour24Numeric,         // Hour (0..23)
@@ -2266,21 +2266,27 @@ func hour24TwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bo
 }
 
 func secondsNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 2)
+	result := oneOrTwoDigitRegex.FindString(input)
+	length := len(result)
+
+	v, succ := parseDigits(input, length)
 	if !succ || v >= 60 {
 		return input, false
 	}
 	t.second = uint8(v)
-	return input[2:], true
+	return input[length:], true
 }
 
 func minutesNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 2)
+	result := oneOrTwoDigitRegex.FindString(input)
+	length := len(result)
+
+	v, succ := parseDigits(input, length)
 	if !succ || v >= 60 {
 		return input, false
 	}
 	t.minute = uint8(v)
-	return input[2:], true
+	return input[length:], true
 }
 
 const time12HourLen = len("hh:mm:ssAM")
@@ -2377,6 +2383,9 @@ var oneOrTwoDigitRegex = regexp.MustCompile("^[0-9]{1,2}")
 // twoDigitRegex: it was just for two digit number string. Ex: "01" or "12"
 var twoDigitRegex = regexp.MustCompile("^[1-9][0-9]?")
 
+// oneToSixDigitRegex: it was just for [0, 999999]
+var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{0,6}")
+
 // parseTwoNumeric is used for pattens 0..31 0..24 0..60 and so on.
 // It returns the parsed int, and remain data after parse.
 func parseTwoNumeric(input string) (int, string) {
@@ -2436,15 +2445,23 @@ func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 }
 
 func microSeconds(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	if len(input) < 6 {
+	result := oneToSixDigitRegex.FindString(input)
+	length := len(result)
+	if length == 0 {
+		t.microsecond = 0
+		return input, true
+	}
+
+	v, ok := parseDigits(input, length)
+
+	if !ok {
 		return input, false
 	}
-	v, err := strconv.ParseUint(input[:6], 10, 64)
-	if err != nil {
-		return input, false
+	for v > 0 && v*10 < 1000000 {
+		v *= 10
 	}
 	t.microsecond = uint32(v)
-	return input[6:], true
+	return input[length:], true
 }
 
 func yearNumericFourDigits(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
