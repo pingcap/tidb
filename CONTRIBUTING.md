@@ -6,12 +6,12 @@ may be different than many other projects you have been involved in. This docume
 ## What is a Contributor?
 
 A Contributor refers to the person who contributes to the following projects:
-- TiDB: https://github.com/pingcap/tidb 
-- TiKV: https://github.com/tikv/tikv 
-- TiSpark: https://github.com/pingcap/tispark 
-- PD: https://github.com/pingcap/pd 
-- Docs: https://github.com/pingcap/docs 
-- Docs-cn: https://github.com/pingcap/docs-cn 
+- TiDB: https://github.com/pingcap/tidb
+- TiKV: https://github.com/tikv/tikv
+- TiSpark: https://github.com/pingcap/tispark
+- PD: https://github.com/pingcap/pd
+- Docs: https://github.com/pingcap/docs
+- Docs-cn: https://github.com/pingcap/docs-cn
 
 ## How to become a TiDB Contributor?
 
@@ -283,33 +283,6 @@ review.
 
 The coding style suggested by the Golang community is used in TiDB. See the [style doc](https://github.com/golang/go/wiki/CodeReviewComments) for details.
 
-## Commit message style
+## Commit Message and Pull Request Style
 
-Please follow this style to make TiDB easy to review, maintain and develop.
-
-```
-<subsystem>: <what changed>
-<BLANK LINE>
-<why this change was made>
-<BLANK LINE>
-<footer>(optional)
-```
-
-The first line is the subject and should be no longer than 70 characters, the
-second line is always blank, and other lines should be wrapped at 80 characters.
-This allows the message to be easier to read on GitHub as well as in various
-git tools.
-
-If the change affects more than one subsystem, you can use comma to separate them like `util/codec,util/types:`.
-
-If the change affects many subsystems, you can use ```*``` instead, like ```*:```.
-
-For the why part, if no specific reason for the change,
-you can use one of some generic reasons like "Improve documentation.",
-"Improve performance.", "Improve robustness.", "Improve test coverage."
-
-[Os X GNU tools]: https://www.topbug.net/blog/2013/04/14/install-and-use-gnu-command-line-tools-in-mac-os-x
-[go-1.8]: https://blog.golang.org/go1.8
-[go-workspace]: https://golang.org/doc/code.html#Workspaces
-[issue]: https://github.com/pingcap/tidb/issues
-[mercurial]: http://mercurial.selenic.com/wiki/Download
+See the [Commit Message and Pull Request Style](https://github.com/pingcap/community/blob/master/commit-message-pr-style.md)
