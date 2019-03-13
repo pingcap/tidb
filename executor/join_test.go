@@ -1406,3 +1406,16 @@ func (s *testSuite) TestScalarFuncNullSemiJoin(c *C) {
 	tk.MustExec("insert into s values(null, 1)")
 	tk.MustQuery("select a in (select a+b from s) from t").Check(testkit.Rows("<nil>", "<nil>"))
 }
+
+func (s *testSuite2) TestInjectProjOnTopN(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a bigint, b bigint)")
+	tk.MustExec("create table t2(a bigint, b bigint)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustQuery("select t1.a+t1.b as result from t1 left join t2 on 1 = 0 order by result limit 20;").Check(testkit.Rows(
+		"2",
+	))
+}
