@@ -33,13 +33,14 @@ import (
 
 // Portable analogs of some common call errors.
 var (
-	ErrInvalidTimeFormat      = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
-	ErrInvalidWeekModeFormat  = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid week mode format: '%v'")
-	ErrInvalidYearFormat      = errors.New("invalid year format")
-	ErrInvalidYear            = errors.New("invalid year")
-	ErrZeroDate               = errors.New("datetime zero in date")
-	ErrIncorrectDatetimeValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
-	ErrTruncatedWrongValue    = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	ErrInvalidTimeFormat        = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
+	ErrInvalidWeekModeFormat    = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid week mode format: '%v'")
+	ErrInvalidYearFormat        = errors.New("invalid year format")
+	ErrInvalidYear              = errors.New("invalid year")
+	ErrZeroDate                 = errors.New("datetime zero in date")
+	ErrIncorrectDatetimeValue   = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
+	ErrDatetimeFunctionOverflow = terror.ClassTypes.New(mysql.ErrDatetimeFunctionOverflow, mysql.MySQLErrName[mysql.ErrDatetimeFunctionOverflow])
+	ErrTruncatedWrongValue      = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 )
 
 // Time format without fractional seconds precision.
@@ -58,7 +59,7 @@ const (
 	// MaxDuration is the maximum for duration.
 	MaxDuration int64 = 838*10000 + 59*100 + 59
 	// MinTime is the minimum for mysql time type.
-	MinTime = -gotime.Duration(838*3600+59*60+59) * gotime.Second
+	MinTime = -gotime.Duration(838*3600 + 59*60 + 59) * gotime.Second
 	// MaxTime is the maximum for mysql time type.
 	MaxTime = gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// ZeroDatetimeStr is the string representation of a zero datetime.
@@ -2587,4 +2588,41 @@ func DateFSP(date string) (fsp int) {
 		fsp = len(date) - i - 1
 	}
 	return
+}
+
+var (
+	dateRange = []gotime.Time{
+		gotime.Date(1000, 1, 1, 0, 0, 0, 0, gotime.Local),
+		gotime.Date(9999, 12, 31, 0, 0, 0, 0, gotime.Local),
+	}
+	timestampRange = []gotime.Time{
+		gotime.Date(1970, 1, 1, 0, 0, 1, 0, gotime.Local),
+		gotime.Date(2038, 1, 19, 3, 14, 7, 0, gotime.Local),
+	}
+	datetimeRange = []gotime.Time{
+		gotime.Date(1000, 1, 1, 0, 0, 0, 0, gotime.Local),
+		gotime.Date(9999, 12, 31, 23, 59, 59, 0, gotime.Local),
+	}
+)
+
+// DateTimeIsOverflow return if this date is overflow.
+// See: https://dev.mysql.com/doc/refman/8.0/en/datetime.html
+func DateTimeIsOverflow(date Time) (bool, error) {
+	var b, e gotime.Time
+	switch date.Type {
+	case mysql.TypeDate:
+		b, e = dateRange[0], dateRange[1]
+	case mysql.TypeTimestamp:
+		b, e = timestampRange[0], timestampRange[1]
+	case mysql.TypeDatetime:
+		b, e = datetimeRange[0], datetimeRange[1]
+	default:
+		return false, nil
+	}
+	t, err := date.Time.GoTime(gotime.Local)
+	if err != nil {
+		return false, err
+	}
+	inRange := (t.After(b) || t.Equal(b)) && (t.Before(e) || t.Equal(e))
+	return !inRange, nil
 }
