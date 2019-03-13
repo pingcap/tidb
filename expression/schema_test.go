@@ -143,3 +143,16 @@ func (s *testEvalSuite) TestSchemaMergeSchema(c *C) {
 		c.Assert(schema.Columns[i+len(lSchema.Columns)].ColName, Equals, rSchema.Columns[i].ColName)
 	}
 }
+
+func (s *testEvalSuite) TestFindIndexByName(c *C) {
+	indexs := make([]*model.IndexInfo, 3)
+	indexs[0] = &model.IndexInfo{Name: model.NewCIStr("idx1")}
+	indexs[1] = &model.IndexInfo{Name: model.NewCIStr("idx2")}
+	indexs[2] = &model.IndexInfo{Name: model.NewCIStr("idx3")}
+	idx := FindIndexByName("idx1", indexs)
+	c.Assert(idx, NotNil)
+	c.Assert(idx.Name.L, Equals, "idx1")
+	indexs = indexs[:0]
+	idx = FindIndexByName("idx1", indexs)
+	c.Assert(idx, IsNil)
+}
