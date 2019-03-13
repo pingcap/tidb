@@ -223,7 +223,7 @@ const DefNumHistoryJobs = 10
 // The maximum count of history jobs is num.
 func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
-	jobs, err := t.GetAllHistoryDDLJobs()
+	jobs, err := t.GetLastNHistoryDDLJobs(maxNumJobs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

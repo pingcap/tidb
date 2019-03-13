@@ -689,6 +689,25 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	return jobs, nil
 }
 
+func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
+	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey,num)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var jobs []*model.Job
+	for _, pair := range pairs {
+		job := &model.Job{}
+		err = job.Decode(pair.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, job)
+	}
+	sorter := &jobsSorter{jobs: jobs}
+	sort.Sort(sorter)
+	return jobs, nil
+}
+
 // jobsSorter implements the sort.Interface interface.
 type jobsSorter struct {
 	jobs []*model.Job
