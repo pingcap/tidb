@@ -417,5 +417,6 @@ func (s *testJSONSuite) TestFunctions(c *C) {
 	c.Assert(n, Equals, 0)
 	c.Assert(err, ErrorMatches, "Invalid JSON bytes")
 	n, err = PeekBytesAsJSON([]byte(""))
+	c.Assert(n, Equals, 0)
 	c.Assert(err, ErrorMatches, "Cant peek from empty bytes")
 }
