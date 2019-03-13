@@ -207,7 +207,7 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 	}
 	topProj := PhysicalProjection{
 		Exprs:                topProjExprs,
-		AvoidColumnEvaluator: false,
+		AvoidColumnEvaluator: true,
 	}.init(p.context(), p.statsInfo(), nil)
 	topProj.SetSchema(p.Schema().Clone())
 	topProj.SetChildren(p)
