@@ -100,6 +100,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4NumberFuncs()
 	case ast.WindowFuncCumeDist:
 		a.typeInfer4CumeDist()
+	case ast.WindowFuncPercentRank:
+		a.typeInfer4PercentRank()
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		a.typeInfer4LeadLag(ctx)
 	default:
@@ -200,6 +202,11 @@ func (a *baseFuncDesc) typeInfer4NumberFuncs() {
 func (a *baseFuncDesc) typeInfer4CumeDist() {
 	a.RetTp = types.NewFieldType(mysql.TypeDouble)
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
+}
+
+func (a *baseFuncDesc) typeInfer4PercentRank() {
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flag, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
 }
 
 func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
