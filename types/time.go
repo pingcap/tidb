@@ -56,7 +56,7 @@ const (
 	// MaxDuration is the maximum for duration.
 	MaxDuration int64 = 838*10000 + 59*100 + 59
 	// MinTime is the minimum for mysql time type.
-	MinTime = -gotime.Duration(838*3600 + 59*60 + 59) * gotime.Second
+	MinTime = -gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// MaxTime is the maximum for mysql time type.
 	MaxTime = gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// ZeroDatetimeStr is the string representation of a zero datetime.
