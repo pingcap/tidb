@@ -263,7 +263,7 @@ git push -f origin myfeature
 
 ### Step 8: Create a pull request
 
-1. Visit your fork at https://github.com/$user/tidb (replace `$user` obviously).
+1. Visit your fork at `https://github.com/$user/tidb` (replace `$user` obviously).
 2. Click the `Compare & pull request` button next to your `myfeature` branch.
 
 ### Step 9: Get a code review
