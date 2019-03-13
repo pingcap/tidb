@@ -387,7 +387,7 @@ func GetAll() map[Kind][]Plugin {
 func NotifyFlush(dom *domain.Domain, pluginName string) error {
 	p := getByName(pluginName)
 	if p == nil || p.Manifest.flushWatcher == nil || p.State != Ready {
-		return errors.Errorf("plugin %s doesn't exists or unsupported flush", pluginName)
+		return errors.Errorf("plugin %s doesn't exists or unsupported flush or doesn't start with PD %v", pluginName)
 	}
 	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, "")
 	if err != nil {
