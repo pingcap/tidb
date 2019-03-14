@@ -653,7 +653,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		if c.startTS > c.maxReadTs {
 			c.commitTS = c.startTS + 1
 		}
+		log.Debugf("con:%d 2PC commit with calculated TS. startTs: %d, maxReadTs: %d, commitTs: %d", c.connID, c.startTS, c.maxReadTs, c.commitTS)
 	} else {
+		log.Debugf("con:%d 2PC will get commitTs from PD", c.connID)
 		commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
 		if err != nil {
 			log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
