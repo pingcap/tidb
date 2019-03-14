@@ -284,8 +284,8 @@ func initFileLog(cfg *zaplog.FileLogConfig, logger *log.Logger) error {
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.StandardLogger()
 
-// SlowQueryZapLogger is used to log slow query, InitZapLogger will set it according to config file.
-var SlowQueryZapLogger *zap.Logger
+// SlowQueryZapLogger is used to log slow query, InitZapLogger will modify it according to config file.
+var SlowQueryZapLogger = zaplog.L()
 
 // InitLogger initializes PD's logger.
 func InitLogger(cfg *LogConfig) error {

@@ -1083,6 +1083,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 type havingWindowAndOrderbyExprResolver struct {
 	inAggFunc    bool
 	inWindowFunc bool
+	inWindowSpec bool
 	inExpr       bool
 	orderBy      bool
 	err          error
@@ -1102,6 +1103,8 @@ func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, s
 		a.inAggFunc = true
 	case *ast.WindowFuncExpr:
 		a.inWindowFunc = true
+	case *ast.WindowSpec:
+		a.inWindowSpec = true
 	case *driver.ParamMarkerExpr, *ast.ColumnNameExpr, *ast.ColumnName:
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		// Enter a new context, skip it.
@@ -1157,9 +1160,11 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
 			return node, false
 		}
+	case *ast.WindowSpec:
+		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || (a.orderBy && a.inExpr) {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1306,6 +1311,12 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 			return nil, extractor.err
 		}
 		field.Expr = n.(ast.ExprNode)
+	}
+	for _, spec := range sel.WindowSpecs {
+		_, ok := spec.Accept(extractor)
+		if !ok {
+			return nil, extractor.err
+		}
 	}
 	sel.Fields.Fields = extractor.selectFields
 	return extractor.aggMapper, nil
