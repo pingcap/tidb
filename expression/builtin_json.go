@@ -750,6 +750,8 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		if isNull || err != nil {
 			return res, true, err
 		}
+
+		// We should do the following checks to get correct values in res.Extract
 		pathExpr, err := json.ParseJSONPathExpr(s)
 		if err != nil {
 			return res, true, json.ErrInvalidJSONPath.GenWithStackByArgs(s)
@@ -758,7 +760,6 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 			return res, true, json.ErrInvalidJSONPathWildcard.GenWithStackByArgs(s)
 		}
 
-		var exists bool
 		obj, exists := res.Extract([]json.PathExpression{pathExpr})
 		if !exists {
 			// If path not exists, just do nothing and no errors.
@@ -766,17 +767,13 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		}
 
 		if obj.TypeCode != json.TypeCodeArray {
-			// JSON_ARRAY_APPEND({"a": "b"}, "$", "c") => [{"a": "b"}, "c"]
-			// We should convert them to a single array first.
+			// res.Extract will return a json object instead of an array if there is an object at path pathExpr.
+			// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
+			// We should wrap them to a single array first.
 			obj = json.CreateBinary([]interface{}{obj})
 		}
 
-		var (
-			value  json.BinaryJSON
-			isnull bool
-		)
-
-		value, isnull, err = b.args[i+1].EvalJSON(b.ctx, row)
+		value, isnull, err := b.args[i+1].EvalJSON(b.ctx, row)
 		if err != nil {
 			return res, true, err
 		}
@@ -788,11 +785,11 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		obj = json.MergeBinary([]json.BinaryJSON{obj, value})
 		res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
 		if err != nil {
-			// err should always be nil, the function should never return here.
+			// We checked pathExpr in the same way as res.Modify do.
+			// So err should always be nil, the function should never return here.
 			return res, true, err
 		}
 	}
-	// res won't be nil, error should be nil.
 	return res, false, nil
 }
 

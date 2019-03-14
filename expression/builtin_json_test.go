@@ -738,30 +738,31 @@ func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		// No error should return in getFunction if t.err is nil.
 		if err != nil {
+			c.Assert(t.err, NotNil)
 			c.Assert(t.err.Equal(err), Equals, true)
 			continue
 		}
+
 		c.Assert(f, NotNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		comment := Commentf("case:%v \n input:%v \n output: %s \n expected: %v \n warnings: %v \n expected error %v", i, t.input, d.GetMysqlJSON(), t.expected, s.ctx.GetSessionVars().StmtCtx.GetWarnings(), t.err)
-		if t.err == nil {
-			c.Assert(err, IsNil, comment)
-			c.Assert(int(s.ctx.GetSessionVars().StmtCtx.WarningCount()), Equals, 0, comment)
 
-			if t.expected == nil {
-				c.Assert(d.IsNull(), IsTrue, comment)
-			} else {
-				var j1 json.BinaryJSON
-				j1, err = json.ParseBinaryFromString(t.expected.(string))
-				c.Assert(err, IsNil)
-				j2 := d.GetMysqlJSON()
-				var cmp int
-				cmp = json.CompareBinary(j1, j2)
-				c.Assert(err, IsNil, comment)
-				c.Assert(cmp, Equals, 0, comment)
-			}
-		} else {
+		if t.err != nil {
 			c.Assert(t.err.Equal(err), Equals, true, comment)
+			continue
 		}
+
+		c.Assert(err, IsNil, comment)
+		c.Assert(int(s.ctx.GetSessionVars().StmtCtx.WarningCount()), Equals, 0, comment)
+
+		if t.expected == nil {
+			c.Assert(d.IsNull(), IsTrue, comment)
+			continue
+		}
+
+		j1, err := json.ParseBinaryFromString(t.expected.(string))
+
+		c.Assert(err, IsNil, comment)
+		c.Assert(json.CompareBinary(j1, d.GetMysqlJSON()), Equals, 0, comment)
 	}
 }
