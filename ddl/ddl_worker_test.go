@@ -338,21 +338,15 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
-		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema &&
-			job.Type != model.ActionRebaseAutoID && job.Type != model.ActionShardRowID && job.Type != model.ActionModifyColumn && job.Type != model.ActionAddForeignKey && job.Type != model.ActionDropForeignKey {
-			// If the schema state is none and is not equal to model.JobStateDone, we only test the job is finished.
-			// Unless the job is model.ActionCreateTable, model.ActionCreateSchema, model.ActionRebaseAutoID, we do the cancel anyway.
-		} else {
-			errs, err := admin.CancelJobs(txn, test.jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return checkErr
-			}
-			// It only tests cancel one DDL job.
-			if !terror.ErrorEqual(errs[0], test.cancelRetErrs[0]) {
-				checkErr = errors.Trace(errs[0])
-				return checkErr
-			}
+		errs, err := admin.CancelJobs(txn, test.jobIDs)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return checkErr
+		}
+		// It only tests cancel one DDL job.
+		if !terror.ErrorEqual(errs[0], test.cancelRetErrs[0]) {
+			checkErr = errors.Trace(errs[0])
+			return checkErr
 		}
 	}
 	return checkErr
@@ -394,7 +388,16 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 19}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 20)}, cancelState: model.StatePublic},
 		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 21}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 20)}, cancelState: model.StatePublic},
+		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 22}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 22)}, cancelState: model.StatePublic},
+
+		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 23}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 24}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 24)}, cancelState: model.StatePublic},
+
+		{act: model.ActionModifyTableCharsetAndCollate, jobIDs: []int64{firstID + 25}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifyTableCharsetAndCollate, jobIDs: []int64{firstID + 26}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 26)}, cancelState: model.StatePublic},
+
+		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 27}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 28}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 28)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -443,12 +446,14 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	defer d.Stop()
 	dbInfo := testSchemaInfo(c, d, "test_cancel_job")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
-
+	// create a partition table.
+	partitionTblInfo := testTableInfoWithPartition(c, d, "t_partition", 5)
 	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int);
 	tblInfo := testTableInfo(c, d, "t", 5)
 	ctx := testNewContext(d)
 	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
+	testCreateTable(c, ctx, d, dbInfo, partitionTblInfo)
 	tableAutoID := int64(100)
 	shardRowIDBits := uint64(5)
 	tblInfo.AutoIncID = tableAutoID
@@ -469,16 +474,25 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	firstJobID := job.ID
 	tests := buildCancelJobTests(firstJobID)
 	var checkErr error
+	var mu sync.Mutex
 	var test *testCancelJob
+	updateTest := func(t *testCancelJob) {
+		mu.Lock()
+		test = t
+		mu.Unlock()
+	}
 	hookCancelFunc := func(job *model.Job) {
 		if job.State == model.JobStateSynced || job.State == model.JobStateCancelled || job.State == model.JobStateCancelling {
 			return
 		}
 		// This hook only valid for the related test job.
 		// This is use to avoid parallel test fail.
+		mu.Lock()
 		if len(test.jobIDs) > 0 && test.jobIDs[0] != job.ID {
+			mu.Unlock()
 			return
 		}
+		mu.Unlock()
 		if checkErr != nil {
 			return
 		}
@@ -495,7 +509,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			checkErr = errors.Trace(err1)
 			return
 		}
+		mu.Lock()
 		checkErr = checkCancelState(txn, job, test)
+		mu.Unlock()
 		if checkErr != nil {
 			return
 		}
@@ -510,7 +526,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	d.SetHook(tc)
 
 	// for adding index
-	test = &tests[0]
+	updateTest(&tests[0])
 	idxOrigName := "idx"
 	validArgs := []interface{}{false, model.NewCIStr(idxOrigName),
 		[]*ast.IndexColName{{
@@ -523,15 +539,15 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
-	test = &tests[1]
+	updateTest(&tests[1])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
-	test = &tests[2]
+	updateTest(&tests[2])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
-	test = &tests[3]
+	updateTest(&tests[3])
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	txn, err = ctx.Txn(true)
@@ -540,9 +556,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, true)
 
 	// for add column
-	test = &tests[4]
+	updateTest(&tests[4])
 	addingColName := "colA"
-
 	newColumnDef := &ast.ColumnDef{
 		Name:    &ast.ColumnName{Name: model.NewCIStr(addingColName)},
 		Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
@@ -556,52 +571,51 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkAddColumn(c, d, dbInfo.ID, tblInfo.ID, addingColName, false)
 
-	test = &tests[5]
+	updateTest(&tests[5])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkAddColumn(c, d, dbInfo.ID, tblInfo.ID, addingColName, false)
 
-	test = &tests[6]
+	updateTest(&tests[6])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkAddColumn(c, d, dbInfo.ID, tblInfo.ID, addingColName, false)
 
-	test = &tests[7]
+	updateTest(&tests[7])
 	testAddColumn(c, ctx, d, dbInfo, tblInfo, addColumnArgs)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkAddColumn(c, d, dbInfo.ID, tblInfo.ID, addingColName, true)
 
 	// for create table
 	tblInfo1 := testTableInfo(c, d, "t1", 2)
-	test = &tests[8]
+	updateTest(&tests[8])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo1.ID, model.ActionCreateTable, []interface{}{tblInfo1}, &cancelState)
 	c.Check(checkErr, IsNil)
 	testCheckTableState(c, d, dbInfo, tblInfo1, model.StateNone)
 
 	// for create database
 	dbInfo1 := testSchemaInfo(c, d, "test_cancel_job1")
-	test = &tests[9]
+	updateTest(&tests[9])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo1.ID, 0, model.ActionCreateSchema, []interface{}{dbInfo1}, &cancelState)
 	c.Check(checkErr, IsNil)
 	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
 
 	// for drop column.
-	test = &tests[10]
+	updateTest(&tests[10])
 	dropColName := "c3"
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 
-	test = &tests[11]
-
+	updateTest(&tests[11])
 	dropColName = "c4"
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 
-	test = &tests[12]
+	updateTest(&tests[12])
 	dropColName = "c5"
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
@@ -609,7 +623,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 
 	// cancel rebase auto id
-	test = &tests[13]
+	updateTest(&tests[13])
 	rebaseIDArgs := []interface{}{int64(200)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, rebaseIDArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
@@ -617,16 +631,16 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(changedTable.Meta().AutoIncID, Equals, tableAutoID)
 
 	// cancel shard bits
-	test = &tests[14]
+	updateTest(&tests[14])
 	shardRowIDArgs := []interface{}{uint64(7)}
-	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, shardRowIDArgs, &cancelState)
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionShardRowID, shardRowIDArgs, &cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(changedTable.Meta().ShardRowIDBits, Equals, shardRowIDBits)
 
 	// modify column
 	col.DefaultValue = "1"
-	test = &tests[15]
+	updateTest(&tests[15])
 	modifyColumnArgs := []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
@@ -635,7 +649,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(changedCol.DefaultValue, IsNil)
 
 	// Test add foreign key failed cause by canceled.
-	test = &tests[16]
+	updateTest(&tests[16])
 	addForeignKeyArgs := []interface{}{model.FKInfo{Name: model.NewCIStr("fk1")}}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, addForeignKeyArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
@@ -643,7 +657,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(len(changedTable.Meta().ForeignKeys), Equals, 0)
 
 	// Test add foreign key successful.
-	test = &tests[17]
+	updateTest(&tests[17])
 	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, addForeignKeyArgs)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
@@ -651,7 +665,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(changedTable.Meta().ForeignKeys[0].Name, Equals, addForeignKeyArgs[0].(model.FKInfo).Name)
 
 	// Test drop foreign key failed cause by canceled.
-	test = &tests[18]
+	updateTest(&tests[18])
 	dropForeignKeyArgs := []interface{}{addForeignKeyArgs[0].(model.FKInfo).Name}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, dropForeignKeyArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
@@ -660,11 +674,58 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(changedTable.Meta().ForeignKeys[0].Name, Equals, dropForeignKeyArgs[0].(model.CIStr))
 
 	// Test drop foreign key successful.
-	test = &tests[19]
+	updateTest(&tests[19])
 	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, dropForeignKeyArgs)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(len(changedTable.Meta().ForeignKeys), Equals, 0)
+
+	// test rename table failed caused by canceled.
+	test = &tests[20]
+	renameTableArgs := []interface{}{dbInfo.ID, model.NewCIStr("t2")}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, renameTableArgs, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Name.L, Equals, "t")
+
+	// test rename table successful.
+	test = &tests[21]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, renameTableArgs)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Name.L, Equals, "t2")
+
+	// test modify table charset failed caused by canceled.
+	test = &tests[22]
+	modifyTableCharsetArgs := []interface{}{"utf8mb4", "utf8mb4_bin"}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyTableCharsetArgs, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Charset, Equals, "utf8")
+	c.Assert(changedTable.Meta().Collate, Equals, "utf8_bin")
+
+	// test modify table charset successfully.
+	test = &tests[23]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyTableCharsetArgs)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(changedTable.Meta().Collate, Equals, "utf8mb4_bin")
+
+	// test truncate table partition failed caused by canceled.
+	test = &tests[24]
+	truncateTblPartitionArgs := []interface{}{partitionTblInfo.Partition.Definitions[0].ID}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, partitionTblInfo.ID, test.act, truncateTblPartitionArgs, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
+	c.Assert(changedTable.Meta().Partition.Definitions[0].ID == partitionTblInfo.Partition.Definitions[0].ID, IsTrue)
+
+	// test truncate table partition charset successfully.
+	test = &tests[25]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, partitionTblInfo.ID, test.act, truncateTblPartitionArgs)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
+	c.Assert(changedTable.Meta().Partition.Definitions[0].ID == partitionTblInfo.Partition.Definitions[0].ID, IsFalse)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

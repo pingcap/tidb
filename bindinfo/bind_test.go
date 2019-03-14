@@ -125,8 +125,8 @@ func (s *testSuite) TestBindParse(c *C) {
 	bindData := bindHandle.Get()[hash]
 	c.Check(bindData, NotNil)
 	c.Check(len(bindData), Equals, 1)
-	c.Check(bindData[0].originalSQL, Equals, "select * from t")
-	c.Check(bindData[0].bindSQL, Equals, "select * from t use index(index_t)")
+	c.Check(bindData[0].OriginalSQL, Equals, "select * from t")
+	c.Check(bindData[0].BindSQL, Equals, "select * from t use index(index_t)")
 	c.Check(bindData[0].Db, Equals, "test")
 	c.Check(bindData[0].Status, Equals, "using")
 	c.Check(bindData[0].Charset, Equals, "utf8mb4")

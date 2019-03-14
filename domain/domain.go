@@ -16,6 +16,8 @@ package domain
 import (
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -608,8 +610,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
-				Endpoints:   addrs,
-				DialTimeout: 5 * time.Second,
+				Endpoints:        addrs,
+				AutoSyncInterval: 30 * time.Second,
+				DialTimeout:      5 * time.Second,
 				DialOptions: []grpc.DialOption{
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
@@ -823,7 +826,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 			}
 			err = bindCacheUpdater.Update(false)
 			if err != nil {
-				log.Error("[domain] update bindinfo failed:", errors.ErrorStack(err))
+				logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
 			}
 		}
 	}()

@@ -865,7 +865,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	pi := util.ProcessInfo{
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
-		Command: mysql.Command2Str[command],
+		Command: command,
 		Time:    t,
 		State:   s.Status(),
 		Info:    sql,
@@ -1303,11 +1303,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	timeutil.SetSystemTZ(tz)
-
 	dom := domain.GetDomain(se)
-	err = dom.LoadPrivilegeLoop(se)
-	if err != nil {
-		return nil, errors.Trace(err)
+
+	if !config.GetGlobalConfig().Security.SkipGrantTable {
+		err = dom.LoadPrivilegeLoop(se)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	se1, err := createSession(store)
@@ -1318,7 +1320,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	se2, err := createSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1327,6 +1328,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// get global system variable tidb_log_bin from mysql.GLOBAL_VARIABLES
+	tidbLogBin, err := se1.GetGlobalSysVar(variable.TiDBLogBin)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	variable.SysVars[variable.TiDBLogBin].Value = tidbLogBin
+
 	if len(cfg.Plugin.Load) > 0 {
 		plugin.InitWatchLoops(dom.GetEtcdClient())
 	}
