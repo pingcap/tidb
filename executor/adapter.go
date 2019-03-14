@@ -373,10 +373,7 @@ func (a *ExecStmt) logAudit() {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
-			cmd, exists := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			if !exists {
-				cmd = ""
-			}
+			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
 			audit.OnGeneralEvent(context.Background(), sessVars, plugin.Log, cmd)
 		}
 		return nil

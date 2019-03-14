@@ -72,7 +72,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 
 	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)
-	defaultLoadDataBatchCnt = 1
+	defaultLoadDataBatchCnt = 3
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
