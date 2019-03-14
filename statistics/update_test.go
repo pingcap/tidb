@@ -65,8 +65,7 @@ func (s *testStatsSuite) registerHook() {
 	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.hook = &logHook{r.Core, ""}
-	r.Core = s.hook
-	lg := zap.New(r.Core)
+	lg := zap.New(s.hook)
 	log.ReplaceGlobals(lg, r)
 }
 
@@ -1055,7 +1054,7 @@ func (h *logHook) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 			h.results = h.results + ", " + f.Key + ": " + h.field2String(f)
 		}
 	}
-	return h.Core.Write(entry, fields)
+	return nil
 }
 
 func (h *logHook) field2String(field zapcore.Field) string {
@@ -1110,13 +1109,13 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	}{
 		{
 			sql: "select * from t where t.a <= 15",
-			result: "[stats-feedback] test.t, column: a, expected: range: [-inf,7), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
-				"[stats-feedback] test.t, column: a, expected: range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
+			result: "[stats-feedback] test.t, column: a, rangeStr: range: [-inf,7), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
+				"[stats-feedback] test.t, column: a, rangeStr: range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
 		},
 		{
 			sql: "select * from t use index(idx) where t.b <= 15",
-			result: "[stats-feedback] test.t, index: idx, expected: range: [-inf,7), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
-				"[stats-feedback] test.t, index: idx, expected: range: [8,15), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
+			result: "[stats-feedback] test.t, index: idx, rangeStr: range: [-inf,7), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
+				"[stats-feedback] test.t, index: idx, rangeStr: range: [8,15), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1 and a <= 5",
@@ -1128,7 +1127,7 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1",
-			result: "[stats-feedback] test.t, index: idx_ba, expected: value: 1, actual: 1, expected: 1",
+			result: "[stats-feedback] test.t, index: idx_ba, rangeStr: value: 1, actual: 1, expected: 1",
 		},
 	}
 	log.SetLevel(zapcore.DebugLevel)
