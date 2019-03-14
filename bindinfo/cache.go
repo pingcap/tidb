@@ -74,11 +74,11 @@ type bindRecord struct {
 }
 
 // NewBindCacheUpdater creates a new BindCacheUpdater.
-func NewBindCacheUpdater(ctx sessionctx.Context, handler *Handle, parser *parser.Parser) *BindCacheUpdater {
+func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.Parser) *BindCacheUpdater {
 	return &BindCacheUpdater{
 		ctx:          ctx,
 		parser:       parser,
-		globalHandle: handler,
+		globalHandle: handle,
 	}
 }
 

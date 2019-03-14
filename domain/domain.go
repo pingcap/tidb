@@ -799,8 +799,8 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
-// BindHandler returns the BindInfo.
-func (do *Domain) BindHandler() *bindinfo.Handle {
+// BindHandle returns domain's bindHandle.
+func (do *Domain) BindHandle() *bindinfo.Handle {
 	return do.bindHandle
 }
 
@@ -810,7 +810,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.bindHandle = bindinfo.NewHandle()
 
-	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandler(), parser)
+	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser)
 	err := bindCacheUpdater.Update(true)
 	if err != nil {
 		return errors.Trace(err)
