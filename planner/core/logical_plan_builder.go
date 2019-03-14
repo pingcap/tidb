@@ -617,13 +617,11 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 		// See #9683
 		// TRUE or FALSE can be a int64
 		if mysql.HasIsBooleanFlag(valueExpr.Type.Flag) {
-			i, _ := valueExpr.GetValue().(int64)
-			if i == 0 {
+			if i := valueExpr.GetValue().(int64); i == 0 {
 				return model.NewCIStr("FALSE"), nil
 			}
 			return model.NewCIStr("TRUE"), nil
 		}
-		// Let default deal with it
 		fallthrough
 
 	default:
