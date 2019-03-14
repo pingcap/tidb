@@ -894,7 +894,7 @@ type countByRangeFunc = func(*stmtctx.StatementContext, int64, []*ranger.Range) 
 //  Also, there're redundant calculation with Selectivity(). We need to reduce it too.
 func newHistogramBySelectivity(sc *stmtctx.StatementContext, histID int64, oldHist, newHist *Histogram, ranges []*ranger.Range, cntByRangeFunc countByRangeFunc) error {
 	cntPerVal := int64(oldHist.AvgCountPerNotNullValue(int64(oldHist.totalRowCount())))
-	var totCnt int64 = 0
+	var totCnt int64
 	for boundIdx, ranIdx, highRangeIdx := 0, 0, 0; boundIdx < oldHist.Bounds.NumRows() && ranIdx < len(ranges); boundIdx, ranIdx = boundIdx+2, highRangeIdx {
 		for highRangeIdx < len(ranges) && chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &ranges[highRangeIdx].HighVal[0]) >= 0 {
 			highRangeIdx++
@@ -941,7 +941,7 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 	newIndexHist.Histogram = *NewHistogram(idx.ID, int64(float64(idx.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 
 	lowBucketIdx, highBucketIdx := 0, 0
-	var totCnt int64 = 0
+	var totCnt int64
 
 	// Bucket bound of index is encoded one, so we need to decode it if we want to calculate the fraction accurately.
 	// TODO: enhance its calculation.

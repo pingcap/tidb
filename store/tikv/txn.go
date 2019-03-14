@@ -45,6 +45,9 @@ type tikvTxn struct {
 	dirty     bool
 	setCnt    int64
 	vars      *kv.Variables
+
+	// For data consistency check.
+	assertions []assertionPair
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -69,6 +72,16 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 		valid:     true,
 		vars:      kv.DefaultVars,
 	}, nil
+}
+
+type assertionPair struct {
+	key       kv.Key
+	assertion kv.AssertionType
+}
+
+// SetAssertion sets a assertion for the key operation.
+func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
+	txn.assertions = append(txn.assertions, assertionPair{key, assertion})
 }
 
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {

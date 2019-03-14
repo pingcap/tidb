@@ -15,6 +15,7 @@ package logutil
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -205,6 +206,26 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+const (
+	// SlowLogTimeFormat is the time format for slow log.
+	SlowLogTimeFormat = "2006-01-02-15:04:05.999999999 -0700"
+)
+
+type slowLogFormatter struct{}
+
+func (f *slowLogFormatter) Format(entry *log.Entry) ([]byte, error) {
+	var b *bytes.Buffer
+	if entry.Buffer != nil {
+		b = entry.Buffer
+	} else {
+		b = &bytes.Buffer{}
+	}
+
+	fmt.Fprintf(b, "# Time: %s\n", entry.Time.Format(SlowLogTimeFormat))
+	fmt.Fprintf(b, "%s\n", entry.Message)
+	return b.Bytes(), nil
+}
+
 func stringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 	switch strings.ToLower(format) {
 	case "text":
@@ -290,15 +311,7 @@ func InitLogger(cfg *LogConfig) error {
 		if err := initFileLog(&tmp, SlowQueryLogger); err != nil {
 			return errors.Trace(err)
 		}
-		hooks := make(log.LevelHooks)
-		hooks.Add(&contextHook{})
-		SlowQueryLogger.Hooks = hooks
-		slowQueryFormatter := stringToLogFormatter(cfg.Format, cfg.DisableTimestamp)
-		ft, ok := slowQueryFormatter.(*textFormatter)
-		if ok {
-			ft.EnableEntryOrder = true
-		}
-		SlowQueryLogger.Formatter = slowQueryFormatter
+		SlowQueryLogger.Formatter = &slowLogFormatter{}
 	}
 
 	return nil
@@ -344,4 +357,28 @@ func SetLevel(level string) error {
 	}
 	zaplog.SetLevel(l.Level())
 	return nil
+}
+
+type ctxKeyType int
+
+const ctxLogKey ctxKeyType = iota
+
+// Logger gets a contextual logger from current context.
+// contextual logger will output common fields from context.
+func Logger(ctx context.Context) *zap.Logger {
+	if ctxlogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		return ctxlogger
+	}
+	return zaplog.L()
+}
+
+// WithConnID attaches connId to context.
+func WithConnID(ctx context.Context, connID uint32) context.Context {
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = zaplog.L()
+	}
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
 }
