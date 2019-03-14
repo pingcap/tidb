@@ -16,26 +16,24 @@ package aggfuncs
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 type baseLeadLag struct {
 	baseAggFunc
+	valueEvaluator // TODO: move it to partial result when parallel execution is supported.
 
-	tp          *types.FieldType
 	defaultExpr expression.Expression
 	offset      uint64
 }
 
 type partialResult4LeadLag struct {
-	evaluator valueEvaluator
-	rows      []chunk.Row
-	curIdx    uint64
+	rows   []chunk.Row
+	curIdx uint64
 }
 
 func (v *baseLeadLag) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4LeadLag{evaluator: buildValueEvaluator(v.tp)})
+	return PartialResult(&partialResult4LeadLag{})
 }
 
 func (v *baseLeadLag) ResetPartialResult(pr PartialResult) {
@@ -58,14 +56,14 @@ func (v *lead) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult
 	p := (*partialResult4LeadLag)(pr)
 	var err error
 	if p.curIdx+v.offset < uint64(len(p.rows)) {
-		err = p.evaluator.evaluateRow(sctx, v.args[0], p.rows[p.curIdx+v.offset])
+		err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx+v.offset])
 	} else {
-		err = p.evaluator.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
+		err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
 	}
 	if err != nil {
 		return err
 	}
-	p.evaluator.appendResult(chk, v.ordinal)
+	v.appendResult(chk, v.ordinal)
 	p.curIdx++
 	return nil
 }
@@ -78,14 +76,14 @@ func (v *lag) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult,
 	p := (*partialResult4LeadLag)(pr)
 	var err error
 	if p.curIdx >= v.offset {
-		err = p.evaluator.evaluateRow(sctx, v.args[0], p.rows[p.curIdx-v.offset])
+		err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx-v.offset])
 	} else {
-		err = p.evaluator.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
+		err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
 	}
 	if err != nil {
 		return err
 	}
-	p.evaluator.appendResult(chk, v.ordinal)
+	v.appendResult(chk, v.ordinal)
 	p.curIdx++
 	return nil
 }
