@@ -21,11 +21,12 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // Test needs to change it, so it's a variable.
@@ -232,7 +233,10 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 	}
 
 	alloc.base = int64(uint64(alloc.base) + 1)
-	log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", uint64(alloc.base), tableID, alloc, alloc.dbID)
+	log.Debug("alloc unsigned ID",
+		zap.Uint64("ID", uint64(alloc.base)),
+		zap.Int64("table ID", tableID),
+		zap.Int64("database ID", alloc.dbID))
 	return alloc.base, nil
 }
 
@@ -262,7 +266,10 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 	}
 
 	alloc.base++
-	log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", alloc.base, tableID, alloc, alloc.dbID)
+	log.Debug("alloc signed ID",
+		zap.Uint64("ID", uint64(alloc.base)),
+		zap.Int64("table ID", tableID),
+		zap.Int64("database ID", alloc.dbID))
 	return alloc.base, nil
 }
 

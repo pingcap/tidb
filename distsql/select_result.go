@@ -26,8 +26,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -178,8 +179,10 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		log.Errorf("invalid cop task execution summaries length, expected: %v, received: %v",
-			len(r.copPlanIDs), len(r.selectResp.GetExecutionSummaries()))
+		logutil.Logger(context.Background()).Error("invalid cop task execution summaries length",
+			zap.Int("expected", len(r.copPlanIDs)),
+			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+
 		return
 	}
 

@@ -25,13 +25,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/structure"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -746,10 +747,10 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 		return errors.Trace(err)
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID)); err != nil {
-		log.Warn("remove ddl reorg end handle error:", err)
+		log.Warn("remove DDL reorg end handle", zap.Error(err))
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID)); err != nil {
-		log.Warn("remove ddl reorg physical id error:", err)
+		log.Warn("remove DDL reorg physical ID", zap.Error(err))
 	}
 	return nil
 }
@@ -780,7 +781,10 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physic
 			endHandle = math.MaxInt64
 		}
 		physicalTableID = job.TableID
-		log.Warnf("new TiDB binary running on old TiDB ddl reorg data, partition %v [%v %v]", physicalTableID, startHandle, endHandle)
+		log.Warn("new TiDB binary running on old TiDB DDL reorg data",
+			zap.Int64("partition ID", physicalTableID),
+			zap.Int64("startHandle", startHandle),
+			zap.Int64("endHandle", endHandle))
 	}
 	return
 }

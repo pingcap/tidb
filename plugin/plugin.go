@@ -24,10 +24,11 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // pluginGlobal holds all global variables for plugin.
@@ -270,7 +271,7 @@ func (w *flushWatcher) watchLoop() {
 		case <-watchChan:
 			err := w.manifest.OnFlush(w.ctx, w.manifest)
 			if err != nil {
-				log.Errorf("Notify plugin %s flush event failure: %v", w.manifest.Name, err)
+				log.Error("notify plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
 			}
 		}
 	}

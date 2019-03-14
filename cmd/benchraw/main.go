@@ -23,10 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -47,7 +48,7 @@ func batchRawPut(value []byte) {
 		ClusterSSLKey:  *sslKey,
 	})
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err.Error())
 	}
 
 	wg := sync.WaitGroup{}
@@ -62,7 +63,7 @@ func batchRawPut(value []byte) {
 				key := fmt.Sprintf("key_%d", k)
 				err = cli.Put([]byte(key), value)
 				if err != nil {
-					log.Fatal(errors.ErrorStack(err))
+					log.Fatal("put failed", zap.Error(err))
 				}
 			}
 		}(i)
@@ -72,7 +73,7 @@ func batchRawPut(value []byte) {
 
 func main() {
 	flag.Parse()
-	log.SetLevel(log.WarnLevel)
+	log.SetLevel(zap.WarnLevel)
 	go func() {
 		err := http.ListenAndServe(":9191", nil)
 		terror.Log(errors.Trace(err))
