@@ -73,6 +73,8 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 		return buildCumeDist(ordinal, orderByCols)
 	case ast.WindowFuncNthValue:
 		return buildNthValue(windowFuncDesc, ordinal)
+	case ast.WindowFuncPercentRank:
+		return buildPercenRank(ordinal, orderByCols)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -385,4 +387,11 @@ func buildNthValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// Already checked when building the function description.
 	nth, _, _ := expression.GetUint64FromConstant(aggFuncDesc.Args[1])
 	return &nthValue{baseAggFunc: base, tp: aggFuncDesc.RetTp, nth: nth}
+}
+
+func buildPercenRank(ordinal int, orderByCols []*expression.Column) AggFunc {
+	base := baseAggFunc{
+		ordinal: ordinal,
+	}
+	return &percentRank{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
 }
