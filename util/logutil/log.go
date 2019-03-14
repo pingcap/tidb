@@ -382,16 +382,3 @@ func WithConnID(ctx context.Context, connID uint32) context.Context {
 	}
 	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
 }
-
-// WithRecvTs attaches current packet received timestamp to context.
-// it's common that each SQL has a packet receive timestamp in MySQL Protocol,
-// so we can use recvTs to gather log for some sql request on one connection.
-func WithRecvTs(ctx context.Context, recvTs int64) context.Context {
-	var logger *zap.Logger
-	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
-		logger = ctxLogger
-	} else {
-		logger = zaplog.L()
-	}
-	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Int64("recvTs", recvTs)))
-}

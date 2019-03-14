@@ -92,7 +92,7 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
 	case ast.AggFuncGroupConcat:
 		a.typeInfer4GroupConcat(ctx)
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow,
-		ast.WindowFuncFirstValue, ast.WindowFuncLastValue:
+		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue:
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
@@ -100,6 +100,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4NumberFuncs()
 	case ast.WindowFuncCumeDist:
 		a.typeInfer4CumeDist()
+	case ast.WindowFuncPercentRank:
+		a.typeInfer4PercentRank()
 	default:
 		panic("unsupported agg function: " + a.Name)
 	}
@@ -198,6 +200,11 @@ func (a *baseFuncDesc) typeInfer4NumberFuncs() {
 func (a *baseFuncDesc) typeInfer4CumeDist() {
 	a.RetTp = types.NewFieldType(mysql.TypeDouble)
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
+}
+
+func (a *baseFuncDesc) typeInfer4PercentRank() {
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flag, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
 }
 
 // GetDefaultValue gets the default value when the function's input is null.
