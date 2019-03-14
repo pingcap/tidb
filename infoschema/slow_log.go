@@ -46,6 +46,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogDBStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogIndexIDsStr, mysql.TypeVarchar, 100, 0, nil, nil},
 	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeVarchar, 4096, 0, nil, nil},
 }
 
@@ -136,6 +137,7 @@ type slowQueryTuple struct {
 	db           string
 	indexNames   string
 	isInternal   bool
+	digest       string
 	sql          string
 }
 
@@ -212,6 +214,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.indexNames = value
 	case variable.SlowLogIsInternalStr:
 		st.isInternal = value == "true"
+	case variable.SlowLogDigestStr:
+		st.digest = value
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
 	}
@@ -238,6 +242,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewStringDatum(st.db))
 	record = append(record, types.NewStringDatum(st.indexNames))
 	record = append(record, types.NewDatum(st.isInternal))
+	record = append(record, types.NewStringDatum(st.digest))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
 }
