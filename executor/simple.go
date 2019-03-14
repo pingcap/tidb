@@ -32,8 +32,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // SimpleExec represents simple statement executor.
@@ -145,7 +146,7 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
-	log.Debugf("con:%d execute rollback statement", sessVars.ConnectionID)
+	logutil.Logger(context.Background()).Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
