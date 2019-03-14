@@ -1400,6 +1400,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	sc.OriginalSQL = s.Text()
 	vars.StmtCtx = sc
 	return
 }

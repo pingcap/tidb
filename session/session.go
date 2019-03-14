@@ -953,8 +953,6 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		}
 		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
 
-		s.sessionVars.StmtCtx.Normalized, s.sessionVars.StmtCtx.SQLDigest = parser.NormalizeDigest(stmtNode.Text())
-
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
 			return nil, errors.Trace(err)

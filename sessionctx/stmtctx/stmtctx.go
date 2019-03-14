@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -115,8 +116,21 @@ type StatementContext struct {
 	NowTs            time.Time
 	SysTs            time.Time
 	StmtType         string
-	Normalized       string
-	SQLDigest        string
+	OriginalSQL      string
+	digestMemo       struct {
+		sync.Once
+		normalized string
+		digest     string
+	}
+}
+
+// SQLDigest gets normalized and digest for provided sql.
+// it will cache result after first calling.
+func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
+	sc.digestMemo.Do(func() {
+		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
+	})
+	return sc.digestMemo.normalized, sc.digestMemo.digest
 }
 
 // AddAffectedRows adds affected rows.
