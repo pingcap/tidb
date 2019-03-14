@@ -2207,6 +2207,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select nth_value(a, 0) over() from t",
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
+		{
+			sql:    "select avg(a) over w from t window w as(partition by b)",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(partition by test.t.b))->Projection",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
