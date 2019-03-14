@@ -16,7 +16,6 @@ package domain
 import (
 	"context"
 	"crypto/tls"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"os"
 	"sync"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
