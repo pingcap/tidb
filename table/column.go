@@ -364,11 +364,11 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	// Check and get timestamp/datetime default value.
 	sc := ctx.GetSessionVars().StmtCtx
 	var needChangeTimeZone bool
-	originalTZ := sc.TimeZone
 	// If the column's default value is not ZeroDatetimeStr nor CurrentTimestamp, should use the time zone of the default value itself.
 	if col.Tp == mysql.TypeTimestamp {
 		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
 			needChangeTimeZone = true
+			originalTZ := sc.TimeZone
 			// For col.Version = 0, the timezone information of default value is already lost, so use the system timezone as the default value timezone.
 			sc.TimeZone = timeutil.SystemLocation()
 			if col.Version >= model.ColumnInfoVersion1 {
