@@ -1493,3 +1493,26 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		c.Assert(tbl.Columns[1].ToString(0), Equals, tests[i].hist)
 	}
 }
+
+func (s *testStatsSuite) TestLoadHistCorrelation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	h := s.do.StatsHandle()
+	origLease := h.Lease
+	h.Lease = time.Second
+	defer func() { h.Lease = origLease }()
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(c int)")
+	testKit.MustExec("insert into t values(1),(2),(3),(4),(5)")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t")
+	h.Clear()
+	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
+	result := testKit.MustQuery("show stats_histograms where Table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 0)
+	testKit.MustExec("explain select * from t where c = 1")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	result = testKit.MustQuery("show stats_histograms where Table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][9], Equals, "1")
+}

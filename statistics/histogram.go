@@ -301,7 +301,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	return
 }
 
-func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
+func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
@@ -309,6 +309,7 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 	}
 	bucketSize := len(rows)
 	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
+	hg.Correlation = corr
 	totalCount := int64(0)
 	for i := 0; i < bucketSize; i++ {
 		count := rows[i].GetInt64(0)
@@ -759,6 +760,21 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
+var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
+
+// IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
+// as need histogram.
+func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
+	if collPseudo && c.NotAccurate() {
+		return true
+	}
+	if c.NDV > 0 && c.Len() == 0 && sc != nil {
+		sc.SetHistogramsNotLoad()
+		histogramNeededColumns.insert(tableColumnID{tableID: c.PhysicalID, columnID: c.Info.ID})
+	}
+	return c.totalRowCount() == 0 || (c.NDV > 0 && c.Len() == 0)
+}
+
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
 	if val.IsNull() {
 		return float64(c.NullCount), nil
@@ -837,6 +853,11 @@ type Index struct {
 
 func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
+}
+
+// IsInvalid checks if this index is invalid.
+func (idx *Index) IsInvalid(collPseudo bool) bool {
+	return (collPseudo && idx.NotAccurate()) || idx.totalRowCount() == 0
 }
 
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) float64 {
