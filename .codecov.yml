@@ -1,8 +1,6 @@
 codecov:
   notify:
     require_ci_to_pass: yes
-  ci:
-    - internal.pingcap.net # add my custom jenkins server
 
 coverage:
   precision: 4
@@ -30,7 +28,6 @@ comment:
   layout: "header, diff"
   behavior: default
   require_changes: no
-
 
 ignore:
   - "LICENSES"
