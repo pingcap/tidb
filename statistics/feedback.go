@@ -974,7 +974,7 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 	isIndex := q.hist.isIndexHist()
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
-		logutil.Logger(context.Background()).Debug("decoding to ranges failed", zap.Error(err))
+		logutil.Logger(context.Background()).Debug("decode to ranges failed", zap.Error(err))
 		return
 	}
 	actual := make([]int64, 0, len(q.feedback))
@@ -1026,7 +1026,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 	}
 	ranges, err := q.DecodeToRanges(true)
 	if err != nil {
-		logutil.Logger(context.Background()).Debug("decoding feedback ranges fail", zap.Error(err))
+		logutil.Logger(context.Background()).Debug("decode feedback ranges fail", zap.Error(err))
 		return nil
 	}
 	for i, ran := range ranges {
@@ -1038,7 +1038,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 
 		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("dncoding keys fail", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("encode keys fail", zap.Error(err))
 			continue
 		}
 		equalityCount := float64(idx.CMSketch.QueryBytes(bytes)) * idx.getIncreaseFactor(t.Count)
@@ -1060,7 +1060,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 			continue
 		}
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("getting row count by ranges fail", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("get row count by ranges fail", zap.Error(err))
 			continue
 		}
 
@@ -1069,7 +1069,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 		q.feedback[i] = feedback{lower: &value, upper: &value, count: int64(equalityCount)}
 		err = rangeFB.dumpRangeFeedback(sc, h, &rang, rangeCount)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("dumping range feedback fail", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("dump range feedback fail", zap.Error(err))
 			continue
 		}
 	}
@@ -1171,7 +1171,7 @@ func getMaxValue(ft *types.FieldType) (max types.Datum) {
 		bytes, err := codec.EncodeKey(nil, nil, val)
 		// should not happen
 		if err != nil {
-			logutil.Logger(context.Background()).Error("encoding key fail", zap.Error(err))
+			logutil.Logger(context.Background()).Error("encode key fail", zap.Error(err))
 		}
 		max.SetBytes(bytes)
 	case mysql.TypeNewDecimal:
@@ -1205,7 +1205,7 @@ func getMinValue(ft *types.FieldType) (min types.Datum) {
 		bytes, err := codec.EncodeKey(nil, nil, val)
 		// should not happen
 		if err != nil {
-			logutil.Logger(context.Background()).Error("encoding key fail", zap.Error(err))
+			logutil.Logger(context.Background()).Error("encode key fail", zap.Error(err))
 		}
 		min.SetBytes(bytes)
 	case mysql.TypeNewDecimal:
