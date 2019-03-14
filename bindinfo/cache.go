@@ -76,9 +76,9 @@ type bindRecord struct {
 // NewBindCacheUpdater creates a new BindCacheUpdater.
 func NewBindCacheUpdater(ctx sessionctx.Context, handler *Handle, parser *parser.Parser) *BindCacheUpdater {
 	return &BindCacheUpdater{
-		globalHandle: handler,
-		parser:       parser,
 		ctx:          ctx,
+		parser:       parser,
+		globalHandle: handler,
 	}
 }
 

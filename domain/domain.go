@@ -16,7 +16,6 @@ package domain
 import (
 	"context"
 	"crypto/tls"
-	"go.uber.org/zap"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
@@ -804,7 +804,8 @@ func (do *Domain) BindHandler() *bindinfo.Handle {
 	return do.bindHandle
 }
 
-// LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should be called only once in BootstrapSession.
+// LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
+// be called only once in BootstrapSession.
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.bindHandle = bindinfo.NewHandle()
