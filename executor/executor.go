@@ -618,6 +618,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		} else {
 			req.AppendInt64(11, 1)
 		}
+		req.AppendString(12, slow.Digest)
 		e.cursor++
 	}
 	return nil
@@ -1398,6 +1399,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if s != nil {
+		// execute missed stmtID uses empty sql
+		sc.OriginalSQL = s.Text()
 	}
 	vars.StmtCtx = sc
 	return
