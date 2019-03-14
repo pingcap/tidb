@@ -523,7 +523,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				}
 				e.removeCnt++
 				if e.removeCnt%e.batchSize == 0 {
-					logutil.Logger(context.Background()).Info("cleaning up dangling index", zap.String("table", e.table.Meta().Name.String()),
+					logutil.Logger(context.Background()).Info("clean up dangling index", zap.String("table", e.table.Meta().Name.String()),
 						zap.String("index", e.index.Meta().Name.String()), zap.Uint64("count", e.removeCnt))
 				}
 			}

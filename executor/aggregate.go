@@ -473,7 +473,7 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 		partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, []byte(groupKey), w.partialResultMap)
 		for i, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i], result); err != nil {
-				logutil.Logger(context.Background()).Error("HashAggFinalWorker append final result to Chunk failed", zap.Error(err))
+				logutil.Logger(context.Background()).Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
 			}
 		}
 		if len(w.aggFuncs) == 0 {
