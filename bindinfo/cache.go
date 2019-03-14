@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -40,7 +39,7 @@ type bindMeta struct {
 	ast ast.StmtNode //ast will be used to do query sql bind check
 }
 
-// cache is a k-v map, key is original sql, value is a slice of bindRecords.
+// cache is a k-v map, key is original sql, value is a slice of bindMeta.
 type cache map[string][]*bindMeta
 
 // Handle holds an atomic cache.
@@ -49,7 +48,9 @@ type Handle struct {
 }
 
 // BindCacheUpdater is used to update the global cache.
-// BindCacheUpdater will update the bind cache per 3 seconds in domain gorountine loop. When the tidb server first startup, the updater will load all bind info in memory; then load diff bind info pre 3 second.
+// BindCacheUpdater will update the bind cache per 3 seconds in domain
+// gorountine loop. When the tidb server first startup, the updater will load
+// all bind info into memory; then load diff bind info per 3 second.
 type BindCacheUpdater struct {
 	ctx sessionctx.Context
 
@@ -62,8 +63,9 @@ type bindRecord struct {
 	OriginalSQL string
 	BindSQL     string
 	Db          string
-	//   deleted: bindRecord has been marked as deleted status.
-	//   using: bindRecord is in using status.
+	// Status represents the status of the binding. It can only be one of the following values:
+	// 1. deleted: bindRecord is deleted, can not be used anymore.
+	// 2. using: bindRecord is in the normal active mode.
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
@@ -80,10 +82,10 @@ func NewBindCacheUpdater(ctx sessionctx.Context, handler *Handle, parser *parser
 	}
 }
 
-// NewHandler creates a Handle with a cache.
-func NewHandler() *Handle {
-	handler := &Handle{}
-	return handler
+// NewHandle creates a Handle with a cache.
+func NewHandle() *Handle {
+	handle := &Handle{}
+	return handle
 }
 
 // Get gets cache from a Handle.
@@ -125,7 +127,8 @@ func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
 	}
 }
 
-// Update updates the BindCacheUpdater's cache. The fullLoad is true when tidb first startup, otherwise it is false.
+// Update updates the BindCacheUpdater's cache.
+// The `fullLoad` is true only when tidb first startup, otherwise it is false.
 func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	var sql string
 	bc := bindCacheUpdater.globalHandle.Get()
@@ -179,7 +182,6 @@ func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) err
 	}
 	stmtNodes, _, err := sparser.Parse(newBindRecord.BindSQL, newBindRecord.Charset, newBindRecord.Collation)
 	if err != nil {
-		log.Warnf("parse error:\n%v\n%s", err, newBindRecord.BindSQL)
 		return errors.Trace(err)
 	}
 	newNode := &bindMeta{

@@ -23,7 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
@@ -804,7 +804,7 @@ func (do *Domain) BindHandler() *bindinfo.Handle {
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should be called only once in BootstrapSession.
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewHandler()
+	do.bindHandle = bindinfo.NewHandle()
 
 	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandler(), parser)
 	err := bindCacheUpdater.Update(true)

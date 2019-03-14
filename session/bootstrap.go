@@ -225,7 +225,7 @@ const (
 		charset text NOT NULL,
 		collation text NOT NULL,
 		INDEX time_index(update_time)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`  // tidb need select bind info with tidb's lastUpdateTime, so add a time index
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`  // This index is used to accelerate the speed when querying with last update time
 
 	// CreateRoleEdgesTable stores the role and user relationship information.
 	CreateRoleEdgesTable = `CREATE TABLE IF NOT EXISTS mysql.role_edges (
