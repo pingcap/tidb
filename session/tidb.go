@@ -207,9 +207,9 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	sessVars := se.GetSessionVars()
 	// All the history should be added here.
 	sessVars.TxnCtx.StatementCount++
-	isReadOnly, err := s.IsReadOnly(sessVars)
-	if err != nil {
-		return nil, err
+	isReadOnly, errNotFound := s.IsReadOnly(sessVars)
+	if errNotFound != nil {
+		log.Error(errNotFound)
 	}
 	if !isReadOnly {
 		if err == nil {
