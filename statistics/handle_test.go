@@ -472,6 +472,14 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(result.Rows()[0][9], Equals, "0")
 	c.Assert(result.Rows()[1][9], Equals, "-0.942857")
 
+	testKit.MustExec("truncate table t")
+	testKit.MustExec("insert into t values (1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1),(11,1),(12,1),(13,1),(14,1),(15,1),(16,1),(17,1),(18,1),(19,1),(20,2),(21,2),(22,2),(23,2),(24,2),(25,2)")
+	testKit.MustExec("analyze table t")
+	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][9], Equals, "0")
+	c.Assert(result.Rows()[1][9], Equals, "1")
+
 	testKit.MustExec("drop table t")
 	testKit.MustExec("create table t(c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1,1),(2,7),(3,12),(4,20),(5,21),(8,18)")

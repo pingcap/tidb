@@ -301,6 +301,44 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			continue
 		}
 
+		// delete relationship from mysql.role_edges
+		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE TO_HOST = '%s' and TO_USER = '%s';`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
+		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE FROM_HOST = '%s' and FROM_USER = '%s';`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
+		// delete relationship from mysql.default_roles
+		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE DEFAULT_ROLE_HOST = '%s' and DEFAULT_ROLE_USER = '%s';`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
+		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE HOST = '%s' and USER = '%s';`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
 		//TODO: need delete columns_priv once we implement columns_priv functionality.
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
 			failedUsers = append(failedUsers, user.String())
