@@ -1,6 +1,8 @@
 codecov:
   notify:
     require_ci_to_pass: yes
+  ci:
+    - !Travis-ci
 
 coverage:
   precision: 4
