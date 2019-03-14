@@ -316,21 +316,15 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
-		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema &&
-			job.Type != model.ActionRebaseAutoID && job.Type != model.ActionShardRowID && job.Type != model.ActionModifyColumn && job.Type != model.ActionAddForeignKey && job.Type != model.ActionDropForeignKey {
-			// If the schema state is none and is not equal to model.JobStateDone, we only test the job is finished.
-			// Unless the job is model.ActionCreateTable, model.ActionCreateSchema, model.ActionRebaseAutoID, we do the cancel anyway.
-		} else {
-			errs, err := admin.CancelJobs(txn, test.jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return checkErr
-			}
-			// It only tests cancel one DDL job.
-			if !terror.ErrorEqual(errs[0], test.cancelRetErrs[0]) {
-				checkErr = errors.Trace(errs[0])
-				return checkErr
-			}
+		errs, err := admin.CancelJobs(txn, test.jobIDs)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return checkErr
+		}
+		// It only tests cancel one DDL job.
+		if !terror.ErrorEqual(errs[0], test.cancelRetErrs[0]) {
+			checkErr = errors.Trace(errs[0])
+			return checkErr
 		}
 	}
 	return checkErr
@@ -372,7 +366,16 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 19}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 20)}, cancelState: model.StatePublic},
 		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 21}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 20)}, cancelState: model.StatePublic},
+		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 22}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 22)}, cancelState: model.StatePublic},
+
+		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 23}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 24}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 24)}, cancelState: model.StatePublic},
+
+		{act: model.ActionModifyTableCharsetAndCollate, jobIDs: []int64{firstID + 25}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifyTableCharsetAndCollate, jobIDs: []int64{firstID + 26}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 26)}, cancelState: model.StatePublic},
+
+		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 27}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 28}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 28)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -421,12 +424,14 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	defer d.Stop()
 	dbInfo := testSchemaInfo(c, d, "test_cancel_job")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
-
+	// create a partition table.
+	partitionTblInfo := testTableInfoWithPartition(c, d, "t_partition", 5)
 	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int);
 	tblInfo := testTableInfo(c, d, "t", 5)
 	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
+	testCreateTable(c, ctx, d, dbInfo, partitionTblInfo)
 	tableAutoID := int64(100)
 	shardRowIDBits := uint64(5)
 	tblInfo.AutoIncID = tableAutoID
@@ -638,6 +643,53 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(len(changedTable.Meta().ForeignKeys), Equals, 0)
+
+	// test rename table failed caused by canceled.
+	test = &tests[20]
+	renameTableArgs := []interface{}{dbInfo.ID, model.NewCIStr("t2")}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, renameTableArgs, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Name.L, Equals, "t")
+
+	// test rename table successful.
+	test = &tests[21]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, renameTableArgs)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Name.L, Equals, "t2")
+
+	// test modify table charset failed caused by canceled.
+	test = &tests[22]
+	modifyTableCharsetArgs := []interface{}{"utf8mb4", "utf8mb4_bin"}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyTableCharsetArgs, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Charset, Equals, "utf8")
+	c.Assert(changedTable.Meta().Collate, Equals, "utf8_bin")
+
+	// test modify table charset successfully.
+	test = &tests[23]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyTableCharsetArgs)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(changedTable.Meta().Collate, Equals, "utf8mb4_bin")
+
+	// test truncate table partition failed caused by canceled.
+	test = &tests[24]
+	truncateTblPartitionArgs := []interface{}{partitionTblInfo.Partition.Definitions[0].ID}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, partitionTblInfo.ID, test.act, truncateTblPartitionArgs, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
+	c.Assert(changedTable.Meta().Partition.Definitions[0].ID == partitionTblInfo.Partition.Definitions[0].ID, IsTrue)
+
+	// test truncate table partition charset successfully.
+	test = &tests[25]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, partitionTblInfo.ID, test.act, truncateTblPartitionArgs)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
+	c.Assert(changedTable.Meta().Partition.Definitions[0].ID == partitionTblInfo.Partition.Definitions[0].ID, IsFalse)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

@@ -268,7 +268,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackDropIndex(t, job)
 	case model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionModifyColumn, model.ActionAddForeignKey,
-		model.ActionDropForeignKey:
+		model.ActionDropForeignKey, model.ActionRenameTable,
+		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition:
 		ver, err = cancelOnlyNotHandledJob(job)
 	case model.ActionDropTable, model.ActionDropSchema:
 		job.State = model.JobStateRollingback
