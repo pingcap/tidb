@@ -100,6 +100,10 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4NumberFuncs()
 	case ast.WindowFuncCumeDist:
 		a.typeInfer4CumeDist()
+	case ast.WindowFuncPercentRank:
+		a.typeInfer4PercentRank()
+	case ast.WindowFuncLead, ast.WindowFuncLag:
+		a.typeInfer4LeadLag(ctx)
 	default:
 		panic("unsupported agg function: " + a.Name)
 	}
@@ -200,6 +204,20 @@ func (a *baseFuncDesc) typeInfer4CumeDist() {
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
 }
 
+func (a *baseFuncDesc) typeInfer4PercentRank() {
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flag, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
+}
+
+func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
+	if len(a.Args) <= 2 {
+		a.typeInfer4MaxMin(ctx)
+	} else {
+		// Merge the type of first and third argument.
+		a.RetTp = expression.InferType4ControlFuncs(a.Args[0].GetType(), a.Args[2].GetType())
+	}
+}
+
 // GetDefaultValue gets the default value when the function's input is null.
 // According to MySQL, default values of the function are listed as follows:
 // e.g.
@@ -258,6 +276,10 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		panic("should never happen in baseFuncDesc.WrapCastForAggArgs")
 	}
 	for i := range a.Args {
+		// Do not cast the second args of these functions, as they are simply non-negative numbers.
+		if i == 1 && (a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag || a.Name == ast.WindowFuncNthValue) {
+			continue
+		}
 		a.Args[i] = castFunc(ctx, a.Args[i])
 		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
 			continue
