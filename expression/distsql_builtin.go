@@ -420,6 +420,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinJSONUnquoteSig{base}
 	case tipb.ScalarFuncSig_JsonArraySig:
 		f = &builtinJSONArraySig{base}
+	case tipb.ScalarFuncSig_JsonArrayAppendSig:
+		f = &builtinJSONArrayAppendSig{base}
 	case tipb.ScalarFuncSig_JsonObjectSig:
 		f = &builtinJSONObjectSig{base}
 	case tipb.ScalarFuncSig_JsonExtractSig:
