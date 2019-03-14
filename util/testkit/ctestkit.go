@@ -78,9 +78,7 @@ func (tk *CTestKit) OpenSessionWithDB(ctx context.Context, db string) context.Co
 // CloseSession closes exists session from ctx.
 func (tk *CTestKit) CloseSession(ctx context.Context) {
 	se := getSession(ctx)
-	if se == nil {
-		return
-	}
+	tk.c.Assert(se, check.NotNil)
 	se.Close()
 }
 
@@ -94,19 +92,19 @@ func (tk *CTestKit) Exec(ctx context.Context, sql string, args ...interface{}) (
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
 		}
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	stmtID, _, _, err := getSession(ctx).PrepareStmt(sql)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	rs, err := getSession(ctx).ExecutePreparedStmt(ctx, stmtID, args...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	err = getSession(ctx).DropPreparedStmt(stmtID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return rs, nil
 }
