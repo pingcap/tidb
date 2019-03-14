@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
-	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
+	"go.uber.org/zap"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
@@ -317,9 +317,9 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 }
 
 func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
+	err := errors.Errorf("%v", r)
 	output <- &AfFinalResult{err: errors.Errorf("%v", r)}
-	buf := util.GetStack()
-	log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
+	logutil.Logger(context.Background()).Error("parallel hash aggregation panicked", zap.Error(err))
 }
 
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
@@ -473,7 +473,7 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 		partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, []byte(groupKey), w.partialResultMap)
 		for i, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i], result); err != nil {
-				log.Error(errors.ErrorStack(err))
+				logutil.Logger(context.Background()).Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
 			}
 		}
 		if len(w.aggFuncs) == 0 {
