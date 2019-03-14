@@ -120,7 +120,7 @@ upload-coverage: SHELL:=/bin/bash
 upload-coverage:
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	mv overalls.coverprofile coverage.txt
-	bash <(curl -s https://codecov.io/bash)
+	curl -s https://codecov.io/bash | bash
 endif
 
 gotest: gofail-enable
