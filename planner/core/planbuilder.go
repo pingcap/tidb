@@ -212,8 +212,9 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
-		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
-		*ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt, *ast.SetRoleStmt:
+		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
+		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
+		*ast.GrantRoleStmt, *ast.SetRoleStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
@@ -1042,6 +1043,9 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
+	case *ast.GrantRoleStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("GRANT ROLE")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.GrantPriv, "", "", "", err)
 	case *ast.RevokeStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.KillStmt:
