@@ -136,7 +136,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 	select {
 	case err := <-w.reorgCtx.doneCh:
 		rowCount, _ := w.reorgCtx.getRowCountAndHandle()
-		log.Info("[ddl] run reorg job done", zap.Int64("backRowCount", rowCount))
+		log.Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		w.reorgCtx.clean()
