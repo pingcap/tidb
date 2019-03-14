@@ -508,7 +508,7 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 22}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenByArgs(firstID + 22)}, cancelState: model.StatePublic},
 
 		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 23}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 24}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 24)}, cancelState: model.StatePublic},
+		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 24}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenByArgs(firstID + 24)}, cancelState: model.StatePublic},
 	}
 
 	return tests
