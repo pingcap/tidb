@@ -271,7 +271,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 	}
 
 	stmt := &ExecStmt{
-		InfoSchema: GetInfoSchema(ctx),
+		InfoSchema: is,
 		Plan:       execPlan,
 		StmtNode:   execStmt,
 		Ctx:        ctx,

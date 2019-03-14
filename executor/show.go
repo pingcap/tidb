@@ -249,7 +249,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 			pi.User,
 			pi.Host,
 			pi.DB,
-			pi.Command,
+			mysql.Command2Str[pi.Command],
 			uint64(time.Since(pi.Time) / time.Second),
 			fmt.Sprintf("%d", pi.State),
 			info,

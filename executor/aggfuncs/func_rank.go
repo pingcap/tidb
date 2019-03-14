@@ -14,15 +14,15 @@
 package aggfuncs
 
 import (
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 type rank struct {
 	baseAggFunc
-	isDense  bool
-	cmpFuncs []chunk.CompareFunc
-	colIdx   []int
+	isDense bool
+	rowComparer
 }
 
 type partialResult4Rank struct {
@@ -48,16 +48,6 @@ func (r *rank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.
 	return nil
 }
 
-func (r *rank) compareRows(prev, curr chunk.Row) int {
-	for i, idx := range r.colIdx {
-		res := r.cmpFuncs[i](prev, idx, curr, idx)
-		if res != 0 {
-			return res
-		}
-	}
-	return 0
-}
-
 func (r *rank) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4Rank)(pr)
 	p.curIdx++
@@ -77,4 +67,30 @@ func (r *rank) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult
 	}
 	chk.AppendInt64(r.ordinal, p.lastRank)
 	return nil
+}
+
+type rowComparer struct {
+	cmpFuncs []chunk.CompareFunc
+	colIdx   []int
+}
+
+func buildRowComparer(cols []*expression.Column) rowComparer {
+	rc := rowComparer{}
+	rc.colIdx = make([]int, 0, len(cols))
+	rc.cmpFuncs = make([]chunk.CompareFunc, 0, len(cols))
+	for _, col := range cols {
+		rc.cmpFuncs = append(rc.cmpFuncs, chunk.GetCompareFunc(col.RetType))
+		rc.colIdx = append(rc.colIdx, col.Index)
+	}
+	return rc
+}
+
+func (rc *rowComparer) compareRows(prev, curr chunk.Row) int {
+	for i, idx := range rc.colIdx {
+		res := rc.cmpFuncs[i](prev, idx, curr, idx)
+		if res != 0 {
+			return res
+		}
+	}
+	return 0
 }
