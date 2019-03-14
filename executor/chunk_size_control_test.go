@@ -158,6 +158,7 @@ func (s *testChunkSizeControlSuite) getKit(name string) (
 
 func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 	_, dom, tk, client, cluster := s.getKit("Limit&TableScan")
+	defer client.Close()
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tbl.Meta().ID
@@ -188,6 +189,7 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 
 func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
 	_, dom, tk, client, cluster := s.getKit("Limit&IndexScan")
+	defer client.Close()
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tbl.Meta().ID
