@@ -71,6 +71,8 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 		return buildLastValue(windowFuncDesc, ordinal)
 	case ast.WindowFuncCumeDist:
 		return buildCumeDist(ordinal, orderByCols)
+	case ast.WindowFuncNthValue:
+		return buildNthValue(windowFuncDesc, ordinal)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -373,4 +375,14 @@ func buildCumeDist(ordinal int, orderByCols []*expression.Column) AggFunc {
 	}
 	r := &cumeDist{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
 	return r
+}
+
+func buildNthValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	// Already checked when building the function description.
+	nth, _, _ := expression.GetUint64FromConstant(aggFuncDesc.Args[1])
+	return &nthValue{baseAggFunc: base, tp: aggFuncDesc.RetTp, nth: nth}
 }

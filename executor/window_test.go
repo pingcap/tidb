@@ -110,4 +110,13 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 1 0.5", "1 2 0.5", "2 1 1", "2 2 1"))
 	result = tk.MustQuery("select a, b, cume_dist() over(order by a, b) from t")
 	result.Check(testkit.Rows("1 1 0.25", "1 2 0.5", "2 1 0.75", "2 2 1"))
+
+	result = tk.MustQuery("select a, nth_value(a, null) over() from t")
+	result.Check(testkit.Rows("1 <nil>", "1 <nil>", "2 <nil>", "2 <nil>"))
+	result = tk.MustQuery("select a, nth_value(a, 1) over() from t")
+	result.Check(testkit.Rows("1 1", "1 1", "2 1", "2 1"))
+	result = tk.MustQuery("select a, nth_value(a, 4) over() from t")
+	result.Check(testkit.Rows("1 2", "1 2", "2 2", "2 2"))
+	result = tk.MustQuery("select a, nth_value(a, 5) over() from t")
+	result.Check(testkit.Rows("1 <nil>", "1 <nil>", "2 <nil>", "2 <nil>"))
 }
