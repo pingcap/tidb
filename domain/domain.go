@@ -112,7 +112,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	}
 	if ok {
 		log.Info("diff load InfoSchema from version failed.", zap.Int64("usedSchemaVersion", usedSchemaVersion),
-			zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Any("time", time.Since(startTime)), zap.Any("tblIDs", tblIDs))
+			zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Duration("time", time.Since(startTime)), zap.Int64s("tblIDs", tblIDs))
 		return latestSchemaVersion, tblIDs, fullLoad, nil
 	}
 
@@ -127,7 +127,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		return 0, nil, fullLoad, errors.Trace(err)
 	}
 	log.Info("full load InfoSchema failed", zap.Int64("usedSchemaVersion", usedSchemaVersion),
-		zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Any("time", time.Since(startTime)))
+		zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Duration("time", time.Since(startTime)))
 	newISBuilder.Build()
 	return latestSchemaVersion, nil, fullLoad, nil
 }
@@ -342,7 +342,7 @@ func (do *Domain) Reload() error {
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
 	// some query maybe responded by ErrInfoSchemaExpired error.
 	if sub > (lease/2) && lease > 0 {
-		log.Warn("loading schema takes a long time.", zap.Any("time", sub))
+		log.Warn("loading schema takes a long time.", zap.Duration("time", sub))
 	}
 
 	return nil
@@ -884,7 +884,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	if err != nil {
 		log.Debug("init stats info failed.", zap.Error(err))
 	} else {
-		log.Info("init stats info time.", zap.Any("time", time.Since(t)))
+		log.Info("init stats info time.", zap.Duration("time", time.Since(t)))
 	}
 	defer func() {
 		do.SetStatsUpdating(false)
