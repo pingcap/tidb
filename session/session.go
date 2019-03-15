@@ -580,13 +580,13 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
 				logutil.Logger(ctx).Warn("Retrying",
-					zap.Int64("schema_ver", schemaVersion),
+					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retry_cnt", retryCnt),
 					zap.Int("query_num", i),
 					zap.String("sql", sqlForLog(st.OriginText())+sessVars.GetExecuteArgumentsInfo()))
 			} else {
 				logutil.Logger(ctx).Warn("Retrying",
-					zap.Int64("schema_ver", schemaVersion),
+					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retry_cnt", retryCnt),
 					zap.Int("query_num", i))
 			}
@@ -601,8 +601,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 		}
 		logutil.Logger(ctx).Warn("Transaction association",
-			zap.Uint64("retrying_txn_start_ts", s.GetSessionVars().TxnCtx.StartTS),
-			zap.Uint64("original_txn_start_ts", orgStartTS))
+			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
+			zap.Uint64("original txnStartTS", orgStartTS))
 		if hook := ctx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
 			hook.(func())()
@@ -911,7 +911,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("Run statement error",
-				zap.Int64("schema_ver", s.sessionVars.TxnCtx.SchemaVersion),
+				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
@@ -1136,7 +1136,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		}
 		vars := s.GetSessionVars()
 		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
-			zap.Int64("schema_ver", vars.TxnCtx.SchemaVersion),
+			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("start_ts", txnID))
 	}
 
@@ -1669,13 +1669,13 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
 			logutil.Logger(context.Background()).Info("[CRUCIAL OPERATION]",
 				zap.Uint64("con", vars.ConnectionID),
-				zap.Int64("schema_ver", schemaVersion),
+				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("secure text", ss.SecureText()),
 				zap.Stringer("user", user))
 		} else {
 			logutil.Logger(context.Background()).Info("[CRUCIAL OPERATION]",
 				zap.Uint64("con", vars.ConnectionID),
-				zap.Int64("schema_ver", schemaVersion),
+				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
 				zap.String("sql", stmt.Text()),
 				zap.Stringer("user", user))
@@ -1691,8 +1691,8 @@ func logQuery(query string, vars *variable.SessionVars) {
 		logutil.Logger(context.Background()).Info("[GENERAL_LOG]",
 			zap.Uint64("con", vars.ConnectionID),
 			zap.Stringer("user", vars.User),
-			zap.Int64("schema_ver", vars.TxnCtx.SchemaVersion),
-			zap.Uint64("txn_start_ts", vars.TxnCtx.StartTS),
+			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
+			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
 			zap.String("sql", query+vars.GetExecuteArgumentsInfo()))
 	}
