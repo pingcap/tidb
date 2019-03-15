@@ -469,7 +469,7 @@ func upgrade(s Session) {
 	}
 
 	if ver < version28 {
-		upgradeToVer27(s)
+		upgradeToVer28(s)
 	}
 
 	updateBootstrapVer(s)
