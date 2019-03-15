@@ -16,6 +16,7 @@ package executor
 import (
 	contxt "context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -62,11 +63,12 @@ type outerMergeCtx struct {
 }
 
 type innerMergeCtx struct {
-	readerBuilder *dataReaderBuilder
-	rowTypes      []*types.FieldType
-	joinKeys      []*expression.Column
-	keyCols       []int
-	compareFuncs  []expression.CompareFunc
+	readerBuilder  *dataReaderBuilder
+	rowTypes       []*types.FieldType
+	joinKeys       []*expression.Column
+	keyCols        []int
+	compareFuncs   []expression.CompareFunc
+	keepOuterOrder bool
 }
 
 type lookUpMergeJoinTask struct {
@@ -394,6 +396,13 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if imw.innerMergeCtx.keepOuterOrder == false {
+		sc := imw.ctx.GetSessionVars().StmtCtx
+		sort.Slice(dLookUpKeys, func(i, j int) bool {
+			cmp := compareRow(sc, dLookUpKeys[i], dLookUpKeys[j])
+			return cmp < 0
+		})
 	}
 	dLookUpKeys = imw.dedupDatumLookUpKeys(dLookUpKeys)
 	err = imw.fetchInnerResults(ctx, task, dLookUpKeys)

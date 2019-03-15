@@ -1560,10 +1560,10 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	// If the inner join keys are the suffix set of the index, then return the IndexLookUpMergeJoin
 	var isIndexScan bool
 	var is *plannercore.PhysicalIndexScan
-	if ir, ok := innerPlan.(*plannercore.PhysicalIndexReader); ok && v.KeepOuterOrder {
+	if ir, ok := innerPlan.(*plannercore.PhysicalIndexReader); ok {
 		is, isIndexScan = ir.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	}
-	if ilr, ok := innerPlan.(*plannercore.PhysicalIndexLookUpReader); ok && v.KeepOuterOrder {
+	if ilr, ok := innerPlan.(*plannercore.PhysicalIndexLookUpReader); ok {
 		is, isIndexScan = ilr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	}
 	if isIndexScan {
@@ -1591,11 +1591,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 						keyCols:  outerKeyCols,
 					},
 					innerMergeCtx: innerMergeCtx{
-						readerBuilder: &dataReaderBuilder{innerPlan, b},
-						rowTypes:      innerTypes,
-						joinKeys:      v.InnerJoinKeys,
-						keyCols:       innerKeyCols,
-						compareFuncs:  compareFuncs,
+						readerBuilder:  &dataReaderBuilder{innerPlan, b},
+						rowTypes:       innerTypes,
+						joinKeys:       v.InnerJoinKeys,
+						keyCols:        innerKeyCols,
+						compareFuncs:   compareFuncs,
+						keepOuterOrder: v.KeepOuterOrder,
 					},
 					workerWg:      new(sync.WaitGroup),
 					joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
