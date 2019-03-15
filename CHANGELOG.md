@@ -16,7 +16,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Fix the issue that setting variables may lead to panic [#9539](https://github.com/pingcap/tidb/pull/9539)
 
 ### DDL
-* Fix the issue that the `Create Table Like` statement  causes panic in some cases [#9652](https://github.com/pingcap/tidb/pull/9652)
+* Fix the issue that the `Create Table Like` statement causes panic in some cases [#9652](https://github.com/pingcap/tidb/pull/9652)
 * Enable the `AutoSync` feature of etcd clients to avoid connection issues between TiDB and etcd in some cases [#9600](https://github.com/pingcap/tidb/pull/9600)
 
 
