@@ -445,7 +445,11 @@ func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
 	if job.DependencyID != noneDependencyJob {
 		intervalCnt := int(3 * time.Second / waitDependencyJobInterval)
 		if *cnt%intervalCnt == 0 {
-			logutil.Logger(context.Background()).Info("[ddl] DDL job need to wait dependent job, sleeps a while, then retries it.", zap.String("worker", w.String()), zap.Int64("jobID", job.ID), zap.Int64("dependentJobID", job.DependencyID), zap.Duration("waitTime", waitDependencyJobInterval))
+			logutil.Logger(context.Background()).Info("[ddl] DDL job need to wait dependent job, sleeps a while, then retries it.", 
+						zap.String("worker", w.String()), 
+						zap.Int64("jobID", job.ID), 
+						zap.Int64("dependentJobID", job.DependencyID), 
+						zap.Duration("waitTime", waitDependencyJobInterval))
 		}
 		time.Sleep(waitDependencyJobInterval)
 		*cnt++
