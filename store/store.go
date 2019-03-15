@@ -14,13 +14,14 @@
 package store
 
 import (
+	"context"
 	"net/url"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 var stores = make(map[string]kv.Driver)
@@ -64,7 +65,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 
 	var s kv.Storage
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
-		log.Info("new store")
+		logutil.Logger(context.Background()).Info("new store")
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})

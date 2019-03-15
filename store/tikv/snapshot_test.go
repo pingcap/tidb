@@ -20,8 +20,8 @@ import (
 
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -100,7 +100,7 @@ func (s *testSnapshotSuite) deleteKeys(keys []kv.Key, c *C) {
 
 func (s *testSnapshotSuite) TestBatchGet(c *C) {
 	for _, rowNum := range s.rowNums {
-		log.Debug("Test BatchGet",
+		logutil.Logger(context.Background()).Debug("Test BatchGet",
 			zap.Int("length", rowNum))
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
@@ -119,7 +119,7 @@ func (s *testSnapshotSuite) TestBatchGet(c *C) {
 
 func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
 	for _, rowNum := range s.rowNums {
-		log.Debug("Test BatchGetNotExist",
+		logutil.Logger(context.Background()).Debug("Test BatchGetNotExist",
 			zap.Int("length", rowNum))
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {

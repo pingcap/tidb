@@ -19,10 +19,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -106,7 +106,7 @@ func (o *pdOracle) getTimestamp(ctx context.Context) (uint64, error) {
 	}
 	dist := time.Since(now)
 	if dist > slowDist {
-		log.Warn("get timestamp too slow",
+		logutil.Logger(ctx).Warn("get timestamp too slow",
 			zap.Duration("cost time", dist))
 	}
 	return oracle.ComposeTS(physical, logical), nil
@@ -126,7 +126,7 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 		case <-ticker.C:
 			ts, err := o.getTimestamp(ctx)
 			if err != nil {
-				log.Error("updateTS error", zap.Error(err))
+				logutil.Logger(ctx).Error("updateTS error", zap.Error(err))
 				break
 			}
 			o.setLastTS(ts)

@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -157,8 +156,8 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	for _, pair := range txn.assertions {
 		mutation, ok := mutations[string(pair.key)]
 		if !ok {
-			log.Error("ASSERTION FAIL!!! assertion exists but no mutation?",
-				zap.String("assertion", pair.String()))
+			logutil.Logger(context.Background()).Error("ASSERTION FAIL!!! assertion exists but no mutation?",
+				zap.Stringer("assertion", pair))
 			continue
 		}
 		// Only apply the first assertion!
@@ -184,7 +183,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	const logSize = 4 * 1024 * 1024 // 4MB
 	if len(keys) > logEntryCount || size > logSize {
 		tableID := tablecodec.DecodeTableID(keys[0])
-		log.Info("[BIG_TXN]",
+		logutil.Logger(context.Background()).Info("[BIG_TXN]",
 			zap.Uint64("con", connID),
 			zap.Int64("table id", tableID),
 			zap.Int("size", size),
@@ -201,7 +200,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	// Sanity check for startTS.
 	if txn.StartTS() == math.MaxUint64 {
 		err = errors.Errorf("try to commit with invalid startTS: %d", txn.StartTS())
-		log.Error("commit failed",
+		logutil.Logger(context.Background()).Error("commit failed",
 			zap.Uint64("con", connID),
 			zap.Error(err))
 		return nil, errors.Trace(err)
@@ -300,9 +299,9 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		go func() {
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
-				log.Debug("2PC async doActionOnBatches",
+				logutil.Logger(context.Background()).Debug("2PC async doActionOnBatches",
 					zap.Uint64("con", c.connID),
-					zap.String("action type", action.String()),
+					zap.Stringer("action type", action),
 					zap.Error(e))
 				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
 			}
@@ -330,9 +329,9 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	if len(batches) == 1 {
 		e := singleBatchActionFunc(bo, batches[0])
 		if e != nil {
-			log.Debug("2PC doActionOnBatches failed",
+			logutil.Logger(context.Background()).Debug("2PC doActionOnBatches failed",
 				zap.Uint64("con", c.connID),
-				zap.String("action type", action.String()),
+				zap.Stringer("action type", action),
 				zap.Error(e),
 				zap.Uint64("start ts", c.startTS))
 		}
@@ -373,16 +372,16 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	var err error
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			log.Debug("2PC doActionOnBatches failed",
+			logutil.Logger(context.Background()).Debug("2PC doActionOnBatches failed",
 				zap.Uint64("con", c.connID),
-				zap.String("action type", action.String()),
+				zap.Stringer("action type", action),
 				zap.Error(e),
 				zap.Uint64("start ts", c.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
-				log.Debug("2PC doActionOnBatches to cancel other actions",
+				logutil.Logger(context.Background()).Debug("2PC doActionOnBatches to cancel other actions",
 					zap.Uint64("con", c.connID),
-					zap.String("action type", action.String()),
+					zap.Stringer("action type", action),
 					zap.Uint64("start ts", c.startTS))
 				cancel()
 			}
@@ -460,7 +459,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				if conditionPair == nil {
 					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
 				}
-				log.Debug("key already exists",
+				logutil.Logger(context.Background()).Debug("key already exists",
 					zap.Uint64("con", c.connID),
 					zap.Binary("key", key))
 				return errors.Trace(conditionPair.Err())
@@ -471,9 +470,9 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			log.Debug("prewrite encounters lock",
+			logutil.Logger(context.Background()).Debug("prewrite encounters lock",
 				zap.Uint64("con", c.connID),
-				zap.String("lock", lock.String()))
+				zap.Stringer("lock", lock))
 			locks = append(locks, lock)
 		}
 		start := time.Now()
@@ -587,13 +586,13 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		if c.mu.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
-			log.Error("2PC failed commit key after primary key committed",
+			logutil.Logger(context.Background()).Error("2PC failed commit key after primary key committed",
 				zap.Error(err),
 				zap.Uint64("start ts", c.startTS))
 			return errors.Trace(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.
-		log.Debug("2PC failed commit primary key",
+		logutil.Logger(context.Background()).Debug("2PC failed commit primary key",
 			zap.Error(err),
 			zap.Uint64("start ts", c.startTS))
 		return errors.Annotate(err, txnRetryableMark)
@@ -637,7 +636,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 	}
 	if keyErr := resp.BatchRollback.GetError(); keyErr != nil {
 		err = errors.Errorf("con:%d 2PC cleanup failed: %s", c.connID, keyErr)
-		log.Debug("2PC failed cleanup key",
+		logutil.Logger(context.Background()).Debug("2PC failed cleanup key",
 			zap.Error(err),
 			zap.Uint64("start ts", c.startTS))
 		return errors.Trace(err)
@@ -728,7 +727,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	if commitTS <= c.startTS {
 		err = errors.Errorf("con:%d Invalid transaction tso with start_ts=%v while commit_ts=%v",
 			c.connID, c.startTS, commitTS)
-		log.Error(err.Error())
+		logutil.Logger(context.Background()).Error("invalid transaction", zap.Error(err))
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
@@ -816,7 +815,7 @@ func (c *twoPhaseCommitter) writeFinishBinlog(tp binlog.BinlogType, commitTS int
 	go func() {
 		err := binInfo.WriteBinlog(c.store.clusterID)
 		if err != nil {
-			log.Error("failed to write binlog",
+			logutil.Logger(context.Background()).Error("failed to write binlog",
 				zap.Error(err))
 		}
 	}()

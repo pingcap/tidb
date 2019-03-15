@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -66,7 +67,7 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
 		case DecorrJitter:
 			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
 		}
-		log.Debug("backoff",
+		logutil.Logger(context.Background()).Debug("backoff",
 			zap.Int("base", base),
 			zap.Int("sleep", sleep))
 		select {
@@ -213,7 +214,7 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	if strings.Contains(err.Error(), mismatchClusterID) {
-		log.Fatal("critical error", zap.Error(err))
+		logutil.Logger(context.Background()).Fatal("critical error", zap.Error(err))
 	}
 	select {
 	case <-b.ctx.Done():
@@ -239,11 +240,11 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
 		startTs = ts
 	}
-	log.Debug("retry later",
+	logutil.Logger(context.Background()).Debug("retry later",
 		zap.Error(err),
 		zap.Int("totalsleep", b.totalSleep),
 		zap.Int("maxsleep", b.maxSleep),
-		zap.String("type", typ.String()),
+		zap.Stringer("type", typ),
 		zap.Reflect("start ts", startTs))
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
@@ -255,7 +256,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 				errMsg += "\n" + err.Error()
 			}
 		}
-		log.Warn(errMsg)
+		logutil.Logger(context.Background()).Warn(errMsg)
 		// Use the first backoff type to generate a MySQL error.
 		return b.types[0].TError()
 	}

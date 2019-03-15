@@ -22,11 +22,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -175,7 +175,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		}
 	}
 	if len(expiredLocks) != len(locks) {
-		log.Error("BatchResolveLocks: maybe safe point is wrong!",
+		logutil.Logger(context.Background()).Error("BatchResolveLocks: maybe safe point is wrong!",
 			zap.Int("get locks", len(locks)),
 			zap.Int("expired locks", len(expiredLocks)))
 		return false, nil
@@ -194,7 +194,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		}
 		txnInfos[l.TxnID] = uint64(status)
 	}
-	log.Info("BatchResolveLocks: lookup txn status",
+	logutil.Logger(context.Background()).Info("BatchResolveLocks: lookup txn status",
 		zap.Duration("cost time", time.Since(startTime)),
 		zap.Int("num of txn", len(txnInfos)))
 
@@ -239,7 +239,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, errors.Errorf("unexpected resolve err: %s", keyErr)
 	}
 
-	log.Info("BatchResolveLocks: resolve locks in a batch",
+	logutil.Logger(context.Background()).Info("BatchResolveLocks: resolve locks in a batch",
 		zap.Duration("cost time", time.Since(startTime)),
 		zap.Int("num of locks", len(expiredLocks)))
 	return true, nil
@@ -348,7 +348,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
-			log.Error(err.Error())
+			logutil.Logger(context.Background()).Error("getTxnStatus error", zap.Error(err))
 			return status, err
 		}
 		if cmdResp.CommitVersion != 0 {
@@ -402,7 +402,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)
-			log.Error(err.Error())
+			logutil.Logger(context.Background()).Error("resolveLock error", zap.Error(err))
 			return err
 		}
 		cleanRegions[loc.Region] = struct{}{}

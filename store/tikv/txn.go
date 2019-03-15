@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -81,7 +80,7 @@ type assertionPair struct {
 	assertion kv.AssertionType
 }
 
-func (a *assertionPair) String() string {
+func (a assertionPair) String() string {
 	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
 }
 
@@ -289,7 +288,7 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	log.Debug("[kv] Rollback txn", zap.Uint64("start ts", txn.StartTS()))
+	logutil.Logger(context.Background()).Debug("[kv] Rollback txn", zap.Uint64("start ts", txn.StartTS()))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil

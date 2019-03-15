@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
@@ -188,7 +187,7 @@ func createSession(store kv.Storage) session.Session {
 	for {
 		se, err := session.CreateSession(store)
 		if err != nil {
-			log.Warn("[gc worker] create session", zap.Error(err))
+			logutil.Logger(context.Background()).Warn("[gc worker] create session", zap.Error(err))
 			continue
 		}
 		// Disable privilege check for gc worker session.
@@ -228,7 +227,7 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 		return errors.Trace(err)
 	})
 	if err != nil {
-		log.Error("[gc worker] check bootstrapped", zap.Error(err))
+		logutil.Logger(context.Background()).Error("[gc worker] check bootstrapped", zap.Error(err))
 		return false
 	}
 	return ver > notBootstrappedVer
@@ -364,7 +363,7 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	}
 
 	if lastRun != nil && lastRun.Add(*runInterval).After(now) {
-		log.Info("[gc worker] gc interval haven't past since last run, no need to gc",
+		logutil.Logger(context.Background()).Info("[gc worker] gc interval haven't past since last run, no need to gc",
 			zap.String("leaderTick on", w.uuid),
 			zap.Duration("interval", *runInterval),
 			zap.Time("last run", *lastRun))
@@ -387,7 +386,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	safePoint := now.Add(-*lifeTime)
 	// We should never decrease safePoint.
 	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
-		log.Info("[gc worker] last safe point is later than current one."+
+		logutil.Logger(context.Background()).Info("[gc worker] last safe point is later than current one."+
 			"No need to gc."+
 			"This might be caused by manually enlarging gc lifetime",
 			zap.String("leaderTick on", w.uuid),
@@ -636,7 +635,7 @@ func (w *GCWorker) checkUseDistributedGC() (bool, error) {
 	if strings.EqualFold(str, gcModeCentral) {
 		return false, nil
 	}
-	log.Warn("[gc worker] distributed mode will be used",
+	logutil.Logger(context.Background()).Warn("[gc worker] distributed mode will be used",
 		zap.String("invalid gc mode", str))
 	return true, nil
 }
@@ -807,11 +806,11 @@ func (w *gcTaskWorker) run() {
 	for task := range w.taskCh {
 		err := w.doGCForRange(task.startKey, task.endKey, task.safePoint)
 		if err != nil {
-			log.Error("[gc worker] gc interrupted because get region error",
+			logutil.Logger(context.Background()).Error("[gc worker] gc interrupted because get region error",
 				zap.String("uuid", w.identifier),
 				zap.Binary("startKey", task.startKey),
 				zap.Binary("endKey", task.endKey),
-				zap.Error(errors.Trace(err)))
+				zap.Error(err))
 		}
 	}
 }
@@ -846,7 +845,7 @@ func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint ui
 		}
 
 		if err != nil {
-			log.Warn("[gc worker]",
+			logutil.Logger(context.Background()).Warn("[gc worker]",
 				zap.String("uuid", w.identifier),
 				zap.String("gc for range", fmt.Sprintf("[%d, %d)", startKey, endKey)),
 				zap.Uint64("safePoint", safePoint),
@@ -1015,7 +1014,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		terror.Log(errors.Trace(err1))
 		return false, errors.Trace(err)
 	}
-	log.Debug("[gc worker] got leader", zap.String("uuid", leader))
+	logutil.Logger(context.Background()).Debug("[gc worker] got leader", zap.String("uuid", leader))
 	if leader == w.uuid {
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
@@ -1042,7 +1041,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	if lease == nil || lease.Before(time.Now()) {
-		log.Debug("[gc worker] register as leader",
+		logutil.Logger(context.Background()).Debug("[gc worker] register as leader",
 			zap.String("uuid", w.uuid))
 		metrics.GCWorkerCounter.WithLabelValues("register_leader").Inc()
 
@@ -1079,7 +1078,7 @@ func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, key string, t uint64) erro
 	s := strconv.FormatUint(t, 10)
 	err := kv.Put(tikv.GcSavedSafePoint, s)
 	if err != nil {
-		log.Error("save safepoint failed", zap.Error(err))
+		logutil.Logger(context.Background()).Error("save safepoint failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return nil
@@ -1156,12 +1155,12 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 		return "", errors.Trace(err)
 	}
 	if req.NumRows() == 0 {
-		log.Debug("[gc worker] load kv",
+		logutil.Logger(context.Background()).Debug("[gc worker] load kv",
 			zap.String("key", key))
 		return "", nil
 	}
 	value := req.GetRow(0).GetString(0)
-	log.Debug("[gc worker] load kv",
+	logutil.Logger(context.Background()).Debug("[gc worker] load kv",
 		zap.String("key", key),
 		zap.String("value", value))
 	return value, nil
@@ -1176,7 +1175,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 		return errors.New("[saveValueToSysTable session is nil]")
 	}
 	_, err := w.session.Execute(context.Background(), stmt)
-	log.Debug("[gc worker] save kv",
+	logutil.Logger(context.Background()).Debug("[gc worker] save kv",
 		zap.String("key", key),
 		zap.String("value", value),
 		zap.Error(err))
@@ -1230,7 +1229,7 @@ func NewMockGCWorker(store tikv.Storage) (*MockGCWorker, error) {
 	}
 	worker.session, err = session.CreateSession(worker.store)
 	if err != nil {
-		log.Error("initialize MockGCWorker session fail", zap.Error(err))
+		logutil.Logger(context.Background()).Error("initialize MockGCWorker session fail", zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	privilege.BindPrivilegeManager(worker.session, nil)

@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	gcodes "google.golang.org/grpc/codes"
@@ -115,10 +115,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
-			log.Error("batchRecvLoop",
+			logutil.Logger(context.Background()).Error("batchRecvLoop",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
-			log.Info("Restart batchRecvLoop")
+			logutil.Logger(context.Background()).Info("Restart batchRecvLoop")
 			go c.batchRecvLoop(cfg)
 		}
 	}()
@@ -130,7 +130,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 			if c.isStopped() {
 				return
 			}
-			log.Error("batchRecvLoop error when receive", zap.Error(err))
+			logutil.Logger(context.Background()).Error("batchRecvLoop error when receive", zap.Error(err))
 
 			// Hold the lock to forbid batchSendLoop using the old client.
 			c.clientLock.Lock()
@@ -140,11 +140,11 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				tikvClient := tikvpb.NewTikvClient(c.conn)
 				streamClient, err := tikvClient.BatchCommands(context.TODO())
 				if err == nil {
-					log.Info("batchRecvLoop re-create streaming success")
+					logutil.Logger(context.Background()).Info("batchRecvLoop re-create streaming success")
 					c.client = streamClient
 					break
 				}
-				log.Error("batchRecvLoop re-create streaming fail", zap.Error(err))
+				logutil.Logger(context.Background()).Error("batchRecvLoop re-create streaming fail", zap.Error(err))
 				// TODO: Use a more smart backoff strategy.
 				time.Sleep(time.Second)
 			}
@@ -388,10 +388,10 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
-			log.Error("batchSendLoop",
+			logutil.Logger(context.Background()).Error("batchSendLoop",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
-			log.Info("Restart batchSendLoop")
+			logutil.Logger(context.Background()).Info("Restart batchSendLoop")
 			go a.batchSendLoop(cfg)
 		}
 	}()
@@ -451,7 +451,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		err := batchCommandsClient.client.Send(request)
 		batchCommandsClient.clientLock.Unlock()
 		if err != nil {
-			log.Error("batch commands send error", zap.Error(err))
+			logutil.Logger(context.Background()).Error("batch commands send error", zap.Error(err))
 			batchCommandsClient.failPendingRequests(err)
 		}
 	}
@@ -542,7 +542,7 @@ func sendBatchRequest(
 	select {
 	case connArray.batchCommandsCh <- entry:
 	case <-ctx1.Done():
-		log.Warn("SendRequest is timeout", zap.String("to", addr))
+		logutil.Logger(context.Background()).Warn("SendRequest is timeout", zap.String("to", addr))
 		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
 	}
 
@@ -554,7 +554,7 @@ func sendBatchRequest(
 		return tikvrpc.FromBatchCommandsResponse(res), nil
 	case <-ctx1.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
-		log.Warn("SendRequest is canceled", zap.String("to", addr))
+		logutil.Logger(context.Background()).Warn("SendRequest is canceled", zap.String("to", addr))
 		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
 	}
 }
@@ -611,7 +611,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		if errors.Cause(err) != io.EOF {
 			return nil, errors.Trace(err)
 		}
-		log.Debug("copstream returns nothing for the request.")
+		logutil.Logger(context.Background()).Debug("copstream returns nothing for the request.")
 	}
 	copStream.Response = first
 	return resp, nil

@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -288,14 +288,14 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 
 	r := c.getCachedRegion(regionID)
 	if r == nil {
-		log.Debug("regionCache: cannot find region when updating leader",
+		logutil.Logger(context.Background()).Debug("regionCache: cannot find region when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		return
 	}
 
 	if !r.SwitchPeer(leaderStoreID) {
-		log.Debug("regionCache: cannot find peer when updating leader",
+		logutil.Logger(context.Background()).Debug("regionCache: cannot find peer when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		c.dropRegionFromCache(r.VerID())
@@ -540,7 +540,7 @@ func (c *RegionCache) DropStoreOnSendRequestFail(ctx *RPCContext, err error) {
 		delete(c.storeMu.stores, failedStoreID)
 	}
 	c.storeMu.Unlock()
-	log.Info("drop regions that on the store due to send request fail",
+	logutil.Logger(context.Background()).Info("drop regions that on the store due to send request fail",
 		zap.Uint64("store", failedStoreID),
 		zap.String("store addr", failedStoreAddr),
 		zap.Error(err))
@@ -559,7 +559,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 			(meta.GetRegionEpoch().GetConfVer() < ctx.Region.confVer ||
 				meta.GetRegionEpoch().GetVersion() < ctx.Region.ver) {
 			err := errors.Errorf("region epoch is ahead of tikv. rpc ctx: %+v, currentRegions: %+v", ctx, currentRegions)
-			log.Info(err.Error())
+			logutil.Logger(context.Background()).Info("region epoch is ahead of tikv", zap.Error(err))
 			return bo.Backoff(BoRegionMiss, err)
 		}
 	}

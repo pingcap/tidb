@@ -22,7 +22,7 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -117,7 +117,7 @@ func saveSafePoint(kv SafePointKV, key string, t uint64) error {
 	s := strconv.FormatUint(t, 10)
 	err := kv.Put(GcSavedSafePoint, s)
 	if err != nil {
-		log.Error("save safepoint failed", zap.Error(err))
+		logutil.Logger(context.Background()).Error("save safepoint failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return nil

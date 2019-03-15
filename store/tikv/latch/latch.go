@@ -15,13 +15,14 @@ package latch
 
 import (
 	"bytes"
+	"context"
 	"math/bits"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
 )
@@ -289,7 +290,7 @@ func (latches *Latches) recycle(currentTS uint64) {
 		total += latch.recycle(currentTS)
 		latch.Unlock()
 	}
-	log.Debug("recycle",
+	logutil.Logger(context.Background()).Debug("recycle",
 		zap.Time("start at", time.Now()),
 		zap.Int("count", total))
 }
