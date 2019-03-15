@@ -2128,6 +2128,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:3582]Window 'w' has a frame definition, so cannot be referenced by another window.",
 		},
 		{
+			sql:    "select sum(a) over w from t window w as (rows between 1 preceding AND 1 following)",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(rows between 1 preceding and 1 following))->Projection",
+		},
+		{
 			sql:    "select sum(a) over(w order by b) from t window w as (order by a)",
 			result: "[planner:3583]Window '<unnamed window>' cannot inherit 'w' since both contain an ORDER BY clause.",
 		},
@@ -2198,6 +2202,22 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max, min(avg(b)) over(rows between 1 preceding and 1 following) min from t group by c",
 			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_4) over(rows between 1 preceding and 1 following))->Window(min(sel_agg_5) over(rows between 1 preceding and 1 following))->Projection",
+		},
+		{
+			sql:    "select nth_value(a, 1.0) over() from t",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
+			sql:    "select nth_value(a, 0) over() from t",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
+			sql:    "select avg(a) over w from t window w as(partition by b)",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(partition by test.t.b))->Projection",
+		},
+		{
+			sql:    "select nth_value(i_date, 1) over() from t",
+			result: "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1) over())->Projection",
 		},
 	}
 
