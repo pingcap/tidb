@@ -14,6 +14,7 @@
 package timeutil
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -75,9 +76,9 @@ func InferSystemTZ() string {
 			if err2 == nil {
 				return name
 			}
-			log.Error("infer timezone failed", zap.Error(err2))
+			logutil.Logger(context.Background()).Error("infer timezone failed", zap.Error(err2))
 		}
-		log.Error("locate timezone files failed", zap.Error(err1))
+		logutil.Logger(context.Background()).Error("locate timezone files failed", zap.Error(err1))
 	case tz != "" && tz != "UTC":
 		for _, source := range zoneSources {
 			if _, err := os.Stat(source + tz); err == nil {

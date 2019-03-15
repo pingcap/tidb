@@ -19,7 +19,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
 
@@ -35,7 +34,7 @@ func SetupSignalHandler(shudownFunc func(bool)) {
 
 	go func() {
 		sig := <-closeSignalChan
-		log.Info("got signal to exit", zap.String("signal", sig.String()))
+		logutil.Logger(context.Background()).Info("got signal to exit", zap.Stringer("signal", sig))
 		shudownFunc(sig == syscall.SIGQUIT)
 	}()
 }

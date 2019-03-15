@@ -14,13 +14,14 @@
 package util
 
 import (
+	"context"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -71,7 +72,7 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 			recoverFn(r)
 		}
 		if r != nil {
-			log.Error("panic in the recoverable goroutine",
+			logutil.Logger(context.Background()).Error("panic in the recoverable goroutine",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 		}
@@ -109,7 +110,7 @@ func SyntaxError(err error) error {
 	if err == nil {
 		return nil
 	}
-	log.Error(err.Error())
+	logutil.Logger(context.Background()).Error("syntax error", zap.Error(err))
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 

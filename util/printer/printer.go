@@ -15,13 +15,14 @@ package printer
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -37,7 +38,7 @@ var (
 
 // PrintTiDBInfo prints the TiDB version information.
 func PrintTiDBInfo() {
-	log.Info("Welcome to TiDB.",
+	logutil.Logger(context.Background()).Info("Welcome to TiDB.",
 		zap.String("Release Version", mysql.TiDBReleaseVersion),
 		zap.String("Git Commit Hash", TiDBGitHash),
 		zap.String("Git Branch", TiDBGitBranch),
@@ -50,7 +51,7 @@ func PrintTiDBInfo() {
 	if err != nil {
 		panic(err)
 	}
-	log.Info("loaded config", zap.ByteString("config", configJSON))
+	logutil.Logger(context.Background()).Info("loaded config", zap.ByteString("config", configJSON))
 }
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.

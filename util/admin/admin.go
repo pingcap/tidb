@@ -14,13 +14,13 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -128,7 +129,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		found := false
 		for j, job := range jobs {
 			if id != job.ID {
-				log.Debug("the job that needs to be canceled isn't equal to current job",
+				logutil.Logger(context.Background()).Debug("the job that needs to be canceled isn't equal to current job",
 					zap.Int64("need to canceled job ID", id),
 					zap.Int64("current job ID", job.ID))
 				continue
@@ -687,7 +688,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		return nil
 	}
 
-	log.Debug("record",
+	logutil.Logger(context.Background()).Debug("record",
 		zap.Binary("startKey", startKey),
 		zap.Binary("key", it.Key()),
 		zap.Binary("value", it.Value()))

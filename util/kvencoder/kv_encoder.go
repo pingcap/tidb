@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -31,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var _ KvEncoder = &kvEncoder{}
@@ -259,7 +260,7 @@ func initGlobal() error {
 
 	if storeGlobal != nil {
 		if err1 := storeGlobal.Close(); err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			logutil.Logger(context.Background()).Error("storeGlobal close error", zap.Error(err1))
 		}
 	}
 	if domGlobal != nil {
