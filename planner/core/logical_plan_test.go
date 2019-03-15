@@ -2215,6 +2215,14 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select ntile(null) over() from t",
 			result: "TableReader(Table(t))->Window(ntile(<nil>) over())->Projection",
 		},
+		{
+			sql:    "select avg(a) over w from t window w as(partition by b)",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(partition by test.t.b))->Projection",
+		},
+		{
+			sql:    "select nth_value(i_date, 1) over() from t",
+			result: "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1) over())->Projection",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
