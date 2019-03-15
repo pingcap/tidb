@@ -90,7 +90,7 @@ func (st *TxnState) GoString() string {
 		s.WriteString("state=pending")
 	} else if st.Valid() {
 		s.WriteString("state=valid")
-		fmt.Fprintf(&s, ", startTS=%d", st.Transaction.StartTS())
+		fmt.Fprintf(&s, ", txnStartTS=%d", st.Transaction.StartTS())
 		if len(st.dirtyTableOP) > 0 {
 			fmt.Fprintf(&s, ", len(dirtyTable)=%d, %#v", len(st.dirtyTableOP), st.dirtyTableOP)
 		}

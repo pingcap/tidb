@@ -1137,7 +1137,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		vars := s.GetSessionVars()
 		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
-			zap.Uint64("start_ts", txnID))
+			zap.Uint64("txnStartTS", txnID))
 	}
 
 	txn, err := s.store.Begin()
