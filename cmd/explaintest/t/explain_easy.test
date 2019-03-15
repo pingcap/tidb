@@ -123,4 +123,11 @@ explain select * from (select * from t order by c) t order by a, b;
 drop table if exists t;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 explain SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;
-explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a)
+explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a);
+
+create table t (i int key, j int, unique key (i, j));
+begin;
+insert into t values (1, 1);
+explain update t set j = -j where i = 1 and j = 1;
+rollback;
+drop table if exists t;
