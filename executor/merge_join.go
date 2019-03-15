@@ -317,7 +317,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			e.outerTable.hasMatch = false
 			e.outerTable.hasNull = false
 
-			if chk.NumRows() == e.maxChunkSize {
+			if chk.IsFull() {
 				return true, nil
 			}
 			continue
