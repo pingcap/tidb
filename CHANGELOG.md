@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file. See also [R
 ### Server
 * Support variable `log_bin` to enable/disable Binlog [#9634](https://github.com/pingcap/tidb/pull/9634)
 * Add a sanity check for transactions to avoid false transaction commit [#9559](https://github.com/pingcap/tidb/pull/9559)
-* Fix the issue when setting a variable with control characters causes a kernel panic  [#9539 ](https://github.com/pingcap/tidb/pull/9539)
+* Fix the issue when setting a variable with control characters causes a kernel panic [#9539](https://github.com/pingcap/tidb/pull/9539)
 
 ### DDL
 * Fix the issue when the `Create Table Like` statement causes a panic issue  [#9652](https://github.com/pingcap/tidb/pull/9652)
