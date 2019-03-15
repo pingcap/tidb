@@ -186,10 +186,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		return nil
 	}
 	handlePair := findPKHandle(tbl, pairs)
-	if handlePair.value.Kind() != types.KindNull {
-		if len(pairs) != 1 {
-			goto CheckUK
-		}
+	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
 		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
@@ -203,7 +200,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.HandleParam = handlePair.param
 		return p
 	}
-CheckUK:
+
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique {
 			continue
