@@ -616,7 +616,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		if !s.isRetryableError(err) {
 			logutil.Logger(ctx).Warn("SQL",
 				zap.String("label", label),
-				zap.String("session", s.String()),
+				zap.Stringer("session", s),
 				zap.Error(err))
 			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable)
 			return errors.Trace(err)
