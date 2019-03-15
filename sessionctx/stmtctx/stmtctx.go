@@ -122,7 +122,7 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
-	Tables map[TableEntry]struct{}
+	Tables []TableEntry
 }
 
 // SQLDigest gets normalized and digest for provided sql.

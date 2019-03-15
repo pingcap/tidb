@@ -161,12 +161,23 @@ func (b *PlanBuilder) GetVisitInfo() []visitInfo {
 }
 
 // GetDBTableInfo gets the accessed dbs and tables info.
-func (b *PlanBuilder) GetDBTableInfo() (tables map[stmtctx.TableEntry]struct{}) {
-	tables = make(map[stmtctx.TableEntry]struct{})
-	for _, v := range b.visitInfo {
-		tables[stmtctx.TableEntry{DB: v.db, Table: v.table}] = struct{}{}
+func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
+	var tables []stmtctx.TableEntry
+	existsFunc := func(tbls []stmtctx.TableEntry, tbl *stmtctx.TableEntry) bool {
+		for _, t := range tbls {
+			if t == *tbl {
+				return true
+			}
+		}
+		return false
 	}
-	return
+	for _, v := range b.visitInfo {
+		tbl := &stmtctx.TableEntry{DB: v.db, Table: v.table}
+		if !existsFunc(tables, tbl) {
+			tables = append(tables, *tbl)
+		}
+	}
+	return tables
 }
 
 // GetOptFlag gets the optFlag of the PlanBuilder.
