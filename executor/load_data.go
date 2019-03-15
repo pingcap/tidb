@@ -25,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // LoadDataExec represents a load data executor.
@@ -247,8 +248,8 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		e.rowCount++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
-			log.Infof("This insert rows has reached the batch %d, current total rows %d",
-				e.maxRowsInBatch, e.rowCount)
+			logutil.Logger(context.Background()).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
+				zap.Uint64("totalRows", e.rowCount))
 			break
 		}
 	}

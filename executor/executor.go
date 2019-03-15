@@ -44,8 +44,9 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -466,7 +467,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 			err = e.doCheckTable(tb)
 		}
 		if err != nil {
-			log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
+			logutil.Logger(ctx).Warn("check table failed", zap.String("tableName", t.Name.O), zap.Error(err))
 			if admin.ErrDataInConsistent.Equal(err) {
 				return ErrAdminCheckTable.GenWithStack("%v err:%v", t.Name, err)
 			}
@@ -1216,7 +1217,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("resultPuller panic stack is:\n%s", buf)
+			logutil.Logger(ctx).Error("resultPuller panicked", zap.String("stack", string(buf)))
 			result.err = errors.Errorf("%v", r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)
