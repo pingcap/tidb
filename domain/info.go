@@ -197,7 +197,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			info := &ServerInfo{}
 			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
-				log.Info("get key failed.", zap.String("key", string(kv.Key)), zap.Any("value", kv.Value),
+				log.Info("get key failed.", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
 					zap.Error(err))
 				return nil, errors.Trace(err)
 			}

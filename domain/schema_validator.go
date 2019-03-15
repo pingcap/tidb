@@ -125,7 +125,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	// Update the schema deltaItem information.
 	if currVer != oldVer {
 		log.Debug("update schema validator.", zap.Int64("old ver", oldVer),
-			zap.Int64("current ver", currVer), zap.Any("changed IDs", changedTableIDs))
+			zap.Int64("current ver", currVer), zap.Int64s("changed IDs", changedTableIDs))
 		s.enqueue(currVer, changedTableIDs)
 	}
 }
