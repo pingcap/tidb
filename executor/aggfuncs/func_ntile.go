@@ -28,7 +28,6 @@ type ntile struct {
 
 type partialResult4Ntile struct {
 	curIdx      uint64
-	divisor     uint64
 	curGroupIdx uint64
 	remainder   uint64
 	quotient    uint64
@@ -36,7 +35,7 @@ type partialResult4Ntile struct {
 }
 
 func (n *ntile) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4Ntile{divisor: n.n, curGroupIdx: 1})
+	return PartialResult(&partialResult4Ntile{curGroupIdx: 1})
 }
 
 func (n *ntile) ResetPartialResult(pr PartialResult) {
@@ -50,9 +49,9 @@ func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Ro
 	p := (*partialResult4Ntile)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
 	// Update the quotient and remainder.
-	if p.divisor != 0 {
-		p.quotient = uint64(len(p.rows)) / p.divisor
-		p.remainder = uint64(len(p.rows)) % p.divisor
+	if n.n != 0 {
+		p.quotient = uint64(len(p.rows)) / n.n
+		p.remainder = uint64(len(p.rows)) % n.n
 	}
 	return nil
 }
@@ -61,7 +60,7 @@ func (n *ntile) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, 
 	p := (*partialResult4Ntile)(pr)
 
 	// If the divisor is 0, the arg of NTILE would be NULL. So we just return NULL.
-	if p.divisor == 0 {
+	if n.n == 0 {
 		chk.AppendNull(n.ordinal)
 		return nil
 	}
