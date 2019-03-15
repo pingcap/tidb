@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file. See also [R
 
 ### SQL Optimizer/Executor
 * Optimize planner to select the outer table based on cost when both tables are specified in Hint of `TIDB_INLJ` [#9615](https://github.com/pingcap/tidb/pull/9615)
-* Fix the issue when `IndexScan` cannot be selected correctly in some cases
+* Fix the issue that `IndexScan` cannot be selected correctly in some cases
 [#9587](https://github.com/pingcap/tidb/pull/9587)
 * Fix incompatibility with MySQL of check in the `agg` function in subqueries [#9551](https://github.com/pingcap/tidb/pull/9551)
 * Make `show stats_histograms` only output valid columns to avoid panics
@@ -13,10 +13,10 @@ All notable changes to this project will be documented in this file. See also [R
 ### Server
 * Support the `log_bin` variable to enable/disable Binlog [#9634](https://github.com/pingcap/tidb/pull/9634)
 * Add a sanity check for transactions to avoid false transaction commit [#9559](https://github.com/pingcap/tidb/pull/9559)
-* Fix the issue when setting a variable with control characters causes a kernel panic [#9539](https://github.com/pingcap/tidb/pull/9539)
+* Fix the issue that setting variables may lead to panic [#9539](https://github.com/pingcap/tidb/pull/9539)
 
 ### DDL
-* Fix the issue when the `Create Table Like` statement causes a panic issue [#9652](https://github.com/pingcap/tidb/pull/9652)
+* Fix the issue that the `Create Table Like` statement  causes panic in some cases [#9652](https://github.com/pingcap/tidb/pull/9652)
 * Enable the `AutoSync` feature of etcd clients to avoid connection issues between TiDB and etcd in some cases [#9600](https://github.com/pingcap/tidb/pull/9600)
 
 
