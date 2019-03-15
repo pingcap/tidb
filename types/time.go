@@ -15,6 +15,7 @@ package types
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -24,10 +25,10 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // Portable analogs of some common call errors.
@@ -263,7 +264,7 @@ func (t Time) ToNumber() *MyDecimal {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		log.Error("[fatal] never happen because we've control the format!")
+		logutil.Logger(context.Background()).Error("[fatal] never happen because we've control the format!")
 	}
 
 	if t.Fsp > 0 {

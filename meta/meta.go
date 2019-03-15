@@ -14,6 +14,7 @@
 package meta
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -25,13 +26,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/structure"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -747,10 +748,10 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 		return errors.Trace(err)
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID)); err != nil {
-		log.Warn("remove DDL reorg end handle", zap.Error(err))
+		logutil.Logger(context.Background()).Warn("remove DDL reorg end handle", zap.Error(err))
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID)); err != nil {
-		log.Warn("remove DDL reorg physical ID", zap.Error(err))
+		logutil.Logger(context.Background()).Warn("remove DDL reorg physical ID", zap.Error(err))
 	}
 	return nil
 }
@@ -781,7 +782,7 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physic
 			endHandle = math.MaxInt64
 		}
 		physicalTableID = job.TableID
-		log.Warn("new TiDB binary running on old TiDB DDL reorg data",
+		logutil.Logger(context.Background()).Warn("new TiDB binary running on old TiDB DDL reorg data",
 			zap.Int64("partition ID", physicalTableID),
 			zap.Int64("startHandle", startHandle),
 			zap.Int64("endHandle", endHandle))

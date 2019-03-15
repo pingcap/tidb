@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -39,7 +39,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
-			log.Error("RunInNewTxn", zap.Error(err))
+			logutil.Logger(context.Background()).Error("RunInNewTxn", zap.Error(err))
 			return errors.Trace(err)
 		}
 
@@ -53,7 +53,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			err1 := txn.Rollback()
 			terror.Log(errors.Trace(err1))
 			if retryable && IsRetryableError(err) {
-				log.Warn("RunInNewTxn",
+				logutil.Logger(context.Background()).Warn("RunInNewTxn",
 					zap.Uint64("retry txn", txn.StartTS()),
 					zap.Uint64("original txn", originalTxnTS),
 					zap.Error(err))
@@ -67,7 +67,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			break
 		}
 		if retryable && IsRetryableError(err) {
-			log.Warn("RunInNewTxn",
+			logutil.Logger(context.Background()).Warn("RunInNewTxn",
 				zap.Uint64("retry txn", txn.StartTS()),
 				zap.Uint64("original txn", originalTxnTS),
 				zap.Error(err))
