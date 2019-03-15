@@ -3528,6 +3528,19 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 					retDecimal = len(tmpStr) - dotIdx - 1
 				}
 			}
+			if sf, ok := args[0].(*ScalarFunction); ok {
+				_, isGetVarSig := sf.Function.(*builtinGetVarSig)
+				if isGetVarSig {
+					tmpStr, _, err := sf.EvalString(ctx, chunk.Row{})
+					if err != nil {
+						return nil, err
+					}
+					retDecimal = 0
+					if dotIdx := strings.LastIndex(tmpStr, "."); dotIdx >= 0 {
+						retDecimal = len(tmpStr) - dotIdx - 1
+					}
+				}
+			}
 		} else {
 			retDecimal = argType.Decimal
 		}
