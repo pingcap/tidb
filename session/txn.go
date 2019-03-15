@@ -21,7 +21,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
@@ -164,14 +164,14 @@ func mockAutoIDRetry() bool {
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
-		log.Error("The code should never run here",
+		logutil.Logger(context.Background()).Error("The code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
 		return errors.New("invalid transaction")
 	}
 	if st.doNotCommit != nil {
 		if err1 := st.Transaction.Rollback(); err1 != nil {
-			log.Error(err1.Error())
+			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
 		}
 		return errors.Trace(st.doNotCommit)
 	}

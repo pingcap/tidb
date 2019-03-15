@@ -25,7 +25,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -69,10 +69,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	ddlLease = schemaLease
 	statisticLease = statsLease
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
-		log.Info("New domain",
+		logutil.Logger(context.Background()).Info("New domain",
 			zap.String("store", store.UUID()),
-			zap.String("ddl lease", ddlLease.String()),
-			zap.String("stats lease", statisticLease.String()))
+			zap.Stringer("ddl lease", ddlLease),
+			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
 		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
@@ -80,8 +80,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
-			log.Error("[ddl] init domain failed",
-				zap.Error(errors.Trace(err1)))
+			logutil.Logger(context.Background()).Error("[ddl] init domain failed",
+				zap.Error(err1))
 		}
 		return true, errors.Trace(err1)
 	})
@@ -133,7 +133,7 @@ func SetStatsLease(lease time.Duration) {
 
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
-	log.Debug("Compiling", zap.String("source", src))
+	logutil.Logger(context.Background()).Debug("Compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
 	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
@@ -143,7 +143,8 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
-		log.Warn("Compiling", zap.String("source", src),
+		logutil.Logger(context.Background()).Warn("Compiling",
+			zap.String("source", src),
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
@@ -160,7 +161,7 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			log.Info("RollbackTxn for ddl/autocommit error.")
+			logutil.Logger(context.Background()).Info("RollbackTxn for ddl/autocommit error.")
 			se.RollbackTxn(ctx)
 		}
 		return meetsErr
@@ -226,7 +227,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				}
 			}
 		} else {
-			log.Error(err1.Error())
+			logutil.Logger(context.Background()).Error("get txn error", zap.Error(err1))
 		}
 	}
 

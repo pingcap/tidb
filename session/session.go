@@ -32,7 +32,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -269,13 +268,13 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	if s.statsCollector != nil {
 		do, err := GetDomain(s.store)
 		if err != nil {
-			log.Debug("Domain not found", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("Domain not found", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
 		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
 		if err != nil {
-			log.Debug("Store query feedback", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("Store query feedback", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
@@ -709,7 +708,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 		}
 		defer func() {
 			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				log.Error(errors.ErrorStack(err))
+				logutil.Logger(context.Background()).Error("set tidb_snap_shot error", zap.Error(err))
 			}
 		}()
 	}
@@ -1114,7 +1113,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
-			log.Error("active transaction fail",
+			logutil.Logger(context.Background()).Error("active transaction fail",
 				zap.Error(err))
 			s.txn.cleanup()
 			s.sessionVars.TxnCtx.StartTS = 0
@@ -1204,8 +1203,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		s.sessionVars.User = user
 		return true
 	} else if user.Hostname == variable.DefHostname {
-		log.Error("User connection verification failed",
-			zap.String("user", user.String()))
+		logutil.Logger(context.Background()).Error("User connection verification failed",
+			zap.Stringer("user", user))
 		return false
 	}
 
@@ -1223,8 +1222,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		}
 	}
 
-	log.Error("User connection verification failed",
-		zap.String("user", user.String()))
+	logutil.Logger(context.Background()).Error("User connection verification failed",
+		zap.Stringer("user", user))
 	return false
 }
 
@@ -1291,7 +1290,7 @@ func loadSystemTZ(se *session) (string, error) {
 	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
 	defer func() {
 		if err := rss[0].Close(); err != nil {
-			log.Error(errors.ErrorStack(err))
+			logutil.Logger(context.Background()).Error("close result set error", zap.Error(err))
 		}
 	}()
 	req := rss[0].NewRecordBatch()
@@ -1381,7 +1380,7 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
-		log.Fatal(errors.ErrorStack(err))
+		logutil.Logger(context.Background()).Fatal("createSession error", zap.Error(err))
 	}
 	schemaLease = saveLease
 
@@ -1465,7 +1464,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 	})
 
 	if err != nil {
-		log.Fatal("Check bootstrapped failed",
+		logutil.Logger(context.Background()).Fatal("Check bootstrapped failed",
 			zap.Error(err))
 	}
 
@@ -1488,7 +1487,7 @@ func finishBootstrap(store kv.Storage) {
 		return errors.Trace(err)
 	})
 	if err != nil {
-		log.Fatal("Finish bootstrap failed",
+		logutil.Logger(context.Background()).Fatal("Finish bootstrap failed",
 			zap.Error(err))
 	}
 }
@@ -1568,7 +1567,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
 		if err != nil {
 			vars.CommonGlobalLoaded = false
-			log.Error("Failed to load common global variables.")
+			logutil.Logger(context.Background()).Error("Failed to load common global variables.")
 			return errors.Trace(err)
 		}
 		gvc.Update(rows, fields)
@@ -1668,18 +1667,18 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		user := vars.User
 		schemaVersion := vars.TxnCtx.SchemaVersion
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Info("[CRUCIAL OPERATION]",
+			logutil.Logger(context.Background()).Info("[CRUCIAL OPERATION]",
 				zap.Uint64("con", vars.ConnectionID),
 				zap.Int64("schema_ver", schemaVersion),
 				zap.String("secure text", ss.SecureText()),
-				zap.String("user", user.String()))
+				zap.Stringer("user", user))
 		} else {
-			log.Info("[CRUCIAL OPERATION]",
+			logutil.Logger(context.Background()).Info("[CRUCIAL OPERATION]",
 				zap.Uint64("con", vars.ConnectionID),
 				zap.Int64("schema_ver", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
 				zap.String("sql", stmt.Text()),
-				zap.String("user", user.String()))
+				zap.Stringer("user", user))
 		}
 	default:
 		logQuery(node.Text(), vars)
@@ -1689,9 +1688,9 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		log.Info("[GENERAL_LOG]",
+		logutil.Logger(context.Background()).Info("[GENERAL_LOG]",
 			zap.Uint64("con", vars.ConnectionID),
-			zap.String("user", vars.User.String()),
+			zap.Stringer("user", vars.User),
 			zap.Int64("schema_ver", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txn_start_ts", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
