@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -64,6 +65,9 @@ type IndexLookUpJoin struct {
 
 	joiner joiner
 
+	isOuterJoin  bool
+	requiredRows int64
+
 	indexRanges   []*ranger.Range
 	keyOff2IdxOff []int
 	innerPtrBytes [][]byte
@@ -102,6 +106,8 @@ type lookUpJoinTask struct {
 
 type outerWorker struct {
 	outerCtx
+
+	lookup *IndexLookUpJoin
 
 	ctx      sessionctx.Context
 	executor Executor
@@ -165,6 +171,8 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 }
 
 func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
+	e.isOuterJoin = IsOuterJoiner(e.joiner)
+	e.requiredRows = int64(e.maxChunkSize)
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
@@ -190,6 +198,7 @@ func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask)
 		batchSize:        32,
 		maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
 		parentMemTracker: e.memTracker,
+		lookup:           e,
 	}
 	return ow
 }
@@ -217,6 +226,9 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.RecordBatch) erro
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
+	}
+	if e.isOuterJoin {
+		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
 	req.Reset()
 	e.joinResult.Reset()
@@ -360,9 +372,14 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	task.memTracker.AttachTo(ow.parentMemTracker)
 
 	ow.increaseBatchSize()
+	task.outerResult.SetRequiredRows(ow.batchSize, ow.maxBatchSize)
+	if ow.lookup.isOuterJoin { // if is outerJoin, push the requiredRows down
+		requiredRows := int(atomic.LoadInt64(&ow.lookup.requiredRows))
+		task.outerResult.SetRequiredRows(requiredRows, ow.maxBatchSize)
+	}
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
-	for task.outerResult.NumRows() < ow.batchSize {
+	for !task.outerResult.IsFull() {
 		err := ow.executor.Next(ctx, chunk.NewRecordBatch(ow.executorChk))
 		if err != nil {
 			return task, errors.Trace(err)
