@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Optimize planner to select the outer table based on cost when both tables are specified in Hint of `TIDB_INLJ` [#9615](https://github.com/pingcap/tidb/pull/9615)
 * Fix the issue when IndexScan cannot be selected correctly in some cases
 [#9587](https://github.com/pingcap/tidb/pull/9587)
-* Fix incompatibility with MySQL of check in the `agg` function in subqueries  [#9551](https://github.com/pingcap/tidb/pull/9551)
+* Fix incompatibility with MySQL of check in the `agg` function in subqueries [#9551](https://github.com/pingcap/tidb/pull/9551)
 * Fix the issue when `show stats_histogram` only outputs valid columns to avoid kernel panics
  [#9502](https://github.com/pingcap/tidb/pull/9502)
 ### Server
