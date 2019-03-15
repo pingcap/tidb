@@ -135,7 +135,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		if e := <-ch; e != nil {
 			logutil.Logger(context.Background()).Debug("snapshot batchGet failed",
 				zap.Error(e),
-				zap.Uint64("start ts", s.version.Ver))
+				zap.Uint64("txnStartTS", s.version.Ver))
 			err = e
 		}
 	}
@@ -320,7 +320,7 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 
 func conflictToString(conflict *pb.WriteConflict) string {
 	var buf bytes.Buffer
-	_, err := fmt.Fprintf(&buf, "WriteConflict: startTS=%d, conflictTS=%d, key=", conflict.StartTs, conflict.ConflictTs)
+	_, err := fmt.Fprintf(&buf, "WriteConflict: txnStartTS=%d, conflictTS=%d, key=", conflict.StartTs, conflict.ConflictTs)
 	if err != nil {
 		logutil.Logger(context.Background()).Error("error", zap.Error(err))
 	}

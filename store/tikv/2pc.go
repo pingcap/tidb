@@ -191,7 +191,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 			zap.Int("puts", putCnt),
 			zap.Int("dels", delCnt),
 			zap.Int("locks", lockCnt),
-			zap.Uint64("startTS", txn.startTS))
+			zap.Uint64("txnStartTS", txn.startTS))
 	}
 
 	// Convert from sec to ms
@@ -199,7 +199,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 
 	// Sanity check for startTS.
 	if txn.StartTS() == math.MaxUint64 {
-		err = errors.Errorf("try to commit with invalid startTS: %d", txn.StartTS())
+		err = errors.Errorf("try to commit with invalid txnStartTS: %d", txn.StartTS())
 		logutil.Logger(context.Background()).Error("commit failed",
 			zap.Uint64("con", connID),
 			zap.Error(err))
@@ -333,7 +333,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				zap.Uint64("con", c.connID),
 				zap.Stringer("action type", action),
 				zap.Error(e),
-				zap.Uint64("start ts", c.startTS))
+				zap.Uint64("txnStartTS", c.startTS))
 		}
 		return errors.Trace(e)
 	}
@@ -376,13 +376,13 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				zap.Uint64("con", c.connID),
 				zap.Stringer("action type", action),
 				zap.Error(e),
-				zap.Uint64("start ts", c.startTS))
+				zap.Uint64("txnStartTS", c.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
 				logutil.Logger(context.Background()).Debug("2PC doActionOnBatches to cancel other actions",
 					zap.Uint64("con", c.connID),
 					zap.Stringer("action type", action),
-					zap.Uint64("start ts", c.startTS))
+					zap.Uint64("txnStartTS", c.startTS))
 				cancel()
 			}
 			if err == nil {
@@ -588,13 +588,13 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 			// There must be a serious bug somewhere.
 			logutil.Logger(context.Background()).Error("2PC failed commit key after primary key committed",
 				zap.Error(err),
-				zap.Uint64("start ts", c.startTS))
+				zap.Uint64("txnStartTS", c.startTS))
 			return errors.Trace(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.
 		logutil.Logger(context.Background()).Debug("2PC failed commit primary key",
 			zap.Error(err),
-			zap.Uint64("start ts", c.startTS))
+			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
@@ -638,7 +638,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		err = errors.Errorf("con:%d 2PC cleanup failed: %s", c.connID, keyErr)
 		logutil.Logger(context.Background()).Debug("2PC failed cleanup key",
 			zap.Error(err),
-			zap.Uint64("start ts", c.startTS))
+			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Trace(err)
 	}
 	return nil
@@ -684,10 +684,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
 					logutil.Logger(ctx).Info("2PC cleanup failed",
 						zap.Error(err),
-						zap.Uint64("start ts", c.startTS))
+						zap.Uint64("txnStartTS", c.startTS))
 				} else {
 					logutil.Logger(ctx).Info("2PC clean up done",
-						zap.Uint64("start ts", c.startTS))
+						zap.Uint64("txnStartTS", c.startTS))
 				}
 				c.cleanWg.Done()
 			}()
@@ -709,7 +709,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	if err != nil {
 		logutil.Logger(ctx).Debug("2PC failed on prewrite",
 			zap.Error(err),
-			zap.Uint64("start ts", c.startTS))
+			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Trace(err)
 	}
 
@@ -718,14 +718,14 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	if err != nil {
 		logutil.Logger(ctx).Warn("2PC get commitTS failed",
 			zap.Error(err),
-			zap.Uint64("start ts", c.startTS))
+			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Trace(err)
 	}
 	c.detail.GetCommitTsTime = time.Since(start)
 
 	// check commitTS
 	if commitTS <= c.startTS {
-		err = errors.Errorf("con:%d Invalid transaction tso with start_ts=%v while commit_ts=%v",
+		err = errors.Errorf("con:%d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
 			c.connID, c.startTS, commitTS)
 		logutil.Logger(context.Background()).Error("invalid transaction", zap.Error(err))
 		return errors.Trace(err)
@@ -741,7 +741,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	// }
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
-		err = errors.Errorf("con:%d txn takes too much time, start: %d, commit: %d", c.connID, c.startTS, c.commitTS)
+		err = errors.Errorf("con:%d txn takes too much time, txnStartTS: %d, txnCommitTS: %d",
+			c.connID, c.startTS, c.commitTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
@@ -755,18 +756,18 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			logutil.Logger(ctx).Error("2PC commit result undetermined",
 				zap.Error(err),
 				zap.NamedError("rpcErr", undeterminedErr),
-				zap.Uint64("start ts", c.startTS))
+				zap.Uint64("txnStartTS", c.startTS))
 			err = errors.Trace(terror.ErrResultUndetermined)
 		}
 		if !c.mu.committed {
 			logutil.Logger(ctx).Debug("2PC failed on commit",
 				zap.Error(err),
-				zap.Uint64("start ts", c.startTS))
+				zap.Uint64("txnStartTS", c.startTS))
 			return errors.Trace(err)
 		}
 		logutil.Logger(ctx).Debug("2PC succeed with error",
 			zap.Error(err),
-			zap.Uint64("start ts", c.startTS))
+			zap.Uint64("txnStartTS", c.startTS))
 	}
 	return nil
 }

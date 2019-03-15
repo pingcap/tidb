@@ -116,7 +116,7 @@ type Lock struct {
 }
 
 func (l *Lock) String() string {
-	return fmt.Sprintf("key: %s, primary: %s, start ts: %d, ttl: %d", l.Key, l.Primary, l.TxnID, l.TTL)
+	return fmt.Sprintf("key: %s, primary: %s, txnStartTS: %d, ttl: %d", l.Key, l.Primary, l.TxnID, l.TTL)
 }
 
 // NewLock creates a new *Lock.

@@ -268,7 +268,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		err = errors.Errorf("startTS %d is stale", txn.startTS)
+		err = errors.Errorf("txnStartTS %d is stale", txn.startTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 	err = committer.executeAndWriteFinishBinlog(ctx)
@@ -288,7 +288,7 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	logutil.Logger(context.Background()).Debug("[kv] Rollback txn", zap.Uint64("start ts", txn.StartTS()))
+	logutil.Logger(context.Background()).Debug("[kv] Rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil

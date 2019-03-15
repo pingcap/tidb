@@ -147,7 +147,7 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 func (s *Scanner) getData(bo *Backoffer) error {
 	logutil.Logger(context.Background()).Debug("txn getData",
 		zap.Binary("nextStartKey", s.nextStartKey),
-		zap.Uint64("start ts", s.startTS()))
+		zap.Uint64("txnStartTS", s.startTS()))
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 
 	for {

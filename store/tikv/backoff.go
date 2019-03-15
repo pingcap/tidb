@@ -245,7 +245,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		zap.Int("totalsleep", b.totalSleep),
 		zap.Int("maxsleep", b.maxSleep),
 		zap.Stringer("type", typ),
-		zap.Reflect("start ts", startTs))
+		zap.Reflect("txnStartTS", startTs))
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
