@@ -37,6 +37,7 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"strconv"
@@ -333,6 +334,16 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 		case mysql.TypeSet:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetSet(i).String()))
 		case mysql.TypeJSON:
+			str := ""
+			strFn := func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Printf("dump text row failed, json data: %#v\npanic recover: %v\n", row.GetJSON(i), r)
+					}
+				}()
+				str = row.GetJSON(i).String()
+			}
+			strFn()
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetJSON(i).String()))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
