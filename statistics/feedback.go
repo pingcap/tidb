@@ -960,7 +960,7 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 			if err == nil {
 				logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
 					zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
-					zap.String("range", rang.String()), zap.Float64("pseudo count", math.Round(count)))
+					zap.Stringer("range", &rang), zap.Float64("pseudo count", math.Round(count)))
 			}
 		}
 	}
