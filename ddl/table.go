@@ -14,13 +14,13 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -329,7 +330,7 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	if err := s.SplitRegion(tableStartKey); err != nil {
 		// It will be automatically split by TiKV later.
-		log.Warn("[ddl] split table region failed", zap.Error(err))
+		logutil.Logger(context.Background()).Warn("[ddl] split table region failed", zap.Error(err))
 	}
 }
 

@@ -14,13 +14,14 @@
 package ddl
 
 import (
+	"context"
 	"sync"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -82,8 +83,7 @@ func (sg *sessionPool) close() {
 	if sg.mu.closed || sg.resPool == nil {
 		return
 	}
-
-	log.Info("[ddl] closing sessionPool")
+	logutil.Logger(context.Background()).Info("[ddl] closing sessionPool")
 	sg.resPool.Close()
 	sg.mu.closed = true
 }
