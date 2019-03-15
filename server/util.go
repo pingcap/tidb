@@ -37,7 +37,6 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"math"
 	"strconv"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	log "github.com/sirupsen/logrus"
 )
 
 func parseNullTermString(b []byte) (str []byte, remain []byte) {
@@ -338,7 +338,7 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 			strFn := func() {
 				defer func() {
 					if r := recover(); r != nil {
-						fmt.Printf("dump text row failed, json data: %#v\npanic recover: %v\n", row.GetJSON(i), r)
+						log.Infof("dump text row failed, json data: %#v\npanic recover: %v\n", row.GetJSON(i), r)
 					}
 				}()
 				str = row.GetJSON(i).String()
