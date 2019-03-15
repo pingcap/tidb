@@ -28,6 +28,22 @@ type WindowFuncDesc struct {
 
 // NewWindowFuncDesc creates a window function signature descriptor.
 func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) *WindowFuncDesc {
+	switch strings.ToLower(name) {
+	case ast.WindowFuncNthValue:
+		val, isNull, ok := expression.GetUint64FromConstant(args[1])
+		// nth_value does not allow `0`, but allows `null`.
+		if !ok || (val == 0 && !isNull) {
+			return nil
+		}
+	case ast.WindowFuncLead, ast.WindowFuncLag:
+		if len(args) < 2 {
+			break
+		}
+		_, isNull, ok := expression.GetUint64FromConstant(args[1])
+		if !ok || isNull {
+			return nil
+		}
+	}
 	return &WindowFuncDesc{newBaseFuncDesc(ctx, name, args)}
 }
 

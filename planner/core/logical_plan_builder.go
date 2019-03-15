@@ -1083,6 +1083,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 type havingWindowAndOrderbyExprResolver struct {
 	inAggFunc    bool
 	inWindowFunc bool
+	inWindowSpec bool
 	inExpr       bool
 	orderBy      bool
 	err          error
@@ -1102,6 +1103,8 @@ func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, s
 		a.inAggFunc = true
 	case *ast.WindowFuncExpr:
 		a.inWindowFunc = true
+	case *ast.WindowSpec:
+		a.inWindowSpec = true
 	case *driver.ParamMarkerExpr, *ast.ColumnNameExpr, *ast.ColumnName:
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		// Enter a new context, skip it.
@@ -1157,9 +1160,11 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
 			return node, false
 		}
+	case *ast.WindowSpec:
+		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || (a.orderBy && a.inExpr) {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1306,6 +1311,12 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 			return nil, extractor.err
 		}
 		field.Expr = n.(ast.ExprNode)
+	}
+	for _, spec := range sel.WindowSpecs {
+		_, ok := spec.Accept(extractor)
+		if !ok {
+			return nil, extractor.err
+		}
 	}
 	sel.Fields.Fields = extractor.selectFields
 	return extractor.aggMapper, nil
@@ -2122,12 +2133,13 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	for _, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		newCol := &expression.Column{
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			DBName:   dbName,
-			TblName:  tableInfo.Name,
-			ColName:  col.Name,
-			ID:       col.ID,
-			RetType:  &col.FieldType,
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     col.Name,
+			OrigColName: col.Name,
+			ID:          col.ID,
+			RetType:     &col.FieldType,
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
@@ -2715,6 +2727,15 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 	b.optFlag |= flagEliminateProjection
 
 	var items []*ast.ByItem
+	if expr.Spec.Name.L != "" {
+		ref, ok := b.windowSpecs[expr.Spec.Name.L]
+		if !ok {
+			return nil, nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(expr.Spec.Name.O)
+		}
+		expr.Spec = ref
+	} else {
+		expr.Spec.Name = model.NewCIStr("<unnamed window>")
+	}
 	spec := expr.Spec
 	if spec.Ref.L != "" {
 		ref, ok := b.windowSpecs[spec.Ref.L]
@@ -2726,6 +2747,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 			return nil, nil, nil, nil, err
 		}
 	}
+
 	lenPartition := 0
 	if spec.PartitionBy != nil {
 		items = append(items, spec.PartitionBy.Items...)
@@ -2773,8 +2795,9 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 			return nil, nil, nil, nil, err
 		}
 		p = np
-		if col, ok := newArg.(*expression.Column); ok {
-			newArgList = append(newArgList, col)
+		switch newArg.(type) {
+		case *expression.Column, *expression.Constant:
+			newArgList = append(newArgList, newArg)
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, newArg)
@@ -2927,9 +2950,6 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 }
 
 func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
-	if expr.Spec.Name.O == "" {
-		expr.Spec.Name = model.NewCIStr("<unnamed window>")
-	}
 	p, partitionBy, orderBy, args, err := b.buildProjectionForWindow(p, expr, aggMap)
 	if err != nil {
 		return nil, err
@@ -2959,6 +2979,9 @@ func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExp
 		return nil, err
 	}
 	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, args)
+	if desc == nil {
+		return nil, ErrWrongArguments.GenWithStackByArgs(expr.F)
+	}
 	// TODO: Check if the function is aggregation function after we support more functions.
 	desc.WrapCastForAggArgs(b.ctx)
 	window := LogicalWindow{
