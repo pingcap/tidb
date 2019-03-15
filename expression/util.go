@@ -14,13 +14,13 @@
 package expression
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
 )
@@ -677,7 +678,7 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 	con, ok := expr.(*Constant)
 	if !ok {
-		log.Warn("not a constant expression", zap.Any("value", expr))
+		logutil.Logger(context.Background()).Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
 		return 0, false, false
 	}
 	dt := con.Value
@@ -685,7 +686,7 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 		var err error
 		dt, err = con.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			log.Warn("eval deferred expr failed", zap.Error(err))
+			logutil.Logger(context.Background()).Warn("eval deferred expr failed", zap.Error(err))
 			return 0, false, false
 		}
 	}
