@@ -23,6 +23,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // init initializes `locCache`.
@@ -167,4 +168,16 @@ func Zone(loc *time.Location) (string, int64) {
 	}
 
 	return name, int64(offset)
+}
+
+// ParseDuration parses lease argument string.
+func ParseDuration(lease string) time.Duration {
+	dur, err := time.ParseDuration(lease)
+	if err != nil {
+		dur, err = time.ParseDuration(lease + "s")
+	}
+	if err != nil || dur < 0 {
+		log.Fatal("invalid lease duration", zap.String("lease", lease))
+	}
+	return dur
 }
