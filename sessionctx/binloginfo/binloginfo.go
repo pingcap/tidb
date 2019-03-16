@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
@@ -29,7 +30,8 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )
@@ -49,12 +51,79 @@ type BinlogInfo struct {
 	Client *pumpcli.PumpsClient
 }
 
-// GetPumpsClient gets the pumps client instance.
+// GetPumpsClient get the pumps client instance.
 func GetPumpsClient() *pumpcli.PumpsClient {
 	pumpsClientLock.RLock()
 	client := pumpsClient
 	pumpsClientLock.RUnlock()
 	return client
+}
+
+// GetPumpsClientByLogBin get the pumps client instance by log_bin variable.
+func GetPumpsClientByLogBin() (*pumpcli.PumpsClient, error) {
+	var binlogCli *pumpcli.PumpsClient
+	var err error
+	if ShouldEnableBinlog() {
+		binlogCli, err = GetOrCreatePumpsClient()
+	}
+	return binlogCli, err
+}
+
+// GetOrCreatePumpsClient get or create the pumps client instance
+func GetOrCreatePumpsClient() (*pumpcli.PumpsClient, error) {
+	pumpsClientLock.RLock()
+	client := GetPumpsClient()
+	pumpsClientLock.RUnlock()
+	if client == nil {
+		pumpsClientLock.Lock()
+		defer pumpsClientLock.Unlock()
+		if pumpsClient != nil {
+			client = pumpsClient
+		} else {
+			var err error
+			client, err = CreatePumpsClient()
+			if err != nil {
+				return nil, err
+			}
+			SetPumpsClient(client)
+		}
+	}
+
+	return client, nil
+}
+
+// CreatePumpsClient create pumps client
+func CreatePumpsClient() (*pumpcli.PumpsClient, error) {
+	var (
+		err    error
+		client *pumpcli.PumpsClient
+	)
+	securityOption := pd.SecurityOption{
+		CAPath:   config.GetGlobalConfig().Security.ClusterSSLCA,
+		CertPath: config.GetGlobalConfig().Security.ClusterSSLCert,
+		KeyPath:  config.GetGlobalConfig().Security.ClusterSSLKey,
+	}
+
+	if len(config.GetGlobalConfig().Binlog.BinlogSocket) == 0 {
+		client, err = pumpcli.NewPumpsClient(
+			config.GetGlobalConfig().Path,
+			timeutil.ParseDuration(config.GetGlobalConfig().Binlog.WriteTimeout),
+			securityOption)
+	} else {
+		client, err = pumpcli.NewLocalPumpsClient(
+			config.GetGlobalConfig().Path,
+			config.GetGlobalConfig().Binlog.BinlogSocket,
+			timeutil.ParseDuration(config.GetGlobalConfig().Binlog.WriteTimeout),
+			securityOption)
+	}
+	if err != nil {
+		return nil, err
+	}
+	err = pumpcli.InitLogger(config.GetGlobalConfig().Log.ToLogConfig())
+	if err != nil {
+		return nil, err
+	}
+	return client, err
 }
 
 // SetPumpsClient sets the pumps client instance.
