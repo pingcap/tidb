@@ -105,6 +105,13 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		return err
 	}
 
+	if len(parentUsedCols) == 0 && len(used) > 0 {
+		// For sql like `select count(1) from (select count(1) from t)`, no column used.
+		// tikv's response will be empty if the inner aggr is pushed down.
+		// We should force some column to be used.
+		used[0] = true
+	}
+
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)

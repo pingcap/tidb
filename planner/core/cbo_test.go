@@ -924,3 +924,21 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 		"      └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
+
+func (s *testAnalyzeSuite) TestIssue9125(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(name varchar(100) DEFAULT NULL)")
+	tk.MustExec("insert into t1(name) values('test')")
+	tk.MustQuery("select count(1) from (select count(1) from (select * from t1 where name='test') t) t2").Check(testkit.Rows(
+		"1",
+	))
+}
