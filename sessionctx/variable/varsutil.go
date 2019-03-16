@@ -63,6 +63,16 @@ func GetDDLReorgBatchSize() int32 {
 	return atomic.LoadInt32(&ddlReorgBatchSize)
 }
 
+// SetDDLErrorCountLimit sets ddlErrorCountlimit size.
+func SetDDLErrorCountLimit(cnt int64) {
+	atomic.StoreInt64(&ddlErrorCountlimit, cnt)
+}
+
+// GetDDLErrorCountLimit gets ddlErrorCountlimit size.
+func GetDDLErrorCountLimit() int64 {
+	return atomic.LoadInt64(&ddlErrorCountlimit)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -104,12 +114,16 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
 	case TiDBSlowLogThreshold:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
+	case TiDBDDLSlowOprThreshold:
+		return strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), true, nil
 	case TiDBQueryLogMaxLen:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
 	case PluginDir:
 		return config.GetGlobalConfig().Plugin.Dir, true, nil
 	case PluginLoad:
 		return config.GetGlobalConfig().Plugin.Load, true, nil
+	case TiDBCheckMb4ValueInUtf8:
+		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -194,6 +208,9 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 }
 
 func checkUInt64SystemVar(name, value string, min, max uint64, vars *SessionVars) (string, error) {
+	if len(value) == 0 {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+	}
 	if value[0] == '-' {
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
@@ -332,8 +349,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
-	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
-		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace:
+	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
+		CoreFile, EndMakersInJSON, SQLLogBin, TiDBLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
+		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
@@ -343,7 +361,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction:
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBCheckMb4ValueInUtf8:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}
@@ -360,6 +378,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBDDLReorgBatchSize:
 		return checkUInt64SystemVar(name, value, uint64(MinDDLReorgBatchSize), uint64(MaxDDLReorgBatchSize), vars)
+	case TiDBDDLErrorCountLimit:
+		return checkUInt64SystemVar(name, value, uint64(0), math.MaxInt64, vars)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
 		TiDBIndexLookupSize,
 		TiDBHashJoinConcurrency,

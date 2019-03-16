@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"strconv"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
@@ -332,6 +334,9 @@ type SessionVars struct {
 
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
+
+	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
+	SlowQueryFile string
 }
 
 // NewSessionVars creates a session vars object.
@@ -357,6 +362,7 @@ func NewSessionVars() *SessionVars {
 		EnableRadixJoin:           false,
 		L2CacheSize:               cpuid.CPU.Cache.L2,
 		CommandValue:              uint32(mysql.ComSleep),
+		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -667,6 +673,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+	case TiDBDDLSlowOprThreshold:
+		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBRetryLimit:
@@ -689,6 +697,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBCheckMb4ValueInUtf8:
+		config.GetGlobalConfig().CheckMb4ValueInUtf8 = TiDBOptOn(val)
+	case TiDBSlowQueryFile:
+		s.SlowQueryFile = val
 	}
 	s.systems[name] = val
 	return nil
@@ -701,6 +713,8 @@ func SetLocalSystemVar(name string, val string) {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgBatchSize:
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
+	case TiDBDDLErrorCountLimit:
+		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
 	}
 }
 
@@ -798,4 +812,81 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+}
+
+const (
+	// SlowLogPrefixStr is slow log row prefix.
+	SlowLogPrefixStr = "# "
+	// SlowLogSpaceMarkStr is slow log space mark.
+	SlowLogSpaceMarkStr = ": "
+	// SlowLogSQLSuffixStr is slow log suffix.
+	SlowLogSQLSuffixStr = ";"
+	// SlowLogTimeStr is slow log field name.
+	SlowLogTimeStr = "Time"
+	// SlowLogStartPrefixStr is slow log start row prefix.
+	SlowLogStartPrefixStr = SlowLogPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
+	// SlowLogTxnStartTSStr is slow log field name.
+	SlowLogTxnStartTSStr = "Txn_start_ts"
+	// SlowLogUserStr is slow log field name.
+	SlowLogUserStr = "User"
+	// SlowLogConnIDStr is slow log field name.
+	SlowLogConnIDStr = "Conn_ID"
+	// SlowLogQueryTimeStr is slow log field name.
+	SlowLogQueryTimeStr = "Query_time"
+	// SlowLogDBStr is slow log field name.
+	SlowLogDBStr = "DB"
+	// SlowLogIsInternalStr is slow log field name.
+	SlowLogIsInternalStr = "Is_internal"
+	// SlowLogIndexIDsStr is slow log field name.
+	SlowLogIndexIDsStr = "Index_ids"
+	// SlowLogDigestStr is slow log field name.
+	SlowLogDigestStr = "Digest"
+	// SlowLogQuerySQLStr is slow log field name.
+	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
+)
+
+// SlowLogFormat uses for formatting slow log.
+// The slow log output is like below:
+// # Time: 2019-02-12-19:33:56.571953 +0800
+// # Txn_start_ts: 406315658548871171
+// # User: root@127.0.0.1
+// # Conn_ID: 6
+// # Query_time: 4.895492
+// # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
+// # DB: test
+// # Index_ids: [1,2]
+// # Is_internal: false
+// select * from t_slim;
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest, sql string) string {
+	var buf bytes.Buffer
+	execDetailStr := execDetail.String()
+	buf.WriteString(SlowLogPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
+	if s.User != nil {
+		buf.WriteString(SlowLogPrefixStr + SlowLogUserStr + SlowLogSpaceMarkStr + s.User.String() + "\n")
+	}
+	if s.ConnectionID != 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogConnIDStr + SlowLogSpaceMarkStr + strconv.FormatUint(s.ConnectionID, 10) + "\n")
+	}
+	buf.WriteString(SlowLogPrefixStr + SlowLogQueryTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64) + "\n")
+	if len(execDetailStr) > 0 {
+		buf.WriteString(SlowLogPrefixStr + execDetailStr + "\n")
+	}
+	if len(s.CurrentDB) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
+	}
+	if len(indexIDs) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
+	}
+	buf.WriteString(SlowLogPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
+	if len(digest) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+	}
+	if len(sql) == 0 {
+		sql = ";"
+	}
+	buf.WriteString(sql)
+	if sql[len(sql)-1] != ';' {
+		buf.WriteString(";")
+	}
+	return buf.String()
 }

@@ -991,6 +991,10 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 	}
 }
 
+// minAdjustFactor is the minimum adjust factor of each index feedback.
+// We use it to avoid adjusting too much when the assumption of independence failed.
+const minAdjustFactor = 0.7
+
 // getNewCount adjust the estimated `eqCount` and `rangeCount` according to the real count.
 // We assumes that `eqCount` and `rangeCount` contribute the same error rate.
 func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (float64, float64) {
@@ -999,6 +1003,7 @@ func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (fl
 		return eqCount, rangeCount
 	}
 	adjustFactor := math.Sqrt(realCount / estimate)
+	adjustFactor = math.Max(adjustFactor, minAdjustFactor)
 	return eqCount * adjustFactor, rangeCount * adjustFactor
 }
 
@@ -1147,9 +1152,9 @@ func getMaxValue(ft *types.FieldType) (max types.Datum) {
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.Flag) {
-			max.SetUint64(types.UnsignedUpperBound[ft.Tp])
+			max.SetUint64(types.IntergerUnsignedUpperBound(ft.Tp))
 		} else {
-			max.SetInt64(types.SignedUpperBound[ft.Tp])
+			max.SetInt64(types.IntergerSignedUpperBound(ft.Tp))
 		}
 	case mysql.TypeFloat:
 		max.SetFloat32(float32(types.GetMaxFloat(ft.Flen, ft.Decimal)))
@@ -1183,7 +1188,7 @@ func getMinValue(ft *types.FieldType) (min types.Datum) {
 		if mysql.HasUnsignedFlag(ft.Flag) {
 			min.SetUint64(0)
 		} else {
-			min.SetInt64(types.SignedLowerBound[ft.Tp])
+			min.SetInt64(types.IntergerSignedLowerBound(ft.Tp))
 		}
 	case mysql.TypeFloat:
 		min.SetFloat32(float32(-types.GetMaxFloat(ft.Flen, ft.Decimal)))

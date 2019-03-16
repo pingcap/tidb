@@ -144,7 +144,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		return ErrPsManyParam
 	}
 
-	err = plannercore.Preprocess(e.ctx, stmt, e.is, true)
+	err = plannercore.Preprocess(e.ctx, stmt, e.is, plannercore.InPrepare)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -271,13 +271,14 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 	}
 
 	stmt := &ExecStmt{
-		InfoSchema: GetInfoSchema(ctx),
+		InfoSchema: is,
 		Plan:       execPlan,
 		StmtNode:   execStmt,
 		Ctx:        ctx,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID]; ok {
 		stmt.Text = prepared.Stmt.Text()
+		ctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
 	}
 	return stmt, nil
 }

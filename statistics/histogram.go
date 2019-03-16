@@ -64,6 +64,11 @@ type Histogram struct {
 	scalars []scalar
 	// TotColSize is the total column size for the histogram.
 	TotColSize int64
+
+	// Correlation is the statistical correlation between physical row ordering and logical ordering of
+	// the column values. This ranges from -1 to +1, and it is only valid for Column histogram, not for
+	// Index histogram.
+	Correlation float64
 }
 
 // Bucket store the bucket count and repeat.
@@ -236,8 +241,8 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if isAnalyzed == 1 {
 		flag = analyzeFlag
 	}
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion, flag)
+	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d, %f)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion, flag, hg.Correlation)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return
@@ -296,7 +301,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	return
 }
 
-func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
+func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
@@ -304,6 +309,7 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 	}
 	bucketSize := len(rows)
 	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
+	hg.Correlation = corr
 	totalCount := int64(0)
 	for i := 0; i < bucketSize; i++ {
 		count := rows[i].GetInt64(0)
@@ -743,14 +749,30 @@ func (e *ErrorRate) merge(rate *ErrorRate) {
 type Column struct {
 	Histogram
 	*CMSketch
-	Count    int64
-	Info     *model.ColumnInfo
-	isHandle bool
+	PhysicalID int64
+	Count      int64
+	Info       *model.ColumnInfo
+	isHandle   bool
 	ErrorRate
 }
 
 func (c *Column) String() string {
 	return c.Histogram.ToString(0)
+}
+
+var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
+
+// IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
+// as need histogram.
+func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
+	if collPseudo && c.NotAccurate() {
+		return true
+	}
+	if c.NDV > 0 && c.Len() == 0 && sc != nil {
+		sc.SetHistogramsNotLoad()
+		histogramNeededColumns.insert(tableColumnID{tableID: c.PhysicalID, columnID: c.Info.ID})
+	}
+	return c.totalRowCount() == 0 || (c.NDV > 0 && c.Len() == 0)
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
@@ -833,6 +855,11 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
+// IsInvalid checks if this index is invalid.
+func (idx *Index) IsInvalid(collPseudo bool) bool {
+	return (collPseudo && idx.NotAccurate()) || idx.totalRowCount() == 0
+}
+
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) float64 {
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
@@ -888,7 +915,7 @@ type countByRangeFunc = func(*stmtctx.StatementContext, int64, []*ranger.Range) 
 //  Also, there're redundant calculation with Selectivity(). We need to reduce it too.
 func newHistogramBySelectivity(sc *stmtctx.StatementContext, histID int64, oldHist, newHist *Histogram, ranges []*ranger.Range, cntByRangeFunc countByRangeFunc) error {
 	cntPerVal := int64(oldHist.AvgCountPerNotNullValue(int64(oldHist.totalRowCount())))
-	var totCnt int64 = 0
+	var totCnt int64
 	for boundIdx, ranIdx, highRangeIdx := 0, 0, 0; boundIdx < oldHist.Bounds.NumRows() && ranIdx < len(ranges); boundIdx, ranIdx = boundIdx+2, highRangeIdx {
 		for highRangeIdx < len(ranges) && chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &ranges[highRangeIdx].HighVal[0]) >= 0 {
 			highRangeIdx++
@@ -935,7 +962,7 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 	newIndexHist.Histogram = *NewHistogram(idx.ID, int64(float64(idx.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 
 	lowBucketIdx, highBucketIdx := 0, 0
-	var totCnt int64 = 0
+	var totCnt int64
 
 	// Bucket bound of index is encoded one, so we need to decode it if we want to calculate the fraction accurately.
 	// TODO: enhance its calculation.
@@ -1001,7 +1028,12 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 		if !ok {
 			continue
 		}
-		newCol := &Column{Info: oldCol.Info, isHandle: oldCol.isHandle, CMSketch: oldCol.CMSketch}
+		newCol := &Column{
+			PhysicalID: oldCol.PhysicalID,
+			Info:       oldCol.Info,
+			isHandle:   oldCol.isHandle,
+			CMSketch:   oldCol.CMSketch,
+		}
 		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
 		var err error
 		splitRanges := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
