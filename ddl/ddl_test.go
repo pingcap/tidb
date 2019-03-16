@@ -116,7 +116,7 @@ func testNewContext(d *ddl) sessionctx.Context {
 }
 
 func testNewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
-	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) (*ddl, error) {
 	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, nil)
 }
 

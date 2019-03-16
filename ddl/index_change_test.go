@@ -52,14 +52,15 @@ func (s *testIndexChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	// create table t (c1 int primary key, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
 	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	tblInfo.PKIsHandle = true
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)

@@ -44,8 +44,10 @@ func (s *testStatSuite) TestStat(c *C) {
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
+
+	c.Assert(err, IsNil)
 
 	time.Sleep(testLease)
 

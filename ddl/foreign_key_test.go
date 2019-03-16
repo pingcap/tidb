@@ -111,8 +111,9 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 }
 
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	s.d = d
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
 	ctx := testNewContext(d)
@@ -120,7 +121,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	testCreateSchema(c, ctx, d, s.dbInfo)
 	tblInfo := testTableInfo(c, d, "t", 3)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)

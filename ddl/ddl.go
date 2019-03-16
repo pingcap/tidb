@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
+
 	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -38,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -329,12 +330,12 @@ func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 
 // NewDDL creates a new DDL.
 func NewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
-	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) DDL {
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) (DDL, error) {
 	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, ctxPool)
 }
 
 func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
-	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) *ddl {
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) (*ddl, error) {
 	if hook == nil {
 		hook = &BaseCallback{}
 	}
@@ -359,8 +360,8 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ddlJobDoneCh: make(chan struct{}, 1),
 		ownerManager: manager,
 		schemaSyncer: syncer,
-		binlogCli:    binloginfo.GetPumpsClient(),
 	}
+
 	ddlCtx.mu.hook = hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
@@ -368,11 +369,19 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ddlCtx:     ddlCtx,
 	}
 
+	binlogCli, err := binloginfo.GetPumpsClientByLogBin()
+	if err != nil {
+		return nil, errors.Errorf("[ddl] get pumps client by log_bin failed %v", err)
+	}
+	if binlogCli != nil {
+		d.ddlCtx.binlogCli = binlogCli
+	}
+
 	d.start(ctx, ctxPool)
 	variable.RegisterStatistics(d)
 
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
-	return d
+	return d, nil
 }
 
 // Stop implements DDL.Stop interface.

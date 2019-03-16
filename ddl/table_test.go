@@ -264,7 +264,9 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 
 func (s *testTableSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_table")
-	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	var err error
+	s.d, err = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	c.Assert(err, IsNil)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)

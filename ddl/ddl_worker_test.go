@@ -53,8 +53,9 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
-	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d1, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
+	c.Assert(err, IsNil)
 	time.Sleep(testLease)
 	testCheckOwner(c, d1, true)
 
@@ -67,7 +68,8 @@ func (s *testDDLSuite) testRunWorker(c *C) {
 	defer store.Close()
 
 	RunWorker = false
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	c.Assert(err, IsNil)
 	testCheckOwner(c, d, false)
 	defer d.Stop()
 
@@ -76,7 +78,8 @@ func (s *testDDLSuite) testRunWorker(c *C) {
 	c.Assert(worker, IsNil)
 	// Make sure the DDL job can be done and exit that goroutine.
 	RunWorker = true
-	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d1, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	c.Assert(err, IsNil)
 	testCheckOwner(c, d1, true)
 	defer d1.Stop()
 	worker = d1.generalWorker()
@@ -87,8 +90,9 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 	store := testCreateStore(c, "test_schema_error")
 	defer store.Close()
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	doDDLJobErr(c, 1, 0, model.ActionCreateSchema, []interface{}{1}, ctx, d)
@@ -98,8 +102,9 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	store := testCreateStore(c, "test_table_error")
 	defer store.Close()
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	// Schema ID is wrong, so dropping table is failed.
@@ -112,7 +117,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	// Table ID or schema ID is wrong, so getting table is failed.
 	tblInfo := testTableInfo(c, d, "t", 3)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		job.SchemaID = -1
 		job.TableID = -1
 		t := meta.NewMeta(txn)
@@ -139,8 +144,9 @@ func (s *testDDLSuite) TestViewError(c *C) {
 	store := testCreateStore(c, "test_view_error")
 	defer store.Close()
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 	dbInfo := testSchemaInfo(c, d, "test")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
@@ -162,8 +168,9 @@ func (s *testDDLSuite) TestViewError(c *C) {
 func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 	store := testCreateStore(c, "test_invalid_ddl_job_type_error")
 	defer store.Close()
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	job := &model.Job{
@@ -173,7 +180,7 @@ func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}
-	err := d.doDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err.Error(), Equals, "[ddl:3]invalid ddl job type: none")
 }
 
@@ -181,8 +188,9 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 	store := testCreateStore(c, "test_foreign_key_error")
 	defer store.Close()
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	doDDLJobErr(c, -1, 1, model.ActionAddForeignKey, nil, ctx, d)
@@ -199,8 +207,9 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	store := testCreateStore(c, "test_index_error")
 	defer store.Close()
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	// Schema ID is wrong.
@@ -234,8 +243,9 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 func (s *testDDLSuite) TestColumnError(c *C) {
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	dbInfo := testSchemaInfo(c, d, "test")
@@ -442,8 +452,9 @@ func (s *testDDLSuite) checkCancelDropColumn(c *C, d *ddl, schemaID int64, table
 func (s *testDDLSuite) TestCancelJob(c *C) {
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	dbInfo := testSchemaInfo(c, d, "test_cancel_job")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	// create a partition table.
@@ -451,7 +462,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int);
 	tblInfo := testTableInfo(c, d, "t", 5)
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, dbInfo, partitionTblInfo)
 	tableAutoID := int64(100)
@@ -830,10 +841,11 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 func (s *testDDLSuite) TestParallelDDL(c *C) {
 	store := testCreateStore(c, "test_parallel_ddl")
 	defer store.Close()
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	/*
@@ -1021,9 +1033,10 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 	store := testCreateStore(c, "test_run_sql")
 	defer store.Close()
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	testCheckOwner(c, d, true)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	worker := d.generalWorker()
 	c.Assert(worker, NotNil)
 

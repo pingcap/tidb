@@ -45,8 +45,9 @@ type testColumnSuite struct {
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_column")
-	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
-
+	var err error
+	s.d, err = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	c.Assert(err, IsNil)
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
@@ -753,11 +754,12 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 }
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	c.Assert(err, IsNil)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -842,11 +844,12 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	c.Assert(err, IsNil)
 	tblInfo := testTableInfo(c, d, "t", 4)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -919,8 +922,9 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	tests := []struct {
 		origin string
 		to     string

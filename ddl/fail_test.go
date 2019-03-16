@@ -24,12 +24,13 @@ import (
 )
 
 func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
+	c.Assert(err, IsNil)
 	// create table t_fail (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t_fail", 2)
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	// insert t_fail values (1, 2);

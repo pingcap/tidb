@@ -36,9 +36,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
-
+	c.Assert(err, IsNil)
 	time.Sleep(testLease)
 
 	ctx := testNewContext(d)
@@ -47,7 +47,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(ctx.Value(testCtxKey), Equals, 1)
 	ctx.ClearValue(testCtxKey)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
@@ -159,16 +159,16 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()
 
-	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d1, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
-
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d1)
 
 	testCheckOwner(c, d1, true)
 
-	d2 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d2, err := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d2.Stop()
-
+	c.Assert(err, IsNil)
 	dbInfo := testSchemaInfo(c, d1, "test")
 	testCreateSchema(c, ctx, d1, dbInfo)
 
