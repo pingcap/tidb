@@ -87,7 +87,7 @@ type QueryCtx interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 
 	// ShowProcess shows the information about the session.
-	ShowProcess() util.ProcessInfo
+	ShowProcess() *util.ProcessInfo
 
 	// GetSessionVars return SessionVars.
 	GetSessionVars() *variable.SessionVars
