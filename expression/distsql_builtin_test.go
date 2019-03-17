@@ -112,13 +112,13 @@ func (s *testEvalSuite) TestEval(c *C) {
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_JsonSearchSig,
 				toPBFieldType(newJSONFieldType()),
-				jsonDatumExpr(`["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`),
-				datumExpr(types.NewBytesDatum([]byte(`all`))),
-				datumExpr(types.NewBytesDatum([]byte(`10`))),
-				datumExpr(types.NewBytesDatum([]byte(`\`))),
-				datumExpr(types.NewBytesDatum([]byte(`$**.k`))),
+				jsonDatumExpr(c, `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`),
+				datumExpr(c, types.NewBytesDatum([]byte(`all`))),
+				datumExpr(c, types.NewBytesDatum([]byte(`10`))),
+				datumExpr(c, types.NewBytesDatum([]byte(`\`))),
+				datumExpr(c, types.NewBytesDatum([]byte(`$**.k`))),
 			),
-			newJSONDatum(`"$[1][0].k"`),
+			newJSONDatum(c, `"$[1][0].k"`),
 		},
 	}
 	sc := new(stmtctx.StatementContext)
@@ -190,21 +190,15 @@ func datumExpr(c *C, d types.Datum) *tipb.Expr {
 	return expr
 }
 
-func newJSONDatum(s string) (d types.Datum) {
+func newJSONDatum(c *C, s string) (d types.Datum) {
 	j, err := json.ParseBinaryFromString(s)
-	if err != nil {
-		log.Warnf("err happened when json.ParseBinaryFromString in newJSONDatum:%s", err.Error())
-	}
+	c.Assert(err, IsNil)
 	d.SetMysqlJSON(j)
 	return d
 }
 
 func jsonDatumExpr(c *C, s string) *tipb.Expr {
-	var d types.Datum
-	j, err := json.ParseBinaryFromString(s)
-	c.Assert(err, IsNil)
-	d.SetMysqlJSON(j)
-	return datumExpr(c, d)
+	return datumExpr(c, newJSONDatum(c, s))
 }
 
 func columnExpr(columnID int64) *tipb.Expr {
