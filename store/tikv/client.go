@@ -23,7 +23,6 @@ import (
 
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -201,8 +200,8 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
-	unaryInterceptor := grpc_prometheus.UnaryClientInterceptor
-	streamInterceptor := grpc_prometheus.StreamClientInterceptor
+	var unaryInterceptor grpc.UnaryClientInterceptor
+	var streamInterceptor grpc.StreamClientInterceptor
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
 		unaryInterceptor = grpc_middleware.ChainUnaryClient(
