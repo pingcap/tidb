@@ -4,7 +4,7 @@ require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/StackExchange/wmi v0.0.0-20180725035823-b12b22c5341f // indirect
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
-	github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470
+	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
 	github.com/coreos/bbolt v1.3.0 // indirect
@@ -12,7 +12,7 @@ require (
 	github.com/coreos/go-semver v0.2.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142 // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
-	github.com/cznic/mathutil v0.0.0-20181021201202-eba54fb065b7
+	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
@@ -48,8 +48,8 @@ require (
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20190215154024-7f2fc73ef562
-	github.com/pingcap/log v0.0.0-20190214045112-b37da76f67a7
-	github.com/pingcap/parser v0.0.0-20190222082040-fe59ebfc9e10
+	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
+	github.com/pingcap/parser v0.0.0-20190312024907-3f6280b08c8b
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
 	github.com/pingcap/tipb v0.0.0-20190107072121-abbec73437b7

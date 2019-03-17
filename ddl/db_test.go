@@ -596,9 +596,6 @@ func (s *testDBSuite) TestCancelDropTableAndSchema(c *C) {
 		{true, model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, false},
 	}
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
 	testCase := &testCases[0]
@@ -1099,9 +1096,6 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
 	}
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
 	testCase := &testCases[0]
@@ -1663,6 +1657,71 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 
 	s.tk.MustExec("drop database ctwl_db")
 	s.tk.MustExec("drop database ctwl_db1")
+}
+
+// TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
+func (s *testDBSuite) TestCreateTableWithLike2(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.tk.MustExec("drop table if exists t1,t2;")
+	defer s.tk.MustExec("drop table if exists t1,t2;")
+	s.tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
+
+	tbl1 := testGetTableByName(c, s.s, "test_db", "t1")
+	doneCh := make(chan error, 2)
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn && job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
+			return
+		}
+		if job.TableID != tbl1.Meta().ID {
+			return
+		}
+		if job.SchemaState == model.StateDeleteOnly {
+			go backgroundExec(s.store, "create table t2 like t1", doneCh)
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	// create table when refer table add column
+	s.tk.MustExec("alter table t1 add column d int")
+	checkTbl2 := func() {
+		err := <-doneCh
+		c.Assert(err, IsNil)
+		s.tk.MustExec("alter table t2 add column e int")
+		t2Info := testGetTableByName(c, s.s, "test_db", "t2")
+		c.Assert(len(t2Info.Meta().Columns), Equals, 4)
+		c.Assert(len(t2Info.Meta().Columns), Equals, len(t2Info.Cols()))
+	}
+	checkTbl2()
+
+	// create table when refer table drop column
+	s.tk.MustExec("drop table t2;")
+	s.tk.MustExec("alter table t1 drop column b;")
+	checkTbl2()
+
+	// create table when refer table add index
+	s.tk.MustExec("drop table t2;")
+	s.tk.MustExec("alter table t1 add index idx2(a);")
+	checkTbl2 = func() {
+		err := <-doneCh
+		c.Assert(err, IsNil)
+		s.tk.MustExec("alter table t2 add column e int")
+		tbl2 := testGetTableByName(c, s.s, "test_db", "t2")
+		c.Assert(len(tbl2.Meta().Columns), Equals, 4)
+		c.Assert(len(tbl2.Meta().Columns), Equals, len(tbl2.Cols()))
+		c.Assert(len(tbl2.Meta().Indices), Equals, 1)
+		c.Assert(tbl2.Meta().Indices[0].Name.L, Equals, "idx1")
+	}
+	checkTbl2()
+
+	// create table when refer table drop index.
+	s.tk.MustExec("drop table t2;")
+	s.tk.MustExec("alter table t1 drop index idx2;")
+	checkTbl2()
+
 }
 
 func (s *testDBSuite) TestCreateTable(c *C) {
@@ -2584,4 +2643,32 @@ func (s *testDBSuite) TestIssue9100(c *C) {
 	tk.MustExec("create table issue9100t2 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col3)) partition by range( col1 + col3 ) (partition p1 values less than (11))")
 	_, err = tk.Exec("alter table issue9100t2 add unique index  p_col1 (col1)")
 	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+}
+
+func (s *testDBSuite) TestModifyColumnCharset(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
+	defer s.mustExec(c, "drop table t_mcc;")
+
+	result := s.tk.MustQuery(`show create table t_mcc`)
+	result.Check(testkit.Rows(
+		"t_mcc CREATE TABLE `t_mcc` (\n" +
+			"  `a` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
+			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	s.tk.MustExec("alter table t_mcc modify column a varchar(8);")
+	t := s.testGetTable(c, "t_mcc")
+	t.Meta().Version = model.TableInfoVersion0
+	// When the table version is TableInfoVersion0, the following statement don't change "b" charset.
+	// So the behavior is not compatible with MySQL.
+	s.tk.MustExec("alter table t_mcc modify column b varchar(8);")
+	result = s.tk.MustQuery(`show create table t_mcc`)
+	result.Check(testkit.Rows(
+		"t_mcc CREATE TABLE `t_mcc` (\n" +
+			"  `a` varchar(8) DEFAULT NULL,\n" +
+			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
 }

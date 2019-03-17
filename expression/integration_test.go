@@ -33,6 +33,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -1398,6 +1399,25 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select subtime(a, b), subtime(cast(a as date), b), subtime(b,a), subtime(a,c), subtime(b," +
 		"c), subtime(c,a), subtime(c,b) from t;")
 	result.Check(testkit.Rows("<nil> <nil> <nil> 2017-01-01 11:29:30 2017-01-01 11:29:30 <nil> <nil>"))
+
+	// ADDTIME & SUBTIME issue #5966
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime, b timestamp, c time, d date, e bit(1))")
+	tk.MustExec(`insert into t values("2017-01-01 12:30:31", "2017-01-01 12:30:31", "01:01:01", "2017-01-01", 0b1)`)
+
+	result = tk.MustQuery("select addtime(a, e), addtime(b, e), addtime(c, e), addtime(d, e) from t")
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery("select addtime('2017-01-01 01:01:01', 0b1), addtime('2017-01-01', b'1'), addtime('01:01:01', 0b1011)")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery("select addtime('2017-01-01', 1), addtime('2017-01-01 01:01:01', 1), addtime(cast('2017-01-01' as date), 1)")
+	result.Check(testkit.Rows("2017-01-01 00:00:01 2017-01-01 01:01:02 00:00:01"))
+
+	result = tk.MustQuery("select subtime(a, e), subtime(b, e), subtime(c, e), subtime(d, e) from t")
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery("select subtime('2017-01-01 01:01:01', 0b1), subtime('2017-01-01', b'1'), subtime('01:01:01', 0b1011)")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery("select subtime('2017-01-01', 1), subtime('2017-01-01 01:01:01', 1), subtime(cast('2017-01-01' as date), 1)")
+	result.Check(testkit.Rows("2016-12-31 23:59:59 2017-01-01 01:01:00 -00:00:01"))
 
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
@@ -3600,6 +3620,13 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err, IsNil)
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("0 0 0 0"))
+
+	_, err = tk.Exec("set @@global.max_user_connections='';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
+	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
 }
 
 func (s *testIntegrationSuite) TestIssues(c *C) {
@@ -3713,7 +3740,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = plannercore.Preprocess(ctx, stmts[0], is, false)
+		err = plannercore.Preprocess(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
