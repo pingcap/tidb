@@ -609,7 +609,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			err1 := cc.writeError(err)
 			terror.Log(errors.Trace(err1))
 		}
-		cc.addMetrics(data[0], startTime, err)
+		//	cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
 	}
 }
@@ -821,7 +821,7 @@ func (cc *clientConn) writeOK() error {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 func (cc *clientConn) writeError(e error) error {
@@ -870,8 +870,7 @@ func (cc *clientConn) writeEOF(serverStatus uint16) error {
 		data = dumpUint16(data, status)
 	}
 
-	err := cc.writePacket(data)
-	return errors.Trace(err)
+	return cc.writePacket(data)
 }
 
 func (cc *clientConn) writeReq(filePath string) error {
@@ -1116,7 +1115,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
@@ -1180,7 +1179,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 		}
 	}
-	return errors.Trace(cc.writeEOF(serverStatus))
+	return cc.writeEOF(serverStatus)
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.

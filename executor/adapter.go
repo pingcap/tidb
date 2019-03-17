@@ -127,7 +127,7 @@ func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
-	return errors.Trace(err)
+	return err
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
