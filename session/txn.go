@@ -164,7 +164,7 @@ func mockAutoIDRetry() bool {
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
-		logutil.Logger(context.Background()).Error("The code should never run here",
+		logutil.Logger(context.Background()).Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
 		return errors.New("invalid transaction")

@@ -268,13 +268,13 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	if s.statsCollector != nil {
 		do, err := GetDomain(s.store)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("Domain not found", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("domain not found", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
 		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("Store query feedback", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("store query feedback", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
@@ -383,7 +383,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
 		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
-			logutil.Logger(ctx).Warn("SQL",
+			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
 				zap.String("txn", s.txn.GoString()))
@@ -412,7 +412,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 
 	if err != nil {
-		logutil.Logger(ctx).Warn("Commit failed",
+		logutil.Logger(ctx).Warn("commit failed",
 			zap.String("finished txn", s.txn.GoString()),
 			zap.Error(err))
 		return errors.Trace(err)
@@ -579,16 +579,16 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				logutil.Logger(ctx).Warn("Retrying",
+				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
-					zap.Uint("retry_cnt", retryCnt),
-					zap.Int("query_num", i),
+					zap.Uint("retryCnt", retryCnt),
+					zap.Int("queryNum", i),
 					zap.String("sql", sqlForLog(st.OriginText())+sessVars.GetExecuteArgumentsInfo()))
 			} else {
-				logutil.Logger(ctx).Warn("Retrying",
+				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
-					zap.Uint("retry_cnt", retryCnt),
-					zap.Int("query_num", i))
+					zap.Uint("retryCnt", retryCnt),
+					zap.Int("queryNum", i))
 			}
 			_, err = st.Exec(ctx)
 			if err != nil {
@@ -600,7 +600,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				return errors.Trace(err)
 			}
 		}
-		logutil.Logger(ctx).Warn("Transaction association",
+		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
 			zap.Uint64("original txnStartTS", orgStartTS))
 		if hook := ctx.Value("preCommitHook"); hook != nil {
@@ -614,7 +614,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 		}
 		if !s.isRetryableError(err) {
-			logutil.Logger(ctx).Warn("SQL",
+			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", label),
 				zap.Stringer("session", s),
 				zap.Error(err))
@@ -623,13 +623,13 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
-			logutil.Logger(ctx).Warn("SQL",
+			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", label),
-				zap.Uint("Retry reached max count", retryCnt))
+				zap.Uint("retry reached max count", retryCnt))
 			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax)
 			return errors.Trace(err)
 		}
-		logutil.Logger(ctx).Warn("SQL",
+		logutil.Logger(ctx).Warn("sql",
 			zap.String("label", label),
 			zap.Error(err),
 			zap.String("txn", s.txn.GoString()))
@@ -708,7 +708,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 		}
 		defer func() {
 			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				logutil.Logger(context.Background()).Error("set tidb_snap_shot error", zap.Error(err))
+				logutil.Logger(context.Background()).Error("set tidbSnapshot error", zap.Error(err))
 			}
 		}()
 	}
@@ -910,7 +910,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
-			logutil.Logger(ctx).Warn("Run statement error",
+			logutil.Logger(ctx).Warn("run statement error",
 				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
 				zap.Error(err),
 				zap.String("session", s.String()))
@@ -952,7 +952,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
-		logutil.Logger(ctx).Warn("Parse SQL error",
+		logutil.Logger(ctx).Warn("parse sql error",
 			zap.Error(err),
 			zap.String("sql", sql))
 		return nil, util.SyntaxError(err)
@@ -973,7 +973,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			logutil.Logger(ctx).Warn("Compile SQL error",
+			logutil.Logger(ctx).Warn("compile sql error",
 				zap.Error(err),
 				zap.String("sql", sql))
 			return nil, errors.Trace(err)
@@ -1203,7 +1203,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		s.sessionVars.User = user
 		return true
 	} else if user.Hostname == variable.DefHostname {
-		logutil.Logger(context.Background()).Error("User connection verification failed",
+		logutil.Logger(context.Background()).Error("user connection verification failed",
 			zap.Stringer("user", user))
 		return false
 	}
@@ -1222,7 +1222,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		}
 	}
 
-	logutil.Logger(context.Background()).Error("User connection verification failed",
+	logutil.Logger(context.Background()).Error("user connection verification failed",
 		zap.Stringer("user", user))
 	return false
 }
@@ -1464,7 +1464,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 	})
 
 	if err != nil {
-		logutil.Logger(context.Background()).Fatal("Check bootstrapped failed",
+		logutil.Logger(context.Background()).Fatal("check bootstrapped failed",
 			zap.Error(err))
 	}
 
@@ -1487,7 +1487,7 @@ func finishBootstrap(store kv.Storage) {
 		return errors.Trace(err)
 	})
 	if err != nil {
-		logutil.Logger(context.Background()).Fatal("Finish bootstrap failed",
+		logutil.Logger(context.Background()).Fatal("finish bootstrap failed",
 			zap.Error(err))
 	}
 }
@@ -1567,7 +1567,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
 		if err != nil {
 			vars.CommonGlobalLoaded = false
-			logutil.Logger(context.Background()).Error("Failed to load common global variables.")
+			logutil.Logger(context.Background()).Error("failed to load common global variables.")
 			return errors.Trace(err)
 		}
 		gvc.Update(rows, fields)

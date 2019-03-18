@@ -69,7 +69,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	ddlLease = schemaLease
 	statisticLease = statsLease
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
-		logutil.Logger(context.Background()).Info("New domain",
+		logutil.Logger(context.Background()).Info("new domain",
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
 			zap.Stringer("stats lease", statisticLease))
@@ -133,7 +133,7 @@ func SetStatsLease(lease time.Duration) {
 
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
-	logutil.Logger(context.Background()).Debug("Compiling", zap.String("source", src))
+	logutil.Logger(context.Background()).Debug("compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
 	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
@@ -143,7 +143,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("Compiling",
+		logutil.Logger(context.Background()).Warn("compiling",
 			zap.String("source", src),
 			zap.Error(err))
 		return nil, errors.Trace(err)
@@ -161,7 +161,7 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			logutil.Logger(context.Background()).Info("RollbackTxn for ddl/autocommit error.")
+			logutil.Logger(context.Background()).Info("rollbackTxn for ddl/autocommit error.")
 			se.RollbackTxn(ctx)
 		}
 		return meetsErr
