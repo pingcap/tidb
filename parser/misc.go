@@ -325,6 +325,7 @@ var tokenMap = map[string]int{
 	"LIKE":                     like,
 	"LIMIT":                    limit,
 	"LINES":                    lines,
+	"LINEAR":                   linear,
 	"LOAD":                     load,
 	"LOCAL":                    local,
 	"LOCALTIME":                localTime,
