@@ -839,6 +839,8 @@ const (
 	SlowLogIsInternalStr = "Is_internal"
 	// SlowLogIndexIDsStr is slow log field name.
 	SlowLogIndexIDsStr = "Index_ids"
+	// SlowLogDigestStr is slow log field name.
+	SlowLogDigestStr = "Digest"
 	// SlowLogQuerySQLStr is slow log field name.
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
 )
@@ -855,7 +857,7 @@ const (
 // # Index_ids: [1,2]
 // # Is_internal: false
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, sql string) string {
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
 	buf.WriteString(SlowLogPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
@@ -876,6 +878,9 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 		buf.WriteString(SlowLogPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
 	}
 	buf.WriteString(SlowLogPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
+	if len(digest) > 0 {
+		buf.WriteString(SlowLogPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+	}
 	if len(sql) == 0 {
 		sql = ";"
 	}

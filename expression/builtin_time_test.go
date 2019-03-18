@@ -1264,6 +1264,11 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		{"2016 11 22 16 50 22", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
 		{"16-50-22 2016 11 22", `%H-%i-%s%Y%m%d`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
 		{"16-50 2016 11 22", `%H-%i-%s%Y%m%d`, false, time.Time{}},
+		{"15-01-2001 1:59:58.999", "%d-%m-%Y %I:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 999000000, time.Local)},
+		{"15-01-2001 1:59:58.1", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 100000000, time.Local)},
+		{"15-01-2001 1:59:58.", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 000000000, time.Local)},
+		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
+		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%S.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
 	}
 
 	fc := funcs[ast.StrToDate]
@@ -2423,6 +2428,8 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 		"0000-00-00",
 		"1992-13-00",
 		"2007-10-07 23:59:61",
+		"2005-00-00",
+		"2005-00-01",
 		123456789}
 
 	for _, i := range testsNull {
