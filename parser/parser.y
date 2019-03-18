@@ -2015,11 +2015,11 @@ PartitionOpt:
 			Definitions:	defs,
 		}
 	}
-|	"PARTITION" "BY" "RANGE" "COLUMNS" '(' ColumnNameList ')' PartitionNumOpt PartitionDefinitionListOpt
+|	"PARTITION" "BY" "RANGE" "COLUMNS" '(' ColumnNameList ')' PartitionNumOpt SubPartitionOpt PartitionDefinitionListOpt
 	{
 		var defs []*ast.PartitionDefinition
-		if $9 != nil {
-			defs = $9.([]*ast.PartitionDefinition)
+		if $10 != nil {
+			defs = $10.([]*ast.PartitionDefinition)
 		}
 		$$ = &ast.PartitionOptions{
 			Tp:		model.PartitionTypeRange,
