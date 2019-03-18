@@ -87,3 +87,8 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/pingcap/pd v2.1.0-rc.4+incompatible => /Users/max/projects/src/github.com/pingcap/pd
+
+replace github.com/pingcap/parser v0.0.0-20190311093336-9fca026d9c49 => /Users/max/projects/src/github.com/pingcap/parser
+

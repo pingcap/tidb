@@ -199,7 +199,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		// explicitly flush columnInfo to client.
 		return errors.Trace(cc.flush())
 	}
-	return errors.Trace(cc.writeResultset(ctx, rs, true, 0, 0))
+	return cc.writeResultset(ctx, rs, true, 0, 0)
 }
 
 // maxFetchSize constants

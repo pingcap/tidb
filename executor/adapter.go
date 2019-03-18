@@ -127,7 +127,7 @@ func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
-	return errors.Trace(err)
+	return err
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -162,15 +162,18 @@ func (a *ExecStmt) IsPrepared() bool {
 }
 
 // IsReadOnly returns true if a statement is read only.
-// It will update readOnlyCheckStmt if current ExecStmt can be conveted to
+// It will update readOnlyCheckStmt if current ExecStmt can be converted to
 // a plannercore.Execute. Last step is using ast.IsReadOnly function to determine
 // a statement is read only or not.
-func (a *ExecStmt) IsReadOnly() bool {
-	readOnlyCheckStmt := a.StmtNode
-	if checkPlan, ok := a.Plan.(*plannercore.Execute); ok {
-		readOnlyCheckStmt = checkPlan.Stmt
+func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) (bool, error) {
+	if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
+		s, err := getPreparedStmt(execStmt, vars)
+		if err != nil {
+			return false, err
+		}
+		return ast.IsReadOnly(s), nil
 	}
-	return ast.IsReadOnly(readOnlyCheckStmt)
+	return ast.IsReadOnly(a.StmtNode), nil
 }
 
 // RebuildPlan rebuilds current execute statement plan.

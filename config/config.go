@@ -330,17 +330,17 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount:  16,
+		GrpcConnectionCount:  5,
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
 
 		MaxTxnTimeUse: 590,
 
-		MaxBatchSize:      128,
+		MaxBatchSize:      1280,
 		OverloadThreshold: 200,
 		MaxBatchWaitTime:  0,
-		BatchWaitSize:     8,
+		BatchWaitSize:     80,
 	},
 	Binlog: Binlog{
 		Enable:       "auto",

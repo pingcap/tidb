@@ -91,7 +91,7 @@ type Session interface {
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
-	ShowProcess() util.ProcessInfo
+	ShowProcess() *util.ProcessInfo
 	// PrePareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
@@ -559,9 +559,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
-			if st.IsReadOnly() {
-				continue
-			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
@@ -862,10 +859,10 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
-	pi := util.ProcessInfo{
+	pi := &util.ProcessInfo{
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
-		Command: mysql.Command2Str[command],
+		Command: command,
 		Time:    t,
 		State:   s.Status(),
 		Info:    sql,
@@ -1623,11 +1620,11 @@ func (s *session) GetStore() kv.Storage {
 	return s.store
 }
 
-func (s *session) ShowProcess() util.ProcessInfo {
-	var pi util.ProcessInfo
+func (s *session) ShowProcess() *util.ProcessInfo {
+	var pi *util.ProcessInfo
 	tmp := s.processInfo.Load()
 	if tmp != nil {
-		pi = tmp.(util.ProcessInfo)
+		pi = tmp.(*util.ProcessInfo)
 	}
 	return pi
 }

@@ -98,7 +98,7 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	return store, nil
 }
 
-func (c *pdClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
+func (c *pdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	panic(errors.New("unimplemented"))
 }
 

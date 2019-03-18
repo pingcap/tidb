@@ -1302,6 +1302,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = getPreparedStmt(execStmt, vars)
+		if err != nil {
+			return
+		}
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
@@ -1390,14 +1393,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
-	err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
-	if err != nil {
-		return errors.Trace(err)
-	}
+	// err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+	// err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
 	vars.StmtCtx = sc
 	return
 }

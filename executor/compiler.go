@@ -119,6 +119,8 @@ func isPhysicalPlanExpensive(p plannercore.PhysicalPlan) bool {
 
 // CountStmtNode records the number of statements with the same type.
 func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
+	//TODO: make this function faster
+	return
 	if inRestrictedSQL {
 		return
 	}

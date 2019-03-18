@@ -23,7 +23,7 @@ type ProcessInfo struct {
 	User    string
 	Host    string
 	DB      string
-	Command string
+	Command byte
 	Time    time.Time
 	State   uint16
 	Info    string
@@ -33,6 +33,6 @@ type ProcessInfo struct {
 // kill statement rely on this interface.
 type SessionManager interface {
 	// ShowProcessList returns map[connectionID]ProcessInfo
-	ShowProcessList() map[uint64]ProcessInfo
+	ShowProcessList() map[uint64]*ProcessInfo
 	Kill(connectionID uint64, query bool)
 }

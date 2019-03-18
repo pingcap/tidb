@@ -649,7 +649,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			pi.User,
 			pi.Host,
 			pi.DB,
-			pi.Command,
+			mysql.Command2Str[pi.Command],
 			t,
 			fmt.Sprintf("%d", pi.State),
 			pi.Info,
