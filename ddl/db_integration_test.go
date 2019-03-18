@@ -24,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	tmysql "github.com/pingcap/parser/mysql"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -587,6 +589,56 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 
 	rs, err = tk.Exec("alter table t charset utf8mb4 collate utf8mb4_bin")
 	c.Assert(err, NotNil)
+
+	// test change column charset when change table charset.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a varchar(10) character set ascii) charset utf8")
+	tk.MustExec("alter table t convert to charset utf8mb4;")
+	checkCharset := func() {
+		tbl := testGetTableByName(c, s.ctx, "test", "t")
+		c.Assert(tbl, NotNil)
+		c.Assert(tbl.Meta().Charset, Equals, charset.CharsetUTF8MB4)
+		c.Assert(tbl.Meta().Collate, Equals, charset.CollationUTF8MB4)
+		for _, col := range tbl.Meta().Columns {
+			c.Assert(col.Charset, Equals, charset.CharsetUTF8MB4)
+			c.Assert(col.Collate, Equals, charset.CollationUTF8MB4)
+		}
+	}
+	checkCharset()
+	// test when table charset is equal to target charset but column is not  equal to the target charset.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a varchar(10) character set ascii) charset utf8mb4")
+	tk.MustExec("alter table t convert to charset utf8mb4;")
+	checkCharset()
+
+	// Mock table info with charset is "". Old TiDB maybe create table with charset is "".
+	mockCtx := mock.NewContext()
+	mockCtx.Store = s.store
+	err = mockCtx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+	txn, err := mockCtx.Txn(true)
+	c.Assert(err, IsNil)
+	mt := meta.NewMeta(txn)
+	db, ok := domain.GetDomain(s.ctx).InfoSchema().SchemaByName(model.NewCIStr("test"))
+	c.Assert(ok, IsTrue)
+	tbl := testGetTableByName(c, s.ctx, "test", "t")
+	tblInfo := tbl.Meta().Clone()
+	tblInfo.Charset = ""
+	tblInfo.Collate = ""
+	err = mt.UpdateTable(db.ID, tblInfo)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	// check table charset is ""
+	tk.MustExec("alter table t add column b varchar(10);") //  load latest schema.
+	tbl = testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl, NotNil)
+	c.Assert(tbl.Meta().Charset, Equals, "")
+	c.Assert(tbl.Meta().Collate, Equals, "")
+	// Test when table charset is "", this for compatibility.
+	tk.MustExec("alter table t convert to charset utf8mb4;")
+	checkCharset()
 }
 
 func (s *testIntegrationSuite) TestCaseInsensitiveCharsetAndCollate(c *C) {

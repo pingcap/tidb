@@ -142,6 +142,11 @@ func testCreateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 	return job
 }
 
+// TestCreateTable exports for integration test to uses.
+func CreateTableForTest(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+	return testCreateTable(c, ctx, d, dbInfo, tblInfo)
+}
+
 func testCreateView(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,

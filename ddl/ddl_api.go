@@ -2426,12 +2426,9 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
-
-	origCharset := tb.Meta().Charset
-	origCollate := tb.Meta().Collate
 	if toCharset == "" {
 		// charset does not change.
-		toCharset = origCharset
+		toCharset = tb.Meta().Charset
 	}
 
 	if toCollate == "" {
@@ -2442,22 +2439,14 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		}
 	}
 
-	if origCharset == toCharset && origCollate == toCollate {
-		// nothing to do.
+	doNothing, err := checkAlterTableCharsetAble(tb.Meta(), toCharset, toCollate)
+	if err != nil {
+		return err
+	}
+	if doNothing {
 		return nil
 	}
 
-	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, col := range tb.Meta().Cols() {
-		if col.Tp == mysql.TypeVarchar {
-			if err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
@@ -2468,6 +2457,48 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkAlterTableCharsetAble(tblInfo *model.TableInfo, toCharset, toCollate string) (bool, error) {
+	var err error
+	origCharset := tblInfo.Charset
+	origCollate := tblInfo.Collate
+	if origCharset == toCharset && origCollate == toCollate {
+		// nothing to do.
+		var doNothing = true
+		for _, col := range tblInfo.Columns {
+			if col.Charset == charset.CharsetBin {
+				continue
+			}
+			if col.Charset == toCharset && col.Collate == toCollate {
+				continue
+			}
+			doNothing = false
+		}
+		if doNothing {
+			return true, nil
+		}
+	}
+
+	if len(origCharset) == 0 {
+		// The table charset may be "", if the table is create in old TiDB version.
+		// This DDL will update the table charset to default charset.
+		// use default charset or database charset? show create table is uses the default charset.
+		origCharset, origCollate = charset.GetDefaultCharsetAndCollate()
+	}
+
+	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
+		return false, errors.Trace(err)
+	}
+
+	for _, col := range tblInfo.Columns {
+		if col.Tp == mysql.TypeVarchar {
+			if err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset); err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+	}
+	return false, nil
 }
 
 // RenameIndex renames an index.
