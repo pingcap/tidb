@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"context"
 	"sync"
 
 	"github.com/ngaut/pools"
@@ -83,7 +82,7 @@ func (sg *sessionPool) close() {
 	if sg.mu.closed || sg.resPool == nil {
 		return
 	}
-	logutil.Logger(context.Background()).Info("[ddl] closing sessionPool")
+	logutil.Logger(ddlLogCtx).Info("[ddl] closing sessionPool")
 	sg.resPool.Close()
 	sg.mu.closed = true
 }

@@ -382,3 +382,13 @@ func WithConnID(ctx context.Context, connID uint32) context.Context {
 	}
 	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
 }
+
+func WithKeyValue(ctx context.Context, key, value string) context.Context {
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = zaplog.L()
+	}
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.String(key, value)))
+}

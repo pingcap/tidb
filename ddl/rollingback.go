@@ -14,8 +14,6 @@
 package ddl
 
 import (
-	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -153,7 +151,7 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// add index workers are started. need to ask them to exit.
-		logutil.Logger(context.Background()).Info("[ddl] run the cancelling DDL job", zap.String("worker", w.String()), zap.String("job", job.String()))
+		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
 		w.reorgCtx.notifyReorgCancel()
 		ver, err = w.onCreateIndex(d, t, job)
 	} else {
@@ -278,9 +276,9 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 	if err != nil {
 		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
-			logutil.Logger(context.Background()).Error("[ddl] run DDL job failed", zap.String("worker", w.String()), zap.String("job", job.String()), zap.Error(err))
+			logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		} else {
-			logutil.Logger(context.Background()).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
+			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
 		}
 
 		job.Error = toTError(err)
