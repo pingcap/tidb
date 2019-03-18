@@ -14,7 +14,6 @@
 package core
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -259,7 +258,8 @@ func (p *basePlan) statsInfo() *property.StatsInfo {
 }
 
 func (p *basePlan) ExplainID() string {
-	return fmt.Sprintf("%s_%d", p.tp, p.id)
+	return ""
+	//return fmt.Sprintf("%s_%d", p.tp, p.id)
 }
 
 // Schema implements Plan Schema interface.
