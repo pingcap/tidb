@@ -93,13 +93,13 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 
 // GetLower gets the lower bound of bucket `idx`.
 func (hg *Histogram) GetLower(idx int) *types.Datum {
-	d := hg.Bounds.GetRow(2*idx).GetDatum(0, hg.tp)
+	d := hg.Bounds.GetRow(2 * idx).GetDatum(0, hg.tp)
 	return &d
 }
 
 // GetUpper gets the upper bound of bucket `idx`.
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
-	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.tp)
+	d := hg.Bounds.GetRow(2*idx + 1).GetDatum(0, hg.tp)
 	return &d
 }
 
@@ -633,7 +633,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	}
 	lh.NDV += rh.NDV
 	lLen := lh.Len()
-	cmp, err := lh.GetUpper(lLen-1).CompareDatum(sc, rh.GetLower(0))
+	cmp, err := lh.GetUpper(lLen - 1).CompareDatum(sc, rh.GetLower(0))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
