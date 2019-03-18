@@ -626,8 +626,8 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 
 	default:
 		fieldName := field.Text()
-		fieldName = strings.TrimLeft(fieldName, "\n +(")
-		fieldName = strings.TrimRight(fieldName, "\n )")
+		fieldName = strings.TrimLeft(fieldName, "\t\n +(")
+		fieldName = strings.TrimRight(fieldName, "\t\n )")
 		return model.NewCIStr(fieldName), nil
 	}
 }
