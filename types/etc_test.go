@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/testleak"
@@ -43,6 +45,7 @@ func testIsTypeChar(c *C, tp byte, expect bool) {
 }
 
 func (s *testTypeEtcSuite) TestIsType(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	testIsTypeBlob(c, mysql.TypeTinyBlob, true)
 	testIsTypeBlob(c, mysql.TypeMediumBlob, true)
@@ -66,6 +69,7 @@ func testTypeToStr(c *C, tp byte, charset string, expect string) {
 }
 
 func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	testTypeStr(c, mysql.TypeYear, "year")
 	testTypeStr(c, 0xdd, "")
@@ -103,12 +107,16 @@ func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestEOFAsNil(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	err := EOFAsNil(io.EOF)
 	c.Assert(err, IsNil)
+	err = EOFAsNil(errors.New("test"))
+	c.Assert(err, ErrorMatches, "test")
 }
 
 func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Flen    int
@@ -128,6 +136,7 @@ func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  float64
@@ -151,6 +160,7 @@ func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestRound(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  float64
@@ -172,6 +182,7 @@ func (s *testTypeEtcSuite) TestRound(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestTruncate(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input   float64
@@ -186,10 +197,161 @@ func (s *testTypeEtcSuite) TestTruncate(c *C) {
 		{100.1156, 3, 1, 99.9, ErrOverflow},
 		{1.36, 10, 2, 1.36, nil},
 	}
-
 	for _, t := range tbl {
 		f, err := TruncateFloat(t.Input, t.Flen, t.Decimal)
 		c.Assert(f, Equals, t.Expect)
 		c.Assert(terror.ErrorEqual(err, t.Err), IsTrue, Commentf("err %v", err))
 	}
+}
+
+func (s *testTypeEtcSuite) TestIsTypeTemporal(c *C) {
+	c.Parallel()
+	defer testleak.AfterTest(c)()
+	res := IsTypeTemporal(mysql.TypeDuration)
+	c.Assert(res, Equals, true)
+	res = IsTypeTemporal(mysql.TypeDatetime)
+	c.Assert(res, Equals, true)
+	res = IsTypeTemporal(mysql.TypeTimestamp)
+	c.Assert(res, Equals, true)
+	res = IsTypeTemporal(mysql.TypeDate)
+	c.Assert(res, Equals, true)
+	res = IsTypeTemporal(mysql.TypeNewDate)
+	c.Assert(res, Equals, true)
+	res = IsTypeTemporal('t')
+	c.Assert(res, Equals, false)
+}
+
+func (s *testTypeEtcSuite) TestIsBinaryStr(c *C) {
+	c.Parallel()
+	defer testleak.AfterTest(c)()
+	in := FieldType{
+		Tp:      mysql.TypeBit,
+		Flag:    mysql.UnsignedFlag,
+		Flen:    1,
+		Decimal: 0,
+		Charset: charset.CharsetUTF8,
+		Collate: charset.CollationUTF8,
+	}
+	in.Collate = charset.CollationUTF8
+	res := IsBinaryStr(&in)
+	c.Assert(res, Equals, false)
+
+	in.Collate = charset.CollationBin
+	res = IsBinaryStr(&in)
+	c.Assert(res, Equals, false)
+
+	in.Tp = mysql.TypeBlob
+	res = IsBinaryStr(&in)
+	c.Assert(res, Equals, true)
+
+}
+
+func (s *testTypeEtcSuite) TestIsNonBinaryStr(c *C) {
+	c.Parallel()
+	defer testleak.AfterTest(c)()
+	in := FieldType{
+		Tp:      mysql.TypeBit,
+		Flag:    mysql.UnsignedFlag,
+		Flen:    1,
+		Decimal: 0,
+		Charset: charset.CharsetUTF8,
+		Collate: charset.CollationUTF8,
+	}
+
+	in.Collate = charset.CollationBin
+	res := IsBinaryStr(&in)
+	c.Assert(res, Equals, false)
+
+	in.Collate = charset.CollationUTF8
+	res = IsBinaryStr(&in)
+	c.Assert(res, Equals, false)
+
+	in.Tp = mysql.TypeBlob
+	res = IsBinaryStr(&in)
+	c.Assert(res, Equals, false)
+}
+
+func (s *testTypeEtcSuite) TestIsTemporalWithDate(c *C) {
+	c.Parallel()
+	defer testleak.AfterTest(c)()
+
+	res := IsTemporalWithDate(mysql.TypeDatetime)
+	c.Assert(res, Equals, true)
+
+	res = IsTemporalWithDate(mysql.TypeDate)
+	c.Assert(res, Equals, true)
+
+	res = IsTemporalWithDate(mysql.TypeTimestamp)
+	c.Assert(res, Equals, true)
+
+	res = IsTemporalWithDate('t')
+	c.Assert(res, Equals, false)
+
+}
+
+func (s *testTypeEtcSuite) TestIsTypePrefixable(c *C) {
+	c.Parallel()
+	defer testleak.AfterTest(c)()
+
+	res := IsTypePrefixable('t')
+	c.Assert(res, Equals, false)
+
+	res = IsTypePrefixable(mysql.TypeBlob)
+	c.Assert(res, Equals, true)
+
+}
+
+func (s *testTypeEtcSuite) TestIsTypeFractionable(c *C) {
+	c.Parallel()
+	defer testleak.AfterTest(c)()
+
+	res := IsTypeFractionable(mysql.TypeDatetime)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeFractionable(mysql.TypeDuration)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeFractionable(mysql.TypeTimestamp)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeFractionable('t')
+	c.Assert(res, Equals, false)
+}
+
+func (s *testTypeEtcSuite) TestIsTypeNumeric(c *C) {
+	c.Parallel()
+	defer testleak.AfterTest(c)()
+
+	res := IsTypeNumeric(mysql.TypeBit)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeNumeric(mysql.TypeTiny)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeNumeric(mysql.TypeInt24)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeNumeric(mysql.TypeLong)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeNumeric(mysql.TypeLonglong)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeNumeric(mysql.TypeNewDecimal)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeNumeric(mysql.TypeDecimal)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeNumeric(mysql.TypeFloat)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeNumeric(mysql.TypeDouble)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeNumeric(mysql.TypeShort)
+	c.Assert(res, Equals, true)
+
+	res = IsTypeNumeric('t')
+	c.Assert(res, Equals, false)
 }

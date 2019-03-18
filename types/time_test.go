@@ -5,8 +5,7 @@
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
+// // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
@@ -31,6 +30,7 @@ type testTimeSuite struct {
 }
 
 func (s *testTimeSuite) TestDateTime(c *C) {
+	c.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
@@ -114,6 +114,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 }
 
 func (s *testTimeSuite) TestTimestamp(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
@@ -140,6 +141,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 }
 
 func (s *testTimeSuite) TestDate(c *C) {
+	c.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
@@ -173,6 +175,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 }
 
 func (s *testTimeSuite) TestTime(c *C) {
+	c.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
@@ -262,6 +265,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 }
 
 func (s *testTimeSuite) TestDurationAdd(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input    string
@@ -299,6 +303,7 @@ func (s *testTimeSuite) TestDurationAdd(c *C) {
 }
 
 func (s *testTimeSuite) TestDurationSub(c *C) {
+	c.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
@@ -324,6 +329,7 @@ func (s *testTimeSuite) TestDurationSub(c *C) {
 }
 
 func (s *testTimeSuite) TestTimeFsp(c *C) {
+	c.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
@@ -364,6 +370,7 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 	}
 }
 func (s *testTimeSuite) TestYear(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
@@ -426,6 +433,7 @@ func (s *testTimeSuite) TestYear(c *C) {
 }
 
 func (s *testTimeSuite) getLocation(c *C) *time.Location {
+	c.Parallel()
 	locations := []string{"Asia/Shanghai", "Europe/Berlin"}
 	timeFormat := "Jan 2, 2006 at 3:04pm (MST)"
 
@@ -446,6 +454,7 @@ func (s *testTimeSuite) getLocation(c *C) *time.Location {
 }
 
 func (s *testTimeSuite) TestCodec(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
@@ -512,6 +521,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 }
 
 func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input                int64
@@ -586,6 +596,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 }
 
 func (s *testTimeSuite) TestToNumber(c *C) {
+	c.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
@@ -660,6 +671,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 }
 
 func (s *testTimeSuite) TestParseFrac(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		S        string
@@ -697,6 +709,7 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 }
 
 func (s *testTimeSuite) TestRoundFrac(c *C) {
+	c.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	sc.TimeZone = time.UTC
@@ -713,6 +726,8 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		{"2012-12-31 11:30:45.999999", 4, "2012-12-31 11:30:46.0000"},
 		{"2012-12-31 11:30:45.999999", 0, "2012-12-31 11:30:46"},
 		{"2012-00-00 11:30:45.999999", 3, "2012-00-00 11:30:46.000"},
+		{"2011-11-11 10:10:10.888888", 0, "2011-11-11 10:10:11"},
+		{"2011-11-11 10:10:10.111111", 0, "2011-11-11 10:10:10"},
 		// TODO: MySQL can handle this case, but we can't.
 		// {"2012-01-00 23:59:59.999999", 3, "2012-01-01 00:00:00.000"},
 	}
@@ -748,6 +763,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 }
 
 func (s *testTimeSuite) TestConvert(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
@@ -797,6 +813,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 }
 
 func (s *testTimeSuite) TestCompare(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 string
@@ -840,6 +857,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 }
 
 func (s *testTimeSuite) TestDurationClock(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	// test hour, minute, second and micro second
 	tbl := []struct {
@@ -865,6 +883,7 @@ func (s *testTimeSuite) TestDurationClock(c *C) {
 }
 
 func (s *testTimeSuite) TestParseDateFormat(c *C) {
+	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
@@ -889,6 +908,7 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 }
 
 func (s *testTimeSuite) TestTamestampDiff(c *C) {
+	c.Parallel()
 	tests := []struct {
 		unit   string
 		t1     types.MysqlTime
@@ -920,6 +940,7 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 }
 
 func (s *testTimeSuite) TestDateFSP(c *C) {
+	c.Parallel()
 	tests := []struct {
 		date   string
 		expect int
@@ -936,6 +957,7 @@ func (s *testTimeSuite) TestDateFSP(c *C) {
 }
 
 func (s *testTimeSuite) TestConvertTimeZone(c *C) {
+	c.Parallel()
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	tests := []struct {
 		input  types.MysqlTime
@@ -957,6 +979,7 @@ func (s *testTimeSuite) TestConvertTimeZone(c *C) {
 }
 
 func (s *testTimeSuite) TestTimeAdd(c *C) {
+	c.Parallel()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -987,6 +1010,7 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 }
 
 func (s *testTimeSuite) TestTruncateOverflowMySQLTime(c *C) {
+	c.Parallel()
 	t := types.MaxTime + 1
 	res, err := types.TruncateOverflowMySQLTime(t)
 	c.Assert(types.ErrTruncatedWrongVal.Equal(err), IsTrue)
@@ -1019,6 +1043,7 @@ func (s *testTimeSuite) TestTruncateOverflowMySQLTime(c *C) {
 }
 
 func (s *testTimeSuite) TestCheckTimestamp(c *C) {
+	c.Parallel()
 
 	shanghaiTz, _ := time.LoadLocation("Asia/Shanghai")
 
@@ -1069,4 +1094,247 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 			c.Assert(validTimestamp, IsNil, Commentf("For %s", t.input))
 		}
 	}
+}
+
+func (s *testTimeSuite) TestCurrentTime(c *C) {
+	c.Parallel()
+	res := types.CurrentTime(mysql.TypeTimestamp)
+	c.Assert(res.Time, NotNil)
+	c.Assert(res.Type, Equals, mysql.TypeTimestamp)
+	c.Assert(res.Fsp, Equals, 0)
+}
+
+func (s *testTimeSuite) TestInvalidZero(c *C) {
+	c.Parallel()
+	in := types.Time{
+		Time: types.ZeroTime,
+		Type: mysql.TypeTimestamp,
+		Fsp:  types.DefaultFsp,
+	}
+	c.Assert(in.InvalidZero(), Equals, true)
+	in.Time = types.FromDate(2019, 00, 00, 00, 00, 00, 00)
+	c.Assert(in.InvalidZero(), Equals, true)
+	in.Time = types.FromDate(2019, 04, 12, 12, 00, 00, 00)
+	c.Assert(in.InvalidZero(), Equals, false)
+
+}
+
+func (s *testTimeSuite) TestGetFsp(c *C) {
+	c.Parallel()
+
+	res := types.GetFsp("2019:04:12 14:00:00.123456")
+	c.Assert(res, Equals, 6)
+
+	res = types.GetFsp("2019:04:12 14:00:00.1234567890")
+	c.Assert(res, Equals, 6)
+
+	res = types.GetFsp("2019:04:12 14:00:00.1")
+	c.Assert(res, Equals, 1)
+
+	res = types.GetFsp("2019:04:12 14:00:00")
+	c.Assert(res, Equals, 0)
+}
+
+func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
+	c.Parallel()
+
+	in := types.Time{
+		Time: types.FromDate(2019, 04, 12, 14, 00, 00, 0000),
+		Type: mysql.TypeTimestamp,
+		Fsp:  types.DefaultFsp,
+	}
+
+	res, err := types.ExtractDatetimeNum(&in, "day")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(12))
+
+	res, err = types.ExtractDatetimeNum(&in, "week")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(14))
+
+	res, err = types.ExtractDatetimeNum(&in, "MONTH")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(4))
+
+	res, err = types.ExtractDatetimeNum(&in, "QUARTER")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(2))
+
+	res, err = types.ExtractDatetimeNum(&in, "YEAR")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(2019))
+
+	res, err = types.ExtractDatetimeNum(&in, "DAY_MICROSECOND")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(12140000000000))
+
+	res, err = types.ExtractDatetimeNum(&in, "DAY_SECOND")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(12140000))
+
+	res, err = types.ExtractDatetimeNum(&in, "DAY_MINUTE")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(121400))
+
+	res, err = types.ExtractDatetimeNum(&in, "DAY_HOUR")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(1214))
+
+	res, err = types.ExtractDatetimeNum(&in, "YEAR_MONTH")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(201904))
+
+	res, err = types.ExtractDatetimeNum(&in, "TEST_ERROR")
+	c.Assert(res, Equals, int64(0))
+	c.Assert(err, ErrorMatches, "invalid unit.*")
+}
+
+func (s *testTimeSuite) TestExtractDurationNum(c *C) {
+	c.Parallel()
+
+	in := types.Duration{Duration: time.Duration(3600 * 24 * 365), Fsp: types.DefaultFsp}
+
+	tbl := []struct {
+		unit   string
+		expect int64
+	}{
+		{"MICROSECOND", 31536},
+		{"SECOND", 0},
+		{"MINUTE", 0},
+		{"HOUR", 0},
+		{"SECOND_MICROSECOND", 31536},
+		{"MINUTE_MICROSECOND", 31536},
+		{"MINUTE_SECOND", 0},
+		{"HOUR_MICROSECOND", 31536},
+		{"HOUR_SECOND", 0},
+		{"HOUR_MINUTE", 0},
+	}
+
+	for _, col := range tbl {
+		res, err := types.ExtractDurationNum(&in, col.unit)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, col.expect)
+	}
+	res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
+	c.Assert(res, Equals, int64(0))
+	c.Assert(err, ErrorMatches, "invalid unit.*")
+
+}
+
+func (s *testTimeSuite) TestExtractTimeValue(c *C) {
+	c.Parallel()
+	tbl := []struct {
+		format string
+		unit   string
+		res1   int64
+		res2   int64
+		res3   int64
+		res4   float64
+	}{
+		{"52", "WEEK", 0, 0, 52 * 7, 0},
+		{"12", "DAY", 0, 0, 12, 0},
+		{"04", "MONTH", 0, 04, 0, 0},
+		{"1", "QUARTER", 0, 1 * 3, 0, 0},
+		{"2019", "YEAR", 2019, 0, 0, 0},
+		{"10.567890", "SECOND_MICROSECOND", 0, 0, 0, 1.056789e+10},
+		{"35:10.567890", "MINUTE_SECOND", 0, 0, 0, 2.11056789e+12},
+		{"11:35:10.567890", "HOUR_SECOND", 0, 0, 0, 4.171056789e+13},
+		{"14:00", "HOUR_MINUTE", 0, 0, 0, 5.04e+13},
+		{"12 14:00:00.345", "DAY_MICROSECOND", 0, 0, 12, 5.0400345e+13},
+		{"12 14:00:00", "DAY_SECOND", 0, 0, 12, 5.04e+13},
+		{"12 14:00", "DAY_MINUTE", 0, 0, 12, 5.04e+13},
+		{"12 14", "DAY_HOUR", 0, 0, 12, 5.04e+13},
+		{"2019-12", "YEAR_MONTH", 2019, 12, 0, 0},
+	}
+	for _, col := range tbl {
+		res1, res2, res3, res4, err := types.ExtractTimeValue(col.unit, col.format)
+		c.Assert(res1, Equals, col.res1)
+		c.Assert(res2, Equals, col.res2)
+		c.Assert(res3, Equals, col.res3)
+		c.Assert(res4, Equals, col.res4)
+		c.Assert(err, IsNil)
+	}
+
+}
+
+func (s *testTimeSuite) TestIsClockUnit(c *C) {
+	c.Parallel()
+	tbl := []struct {
+		input    string
+		expected bool
+	}{
+		{"MICROSECOND", true},
+		{"SECOND", true},
+		{"MINUTE", true},
+		{"HOUR", true},
+		{"SECOND_MICROSECOND", true},
+		{"MINUTE_MICROSECOND", true},
+		{"MINUTE_SECOND", true},
+		{"HOUR_MICROSECOND", true},
+		{"HOUR_SECOND", true},
+		{"HOUR_MINUTE", true},
+		{"DAY_MICROSECOND", true},
+		{"DAY_SECOND", true},
+		{"DAY_MINUTE", true},
+		{"DAY_HOUR", true},
+		{"TEST", false},
+	}
+	for _, col := range tbl {
+		output := types.IsClockUnit(col.input)
+		c.Assert(output, Equals, col.expected)
+	}
+}
+
+func (s *testTimeSuite) TestIsDateFormat(c *C) {
+	c.Parallel()
+
+	input := "1234:321"
+	output := types.IsDateFormat(input)
+	c.Assert(output, Equals, false)
+
+	input = "2019-04-01"
+	output = types.IsDateFormat(input)
+	c.Assert(output, Equals, true)
+
+	input = "2019-4-1"
+	output = types.IsDateFormat(input)
+	c.Assert(output, Equals, true)
+}
+
+func (s *testTimeSuite) TestParseTimeFromInt64(c *C) {
+	c.Parallel()
+
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+
+	input := int64(20190412140000)
+	output, err := types.ParseTimeFromInt64(sc, input)
+	c.Assert(err, IsNil)
+	c.Assert(output.Fsp, Equals, types.DefaultFsp)
+	c.Assert(output.Type, Equals, mysql.TypeDatetime)
+	c.Assert(output.Time.Year(), Equals, 2019)
+	c.Assert(output.Time.Month(), Equals, 04)
+	c.Assert(output.Time.Day(), Equals, 12)
+	c.Assert(output.Time.Hour(), Equals, 14)
+	c.Assert(output.Time.Minute(), Equals, 00)
+	c.Assert(output.Time.Second(), Equals, 00)
+	c.Assert(output.Time.Microsecond(), Equals, 00)
+}
+
+func (s *testTimeSuite) TestGetFormatType(c *C) {
+	c.Parallel()
+	input := "TEST"
+	isDuration, isDate := types.GetFormatType(input)
+	c.Assert(isDuration, Equals, false)
+	c.Assert(isDate, Equals, false)
+
+	input = "%y %m %d 2019 04 01"
+	isDuration, isDate = types.GetFormatType(input)
+	c.Assert(isDuration, Equals, false)
+	c.Assert(isDate, Equals, true)
+
+	input = "%h 30"
+	isDuration, isDate = types.GetFormatType(input)
+	c.Assert(isDuration, Equals, true)
+	c.Assert(isDate, Equals, false)
 }
