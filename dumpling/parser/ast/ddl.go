@@ -1790,6 +1790,9 @@ func (n *PartitionDefinition) Restore(ctx *RestoreCtx) error {
 		ctx.WriteKeyWord(" VALUES LESS THAN ")
 		ctx.WritePlain("(")
 		for k, less := range n.LessThan {
+			if k != 0 {
+				ctx.WritePlain(", ")
+			}
 			if err := less.Restore(ctx); err != nil {
 				return errors.Annotatef(err, "An error occurred while restore PartitionDefinition.LessThan[%d]", k)
 			}

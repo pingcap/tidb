@@ -2761,6 +2761,13 @@ func (s *testParserSuite) TestTablePartition(c *C) {
 		    partition by range (id)
 		    subpartition by hash (id)
 		    (partition p0 values less than (42))`, true, "CREATE TABLE `t` (`id` INT) PARTITION BY RANGE (`id`) (PARTITION `p0` VALUES LESS THAN (42))"},
+		{`create table t1 (a varchar(5), b int signed, c varchar(10), d datetime)
+		partition by range columns(b,c)
+		subpartition by hash(to_seconds(d))
+		( partition p0 values less than (2, 'b'),
+		  partition p1 values less than (4, 'd'),
+		  partition p2 values less than (10, 'za'));`, true,
+			"CREATE TABLE `t1` (`a` VARCHAR(5),`b` INT,`c` VARCHAR(10),`d` DATETIME) PARTITION BY RANGE COLUMNS(`b`,`c`) (PARTITION `p0` VALUES LESS THAN (2, 'b'),PARTITION `p1` VALUES LESS THAN (4, 'd'),PARTITION `p2` VALUES LESS THAN (10, 'za'))"},
 		{`CREATE TABLE t1 (a INT, b TIMESTAMP DEFAULT '0000-00-00 00:00:00')
 ENGINE=INNODB PARTITION BY LINEAR HASH (a) PARTITIONS 1;`, true, "CREATE TABLE `t1` (`a` INT,`b` TIMESTAMP DEFAULT '0000-00-00 00:00:00') ENGINE = INNODB"},
 	}
