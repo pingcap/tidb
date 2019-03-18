@@ -1578,15 +1578,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			}
 			if isInnerKeysSuffix {
 				is.KeepOrder = true
-				// keepOuterOrder means the prop items of PhysicalIndexJoin must be the suffix of outerJoinKeys
-				keepOuterOrder := v.KeepOuterOrder && len(v.OuterJoinKeys) >= len(v.PropItems)
-				for i := 0; i < len(v.PropItems) && keepOuterOrder; i++ {
-					if v.PropItems[i].Col.ColName != v.OuterJoinKeys[i].ColName {
-						keepOuterOrder = false
-					}
-				}
+				// keepOuterOrder means the outerJoinKeys must be the suffix of the prop items of PhysicalIndexJoin
+				keepOuterOrder := v.KeepOuterOrder && len(v.OuterJoinKeys) < len(v.PropItems)
 				compareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
 				for i := range v.OuterJoinKeys {
+					if keepOuterOrder && v.PropItems[i].Col.ColName != v.OuterJoinKeys[i].ColName {
+						keepOuterOrder = false
+					}
 					compareFuncs = append(compareFuncs, expression.GetCmpFunction(v.OuterJoinKeys[i], v.InnerJoinKeys[i]))
 				}
 				return &IndexLookUpMergeJoin{
