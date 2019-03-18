@@ -13,19 +13,22 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // ChangeExec represents a change executor.
 type ChangeExec struct {
 	baseExecutor
 
-	Statement ast.ChangeStmt
+	Statement *ast.ChangeStmt
 }
 
 // Next implements the Executor Next interface.
-func (e *ChangeExec) Next(ctx context.Context) error {
+func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
+	fmt.Println("change")
 	/*	stmt := e.Statement
 		state:=stmt.NodeType
 	*/
