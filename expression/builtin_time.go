@@ -5641,7 +5641,7 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	tm := arg.Time
 	var day int
 	year, month := tm.Year(), tm.Month()
-	if year == 0 && month == 0 && tm.Day() == 0 {
+	if month == 0 {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
 	}
 	day = types.GetLastDay(year, month)
