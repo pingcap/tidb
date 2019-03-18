@@ -334,6 +334,13 @@ type Set struct {
 	VarAssigns []*expression.VarAssignment
 }
 
+// Change represents a plan for set stmt.
+type Change struct {
+	baseSchemaProducer
+
+	Statement *ast.ChangeStmt
+}
+
 // Simple represents a simple statement plan which doesn't need any optimization.
 type Simple struct {
 	baseSchemaProducer
