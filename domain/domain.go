@@ -644,9 +644,13 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
 	ctx := context.Background()
 	callback := &ddlCallback{do: do}
-	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
+	var err error
+	do.ddl, err = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-	err := do.ddl.SchemaSyncer().Init(ctx)
+	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
