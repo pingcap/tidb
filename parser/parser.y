@@ -181,6 +181,8 @@ import (
 	minuteMicrosecond	"MINUTE_MICROSECOND"
 	minuteSecond 		"MINUTE_SECOND"
 	mod 			"MOD"
+	node_id			"NODE_ID"
+	node_state		"NODE_STATE"
 	not			"NOT"
 	noWriteToBinLog 	"NO_WRITE_TO_BINLOG"
 	nthValue		"NTH_VALUE"
@@ -623,6 +625,7 @@ import (
 	RevokeRoleStmt      "Revoke role statement"
 	RollbackStmt			"ROLLBACK statement"
 	SetStmt				"Set variable statement"
+	ChangeStmt				"Change statement"
 	SetRoleStmt				"Set active role statement"
 	SetDefaultRoleStmt			"Set default statement for some user"
 	ShowStmt			"Show engines/databases/tables/user/columns/warnings/status statement"
@@ -5541,6 +5544,24 @@ UnionSelect:
 UnionOpt:
 DefaultTrueDistinctOpt
 
+/********************Change Statement*******************************/
+ChangeStmt:
+	"CHANGE" "PUMP" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
+	{
+		$$ = &ast.ChangeStmt{
+			NodeType: ast.PumpType,
+			State: $6,
+			NodeID: $9,
+		}
+	}
+|	"CHANGE" "DRAINER" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
+	{
+		$$ = &ast.ChangeStmt{
+			NodeType: ast.DrainerType,
+			State: $6,
+			NodeID: $9,
+		}
+	}
 
 /********************Set Statement*******************************/
 SetStmt:
@@ -6500,6 +6521,7 @@ Statement:
 |	DeleteFromStmt
 |	ExecuteStmt
 |	ExplainStmt
+|	ChangeStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
