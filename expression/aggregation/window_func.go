@@ -35,6 +35,12 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 		if !ok || (val == 0 && !isNull) {
 			return nil
 		}
+	case ast.WindowFuncNtile:
+		val, isNull, ok := expression.GetUint64FromConstant(args[0])
+		// ntile does not allow `0`, but allows `null`.
+		if !ok || (val == 0 && !isNull) {
+			return nil
+		}
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		if len(args) < 2 {
 			break

@@ -100,6 +100,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4NumberFuncs()
 	case ast.WindowFuncCumeDist:
 		a.typeInfer4CumeDist()
+	case ast.WindowFuncNtile:
+		a.typeInfer4Ntile()
 	case ast.WindowFuncPercentRank:
 		a.typeInfer4PercentRank()
 	case ast.WindowFuncLead, ast.WindowFuncLag:
@@ -204,6 +206,13 @@ func (a *baseFuncDesc) typeInfer4CumeDist() {
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
 }
 
+func (a *baseFuncDesc) typeInfer4Ntile() {
+	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
+	a.RetTp.Flen = 21
+	types.SetBinChsClnFlag(a.RetTp)
+	a.RetTp.Flag |= mysql.UnsignedFlag
+}
+
 func (a *baseFuncDesc) typeInfer4PercentRank() {
 	a.RetTp = types.NewFieldType(mysql.TypeDouble)
 	a.RetTp.Flag, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
@@ -250,15 +259,18 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 // We do not need to wrap cast upon these functions,
 // since the EvalXXX method called by the arg is determined by the corresponding arg type.
 var noNeedCastAggFuncs = map[string]struct{}{
-	ast.AggFuncCount:        {},
-	ast.AggFuncMax:          {},
-	ast.AggFuncMin:          {},
-	ast.AggFuncFirstRow:     {},
-	ast.WindowFuncRowNumber: {},
+	ast.AggFuncCount:    {},
+	ast.AggFuncMax:      {},
+	ast.AggFuncMin:      {},
+	ast.AggFuncFirstRow: {},
+	ast.WindowFuncNtile: {},
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
 func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
+	if len(a.Args) == 0 {
+		return
+	}
 	if _, ok := noNeedCastAggFuncs[a.Name]; ok {
 		return
 	}
@@ -272,6 +284,14 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		castFunc = expression.WrapWithCastAsString
 	case types.ETDecimal:
 		castFunc = expression.WrapWithCastAsDecimal
+	case types.ETDatetime, types.ETTimestamp:
+		castFunc = func(ctx sessionctx.Context, expr expression.Expression) expression.Expression {
+			return expression.WrapWithCastAsTime(ctx, expr, retTp)
+		}
+	case types.ETDuration:
+		castFunc = expression.WrapWithCastAsDuration
+	case types.ETJson:
+		castFunc = expression.WrapWithCastAsJSON
 	default:
 		panic("should never happen in baseFuncDesc.WrapCastForAggArgs")
 	}
