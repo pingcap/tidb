@@ -14,12 +14,14 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
@@ -94,7 +96,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.Sta
 	ds.stats = profile
 	selectivity, nodes, err := profile.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
-		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+		logutil.Logger(context.Background()).Warn("an error happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && ds.stats.HistColl != nil {
@@ -194,7 +196,7 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo) (*property.
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
-		log.Errorf("Cannot find column %v indices from schema %s", cols, schema)
+		logutil.Logger(context.Background()).Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
 		return 0
 	}
 	var cardinality = 1.0
@@ -335,12 +337,14 @@ func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo) (*prope
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
-	childLen := len(childProfile.Cardinality)
 	p.stats = &property.StatsInfo{
 		RowCount:    childProfile.RowCount,
-		Cardinality: make([]float64, childLen+1),
+		Cardinality: make([]float64, p.schema.Len()),
 	}
-	copy(p.stats.Cardinality, childProfile.Cardinality)
-	p.stats.Cardinality[childLen] = childProfile.RowCount
+	for i := 0; i < p.schema.Len()-1; i++ {
+		colIdx := p.children[0].Schema().ColumnIndex(p.schema.Columns[i])
+		p.stats.Cardinality[i] = childProfile.Cardinality[colIdx]
+	}
+	p.stats.Cardinality[p.schema.Len()-1] = childProfile.RowCount
 	return p.stats, nil
 }
