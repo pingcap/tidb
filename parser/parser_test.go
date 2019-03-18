@@ -68,7 +68,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"generated", "virtual", "stored", "usage",
 		"delayed", "high_priority", "low_priority",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
-		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window",
+		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window", "linear",
 		// TODO: support the following keywords
 		// "with",
 	}
@@ -2761,6 +2761,8 @@ func (s *testParserSuite) TestTablePartition(c *C) {
 		    partition by range (id)
 		    subpartition by hash (id)
 		    (partition p0 values less than (42))`, true, "CREATE TABLE `t` (`id` INT) PARTITION BY RANGE (`id`) (PARTITION `p0` VALUES LESS THAN (42))"},
+		{`CREATE TABLE t1 (a INT, b TIMESTAMP DEFAULT '0000-00-00 00:00:00')
+ENGINE=INNODB PARTITION BY LINEAR HASH (a) PARTITIONS 1;`, true, "CREATE TABLE `t1` (`a` INT,`b` TIMESTAMP DEFAULT '0000-00-00 00:00:00') ENGINE = INNODB"},
 	}
 	s.RunTest(c, table)
 
