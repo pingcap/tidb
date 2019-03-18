@@ -457,7 +457,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				key := alreadyExist.GetKey()
 				conditionPair := c.txn.us.LookupConditionPair(key)
 				if conditionPair == nil {
-					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
+					panic(fmt.Sprintf("conn%d, conditionPair for key:%s should not be nil", c.connID, key))
 				}
 				logutil.Logger(context.Background()).Debug("key already exists",
 					zap.Uint64("conn", c.connID),
@@ -582,7 +582,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	if keyErr := commitResp.GetError(); keyErr != nil {
 		c.mu.RLock()
 		defer c.mu.RUnlock()
-		err = errors.Errorf("con:%d 2PC commit failed: %v", c.connID, keyErr.String())
+		err = errors.Errorf("conn%d 2PC commit failed: %v", c.connID, keyErr.String())
 		if c.mu.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
@@ -635,7 +635,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		return errors.Trace(err)
 	}
 	if keyErr := resp.BatchRollback.GetError(); keyErr != nil {
-		err = errors.Errorf("con:%d 2PC cleanup failed: %s", c.connID, keyErr)
+		err = errors.Errorf("conn%d 2PC cleanup failed: %s", c.connID, keyErr)
 		logutil.Logger(context.Background()).Debug("2PC failed cleanup key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
@@ -725,7 +725,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 
 	// check commitTS
 	if commitTS <= c.startTS {
-		err = errors.Errorf("con:%d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
+		err = errors.Errorf("conn%d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
 			c.connID, c.startTS, commitTS)
 		logutil.Logger(context.Background()).Error("invalid transaction", zap.Error(err))
 		return errors.Trace(err)
@@ -741,7 +741,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	// }
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
-		err = errors.Errorf("con:%d txn takes too much time, txnStartTS: %d, txnCommitTS: %d",
+		err = errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
