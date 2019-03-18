@@ -251,6 +251,10 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
+# Calculate commit_ts instead of allocating commit_ts from PD to reduce latency of committing. This optimization
+# guarantees Snapshot Isolation but will cause problem to tidb-binlog and lose the transactions' real commit time.
+use-calculated-commit-ts = false
+
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.

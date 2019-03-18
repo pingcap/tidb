@@ -219,8 +219,8 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name: "twopc_duration",
-			Help: "no help",
-			Buckets: prometheus.ExponentialBuckets(0.0005, 2, 20),
+			Name:      "twopc_duration",
+			Help:      "no help",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		}, []string{LblType})
 )

@@ -63,19 +63,19 @@ func (ca twoPhaseCommitAction) MetricsTag() string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store        *tikvStore
-	txn          *tikvTxn
-	startTS      uint64
-	keys         [][]byte
-	mutations    map[string]*pb.Mutation
-	lockTTL      uint64
-	maxReadTs    uint64
-	hasMaxReadTs bool
-	commitTS     uint64
-	mu           struct {
+	store     *tikvStore
+	txn       *tikvTxn
+	startTS   uint64
+	keys      [][]byte
+	mutations map[string]*pb.Mutation
+	lockTTL   uint64
+	commitTS  uint64
+	mu        struct {
 		sync.RWMutex
-		committed       bool
-		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
+		committed          bool
+		undeterminedErr    error // undeterminedErr saves the rpc error we encounter when commit primary key.
+		maxReadTs          uint64
+		isMaxReadTsInvalid bool
 	}
 	priority pb.CommandPri
 	syncLog  bool
@@ -167,7 +167,6 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		keys:          keys,
 		mutations:     mutations,
 		lockTTL:       txnLockTTL(txn.startTime, size),
-		hasMaxReadTs:  true,
 		priority:      getTxnPriority(txn),
 		syncLog:       getTxnSyncLog(txn),
 		connID:        connID,
@@ -343,14 +342,23 @@ func (c *twoPhaseCommitter) keySize(key []byte) int {
 	return len(key)
 }
 
-func (c *twoPhaseCommitter) getMaxReadTs(ts uint64) {
-	if ts == math.MaxUint64 || !c.hasMaxReadTs {
+func (c *twoPhaseCommitter) updateMaxReadTs(ts uint64) {
+	if !config.GetGlobalConfig().TiKVClient.UseCalculatedCommitTs {
 		return
 	}
-	if ts == 0 {
-		c.hasMaxReadTs = false
-	} else if ts > c.maxReadTs {
-		c.maxReadTs = ts
+	if ts == math.MaxUint64 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.mu.isMaxReadTsInvalid {
+		if ts == 0 {
+			c.mu.isMaxReadTsInvalid = true
+		} else if ts > c.mu.maxReadTs {
+			c.mu.maxReadTs = ts
+		}
 	}
 }
 
@@ -396,7 +404,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			c.getMaxReadTs(prewriteResp.GetMaxReadTs())
+			c.updateMaxReadTs(prewriteResp.GetMaxReadTs())
 			return nil
 		}
 		var locks []*Lock
@@ -648,12 +656,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}
 
 	start = time.Now()
-	if c.hasMaxReadTs {
-		c.commitTS = c.maxReadTs + 1
-		if c.startTS > c.maxReadTs {
+	// Here `mu` doesn't need to be locked
+	if config.GetGlobalConfig().TiKVClient.UseCalculatedCommitTs && !c.mu.isMaxReadTsInvalid {
+		c.commitTS = c.mu.maxReadTs + 1
+		if c.startTS > c.mu.maxReadTs {
 			c.commitTS = c.startTS + 1
 		}
-		log.Debugf("con:%d 2PC commit with calculated TS. startTs: %d, maxReadTs: %d, commitTs: %d", c.connID, c.startTS, c.maxReadTs, c.commitTS)
+		log.Debugf("con:%d 2PC commit with calculated TS. startTs: %d, maxReadTs: %d, commitTs: %d", c.connID, c.startTS, c.mu.maxReadTs, c.commitTS)
 	} else {
 		log.Debugf("con:%d 2PC will get commitTs from PD", c.connID)
 		commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
