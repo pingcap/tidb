@@ -916,8 +916,6 @@ func logForIndexRange(idx *Index, ran *ranger.Range, actual int64, factor float6
 }
 
 func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, actual []int64, factor float64) {
-	fmt.Println("=======> log index ", ranges)
-
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	if idx.CMSketch == nil || idx.statsVer != version1 {
 		for i, ran := range ranges {
