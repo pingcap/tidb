@@ -56,19 +56,19 @@ type IndexLookUpMergeJoin struct {
 }
 
 type outerMergeCtx struct {
-	rowTypes []*types.FieldType
-	joinKeys []*expression.Column
-	keyCols  []int
-	filter   expression.CNFExprs
-}
-
-type innerMergeCtx struct {
-	readerBuilder  *dataReaderBuilder
 	rowTypes       []*types.FieldType
 	joinKeys       []*expression.Column
 	keyCols        []int
-	compareFuncs   []expression.CompareFunc
+	filter         expression.CNFExprs
 	keepOuterOrder bool
+}
+
+type innerMergeCtx struct {
+	readerBuilder *dataReaderBuilder
+	rowTypes      []*types.FieldType
+	joinKeys      []*expression.Column
+	keyCols       []int
+	compareFuncs  []expression.CompareFunc
 }
 
 type lookUpMergeJoinTask struct {
@@ -343,6 +343,30 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 	if task.outerResult.NumRows() == 0 {
 		return nil, nil
 	}
+	if omw.outerMergeCtx.keepOuterOrder == false {
+		c := omw.executor.newFirstChunk()
+		var rows []chunk.Row
+		for i := 0; i < task.outerResult.NumRows(); i++ {
+			rows = append(rows, task.outerResult.GetRow(i))
+		}
+		sc := omw.ctx.GetSessionVars().StmtCtx
+		sort.Slice(rows, func(i, j int) bool {
+			for id := range omw.keyCols {
+				datumI := rows[i].GetDatum(id, omw.rowTypes[id])
+				datumJ := rows[j].GetDatum(id, omw.rowTypes[id])
+				cmp, err := (&datumI).CompareDatum(sc, &datumJ)
+				terror.Log(err)
+				if cmp != 0 {
+					return cmp < 0
+				}
+			}
+			return false
+		})
+		for i := 0; i < len(rows); i++ {
+			c.AppendRow(rows[i])
+		}
+		task.outerResult = c
+	}
 
 	if omw.filter != nil {
 		outerMatch := make([]bool, 0, task.outerResult.NumRows())
@@ -396,13 +420,6 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if imw.innerMergeCtx.keepOuterOrder == false {
-		sc := imw.ctx.GetSessionVars().StmtCtx
-		sort.Slice(dLookUpKeys, func(i, j int) bool {
-			cmp := compareRow(sc, dLookUpKeys[i], dLookUpKeys[j])
-			return cmp < 0
-		})
 	}
 	dLookUpKeys = imw.dedupDatumLookUpKeys(dLookUpKeys)
 	err = imw.fetchInnerResults(ctx, task, dLookUpKeys)
