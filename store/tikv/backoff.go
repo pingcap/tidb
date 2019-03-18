@@ -242,8 +242,8 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	}
 	logutil.Logger(context.Background()).Debug("retry later",
 		zap.Error(err),
-		zap.Int("totalsleep", b.totalSleep),
-		zap.Int("maxsleep", b.maxSleep),
+		zap.Int("totalSleep", b.totalSleep),
+		zap.Int("maxSleep", b.maxSleep),
 		zap.Stringer("type", typ),
 		zap.Reflect("txnStartTS", startTs))
 
