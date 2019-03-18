@@ -308,6 +308,13 @@ type Deallocate struct {
 	Name string
 }
 
+// Deallocate represents deallocate plan.
+type Change struct {
+	baseSchemaProducer
+
+	Statement *ast.ChangeStmt
+}
+
 // Show represents a show plan.
 type Show struct {
 	baseSchemaProducer
