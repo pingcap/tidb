@@ -712,10 +712,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = string(hack.String(data))
-	token := cc.server.getToken()
+	//token := cc.server.getToken()
 	defer func() {
 		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
-		cc.server.releaseToken(token)
+		//cc.server.releaseToken(token)
 		span.Finish()
 	}()
 
