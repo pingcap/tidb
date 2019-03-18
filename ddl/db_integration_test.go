@@ -15,7 +15,6 @@ package ddl_test
 
 import (
 	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
