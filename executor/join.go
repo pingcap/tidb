@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -395,6 +396,10 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 
 func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row,
 	hashTable *hashTable4HashJoin, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+	if hashTable.MVMap == nil {
+		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
+		return true, joinResult
+	}
 	buffer := e.hashJoinBuffers[workerID]
 	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, buffer.bytes)
 	if err != nil {
@@ -728,6 +733,7 @@ type hashTable4HashJoin struct {
 }
 
 func (ht *hashTable4HashJoin) getRows(key []byte, valBuf [][]byte) []chunk.Row {
+	logrus.Warning("ht.mvmap", ht.MVMap, ht.MVMap.Len())
 	valBuf = ht.Get(key, valBuf[:0])
 	if len(valBuf) == 0 {
 		return nil
