@@ -100,7 +100,7 @@ func (s *testSnapshotSuite) deleteKeys(keys []kv.Key, c *C) {
 
 func (s *testSnapshotSuite) TestBatchGet(c *C) {
 	for _, rowNum := range s.rowNums {
-		logutil.Logger(context.Background()).Debug("Test BatchGet",
+		logutil.Logger(context.Background()).Debug("test BatchGet",
 			zap.Int("length", rowNum))
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
@@ -119,7 +119,7 @@ func (s *testSnapshotSuite) TestBatchGet(c *C) {
 
 func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
 	for _, rowNum := range s.rowNums {
-		logutil.Logger(context.Background()).Debug("Test BatchGetNotExist",
+		logutil.Logger(context.Background()).Debug("test BatchGetNotExist",
 			zap.Int("length", rowNum))
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {

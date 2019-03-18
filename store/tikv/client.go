@@ -118,7 +118,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 			logutil.Logger(context.Background()).Error("batchRecvLoop",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
-			logutil.Logger(context.Background()).Info("Restart batchRecvLoop")
+			logutil.Logger(context.Background()).Info("restart batchRecvLoop")
 			go c.batchRecvLoop(cfg)
 		}
 	}()
@@ -391,7 +391,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			logutil.Logger(context.Background()).Error("batchSendLoop",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
-			logutil.Logger(context.Background()).Info("Restart batchSendLoop")
+			logutil.Logger(context.Background()).Info("restart batchSendLoop")
 			go a.batchSendLoop(cfg)
 		}
 	}()
@@ -542,7 +542,7 @@ func sendBatchRequest(
 	select {
 	case connArray.batchCommandsCh <- entry:
 	case <-ctx1.Done():
-		logutil.Logger(context.Background()).Warn("SendRequest is timeout", zap.String("to", addr))
+		logutil.Logger(context.Background()).Warn("send request is timeout", zap.String("to", addr))
 		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
 	}
 
@@ -554,7 +554,7 @@ func sendBatchRequest(
 		return tikvrpc.FromBatchCommandsResponse(res), nil
 	case <-ctx1.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
-		logutil.Logger(context.Background()).Warn("SendRequest is canceled", zap.String("to", addr))
+		logutil.Logger(context.Background()).Warn("send request is canceled", zap.String("to", addr))
 		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
 	}
 }

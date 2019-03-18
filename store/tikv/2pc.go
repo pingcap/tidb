@@ -185,7 +185,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		tableID := tablecodec.DecodeTableID(keys[0])
 		logutil.Logger(context.Background()).Info("[BIG_TXN]",
 			zap.Uint64("con", connID),
-			zap.Int64("table id", tableID),
+			zap.Int64("table ID", tableID),
 			zap.Int("size", size),
 			zap.Int("keys", len(keys)),
 			zap.Int("puts", putCnt),
@@ -201,7 +201,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	if txn.StartTS() == math.MaxUint64 {
 		err = errors.Errorf("try to commit with invalid txnStartTS: %d", txn.StartTS())
 		logutil.Logger(context.Background()).Error("commit failed",
-			zap.Uint64("con", connID),
+			zap.Uint64("conn", connID),
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
@@ -300,7 +300,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
 				logutil.Logger(context.Background()).Debug("2PC async doActionOnBatches",
-					zap.Uint64("con", c.connID),
+					zap.Uint64("conn", c.connID),
 					zap.Stringer("action type", action),
 					zap.Error(e))
 				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
@@ -330,7 +330,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		e := singleBatchActionFunc(bo, batches[0])
 		if e != nil {
 			logutil.Logger(context.Background()).Debug("2PC doActionOnBatches failed",
-				zap.Uint64("con", c.connID),
+				zap.Uint64("conn", c.connID),
 				zap.Stringer("action type", action),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", c.startTS))
@@ -373,14 +373,14 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			logutil.Logger(context.Background()).Debug("2PC doActionOnBatches failed",
-				zap.Uint64("con", c.connID),
+				zap.Uint64("conn", c.connID),
 				zap.Stringer("action type", action),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", c.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
 				logutil.Logger(context.Background()).Debug("2PC doActionOnBatches to cancel other actions",
-					zap.Uint64("con", c.connID),
+					zap.Uint64("conn", c.connID),
 					zap.Stringer("action type", action),
 					zap.Uint64("txnStartTS", c.startTS))
 				cancel()
@@ -460,7 +460,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
 				}
 				logutil.Logger(context.Background()).Debug("key already exists",
-					zap.Uint64("con", c.connID),
+					zap.Uint64("conn", c.connID),
 					zap.Binary("key", key))
 				return errors.Trace(conditionPair.Err())
 			}
@@ -471,7 +471,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				return errors.Trace(err1)
 			}
 			logutil.Logger(context.Background()).Debug("prewrite encounters lock",
-				zap.Uint64("con", c.connID),
+				zap.Uint64("conn", c.connID),
 				zap.Stringer("lock", lock))
 			locks = append(locks, lock)
 		}

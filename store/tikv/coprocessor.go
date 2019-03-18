@@ -750,8 +750,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		err := errors.Errorf("other error: %s", otherErr)
 		logutil.Logger(context.Background()).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
-			zap.Uint64("region_id", task.region.id),
-			zap.String("store_addr", task.storeAddr),
+			zap.Uint64("regionID", task.region.id),
+			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}

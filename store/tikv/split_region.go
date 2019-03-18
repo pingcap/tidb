@@ -28,7 +28,7 @@ import (
 // SplitRegion splits the region contains splitKey into 2 regions: [start,
 // splitKey) and [splitKey, end).
 func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
-	logutil.Logger(context.Background()).Info("start split_region",
+	logutil.Logger(context.Background()).Info("start split region",
 		zap.Binary("at", splitKey))
 	bo := NewBackoffer(context.Background(), splitRegionBackoff)
 	sender := NewRegionRequestSender(s.regionCache, s.client)
@@ -45,7 +45,7 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 			return errors.Trace(err)
 		}
 		if bytes.Equal(splitKey, loc.StartKey) {
-			logutil.Logger(context.Background()).Info("skip split_region region",
+			logutil.Logger(context.Background()).Info("skip split region",
 				zap.Binary("at", splitKey))
 			return nil
 		}
@@ -64,7 +64,7 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 			}
 			continue
 		}
-		logutil.Logger(context.Background()).Info("split_region complete",
+		logutil.Logger(context.Background()).Info("split region complete",
 			zap.Binary("at", splitKey),
 			zap.Stringer("new region left", res.SplitRegion.GetLeft()),
 			zap.Stringer("new region right", res.SplitRegion.GetRight()))
