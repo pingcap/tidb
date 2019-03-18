@@ -1065,6 +1065,8 @@ func (h *logHook) field2String(field zapcore.Field) string {
 		return fmt.Sprintf("%v", field.Integer)
 	case zapcore.Float64Type:
 		return fmt.Sprintf("%v", math.Float64frombits(uint64(field.Integer)))
+	case zapcore.StringerType:
+		return field.Interface.(fmt.Stringer).String()
 	}
 	return "not support"
 }
