@@ -377,7 +377,8 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 		if !ok {
 			break
 		}
-		ok, joinResult = e.join2Chunk(workerID, outerResult, joinResult, selected)
+		hashTable := &hashTable4HashJoin{e.globalHashTable, nil, e.innerResult}
+		ok, joinResult = e.join2Chunk(workerID, outerResult, hashTable, joinResult, selected)
 		if !ok {
 			break
 		}
@@ -393,7 +394,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 }
 
 func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row,
-	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+	hashTable *hashTable4HashJoin, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	buffer := e.hashJoinBuffers[workerID]
 	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, buffer.bytes)
 	if err != nil {
@@ -404,17 +405,10 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
 		return true, joinResult
 	}
-	e.hashTableValBufs[workerID] = e.globalHashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
-	innerPtrs := e.hashTableValBufs[workerID]
-	if len(innerPtrs) == 0 {
+	innerRows := hashTable.getRows(joinKey, e.hashTableValBufs[workerID])
+	if len(innerRows) == 0 {
 		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
 		return true, joinResult
-	}
-	innerRows := make([]chunk.Row, 0, len(innerPtrs))
-	for _, b := range innerPtrs {
-		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
-		matchedInner := e.innerResult.GetRow(ptr)
-		innerRows = append(innerRows, matchedInner)
 	}
 	iter := chunk.NewIterator4Slice(innerRows)
 	hasMatch, hasNull := false, false
@@ -454,7 +448,7 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 	return ok, joinResult
 }
 
-func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResult *hashjoinWorkerResult,
+func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, hashTable *hashTable4HashJoin, joinResult *hashjoinWorkerResult,
 	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
 	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
@@ -466,7 +460,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 		if !selected[i] { // process unmatched outer rows
 			e.joiners[workerID].onMissMatch(false, outerChk.GetRow(i), joinResult.chk)
 		} else { // process matched outer rows
-			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResult)
+			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), hashTable, joinResult)
 			if !ok {
 				return false, joinResult
 			}
@@ -724,4 +718,31 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) 
 			return errors.Trace(err)
 		}
 	}
+}
+
+type hashTable4HashJoin struct {
+	*mvmap.MVMap
+
+	srcChk  *chunk.Chunk
+	srcList *chunk.List
+}
+
+func (ht *hashTable4HashJoin) getRows(key []byte, valBuf [][]byte) []chunk.Row {
+	valBuf = ht.Get(key, valBuf[:0])
+	if len(valBuf) == 0 {
+		return nil
+	}
+	rows := make([]chunk.Row, 0, len(valBuf))
+	if ht.srcChk != nil {
+		for _, b := range valBuf {
+			ptr := *(*uint32)(unsafe.Pointer(&b[0]))
+			rows = append(rows, ht.srcChk.GetRow(int(ptr)))
+		}
+	} else {
+		for _, b := range valBuf {
+			ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
+			rows = append(rows, ht.srcList.GetRow(ptr))
+		}
+	}
+	return rows
 }
