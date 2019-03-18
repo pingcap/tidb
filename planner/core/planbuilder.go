@@ -14,6 +14,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -82,6 +83,18 @@ func (info *tableHintInfo) matchTableName(tables []*model.CIStr, tablesInHints [
 		}
 	}
 	return false
+}
+
+func (info *tableHintInfo) restore2IndexJoinHint() string {
+	buffer := bytes.NewBufferString("/*+ TIDB_INLJ(")
+	for i, tableName := range info.indexNestedLoopJoinTables {
+		buffer.WriteString(tableName.O)
+		if i < len(info.indexNestedLoopJoinTables)-1 {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(") */")
+	return buffer.String()
 }
 
 // clauseCode indicates in which clause the column is currently.
@@ -653,13 +666,9 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 // getColsInfo returns the info of index columns, normal columns and primary key.
 func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
-	// idxNames contains all the normal columns that can be analyzed more effectively, because those columns occur as index
-	// columns or primary key columns with integer type.
-	var idxNames []string
 	if tbl.PKIsHandle {
 		for _, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				idxNames = append(idxNames, col.Name.L)
 				pkCol = col
 			}
 		}
@@ -667,22 +676,13 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	for _, idx := range tn.TableInfo.Indices {
 		if idx.State == model.StatePublic {
 			indicesInfo = append(indicesInfo, idx)
-			if len(idx.Columns) == 1 {
-				idxNames = append(idxNames, idx.Columns[0].Name.L)
-			}
 		}
 	}
 	for _, col := range tbl.Columns {
-		isIndexCol := false
-		for _, idx := range idxNames {
-			if idx == col.Name.L {
-				isIndexCol = true
-				break
-			}
+		if col == pkCol {
+			continue
 		}
-		if !isIndexCol {
-			colsInfo = append(colsInfo, col)
-		}
+		colsInfo = append(colsInfo, col)
 	}
 	return
 }
@@ -884,6 +884,7 @@ func buildShowSlowSchema() *expression.Schema {
 	schema.Append(buildColumn("", "TABLE_IDS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumn("", "INDEX_IDS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumn("", "INTERNAL", mysql.TypeTiny, tinySize))
+	schema.Append(buildColumn("", "DIGEST", mysql.TypeVarchar, 64))
 	return schema
 }
 
@@ -977,6 +978,9 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 				isView = table.Meta().IsView()
 			}
+		case ast.ShowCreateView:
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, "", "", "", err)
 		}
 		p.SetSchema(buildShowSchema(show, isView))
 	}
@@ -1016,7 +1020,23 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
-	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
+	case *ast.CreateUserStmt:
+		if raw.IsCreateRole {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateRolePriv, "", "", "", err)
+		} else {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
+		}
+	case *ast.DropUserStmt:
+		if raw.IsDropRole {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropRolePriv, "", "", "", err)
+		} else {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
+		}
+	case *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
@@ -1521,9 +1541,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
 		if _, ok := plan.(LogicalPlan); ok {
 			b.visitInfo = append(b.visitInfo, visitInfo{
-				// TODO: We should check CreateViewPriv instead of CreatePriv.
-				// See https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html#priv_create-view.
-				privilege: mysql.CreatePriv,
+				privilege: mysql.CreateViewPriv,
 				db:        v.ViewName.Schema.L,
 				table:     v.ViewName.Name.L,
 				err:       nil,
@@ -1754,8 +1772,17 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		} else {
 			names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 		}
+	case ast.ShowCreateUser:
+		if s.User != nil {
+			names = []string{fmt.Sprintf("CREATE USER for %s", s.User)}
+		}
+	case ast.ShowCreateView:
+		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
+	case ast.ShowDrainerStatus:
+		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowGrants:
 		if s.User != nil {
 			names = []string{fmt.Sprintf("Grants for %s", s.User)}
@@ -1779,13 +1806,16 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+	case ast.ShowPumpStatus:
+		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowStatsMeta:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	case ast.ShowStatsHistograms:
-		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size"}
+		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size", "Correlation"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
-			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble}
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeDouble}
 	case ast.ShowStatsBuckets:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Bucket_id", "Count",
 			"Repeats", "Lower_Bound", "Upper_Bound"}

@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -137,6 +138,13 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
 
+	tk.MustExec("set @@session.ddl_slow_threshold=12345")
+	tk.MustQuery("select @@session.ddl_slow_threshold").Check(testkit.Rows("12345"))
+	c.Assert(variable.DDLSlowOprThreshold, Equals, uint32(12345))
+	tk.MustExec("set session ddl_slow_threshold=\"54321\"")
+	tk.MustQuery("show variables like 'ddl_slow_threshold'").Check(testkit.Rows("ddl_slow_threshold 54321"))
+	c.Assert(variable.DDLSlowOprThreshold, Equals, uint32(54321))
+
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
@@ -240,6 +248,14 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("0"))
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
+
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())))
+	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())))
+
+	tk.MustExec("set global tidb_log_bin = on")
+	tk.MustQuery(`select @@global.tidb_log_bin;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_log_bin = off")
+	tk.MustQuery(`select @@global.tidb_log_bin;`).Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")

@@ -31,10 +31,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var _ Executor = &IndexLookUpJoin{}
@@ -94,6 +95,7 @@ type lookUpJoinTask struct {
 	doneCh   chan error
 	cursor   int
 	hasMatch bool
+	hasNull  bool
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -234,18 +236,20 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.RecordBatch) erro
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, err := e.joiner.tryToMatch(outerRow, e.innerIter, req.Chunk)
+			matched, isNull, err := e.joiner.tryToMatch(outerRow, e.innerIter, req.Chunk)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			task.hasMatch = task.hasMatch || matched
+			task.hasNull = task.hasNull || isNull
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
 			if !task.hasMatch {
-				e.joiner.onMissMatch(outerRow, req.Chunk)
+				e.joiner.onMissMatch(task.hasNull, outerRow, req.Chunk)
 			}
 			task.cursor++
 			task.hasMatch = false
+			task.hasNull = false
 		}
 		if req.NumRows() == e.maxChunkSize {
 			return nil
@@ -302,7 +306,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("outerWorker panic stack is:\n%s", buf)
+			logutil.Logger(ctx).Error("outerWorker panicked", zap.String("stack", string(buf)))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			task.doneCh <- errors.Errorf("%v", r)
 			ow.pushToChan(ctx, task, ow.resultCh)
@@ -404,7 +408,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("innerWorker panic stack is:\n%s", buf)
+			logutil.Logger(ctx).Error("innerWorker panicked", zap.String("stack", string(buf)))
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- errors.Errorf("%v", r)
 		}

@@ -23,13 +23,15 @@ import (
 	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -43,8 +45,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
@@ -55,6 +59,7 @@ type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
+	bindHandle      *bindinfo.Handle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
 	statsUpdating   sync2.AtomicInt32
@@ -605,8 +610,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
-				Endpoints:   addrs,
-				DialTimeout: 5 * time.Second,
+				Endpoints:        addrs,
+				AutoSyncInterval: 30 * time.Second,
+				DialTimeout:      5 * time.Second,
 				DialOptions: []grpc.DialOption{
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
@@ -791,6 +797,41 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 // PrivilegeHandle returns the MySQLPrivilege.
 func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
+}
+
+// BindHandle returns domain's bindHandle.
+func (do *Domain) BindHandle() *bindinfo.Handle {
+	return do.bindHandle
+}
+
+// LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
+// be called only once in BootstrapSession.
+func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	do.bindHandle = bindinfo.NewHandle()
+
+	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser)
+	err := bindCacheUpdater.Update(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	duration := 3 * time.Second
+	go func() {
+		defer recoverInDomain("loadBindInfoLoop", false)
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-time.After(duration):
+			}
+			err = bindCacheUpdater.Update(false)
+			if err != nil {
+				logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
+			}
+		}
+	}()
+	return nil
 }
 
 // StatsHandle returns the statistic handle.

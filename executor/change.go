@@ -13,8 +13,10 @@ package executor
 
 import (
 	"context"
-	"fmt"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb-tools/tidb-binlog/node"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -28,10 +30,39 @@ type ChangeExec struct {
 // Next implements the Executor Next interface.
 func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
-	fmt.Println("change")
-	/*	stmt := e.Statement
-		state:=stmt.NodeType
+	stmt := e.Statement
+	cfg := config.GetGlobalConfig()
+	return updateNodeState(cfg.Path, stmt.NodeType, stmt.NodeID, stmt.State)
+}
+
+// updateNodeState update pump or drainer's state.
+func updateNodeState(urls, kind, nodeID, state string) error {
+	/*
+		node's state can be online, pausing, paused, closing and offline.
+		if the state is one of them, will update the node's state saved in etcd directly.
 	*/
-	//todo
-	return nil
+	registry, err := createRegistry(urls)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, n := range nodes {
+		if n.NodeID != nodeID {
+			continue
+		}
+		switch state {
+		case node.Online, node.Pausing, node.Paused, node.Closing, node.Offline:
+			n.State = state
+			return registry.UpdateNode(context.Background(), node.NodePrefix[kind], n)
+		default:
+			return errors.Errorf("state %s is illegal", state)
+		}
+	}
+
+	return errors.NotFoundf("node %s, id %s from etcd %s", kind, nodeID, urls)
 }

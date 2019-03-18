@@ -283,8 +283,8 @@ func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	// ctx.GetSessionVars().User = "root@localhost"
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `CREATE USER 'selectusr'@'localhost';`)
-	mustExec(c, se, `GRANT Create ON test.* TO  'selectusr'@'localhost';`)
-	mustExec(c, se, `GRANT Select ON test.viewsecurity TO  'selectusr'@'localhost';`)
+	mustExec(c, se, `GRANT CREATE VIEW ON test.* TO  'selectusr'@'localhost';`)
+	mustExec(c, se, `GRANT SELECT ON test.viewsecurity TO  'selectusr'@'localhost';`)
 
 	// ctx.GetSessionVars().User = "selectusr@localhost"
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "selectusr", Hostname: "localhost"}, nil, nil), IsTrue)
@@ -297,6 +297,20 @@ func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	mustExec(c, se, `REVOKE Select ON test.viewsecurity FROM  'selectusr'@'localhost';`)
 	_, err := se.Execute(context.Background(), "select * from test.selectviewsecurity")
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
+}
+
+func (s *testPrivilegeSuite) TestRoleAdminSecurity(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'r1'@'localhost';`)
+	mustExec(c, se, `CREATE USER 'r2'@'localhost';`)
+	mustExec(c, se, `GRANT ALL ON *.* to r1@localhost`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `create role r_test1@localhost`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `create role r_test2@localhost`)
+	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
@@ -325,6 +339,18 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	se2 := newSession(c, s.store, s.dbName)
+	mustExec(c, se2, "create role 'r1'@'localhost'")
+	mustExec(c, se2, "create role 'r2'@'localhost'")
+	mustExec(c, se2, "create role 'r3@example.com'@'localhost'")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3@example.com", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	mustExec(c, se1, "drop user 'r1'@'localhost'")
+	mustExec(c, se1, "drop user 'r2'@'localhost'")
+	mustExec(c, se1, "drop user 'r3@example.com'@'localhost'")
 }
 
 func (s *testPrivilegeSuite) TestUseDb(c *C) {
@@ -413,6 +439,10 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), "analyze table t1")
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
+
+	_, err = se.Execute(context.Background(), "select * from t1")
+	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'localhost'@'anobody' for table 't1'")
 
 	// try again after SELECT privilege granted
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -420,6 +450,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "analyze table t1")
 	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 	// Add INSERT privilege and it should work.
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "GRANT INSERT ON atest.* TO 'anobody'")
@@ -454,6 +485,13 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "ADMIN SHOW DDL JOBS")
 	c.Assert(err, IsNil)
+}
+
+func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
+	pc := privilege.GetPrivilegeManager(se)
+	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
 }
 
 func mustExec(c *C, se session.Session, sql string) {

@@ -56,6 +56,13 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			},
 		}
 	}
+	if alreadyExist, ok := errors.Cause(err).(*ErrKeyAlreadyExist); ok {
+		return &kvrpcpb.KeyError{
+			AlreadyExist: &kvrpcpb.AlreadyExist{
+				Key: alreadyExist.Key,
+			},
+		}
+	}
 	if retryable, ok := errors.Cause(err).(ErrRetryable); ok {
 		return &kvrpcpb.KeyError{
 			Retryable: retryable.Error(),
@@ -171,14 +178,14 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	// Region epoch does not match.
 	if !proto.Equal(region.GetRegionEpoch(), ctx.GetRegionEpoch()) {
 		nextRegion, _ := h.cluster.GetRegionByKey(region.GetEndKey())
-		newRegions := []*metapb.Region{region}
+		currentRegions := []*metapb.Region{region}
 		if nextRegion != nil {
-			newRegions = append(newRegions, nextRegion)
+			currentRegions = append(currentRegions, nextRegion)
 		}
 		return &errorpb.Error{
-			Message: *proto.String("stale epoch"),
-			StaleEpoch: &errorpb.StaleEpoch{
-				NewRegions: newRegions,
+			Message: *proto.String("epoch not match"),
+			EpochNotMatch: &errorpb.EpochNotMatch{
+				CurrentRegions: currentRegions,
 			},
 		}
 	}
