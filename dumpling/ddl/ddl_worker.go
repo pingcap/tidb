@@ -432,7 +432,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
 		w.waitSchemaChanged(nil, d, waitTime, schemaVer, job)
-		if job.IsSynced() {
+		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
@@ -536,15 +536,16 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	// Save errors in job, so that others can know errors happened.
 	if err != nil {
-		// If job is not cancelled, we should log this error.
-		if job.State != model.JobStateCancelled {
-			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
-		} else {
-			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, err)
-		}
-
 		job.Error = toTError(err)
 		job.ErrorCount++
+
+		// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
+		if job.State == model.JobStateCancelled {
+			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, err)
+			return ver, nil
+		}
+		log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
+
 		// Load global ddl variables.
 		if err1 := loadDDLVars(w); err1 != nil {
 			log.Errorf("[ddl-%s] load ddl global variable error: %v", w, err1)
