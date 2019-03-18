@@ -15,13 +15,13 @@ package infoschema
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -64,7 +64,7 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 	}
 	defer func() {
 		if err = file.Close(); err != nil {
-			log.Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
+			logutil.Logger(context.Background()).Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
 		}
 	}()
 
