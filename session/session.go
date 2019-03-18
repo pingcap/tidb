@@ -1320,8 +1320,16 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	se2, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dom.LoadBindInfoLoop(se2, se2.parser)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
-	// get global system tidb_log_bin from mysql.GLOBAL_VARIABLES
+	// get global system variable tidb_log_bin from mysql.GLOBAL_VARIABLES
 	tidbLogBin, err := se1.GetGlobalSysVar(variable.TiDBLogBin)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1419,7 +1427,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 27
+	currentBootstrapVersion = 28
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
