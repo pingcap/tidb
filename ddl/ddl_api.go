@@ -947,6 +947,11 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 				}
 			}
 		}
+		if constr.Tp == ast.ConstraintFulltext {
+			sc := ctx.GetSessionVars().StmtCtx
+			sc.AppendWarning(ErrTableCantHandleFt)
+			continue
+		}
 		// build index info.
 		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
 		if err != nil {
