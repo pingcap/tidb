@@ -288,6 +288,7 @@ const (
 	version25 = 25
 	version26 = 26
 	version27 = 27
+	version28 = 28
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -452,6 +453,10 @@ func upgrade(s Session) {
 
 	if ver < version27 {
 		upgradeToVer27(s)
+	}
+
+	if ver < version28 {
+		upgradeToVer28(s)
 	}
 
 	updateBootstrapVer(s)
@@ -727,6 +732,15 @@ func upgradeToVer26(s Session) {
 
 func upgradeToVer27(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `correlation` double NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer28(s Session) {
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = '%[4]d' WHERE VARIABLE_NAME = '%[3]s'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBMaxChunkSize, variable.DefMaxChunkSize)
+	mustExecute(s, sql)
+	sql = fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = '%[4]d' WHERE VARIABLE_NAME = '%[3]s'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBInitChunkSize, variable.DefInitChunkSize)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
