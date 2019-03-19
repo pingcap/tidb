@@ -846,7 +846,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			leftExec.retTypes(),
 			rightExec.retTypes(),
 		),
-		isOuterJoin: IsOuterJoiner(v.JoinType),
+		isOuterJoin: v.JoinType.IsOuterJoin(),
 	}
 
 	leftKeys := v.LeftKeys
@@ -914,7 +914,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
-		isOuterJoin:  IsOuterJoiner(v.JoinType),
+		isOuterJoin:  v.JoinType.IsOuterJoin(),
 		innerIdx:     v.InnerChildIdx,
 	}
 
@@ -1554,7 +1554,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
-		isOuterJoin:   IsOuterJoiner(v.JoinType),
+		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 	}

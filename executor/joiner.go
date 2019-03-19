@@ -460,13 +460,3 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 
 func (j *innerJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
 }
-
-// IsOuterJoiner returns if this joiner is a outer joiner
-func IsOuterJoiner(j plannercore.JoinType) bool {
-	switch j {
-	case plannercore.LeftOuterSemiJoin, plannercore.LeftOuterJoin, plannercore.RightOuterJoin, plannercore.AntiLeftOuterSemiJoin:
-		return true
-	default:
-		return false
-	}
-}
