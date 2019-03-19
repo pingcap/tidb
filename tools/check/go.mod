@@ -6,6 +6,7 @@ require (
 	github.com/chzchzchz/goword v0.0.0-20170907005317-a9744cb52b03
 	github.com/client9/misspell v0.3.4
 	github.com/dnephin/govet v0.0.0-20171012192244-4a96d43e39d3
+	github.com/golangci/golangci-lint v1.15.0 // indirect
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf // indirect
 	github.com/gordonklaus/ineffassign v0.0.0-20180909121442-1003c8bd00dc
 	github.com/kisielk/errcheck v1.2.0

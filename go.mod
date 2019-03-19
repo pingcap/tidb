@@ -34,6 +34,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway v1.5.1 // indirect
 	github.com/jonboulle/clockwork v0.1.0 // indirect
 	github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5
+	github.com/kr/pretty v0.1.0 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 // indirect
 	github.com/myesui/uuid v1.0.0 // indirect
@@ -82,6 +83,7 @@ require (
 	golang.org/x/tools v0.0.0-20190130214255-bb1329dc71a0
 	google.golang.org/genproto v0.0.0-20190108161440-ae2f86662275 // indirect
 	google.golang.org/grpc v1.17.0
+	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
