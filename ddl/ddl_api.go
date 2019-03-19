@@ -2500,7 +2500,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate strin
 			}
 		}
 	}
-	return doNothing, nil
+	return doNothing, err
 }
 
 // RenameIndex renames an index.
