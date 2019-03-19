@@ -178,12 +178,12 @@ Projection_13	0.00	root	te.expect_time
     │   │ └─Selection_84	0.00	cop	eq(tr.brand_identy, 32314), eq(tr.domain_type, 2)
     │   │   └─TableScan_82	0.00	cop	table:tr, keep order:false
     │   └─IndexLookUp_35	250.00	root	
-    │     ├─IndexScan_32	10.00	cop	table:te, index:trade_id, range: decided by [tr.id], keep order:false, stats:pseudo
+    │     ├─IndexScan_32	10.00	cop	table:te, index:trade_id, range: decided by [eq(te.trade_id, tr.id)], keep order:false, stats:pseudo
     │     └─Selection_34	250.00	cop	ge(te.expect_time, 2018-04-23 00:00:00.000000), le(te.expect_time, 2018-04-23 23:59:59.000000)
     │       └─TableScan_33	10.00	cop	table:te, keep order:false, stats:pseudo
     └─IndexReader_103	0.00	root	index:Selection_102
       └─Selection_102	0.00	cop	not(isnull(p.relate_id))
-        └─IndexScan_101	10.00	cop	table:p, index:relate_id, range: decided by [tr.id], keep order:false, stats:pseudo
+        └─IndexScan_101	10.00	cop	table:p, index:relate_id, range: decided by [eq(p.relate_id, tr.id)], keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	count	task	operator info
 Projection_7	1.00	root	1
@@ -227,7 +227,7 @@ Limit_11	5.00	root	offset:0, count:5
   ├─TableReader_17	4.00	root	data:TableScan_16
   │ └─TableScan_16	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─IndexReader_14	10.00	root	index:IndexScan_13
-    └─IndexScan_13	10.00	cop	table:t2, index:a, range: decided by [t1.a], keep order:false, stats:pseudo
+    └─IndexScan_13	10.00	cop	table:t2, index:a, range: decided by [eq(t2.a, t1.a)], keep order:false, stats:pseudo
 explain select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	count	task	operator info
 Limit_12	5.00	root	offset:0, count:5
@@ -236,7 +236,7 @@ Limit_12	5.00	root	offset:0, count:5
     ├─TableReader_19	4.00	root	data:TableScan_18
     │ └─TableScan_18	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
     └─IndexReader_16	10.00	root	index:IndexScan_15
-      └─IndexScan_15	10.00	cop	table:t2, index:a, range: decided by [t1.a], keep order:false, stats:pseudo
+      └─IndexScan_15	10.00	cop	table:t2, index:a, range: decided by [eq(t2.a, t1.a)], keep order:false, stats:pseudo
 explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	count	task	operator info
 Limit_11	5.00	root	offset:0, count:5

@@ -14,19 +14,22 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	log "github.com/sirupsen/logrus"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -316,10 +319,21 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
-func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int,
-	innerPlan PhysicalPlan, ranges []*ranger.Range, keyOff2IdxOff []int) []PhysicalPlan {
+func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, outerIdx int, innerPlan PhysicalPlan,
+	ranges []*ranger.Range, keyOff2IdxOff []int, compareFilters *ColWithCmpFuncManager) []PhysicalPlan {
 	joinType := p.JoinType
 	outerSchema := p.children[outerIdx].Schema()
+	var (
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
+	)
+	if outerIdx == 0 {
+		outerJoinKeys = p.LeftJoinKeys
+		innerJoinKeys = p.RightJoinKeys
+	} else {
+		innerJoinKeys = p.LeftJoinKeys
+		outerJoinKeys = p.RightJoinKeys
+	}
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
 	if !prop.AllColsFromSchema(outerSchema) || !all {
@@ -357,6 +371,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, innerJ
 		innerPlan:       innerPlan,
 		KeyOff2IdxOff:   newKeyOff,
 		Ranges:          ranges,
+		CompareFilters:  compareFilters,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
@@ -413,38 +428,75 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			innerPlan := p.constructInnerTableScan(ds, pkCol, outerJoinKeys, us)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
-			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, keyOff2IdxOff)
+			return p.constructIndexJoin(prop, outerIdx, innerPlan, nil, keyOff2IdxOff, nil)
 		}
 	}
-	var (
-		bestIndexInfo  *model.IndexInfo
-		rangesOfBest   []*ranger.Range
-		maxUsedCols    int
-		remainedOfBest []expression.Expression
-		keyOff2IdxOff  []int
-	)
+	helper := &indexJoinBuildHelper{join: p}
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			continue
 		}
 		indexInfo := path.index
-		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, ds, innerJoinKeys)
-		// We choose the index by the number of used columns of the range, the much the better.
-		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
-		// But obviously when the range is nil, we don't need index join.
-		if len(ranges) > 0 && len(ranges[0].LowVal) > maxUsedCols {
-			bestIndexInfo = indexInfo
-			maxUsedCols = len(ranges[0].LowVal)
-			rangesOfBest = ranges
-			remainedOfBest = remained
-			keyOff2IdxOff = tmpKeyOff2IdxOff
+		err := helper.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
+		if err != nil {
+			log.Warnf("[planner]: error happened when build index join: %v", err)
 		}
 	}
-	if bestIndexInfo != nil {
-		innerPlan := p.constructInnerIndexScan(ds, bestIndexInfo, remainedOfBest, outerJoinKeys, us)
-		return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, rangesOfBest, keyOff2IdxOff)
+	if helper.chosenIndexInfo != nil {
+		keyOff2IdxOff := make([]int, len(innerJoinKeys))
+		for i := range keyOff2IdxOff {
+			keyOff2IdxOff[i] = -1
+		}
+		for idxOff, keyOff := range helper.idxOff2KeyOff {
+			if keyOff != -1 {
+				keyOff2IdxOff[keyOff] = idxOff
+			}
+		}
+		idxCols, _ := expression.IndexInfo2Cols(ds.schema.Columns, helper.chosenIndexInfo)
+		rangeInfo := helper.buildRangeDecidedByInformation(idxCols, outerJoinKeys)
+		innerPlan := p.constructInnerIndexScan(ds, helper.chosenIndexInfo, helper.chosenRemained, outerJoinKeys, us, rangeInfo)
+		return p.constructIndexJoin(prop, outerIdx, innerPlan, helper.chosenRanges, keyOff2IdxOff, helper.lastColManager)
 	}
 	return nil
+}
+
+type indexJoinBuildHelper struct {
+	join *LogicalJoin
+
+	chosenIndexInfo *model.IndexInfo
+	maxUsedCols     int
+	chosenAccess    []expression.Expression
+	chosenRemained  []expression.Expression
+	idxOff2KeyOff   []int
+	lastColManager  *ColWithCmpFuncManager
+	chosenRanges    []*ranger.Range
+
+	curPossibleUsedKeys []*expression.Column
+	curNotUsedIndexCols []*expression.Column
+	curNotUsedColLens   []int
+	curIdxOff2KeyOff    []int
+}
+
+func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column, outerJoinKeys []*expression.Column) string {
+	buffer := bytes.NewBufferString("[")
+	isFirst := true
+	for idxOff, keyOff := range ijHelper.idxOff2KeyOff {
+		if keyOff == -1 {
+			continue
+		}
+		if !isFirst {
+			buffer.WriteString(" ")
+		} else {
+			isFirst = false
+		}
+		buffer.WriteString(fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
+	}
+	for _, access := range ijHelper.chosenAccess {
+		// Since now there must be eq/in condition so here we can just append space directly.
+		buffer.WriteString(fmt.Sprintf(" %v", access))
+	}
+	buffer.WriteString("]")
+	return buffer.String()
 }
 
 // constructInnerTableScan is specially used to construct the inner plan for PhysicalIndexJoin.
@@ -494,7 +546,8 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 }
 
 // constructInnerIndexScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, remainedConds []expression.Expression, outerJoinKeys []*expression.Column, us *LogicalUnionScan) PhysicalPlan {
+func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, filterConds []expression.Expression,
+	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string) PhysicalPlan {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -504,9 +557,8 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		dataSourceSchema: ds.schema,
 		KeepOrder:        false,
 		Ranges:           ranger.FullRange(),
-		rangeDecidedBy:   outerJoinKeys,
+		rangeInfo:        rangeInfo,
 	}.Init(ds.ctx)
-	is.filterCondition = remainedConds
 
 	var rowCount float64
 	idxHist, ok := ds.statisticTable.Indices[idx.ID]
@@ -529,7 +581,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	}
 
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(remainedConds, idx.Columns, ds.tableInfo)
+	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)
 	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
 	t := finishCopTask(ds.ctx, cop)
@@ -537,78 +589,337 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	return p.constructInnerUnionScan(us, reader)
 }
 
-// buildRangeForIndexJoin checks whether this index can be used for building index join and return the range if this index is ok.
-// If this index is invalid, just return nil range.
-func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (
-	[]*ranger.Range, []expression.Expression, []int) {
-	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.Schema().Columns, indexInfo)
-	if len(idxCols) == 0 {
-		return nil, nil, nil
-	}
-
-	// Extract the filter to calculate access and the filters that must be remained ones.
-	access, eqConds, remained, keyOff2IdxOff := p.buildFakeEqCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan.pushedDownConds)
-
-	if len(keyOff2IdxOff) == 0 {
-		return nil, nil, nil
-	}
-
-	// In `buildFakeEqCondsForIndexJoin`, we construct the equal conditions for join keys and remove filters that contain the join keys' column.
-	// When t1.a = t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as the access condition.
-	// So the equal conditions we built can be successfully used to build a range if they can be used. They won't be affected by the existing filters.
-	res, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, access, idxCols, colLengths)
-	if err != nil {
-		terror.Log(err)
-		return nil, nil, nil
-	}
-
-	// We should guarantee that all the join's equal condition is used.
-	for _, eqCond := range eqConds {
-		if !expression.Contains(res.AccessConds, eqCond) {
-			return nil, nil, nil
-		}
-	}
-
-	return res.Ranges, append(remained, res.RemainedConds...), keyOff2IdxOff
+var symmetricOp = map[string]string{
+	ast.LT: ast.GT,
+	ast.GE: ast.LE,
+	ast.GT: ast.LT,
+	ast.LE: ast.GE,
 }
 
-func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
-	innerFilters []expression.Expression) (accesses, eqConds, remained []expression.Expression, keyOff2IdxOff []int) {
-	// Check whether all join keys match one column from index.
-	keyOff2IdxOff = joinKeysMatchIndex(keys, idxCols, colLengths)
-	if keyOff2IdxOff == nil {
-		return nil, nil, nil, nil
-	}
+// ColWithCmpFuncManager is used in index join to handle the column with compare functions(>=, >, <, <=).
+// It stores the compare functions and build ranges in execution phase.
+type ColWithCmpFuncManager struct {
+	targetCol         *expression.Column
+	colLength         int
+	OpType            []string
+	opArg             []expression.Expression
+	tmpConstant       []*expression.Constant
+	affectedColSchema *expression.Schema
+	compareFuncs      []chunk.CompareFunc
+}
 
-	usableKeys := make([]*expression.Column, 0, len(keys))
-
-	conds := make([]expression.Expression, 0, len(keys)+len(innerFilters))
-	eqConds = make([]expression.Expression, 0, len(keys))
-	// Construct a fake equal expression for every join key for calculating the range.
-	for i, key := range keys {
-		if keyOff2IdxOff[i] < 0 {
+func (cwc *ColWithCmpFuncManager) appendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {
+	cwc.OpType = append(cwc.OpType, opName)
+	cwc.opArg = append(cwc.opArg, arg)
+	cwc.tmpConstant = append(cwc.tmpConstant, &expression.Constant{RetType: cwc.targetCol.RetType})
+	for _, col := range affectedCols {
+		if cwc.affectedColSchema.Contains(col) {
 			continue
 		}
-		usableKeys = append(usableKeys, key)
-		// Int datum 1 can convert to all column's type(numeric type, string type, json, time type, enum, set) safely.
-		fakeConstant := &expression.Constant{Value: types.NewIntDatum(1), RetType: key.GetType()}
-		eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
-		conds = append(conds, eqFunc)
-		eqConds = append(eqConds, eqFunc)
+		cwc.compareFuncs = append(cwc.compareFuncs, chunk.GetCompareFunc(col.RetType))
+		cwc.affectedColSchema.Append(col)
 	}
+}
 
-	// Look into every `innerFilter`, if it contains join keys' column, put this filter into `remained` part directly.
-	remained = make([]expression.Expression, 0, len(innerFilters))
-	for _, filter := range innerFilters {
-		affectedCols := expression.ExtractColumns(filter)
-		if expression.ColumnSliceIsIntersect(affectedCols, usableKeys) {
-			remained = append(remained, filter)
+// CompareRow compares the rows for deduplicate.
+func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
+	for i, col := range cwc.affectedColSchema.Columns {
+		ret := cwc.compareFuncs[i](lhs, col.Index, rhs, col.Index)
+		if ret != 0 {
+			return ret
+		}
+	}
+	return 0
+}
+
+// BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
+func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row chunk.Row) ([]*ranger.Range, error) {
+	exprs := make([]expression.Expression, len(cwc.OpType))
+	for i, opType := range cwc.OpType {
+		constantArg, err := cwc.opArg[i].Eval(row)
+		if err != nil {
+			return nil, err
+		}
+		cwc.tmpConstant[i].Value = constantArg
+		newExpr, err := expression.NewFunction(ctx, opType, types.NewFieldType(mysql.TypeTiny), cwc.targetCol, cwc.tmpConstant[i])
+		if err != nil {
+			return nil, err
+		}
+		exprs = append(exprs, newExpr)
+	}
+	ranges, err := ranger.BuildColumnRange(exprs, ctx.GetSessionVars().StmtCtx, cwc.targetCol.RetType, cwc.colLength)
+	if err != nil {
+		return nil, err
+	}
+	return ranges, nil
+}
+
+func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err error) {
+	for i := range cwc.opArg {
+		cwc.opArg[i], err = cwc.opArg[i].ResolveIndices(schema)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// String implements Stringer interface.
+func (cwc *ColWithCmpFuncManager) String() string {
+	buffer := bytes.NewBufferString("")
+	for i := range cwc.OpType {
+		buffer.WriteString(fmt.Sprintf("%v(%v, %v)", cwc.OpType[i], cwc.targetCol, cwc.opArg[i]))
+		if i < len(cwc.OpType)-1 {
+			buffer.WriteString(" ")
+		}
+	}
+	return buffer.String()
+}
+
+func (ijHelper *indexJoinBuildHelper) checkIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int) {
+	tmpSchema := expression.NewSchema(innerKeys...)
+	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
+	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
+	ijHelper.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
+	ijHelper.curNotUsedColLens = make([]int, 0, len(idxCols))
+	for i, idxCol := range idxCols {
+		ijHelper.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
+		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
+			ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCol)
 			continue
 		}
-		conds = append(conds, filter)
+		ijHelper.curNotUsedIndexCols = append(ijHelper.curNotUsedIndexCols, idxCol)
+		ijHelper.curNotUsedColLens = append(ijHelper.curNotUsedColLens, colLens[i])
 	}
+}
 
-	return conds, eqConds, remained, keyOff2IdxOff
+// findUsefulEqAndInFilters analyzes the pushedDownConds held by inner child and split them to three parts.
+// usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
+// uselessFilters is the conditions which cannot be used for building ranges.
+// remainingRangeCandidates is the other conditions for future use.
+func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression) {
+	uselessFilters = make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
+	remainingRangeCandidates = make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
+	// This loop finds the possible filters which can be used to build ranges.
+	// If the filter contains index column covered by join keys, it will be useless since we always use join key to build range for that index column..
+	for _, innerFilter := range innerPlan.pushedDownConds {
+		affectedCols := expression.ExtractColumns(innerFilter)
+		if expression.ColumnSliceIsIntersect(affectedCols, ijHelper.curPossibleUsedKeys) {
+			uselessFilters = append(uselessFilters, innerFilter)
+			continue
+		}
+		remainingRangeCandidates = append(remainingRangeCandidates, innerFilter)
+	}
+	var remainedEqOrIn []expression.Expression
+	// Extract the eq/in functions of possible join key.
+	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
+	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _ = ranger.ExtractEqAndInCondition(
+		innerPlan.ctx, remainingRangeCandidates,
+		ijHelper.curNotUsedIndexCols,
+		ijHelper.curNotUsedColLens,
+	)
+	uselessFilters = append(uselessFilters, remainedEqOrIn...)
+	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates
+}
+
+// buildLastColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
+// The returned value is just for outputting explain information
+func (ijHelper *indexJoinBuildHelper) buildLastColManager(nextCol *expression.Column,
+	innerPlan *DataSource, cwc *ColWithCmpFuncManager) []expression.Expression {
+	var lastColAccesses []expression.Expression
+loopOtherConds:
+	for _, filter := range ijHelper.join.OtherConditions {
+		sf, ok := filter.(*expression.ScalarFunction)
+		if !ok || !(sf.FuncName.L == ast.LE || sf.FuncName.L == ast.LT || sf.FuncName.L == ast.GE || sf.FuncName.L == ast.GT) {
+			continue
+		}
+		var funcName string
+		var anotherArg expression.Expression
+		if lCol, ok := sf.GetArgs()[0].(*expression.Column); ok && lCol.Equal(nil, nextCol) {
+			anotherArg = sf.GetArgs()[1]
+			funcName = sf.FuncName.L
+		} else if rCol, ok := sf.GetArgs()[1].(*expression.Column); ok && rCol.Equal(nil, nextCol) {
+			anotherArg = sf.GetArgs()[0]
+			// The column manager always build expression in the form of col op arg1.
+			// So we need use the symmetric one of the current function.
+			funcName = symmetricOp[sf.FuncName.L]
+		} else {
+			continue
+		}
+		affectedCols := expression.ExtractColumns(anotherArg)
+		if len(affectedCols) == 0 {
+			continue
+		}
+		for _, col := range affectedCols {
+			if innerPlan.schema.Contains(col) {
+				continue loopOtherConds
+			}
+		}
+		lastColAccesses = append(lastColAccesses, sf)
+		cwc.appendNewExpr(funcName, anotherArg, affectedCols)
+	}
+	return lastColAccesses
+}
+
+func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) error {
+	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.schema.Columns, indexInfo)
+	if len(idxCols) == 0 {
+		return nil
+	}
+	accesses := make([]expression.Expression, 0, len(idxCols))
+	ijHelper.checkIndex(innerJoinKeys, idxCols, colLengths)
+	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
+	keyMatchedLen := len(idxCols)
+	for ; keyMatchedLen > 0; keyMatchedLen-- {
+		if ijHelper.curIdxOff2KeyOff[keyMatchedLen-1] != -1 {
+			break
+		}
+	}
+	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
+	accesses = append(accesses, notKeyEqAndIn...)
+	// We hope that the index cols appeared in the join keys can all be used to build range. If it cannot be satisfied,
+	// we'll mark this index as cannot be used for index join.
+	// So we should make sure that all columns before the keyMatchedLen is join key or has eq/in function.
+	if len(notKeyEqAndIn) < keyMatchedLen-matchedKeyCnt {
+		return nil
+	}
+	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
+	// If all the idnex columns are covered by eq/in conditions, we don't need to consider other conditions anymore
+	if lastColPos == len(idxCols) {
+		remained = append(remained, rangeFilterCandidates...)
+		ranges, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
+		if err != nil {
+			return err
+		}
+		ijHelper.updateBestChoice(ranges, indexInfo, accesses, remained, nil)
+		return nil
+	}
+	lastPossibleCol := idxCols[lastColPos]
+	lastColManager := &ColWithCmpFuncManager{
+		targetCol:         lastPossibleCol,
+		colLength:         colLengths[lastColPos],
+		affectedColSchema: expression.NewSchema(),
+	}
+	lastColAccess := ijHelper.buildLastColManager(lastPossibleCol, innerPlan, lastColManager)
+	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
+	if len(lastColAccess) == 0 {
+		colAccesses, colRemained := ranger.DetachCondsForTableRange(ijHelper.join.ctx, rangeFilterCandidates, lastPossibleCol)
+		var ranges, nextColRange []*ranger.Range
+		var err error
+		if len(colAccesses) > 0 {
+			nextColRange, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx.GetSessionVars().StmtCtx, lastPossibleCol.RetType, colLengths[lastColPos])
+			if err != nil {
+				return err
+			}
+		}
+		ranges, err = ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
+		if err != nil {
+			return err
+		}
+		remained = append(remained, colRemained...)
+		if colLengths[lastColPos] != types.UnspecifiedLength {
+			remained = append(remained, colAccesses...)
+		}
+		accesses = append(accesses, colAccesses...)
+		ijHelper.updateBestChoice(ranges, indexInfo, accesses, remained, nil)
+		return nil
+	}
+	accesses = append(accesses, lastColAccess...)
+	remained = append(remained, rangeFilterCandidates...)
+	ranges, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true)
+	if err != nil {
+		return err
+	}
+	ijHelper.updateBestChoice(ranges, indexInfo, accesses, remained, lastColManager)
+	return nil
+}
+
+func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, idxInfo *model.IndexInfo, accesses,
+	remained []expression.Expression, lastColManager *ColWithCmpFuncManager) {
+	// We choose the index by the number of used columns of the range, the much the better.
+	// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
+	// But obviously when the range is nil, we don't need index join.
+	if len(ranges) > 0 && len(ranges[0].LowVal) > ijHelper.maxUsedCols {
+		ijHelper.chosenIndexInfo = idxInfo
+		ijHelper.maxUsedCols = len(ranges[0].LowVal)
+		ijHelper.chosenRanges = ranges
+		ijHelper.chosenAccess = accesses
+		ijHelper.chosenRemained = remained
+		ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
+		ijHelper.lastColManager = lastColManager
+	}
+}
+
+func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, err error) {
+	pointLength := matchedKeyCnt + len(eqAndInFuncs)
+	if nextColRange != nil {
+		for _, colRan := range nextColRange {
+			// The range's exclude status is the same with last col's.
+			ran := &ranger.Range{
+				LowVal:      make([]types.Datum, pointLength, pointLength+1),
+				HighVal:     make([]types.Datum, pointLength, pointLength+1),
+				LowExclude:  colRan.LowExclude,
+				HighExclude: colRan.HighExclude,
+			}
+			ran.LowVal = append(ran.LowVal, colRan.LowVal[0])
+			ran.HighVal = append(ran.HighVal, colRan.HighVal[0])
+			ranges = append(ranges, ran)
+		}
+	} else if haveExtraCol {
+		// Reserve a position for the last col.
+		ranges = append(ranges, &ranger.Range{
+			LowVal:  make([]types.Datum, pointLength+1, pointLength+1),
+			HighVal: make([]types.Datum, pointLength+1, pointLength+1),
+		})
+	} else {
+		ranges = append(ranges, &ranger.Range{
+			LowVal:  make([]types.Datum, pointLength, pointLength),
+			HighVal: make([]types.Datum, pointLength, pointLength),
+		})
+	}
+	emptyRow := chunk.Row{}
+	for i, j := 0, 0; j < len(eqAndInFuncs); i++ {
+		// This position is occupied by join key.
+		if ijHelper.curIdxOff2KeyOff[i] != -1 {
+			continue
+		}
+		sf := eqAndInFuncs[j].(*expression.ScalarFunction)
+		// Deal with the first two args.
+		if _, ok := sf.GetArgs()[0].(*expression.Column); ok {
+			for _, ran := range ranges {
+				ran.LowVal[i], err = sf.GetArgs()[1].Eval(emptyRow)
+				if err != nil {
+					return nil, err
+				}
+				ran.HighVal[i] = ran.LowVal[i]
+			}
+		} else {
+			for _, ran := range ranges {
+				ran.LowVal[i], err = sf.GetArgs()[0].Eval(emptyRow)
+				if err != nil {
+					return nil, err
+				}
+				ran.HighVal[i] = ran.LowVal[i]
+			}
+		}
+		// If the length of in function's constant list is more than one, we will expand ranges.
+		curRangeLen := len(ranges)
+		for argIdx := 2; argIdx < len(sf.GetArgs()); argIdx++ {
+			newRanges := make([]*ranger.Range, 0, curRangeLen)
+			for oldRangeIdx := 0; oldRangeIdx < curRangeLen; oldRangeIdx++ {
+				newRange := ranges[oldRangeIdx].Clone()
+				newRange.LowVal[i], err = sf.GetArgs()[argIdx].Eval(emptyRow)
+				if err != nil {
+					return nil, err
+				}
+				newRange.HighVal[i] = newRange.LowVal[i]
+				newRanges = append(newRanges, newRange)
+			}
+			ranges = append(ranges, newRanges...)
+		}
+		j++
+	}
+	return ranges, nil
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
@@ -626,20 +937,11 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", p.hintInfo.restore2IndexJoinHint())
 			}
 
-			// Append inapplicable reason.
-			if len(p.EqualConditions) == 0 {
-				errMsg += " without column equal ON condition"
-			}
-
 			// Generate warning message to client.
 			warning := ErrInternal.GenWithStack(errMsg)
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}()
-
-	if len(p.EqualConditions) == 0 {
-		return nil, false
-	}
 
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:

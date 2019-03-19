@@ -146,7 +146,7 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 	)
 	res := &DetachRangeResult{}
 
-	accessConds, filterConds, newConditions, emptyRange := extractEqAndInCondition(sctx, conditions, cols, lengths)
+	accessConds, filterConds, newConditions, emptyRange := ExtractEqAndInCondition(sctx, conditions, cols, lengths)
 	if emptyRange {
 		return res, nil
 	}
@@ -156,8 +156,6 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 			break
 		}
 	}
-	// We should remove all accessConds, so that they will not be added to filter conditions.
-	newConditions = removeAccessConditions(newConditions, accessConds)
 	eqOrInCount := len(accessConds)
 	if eqOrInCount == len(cols) {
 		// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
@@ -198,7 +196,13 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 	return res, err
 }
 
-func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
+// ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
+// accesses: The condition will be used to build range.
+// filters: filters is the part that some access conditions need to be evaluate again since it's only the prefix part of char column.
+// newConditions: We'll simplify the given conditions if there're multiple in conditions or eq conditions on the same column.
+//   e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
+// bool: indicate whether there's nil range when merging eq and in conditions.
+func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
 	cols []*expression.Column, lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, bool) {
 	var filters []expression.Expression
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
@@ -247,6 +251,8 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			filters = append(filters, cond)
 		}
 	}
+	// We should remove all accessConds, so that they will not be added to filter conditions.
+	newConditions = removeAccessConditions(newConditions, accesses)
 	return accesses, filters, newConditions, false
 }
 

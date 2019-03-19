@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -186,7 +187,7 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 	// handle the null condition, while calculate range can prune something like:
 	// "select * from t where t is null"
 	accessConds := ranger.ExtractAccessConditionsForColumn(conds, partCol.UniqueID)
-	r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType)
+	r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType, types.UnspecifiedLength)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
