@@ -65,6 +65,19 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 	return buf
 }
 
+// EncodeKeyRange encode table id and low/high handle into a kv.KeyRange
+func EncodeKeyRange(tableID int64, lowHandle, highHandle []byte) kv.KeyRange {
+	span := make([]byte, recordRowKeyLen*2)
+	lb := appendTableRecordPrefix(span[0:0:recordRowKeyLen], tableID)
+	lb = append(lb, lowHandle...)
+	hb := appendTableRecordPrefix(span[recordRowKeyLen:recordRowKeyLen:recordRowKeyLen*2], tableID)
+	hb = append(hb, highHandle...)
+	return kv.KeyRange{
+		StartKey: lb,
+		EndKey:   hb,
+	}
+}
+
 // EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
 func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
 	buf := make([]byte, 0, recordRowKeyLen)

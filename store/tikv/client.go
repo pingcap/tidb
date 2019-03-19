@@ -236,7 +236,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				PermitWithoutStream: true,
 			}),
 			grpc.WithReadBufferSize(128*1024),
-			grpc.WithWriteBufferSize(128*1024),
+			grpc.WithWriteBufferSize(256*1024),
 		)
 		cancel()
 		if err != nil {

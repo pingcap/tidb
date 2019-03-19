@@ -605,8 +605,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("sql", queryStrForLog(string(data[1:]))),
 				zap.String("err", errStrForLog(err)),
 			)
-			err1 := cc.writeError(err)
-			terror.Log(errors.Trace(err1))
+			cc.writeError(err)
+			//terror.Log(errors.Trace(err1))
 		}
 		//	cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0

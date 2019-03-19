@@ -191,9 +191,7 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 		if !ran.HighExclude {
 			high = []byte(kv.Key(high).PrefixNext())
 		}
-		startKey := tablecodec.EncodeRowKey(tid, low)
-		endKey := tablecodec.EncodeRowKey(tid, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		krs = append(krs, tablecodec.EncodeKeyRange(tid, low, high))
 	}
 	fb.StoreRanges(feedbackRanges)
 	return krs
@@ -203,9 +201,7 @@ func tableRangesToKVRangesWithoutSplit(tid int64, ranges []*ranger.Range) []kv.K
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		low, high := encodeHandleKey(ran)
-		startKey := tablecodec.EncodeRowKey(tid, low)
-		endKey := tablecodec.EncodeRowKey(tid, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		krs = append(krs, tablecodec.EncodeKeyRange(tid, low, high))
 	}
 	return krs
 }
@@ -237,9 +233,7 @@ func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 		low := codec.EncodeInt(nil, handles[i])
 		high := codec.EncodeInt(nil, handles[j-1])
 		high = []byte(kv.Key(high).PrefixNext())
-		startKey := tablecodec.EncodeRowKey(tid, low)
-		endKey := tablecodec.EncodeRowKey(tid, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		krs = append(krs, tablecodec.EncodeKeyRange(tid, low, high))
 		i = j
 	}
 	return krs

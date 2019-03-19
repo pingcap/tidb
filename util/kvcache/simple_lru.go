@@ -15,8 +15,6 @@ package kvcache
 
 import (
 	"container/list"
-
-	"github.com/pingcap/tidb/util/memory"
 )
 
 // Key is the interface that every key in LRU Cache should implement.
@@ -88,27 +86,11 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	l.elements[hash] = element
 	l.size++
 
-	memUsed, err := memory.MemUsed()
-	if err != nil {
-		l.DeleteAll()
-		return
-	}
-
-	for memUsed > uint64(float64(l.quota)*(1.0-l.guard)) || l.size > l.capacity {
+	for l.size > l.capacity {
 		lru := l.cache.Back()
-		if lru == nil {
-			break
-		}
 		l.cache.Remove(lru)
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
-		if memUsed > uint64(float64(l.quota)*(1.0-l.guard)) {
-			memUsed, err = memory.MemUsed()
-			if err != nil {
-				l.DeleteAll()
-				return
-			}
-		}
 	}
 }
 
