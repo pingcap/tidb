@@ -16,6 +16,7 @@ package ddl
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/table"
 )
@@ -179,6 +180,18 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	expr.Accept(&c)
 	if c.found {
 		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(colName)
+	}
+	return nil
+}
+
+// checkAutoIncrementRef checks if an generated column depends on an auto-increment column and raises an error if so.
+// See https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
+func checkAutoIncrementRef(name string, dependencies map[string]struct{}, tbInfo *model.TableInfo) error {
+	exists, autoIncrementColumn := hasAutoIncrementColumn(tbInfo)
+	if exists {
+		if _, found := dependencies[autoIncrementColumn]; found {
+			return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(name)
+		}
 	}
 	return nil
 }

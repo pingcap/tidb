@@ -16,6 +16,7 @@ package core
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -760,7 +762,7 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
@@ -865,7 +867,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		s.ctx.GetSessionVars().HashJoinConcurrency = 1
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
@@ -1327,7 +1329,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		_, err = BuildLogicalPlan(s.ctx, stmt, s.is)
 		if tt.err == nil {
 			c.Assert(err, IsNil, comment)
@@ -1637,7 +1639,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			ctx:       MockContext(),
@@ -1755,7 +1757,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
@@ -1887,7 +1889,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
@@ -1998,7 +2000,7 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
@@ -2029,7 +2031,7 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
@@ -2063,7 +2065,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
-			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(order by test.t.a asc, test.t.b desc))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(order by test.t.a asc, test.t.b desc range between unbounded preceding and current row))->Projection",
 		},
 		{
 			sql:    "select a, b as a, avg(a) over(partition by a) from t",
@@ -2124,6 +2126,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "select sum(a) over(w) from t window w as (rows between 1 preceding AND 1 following)",
 			result: "[planner:3582]Window 'w' has a frame definition, so cannot be referenced by another window.",
+		},
+		{
+			sql:    "select sum(a) over w from t window w as (rows between 1 preceding AND 1 following)",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select sum(a) over(w order by b) from t window w as (order by a)",
@@ -2187,7 +2193,39 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over(order by a range between 1.0 preceding and 1 following) from t",
-			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(order by test.t.a asc range between 1.0 preceding and 1 following))->Projection",
+		},
+		{
+			sql:    "select row_number() over(rows between 1 preceding and 1 following) from t",
+			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
+		},
+		{
+			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max, min(avg(b)) over(rows between 1 preceding and 1 following) min from t group by c",
+			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_4) over(rows between 1 preceding and 1 following))->Window(min(sel_agg_5) over(rows between 1 preceding and 1 following))->Projection",
+		},
+		{
+			sql:    "select nth_value(a, 1.0) over() from t",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
+			sql:    "select nth_value(a, 0) over() from t",
+			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
+			sql:    "select ntile(0) over() from t",
+			result: "[planner:1210]Incorrect arguments to ntile",
+		},
+		{
+			sql:    "select ntile(null) over() from t",
+			result: "TableReader(Table(t))->Window(ntile(<nil>) over())->Projection",
+		},
+		{
+			sql:    "select avg(a) over w from t window w as(partition by b)",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(partition by test.t.b))->Projection",
+		},
+		{
+			sql:    "select nth_value(i_date, 1) over() from t",
+			result: "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1) over())->Projection",
 		},
 	}
 
@@ -2199,7 +2237,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is, false)
+		Preprocess(s.ctx, stmt, s.is)
 		builder := &PlanBuilder{
 			ctx:       MockContext(),
 			is:        s.is,
@@ -2218,5 +2256,103 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		p, err = physicalOptimize(lp)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.result, comment)
+	}
+}
+
+func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
+	pp := &property.PhysicalProperty{}
+	for _, item := range byItems {
+		pp.Items = append(pp.Items, property.Item{Col: item.Expr.(*expression.Column), Desc: item.Desc})
+	}
+	return pp
+}
+
+func pathsName(paths []*candidatePath) string {
+	var names []string
+	for _, path := range paths {
+		if path.path.isTablePath {
+			names = append(names, "PRIMARY_KEY")
+		} else {
+			names = append(names, path.path.index.Name.O)
+		}
+	}
+	return strings.Join(names, ",")
+}
+
+func (s *testPlanSuite) TestSkylinePruning(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{
+			sql:    "select * from t",
+			result: "PRIMARY_KEY",
+		},
+		{
+			sql:    "select * from t order by f",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select * from t where a > 1",
+			result: "PRIMARY_KEY",
+		},
+		{
+			sql:    "select * from t where a > 1 order by f",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select * from t where f > 1",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select f from t where f > 1",
+			result: "f,f_g",
+		},
+		{
+			sql:    "select f from t where f > 1 order by a",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select * from t where f > 1 and g > 1",
+			result: "PRIMARY_KEY,f,g,f_g",
+		},
+	}
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		lp := p.(LogicalPlan)
+		_, err = lp.recursiveDeriveStats()
+		c.Assert(err, IsNil)
+		var ds *DataSource
+		var byItems []*ByItems
+		for ds == nil {
+			switch v := lp.(type) {
+			case *DataSource:
+				ds = v
+			case *LogicalSort:
+				byItems = v.ByItems
+				lp = lp.Children()[0]
+			default:
+				lp = lp.Children()[0]
+			}
+		}
+		paths := ds.skylinePruning(byItemsToProperty(byItems))
+		c.Assert(pathsName(paths), Equals, tt.result)
 	}
 }

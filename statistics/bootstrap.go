@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
@@ -34,7 +35,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache
 		physicalID := row.GetInt64(1)
 		table, ok := h.getTableByPhysicalID(is, physicalID)
 		if !ok {
-			log.Debugf("Unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
+			logutil.Logger(context.Background()).Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			continue
 		}
 		tableInfo := table.Meta()
@@ -120,7 +121,14 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables stat
 				continue
 			}
 			hist := NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
-			table.Columns[hist.ID] = &Column{Histogram: *hist, Info: colInfo, Count: nullCount, isHandle: tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)}
+			hist.Correlation = row.GetFloat64(9)
+			table.Columns[hist.ID] = &Column{
+				Histogram:  *hist,
+				PhysicalID: table.PhysicalID,
+				Info:       colInfo,
+				Count:      nullCount,
+				isHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+			}
 		}
 	}
 }
@@ -128,7 +136,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables stat
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver from mysql.stats_histograms"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation from mysql.stats_histograms"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -181,14 +189,14 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables statsCache, iter *chu
 			var err error
 			lower, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				log.Debugf("decode bucket lower bound failed: %s", errors.ErrorStack(err))
+				logutil.Logger(context.Background()).Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
 			upper, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				log.Debugf("decode bucket upper bound failed: %s", errors.ErrorStack(err))
+				logutil.Logger(context.Background()).Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}

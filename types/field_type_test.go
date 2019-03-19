@@ -155,7 +155,7 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft = NewFieldType(mysql.TypeYear)
 	ft.Flen = 2
 	ft.Decimal = 2
-	c.Assert(ft.String(), Equals, "year(4)") // Note: Invalid year.
+	c.Assert(ft.String(), Equals, "year(2)") // Note: Invalid year.
 }
 
 func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {

@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
-func Example_LoadRunShutdownPlugin() {
+func LoadRunShutdownPluginExample() {
 	ctx := context.Background()
 	var pluginVarNames []string
 	cfg := plugin.Config{
@@ -41,20 +41,6 @@ func Example_LoadRunShutdownPlugin() {
 			continue
 		}
 		plugin.DeclareAuditManifest(auditPlugin.Manifest).NotifyEvent(context.Background(), nil)
-	}
-
-	err = plugin.Reload(ctx, cfg, plugin.ID("conn_ip_example-2"))
-	if err != nil {
-		panic(err)
-	}
-
-	for _, auditPlugin := range plugin.GetByKind(plugin.Audit) {
-		if auditPlugin.State != plugin.Ready {
-			continue
-		}
-		plugin.DeclareAuditManifest(auditPlugin.Manifest).NotifyEvent(
-			context.WithValue(context.Background(), "ip", "1.1.1.2"), nil,
-		)
 	}
 
 	plugin.Shutdown(context.Background())

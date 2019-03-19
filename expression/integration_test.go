@@ -33,10 +33,12 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -542,6 +544,13 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	// for radians
 	result = tk.MustQuery("SELECT radians(1.0), radians(pi()), radians(pi()/2), radians(180), radians(1.009);")
 	result.Check(testkit.Rows("0.017453292519943295 0.05483113556160754 0.02741556778080377 3.141592653589793 0.01761037215262278"))
+
+	// for rand
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.6046602879796196", "0.16729663442585624", "0.7199826688373036"))
+	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.6046602879796196 0.16729663442585624 0.7199826688373036"))
 }
 
 func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
@@ -1381,6 +1390,25 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select subtime(a, b), subtime(cast(a as date), b), subtime(b,a), subtime(a,c), subtime(b," +
 		"c), subtime(c,a), subtime(c,b) from t;")
 	result.Check(testkit.Rows("<nil> <nil> <nil> 2017-01-01 11:29:30 2017-01-01 11:29:30 <nil> <nil>"))
+
+	// ADDTIME & SUBTIME issue #5966
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime, b timestamp, c time, d date, e bit(1))")
+	tk.MustExec(`insert into t values("2017-01-01 12:30:31", "2017-01-01 12:30:31", "01:01:01", "2017-01-01", 0b1)`)
+
+	result = tk.MustQuery("select addtime(a, e), addtime(b, e), addtime(c, e), addtime(d, e) from t")
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery("select addtime('2017-01-01 01:01:01', 0b1), addtime('2017-01-01', b'1'), addtime('01:01:01', 0b1011)")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery("select addtime('2017-01-01', 1), addtime('2017-01-01 01:01:01', 1), addtime(cast('2017-01-01' as date), 1)")
+	result.Check(testkit.Rows("2017-01-01 00:00:01 2017-01-01 01:01:02 00:00:01"))
+
+	result = tk.MustQuery("select subtime(a, e), subtime(b, e), subtime(c, e), subtime(d, e) from t")
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery("select subtime('2017-01-01 01:01:01', 0b1), subtime('2017-01-01', b'1'), subtime('01:01:01', 0b1011)")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery("select subtime('2017-01-01', 1), subtime('2017-01-01 01:01:01', 1), subtime(cast('2017-01-01' as date), 1)")
+	result.Check(testkit.Rows("2016-12-31 23:59:59 2017-01-01 01:01:00 -00:00:01"))
 
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
@@ -3586,6 +3614,13 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err, IsNil)
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("0 0 0 0"))
+
+	_, err = tk.Exec("set @@global.max_user_connections='';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
+	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
 }
 
 func (s *testIntegrationSuite) TestIssues(c *C) {
@@ -3699,7 +3734,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = plannercore.Preprocess(ctx, stmts[0], is, false)
+		err = plannercore.Preprocess(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
@@ -3935,6 +3970,42 @@ func (s *testIntegrationSuite) TestValuesFloat32(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 0.02`))
 }
 
+func (s *testIntegrationSuite) TestFuncNameConst(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a CHAR(20), b VARCHAR(20), c BIGINT);")
+	tk.MustExec("INSERT INTO t (b, c) values('hello', 1);")
+
+	r := tk.MustQuery("SELECT name_const('test_int', 1), name_const('test_float', 3.1415);")
+	r.Check(testkit.Rows("1 3.1415"))
+	r = tk.MustQuery("SELECT name_const('test_string', 'hello'), name_const('test_nil', null);")
+	r.Check(testkit.Rows("hello <nil>"))
+	r = tk.MustQuery("SELECT name_const('test_string', 1) + c FROM t;")
+	r.Check(testkit.Rows("2"))
+	r = tk.MustQuery("SELECT concat('hello', name_const('test_string', 'world')) FROM t;")
+	r.Check(testkit.Rows("helloworld"))
+	err := tk.ExecToErr(`select name_const(a,b) from t;`)
+	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const(a,"hello") from t;`)
+	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const("hello", b) from t;`)
+	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const("hello", 1+1) from t;`)
+	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const(concat('a', 'b'), 555) from t;`)
+	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const(555) from t;`)
+	c.Assert(err.Error(), Equals, "[expression:1582]Incorrect parameter count in the call to native function 'name_const'")
+
+	var rs sqlexec.RecordSet
+	rs, err = tk.Exec(`select name_const("hello", 1);`)
+	c.Assert(err, IsNil)
+	c.Assert(len(rs.Fields()), Equals, 1)
+	c.Assert(rs.Fields()[0].Column.Name.L, Equals, "hello")
+}
+
 func (s *testIntegrationSuite) TestValuesEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3944,4 +4015,20 @@ func (s *testIntegrationSuite) TestValuesEnum(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 a`))
 	tk.MustExec(`insert into t values (1, "b") on duplicate key update b = values(b);`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 b`))
+}
+
+func (s *testIntegrationSuite) TestIssue9325(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue))")
+	tk.MustExec("insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01')")
+	result := tk.MustQuery("select * from t where a between timestamp'2019-02-16 14:19:00' and timestamp'2019-02-16 14:21:00'")
+	c.Assert(result.Rows(), HasLen, 2)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp)")
+	tk.MustExec("insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01')")
+	result = tk.MustQuery("select * from t where a < timestamp'2019-02-16 14:21:00'")
+	result.Check(testkit.Rows("2019-02-16 14:19:59", "2019-02-16 14:20:01"))
 }

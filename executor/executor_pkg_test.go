@@ -69,7 +69,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 		User:    "test",
 		Host:    "127.0.0.1",
 		DB:      "test",
-		Command: "select * from t",
+		Command: 't',
 		State:   1,
 		Info:    "",
 	}

@@ -14,6 +14,8 @@
 package infoschema_test
 
 import (
+	"fmt"
+	"os"
 	"strconv"
 
 	. "github.com/pingcap/check"
@@ -24,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite) TestInfoschemaFieldValue(c *C) {
@@ -227,4 +230,42 @@ func (s *testSuite) TestTableIDAndIndexID(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tblID, Greater, 0)
 	tk.MustQuery("select * from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("test t 0 PRIMARY 1 a <nil>  0", "test t 1 k1 1 b <nil>  1"))
+}
+
+func (s *testSuite) TestSlowQuery(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	session.SetStatsLease(0)
+	do, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer do.Close()
+	tk := testkit.NewTestKit(c, store)
+	// Prepare slow log file.
+	slowLogFileName := "tidb_slow.log"
+	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
+	c.Assert(err, IsNil)
+	defer os.Remove(slowLogFileName)
+	_, err = f.Write([]byte(`# Time: 2019-02-12-19:33:56.571953 +0800
+# Txn_start_ts: 406315658548871171
+# User: root@127.0.0.1
+# Conn_ID: 6
+# Query_time: 4.895492
+# Process_time: 0.161 Request_count: 1 Total_keys: 100001 Process_keys: 100000
+# DB: test
+# Is_internal: false
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+select * from t_slim;`))
+	c.Assert(f.Close(), IsNil)
+	c.Assert(err, IsNil)
+
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
+	tk.MustExec("set time_zone = '+08:00';")
+	re := tk.MustQuery("select * from information_schema.slow_query")
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0|0|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|select * from t_slim;"))
+	tk.MustExec("set time_zone = '+00:00';")
+	re = tk.MustQuery("select * from information_schema.slow_query")
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0|0|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|select * from t_slim;"))
 }

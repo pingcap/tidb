@@ -43,6 +43,8 @@ type Manifest struct {
 	Validate       func(ctx context.Context, manifest *Manifest) error
 	OnInit         func(ctx context.Context, manifest *Manifest) error
 	OnShutdown     func(ctx context.Context, manifest *Manifest) error
+	OnFlush        func(ctx context.Context, manifest *Manifest) error
+	flushWatcher   *flushWatcher
 }
 
 // ExportManifest exports a manifest to TiDB as a known format.
