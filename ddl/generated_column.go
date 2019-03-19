@@ -105,6 +105,7 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 // old and new is valid or not by such rules:
 //  1. the modification can't change stored status;
 //  2. if the new is generated, check its refer rules.
+//  3. check if the modified expr contains non-deterministic functions
 func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *table.Column) error {
 	// rule 1.
 	var stored = [2]bool{false, false}
@@ -152,6 +153,11 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	// rule 3
+	if err := checkIllegalFn4GeneratedColumn(newCol.Name.L, newCol.GeneratedExpr); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }

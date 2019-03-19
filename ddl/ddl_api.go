@@ -2140,9 +2140,6 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
 		case ast.ColumnOptionGenerated:
-			if err := checkIllegalFn4GeneratedColumn(col.Name.L, opt.Expr); err != nil {
-				return errors.Trace(err)
-			}
 			var buf = bytes.NewBuffer([]byte{})
 			opt.Expr.Format(buf)
 			col.GeneratedExprString = buf.String()
@@ -2365,14 +2362,6 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
 		return errBadField.GenWithStackByArgs(colName, ident.Name)
-	}
-
-	for _, option := range specNewColumn.Options {
-		if option.Tp == ast.ColumnOptionGenerated {
-			if err := checkIllegalFn4GeneratedColumn(colName.L, option.Expr); err != nil {
-				return errors.Trace(err)
-			}
-		}
 	}
 
 	// Clean the NoDefaultValueFlag value.
