@@ -300,9 +300,10 @@ func (tc *TiDBContext) FieldList(table string) (columns []*ColumnInfo, err error
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	columns = make([]*ColumnInfo, 0, len(fields))
-	for _, f := range fields {
-		columns = append(columns, convertColumnInfo(f))
+	columns = make([]*ColumnInfo, len(fields))
+	colSpan := make([]ColumnInfo, len(fields))
+	for i, f := range fields {
+		columns[i] = convertColumnInfo(&colSpan[i], f)
 	}
 	return columns, nil
 }
@@ -331,8 +332,9 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	}
 	statement = stmt
 	columns = make([]*ColumnInfo, len(fields))
+	colSpan := make([]ColumnInfo, len(fields))
 	for i := range fields {
-		columns[i] = convertColumnInfo(fields[i])
+		columns[i] = convertColumnInfo(&colSpan[i], fields[i])
 	}
 	params = make([]*ColumnInfo, paramCount)
 	for i := range params {
@@ -396,8 +398,10 @@ func (trs *tidbResultSet) Close() error {
 func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	if trs.columns == nil {
 		fields := trs.recordSet.Fields()
-		for _, v := range fields {
-			trs.columns = append(trs.columns, convertColumnInfo(v))
+		trs.columns = make([]*ColumnInfo, len(fields))
+		colSpan := make([]ColumnInfo, len(fields))
+		for i, v := range fields {
+			trs.columns[i] = convertColumnInfo(&colSpan[i], v)
 		}
 	}
 	return trs.columns
@@ -489,7 +493,7 @@ func charsetID(name string) int {
 	return 0
 }
 
-func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
+func convertColumnInfo(ci *ColumnInfo, fld *ast.ResultField) *ColumnInfo {
 	var colLength uint32
 	if fld.Column.Flen != types.UnspecifiedLength {
 		colLength = uint32(fld.Column.Flen)
@@ -545,7 +549,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		orgTable = fld.Table.Name.O
 	}
 
-	return &ColumnInfo{
+	*ci = ColumnInfo{
 		Name:         fld.ColumnAsName.O,
 		OrgName:      fld.Column.Name.O,
 		Table:        fld.TableAsName.O,
@@ -557,4 +561,5 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		ColumnLength: colLength,
 		Charset:      uint16(charsetID(fld.Column.Charset)),
 	}
+	return ci
 }
