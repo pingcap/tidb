@@ -31,7 +31,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/gcutil"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -330,7 +331,7 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	if err := s.SplitRegion(tableStartKey); err != nil {
 		// It will be automatically split by TiKV later.
-		log.Warnf("[ddl] splitting table region failed %v", errors.ErrorStack(err))
+		logutil.Logger(ddlLogCtx).Warn("[ddl] split table region failed", zap.Error(err))
 	}
 }
 
