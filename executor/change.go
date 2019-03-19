@@ -33,7 +33,6 @@ type ChangeExec struct {
 
 // Next implements the Executor Next interface.
 func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-
 	stmt := e.Statement
 	cfg := config.GetGlobalConfig()
 	return updateNodeState(cfg.Path, stmt.NodeType, stmt.NodeID, stmt.State)
@@ -41,7 +40,6 @@ func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 // updateNodeState update pump or drainer's state.
 func updateNodeState(urls, kind, nodeID, state string) error {
-
 	kind = strings.ToLower(kind)
 	registry, err := createRegistry(urls)
 	if err != nil {
