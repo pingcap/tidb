@@ -147,7 +147,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		paramValues []byte
 	)
 	numParams := stmt.NumParams()
-	args := make([]interface{}, numParams)
+	args := stmt.GetArgsBuf()
 	if numParams > 0 {
 		nullBitmapLen := (numParams + 7) >> 3
 		if len(data) < (pos + nullBitmapLen + 1) {

@@ -63,6 +63,15 @@ type TiDBStatement struct {
 	ctx         *TiDBContext
 	rs          ResultSet
 	sql         string
+	args        []interface{}
+}
+
+func (ts *TiDBStatement) GetArgsBuf() []interface{} {
+	if ts.args == nil {
+		ts.args = make([]interface{}, ts.numParams)
+	}
+
+	return ts.args
 }
 
 // ID implements PreparedStatement ID method.

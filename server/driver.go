@@ -126,6 +126,8 @@ type PreparedStatement interface {
 	// GetResultSet gets ResultSet associated this statement
 	GetResultSet() ResultSet
 
+	GetArgsBuf() []interface{}
+
 	// Reset removes all bound parameters.
 	Reset()
 
