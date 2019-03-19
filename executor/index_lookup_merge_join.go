@@ -351,8 +351,8 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 			rows = append(rows, task.outerResult.GetRow(i))
 		}
 		sort.Slice(rows, func(i, j int) bool {
-			for id := 0; id < len(omw.joinKeys); id++ {
-				cmp, _, err := omw.compareFuncs[id](omw.ctx, omw.joinKeys[id], omw.joinKeys[id], rows[i], rows[j])
+			for id, joinKey := range omw.joinKeys {
+				cmp, _, err := omw.compareFuncs[id](omw.ctx, joinKey, joinKey, rows[i], rows[j])
 				terror.Log(errors.Trace(err))
 				if cmp != 0 {
 					return cmp < 0
