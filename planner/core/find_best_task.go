@@ -463,7 +463,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		IdxColLens:       path.idxColLens,
 		AccessCondition:  path.accessConds,
 		Ranges:           path.ranges,
-		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,

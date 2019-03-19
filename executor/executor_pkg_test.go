@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -23,7 +22,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -128,7 +126,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 	return schema
 }
 
-func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
+func (s *testExecSuite) TestBuildKvRangesForIndexJoinWithoutCwc(c *C) {
 	indexRanges := make([]*ranger.Range, 0, 6)
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
@@ -137,16 +135,16 @@ func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
 
-	joinKeyRows := make([][]types.Datum, 0, 5)
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(1, 1))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(1, 2))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 1))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 2))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 3))
+	joinKeyRows := make([]*indexJoinLookUpContent, 0, 5)
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 1)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 2)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 1)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 2)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 3)})
 
 	keyOff2IdxOff := []int{1, 3}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	kvRanges, err := buildKvRangesForIndexJoin(sc, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff)
+	ctx := mock.NewContext()
+	kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil)
 	c.Assert(err, IsNil)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
