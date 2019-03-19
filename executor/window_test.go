@@ -142,4 +142,7 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 2 1", "2 2 2"))
 	result = tk.MustQuery("select a, lead(a, 1, 'lead') over(), lag(a, 1, 'lag') over() from t")
 	result.Check(testkit.Rows("1 1 lag", "1 2 1", "2 2 1", "2 lead 2"))
+
+	result = tk.MustQuery("SELECT CUME_DIST() OVER (ORDER BY null);")
+	result.Check(testkit.Rows("1"))
 }
