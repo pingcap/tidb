@@ -1560,25 +1560,21 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		if isInnerKeysPrefix {
 			is.KeepOrder = true
 			// enforceOuterOrder means the outerJoinKeys must be the prefix of the prop items of PhysicalIndexJoin
-			enforceOuterOrder := len(v.OuterJoinKeys) < len(v.PropItems)
 			compareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
 			outerCompareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
 			for i := range v.OuterJoinKeys {
-				if enforceOuterOrder && v.PropItems[i].Col.ColName != v.OuterJoinKeys[i].ColName {
-					enforceOuterOrder = false
-				}
 				compareFuncs = append(compareFuncs, expression.GetCmpFunction(v.OuterJoinKeys[i], v.InnerJoinKeys[i]))
 				outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(v.OuterJoinKeys[i], v.OuterJoinKeys[i]))
 			}
 			return &IndexLookUpMergeJoin{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 				outerMergeCtx: outerMergeCtx{
-					rowTypes:          outerTypes,
-					filter:            outerFilter,
-					joinKeys:          v.OuterJoinKeys,
-					keyCols:           outerKeyCols,
-					enforceOuterOrder: enforceOuterOrder,
-					compareFuncs:      outerCompareFuncs,
+					rowTypes:       outerTypes,
+					filter:         outerFilter,
+					joinKeys:       v.OuterJoinKeys,
+					keyCols:        outerKeyCols,
+					keepOuterOrder: v.KeepOuterOrder,
+					compareFuncs:   outerCompareFuncs,
 				},
 				innerMergeCtx: innerMergeCtx{
 					readerBuilder: &dataReaderBuilder{innerPlan, b},
