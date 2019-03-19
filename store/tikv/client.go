@@ -310,6 +310,7 @@ type batchCommandsEntry struct {
 // fetchAllPendingRequests fetches all pending requests from the channel.
 func fetchAllPendingRequests(
 	ch chan *batchCommandsEntry,
+	maxBatchSize int,
 	entries *[]*batchCommandsEntry,
 	requests *[]*tikvpb.BatchCommandsRequest_Request,
 ) {
@@ -321,8 +322,13 @@ func fetchAllPendingRequests(
 	*entries = append(*entries, entry)
 	*requests = append(*requests, entry.req)
 
+	size := len(ch)
+	if size >= maxBatchSize {
+		size = maxBatchSize
+	}
+
 	// This loop is for trying best to collect more requests.
-	for i := 0; i < len(ch); i++ {
+	for i := 0; i < size; i++ {
 		entry := <-ch
 		if entry == nil {
 			return
@@ -393,6 +399,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	requests := make([]*tikvpb.BatchCommandsRequest_Request, 0, cfg.MaxBatchSize)
 	requestIDs := make([]uint64, 0, cfg.MaxBatchSize)
 
+	var bestBatchWaitSize = cfg.BatchWaitSize
 	for {
 		// Choose a connection by round-robbin.
 		next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
@@ -403,8 +410,25 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		requestIDs = requestIDs[:0]
 
 		metrics.TiKVPendingBatchRequests.Set(float64(len(a.batchCommandsCh)))
-		fetchAllPendingRequests(a.batchCommandsCh, &entries, &requests)
+		fetchAllPendingRequests(a.batchCommandsCh, int(cfg.MaxBatchSize), &entries, &requests)
+		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
+			tikvTransportLayerLoad := atomic.LoadUint64(batchCommandsClient.tikvTransportLayerLoad)
+			// If the target TiKV is overload, wait a while to collect more requests.
+			if uint(tikvTransportLayerLoad) >= cfg.OverloadThreshold {
+				fetchMorePendingRequests(
+					a.batchCommandsCh, int(cfg.MaxBatchSize), int(bestBatchWaitSize),
+					cfg.MaxBatchWaitTime, &entries, &requests,
+				)
+			}
+		}
 		length := len(requests)
+		if uint(length) < bestBatchWaitSize && bestBatchWaitSize > 1 {
+			// Waits too long to collect requests, reduce the target batch size.
+			bestBatchWaitSize -= 1
+		} else if uint(length) > bestBatchWaitSize+4 && bestBatchWaitSize < cfg.MaxBatchSize {
+			bestBatchWaitSize += 1
+		}
+
 		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
 		for i := 0; i < length; i++ {
 			requestID := uint64(i) + maxBatchID - uint64(length)
