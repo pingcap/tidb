@@ -4032,3 +4032,33 @@ func (s *testIntegrationSuite) TestIssue9325(c *C) {
 	result = tk.MustQuery("select * from t where a < timestamp'2019-02-16 14:21:00'")
 	result.Check(testkit.Rows("2019-02-16 14:19:59", "2019-02-16 14:20:01"))
 }
+
+func (s *testIntegrationSuite) TestFuncValidatePasswordStrength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set global validate_password_check_user_name = 'ON';")
+	tk.MustExec("set global validate_password_length = 10;")
+	tk.MustExec("set global validate_password_mixed_case_count = 3;")
+	tk.MustExec("set global validate_password_number_count = 3;")
+	tk.MustExec("set global validate_password_special_char_count = 3;")
+	tk.Se.GetSessionVars().User = &auth.UserIdentity{Username: "user123", AuthUsername: "auth_user"}
+	result := tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('user123')")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('321resu')")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('auth_user')")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('resu_htua')")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('password')")
+	result.Check(testkit.Rows("25"))
+	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('password12')")
+	result.Check(testkit.Rows("50"))
+	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('Pingcap123_')")
+	result.Check(testkit.Rows("50"))
+	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('PingcapPP123_')")
+	result.Check(testkit.Rows("50"))
+	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('PINGCAp123_')")
+	result.Check(testkit.Rows("50"))
+	result = tk.MustQuery("select VALIDATE_PASSWORD_STRENGTH('Pingcap_PP_123!')")
+	result.Check(testkit.Rows("100"))
+}

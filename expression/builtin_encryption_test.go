@@ -493,3 +493,31 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 	_, err := funcs[ast.PasswordFunc].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 }
+
+func (s *testEvaluatorSuite) TestValidatePasswordStrength(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		in     interface{}
+		expect int64
+	}{
+		{"", 0},
+		{"1", 0},
+		{"你好啊", 0},
+		{"pass", 25},
+		{"user123", 25},
+		{"你好世界", 25},
+		{"password", 50},
+		{"auth_user", 50},
+		{"你好世界你好世界", 50},
+		{"Pingcap123", 50},
+		{"Pingcap123_", 100},
+	}
+
+	for _, t := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.ValidatePasswordStrength, s.primitiveValsToConstants([]interface{}{t.in})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, t.expect)
+	}
+}

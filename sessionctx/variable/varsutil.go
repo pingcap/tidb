@@ -345,8 +345,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		_, err := parseTimeZone(value)
 		return value, err
-	case ValidatePasswordLength, ValidatePasswordNumberCount:
+	case ValidatePasswordLength, ValidatePasswordMixedCaseCount, ValidatePasswordNumberCount, ValidatePasswordSpecialCharCount:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case ValidatePasswordPolicy:
+
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,

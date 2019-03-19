@@ -135,7 +135,12 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_sync_array_size", "1"},
 	{ScopeSession, "rand_seed2", ""},
 	{ScopeGlobal, "validate_password_check_user_name", "OFF"},
+	{ScopeGlobal, "validate_password_dictionary_file", ""},
+	{ScopeGlobal, "validate_password_length", "8"},
+	{ScopeGlobal, "validate_password_mixed_case_count", "1"},
 	{ScopeGlobal, "validate_password_number_count", "1"},
+	{ScopeGlobal, "validate_password_policy", "MEDIUM"},
+	{ScopeGlobal, "validate_password_special_char_count", "1"},
 	{ScopeSession, "gtid_next", ""},
 	{ScopeGlobal | ScopeSession, SQLSelectLimit, "18446744073709551615"},
 	{ScopeGlobal, "ndb_show_foreign_key_mock_tables", ""},
@@ -203,7 +208,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_log_group_home_dir", "./"},
 	{ScopeNone, "performance_schema_events_statements_history_size", "10"},
 	{ScopeGlobal, GeneralLog, "0"},
-	{ScopeGlobal, "validate_password_dictionary_file", ""},
 	{ScopeGlobal, "binlog_order_commits", "ON"},
 	{ScopeGlobal, "master_verify_checksum", "OFF"},
 	{ScopeGlobal, "key_cache_division_limit", "100"},
@@ -593,7 +597,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "myisam_use_mmap", "OFF"},
 	{ScopeGlobal | ScopeSession, "ndb_join_pushdown", ""},
 	{ScopeGlobal | ScopeSession, "character_set_server", mysql.DefaultCharset},
-	{ScopeGlobal, "validate_password_special_char_count", "1"},
 	{ScopeNone, "performance_schema_max_thread_instances", "402"},
 	{ScopeGlobal, "slave_rows_search_algorithms", "TABLE_SCAN,INDEX_SCAN"},
 	{ScopeGlobal | ScopeSession, "ndbinfo_show_hidden", ""},
@@ -604,7 +607,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "sync_relay_log_info", "10000"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_limit", "1"},
 	{ScopeNone, "innodb_ft_max_token_size", "84"},
-	{ScopeGlobal, "validate_password_length", "8"},
 	{ScopeGlobal, "ndb_log_binlog_index", ""},
 	{ScopeGlobal, "innodb_api_bk_commit_interval", "5"},
 	{ScopeNone, "innodb_undo_directory", "."},
@@ -799,10 +801,20 @@ const (
 	BlockEncryptionMode = "block_encryption_mode"
 	// WaitTimeout is the name for 'wait_timeout' system variable.
 	WaitTimeout = "wait_timeout"
-	// ValidatePasswordNumberCount is the name of 'validate_password_number_count' system variable.
-	ValidatePasswordNumberCount = "validate_password_number_count"
+	// ValidatePasswordCheckUserName is the name of 'validate_password_check_user_name' system variable
+	ValidatePasswordCheckUserName = "validate_password_check_user_name"
+	// ValidatePasswordDictionaryFile is the name of 'validate_password_dictionary_file' system variable
+	ValidatePasswordDictionaryFile = "validate_password_dictionary_file"
 	// ValidatePasswordLength is the name of 'validate_password_length' system variable.
 	ValidatePasswordLength = "validate_password_length"
+	// ValidatePasswordMixedCaseCount is the name of 'validate_password_mixed_case_count' system variable
+	ValidatePasswordMixedCaseCount = "validate_password_mixed_case_count"
+	// ValidatePasswordNumberCount is the name of 'validate_password_number_count' system variable.
+	ValidatePasswordNumberCount = "validate_password_number_count"
+	// ValidatePasswordPolicy is the name of 'validate_password_policy' system variable
+	ValidatePasswordPolicy = "validate_password_policy"
+	// ValidatePasswordSpecialCharCount is the name of 'validate_password_special_char_count' system variable
+	ValidatePasswordSpecialCharCount = "validate_password_special_char_count"
 	// PluginDir is the name of 'plugin_dir' system variable.
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.

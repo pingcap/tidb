@@ -26,7 +26,9 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
@@ -895,10 +897,160 @@ func (b *builtinUncompressedLengthSig) evalInt(row chunk.Row) (int64, bool, erro
 	return int64(len), false, nil
 }
 
+func reverse(s string) string {
+	runes := []rune(s)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}
+
+func validateByUser(s *variable.SessionVars, psw string) (bool, error) {
+	v, err := variable.GetGlobalSystemVar(s, variable.ValidatePasswordCheckUserName)
+	if err != nil || strings.EqualFold(v, "OFF") {
+		return err == nil, err
+	}
+	if s.User == nil {
+		return true, nil
+	}
+	if n := s.User.Username; n != "" {
+		if psw == n || psw == reverse(n) {
+			return false, nil
+		}
+	}
+	if n := s.User.AuthUsername; n != "" {
+		if psw == n || psw == reverse(n) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func validateByMixedDigitSpecial(s *variable.SessionVars, pwd string) (bool, error) {
+	numLower := int64(0)
+	numUpper := int64(0)
+	numDigit := int64(0)
+	numSpecial := int64(0)
+	for _, c := range pwd {
+		if unicode.IsLower(c) {
+			numLower++
+		} else if unicode.IsUpper(c) {
+			numUpper++
+		} else if unicode.IsDigit(c) {
+			numDigit++
+		} else {
+			numSpecial++
+		}
+	}
+	v, err := variable.GetGlobalSystemVar(s, variable.ValidatePasswordMixedCaseCount)
+	if err != nil {
+		return false, err
+	}
+	minMixed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || numLower < minMixed || numUpper < minMixed {
+		return false, err
+	}
+	v, err = variable.GetGlobalSystemVar(s, variable.ValidatePasswordNumberCount)
+	if err != nil {
+		return false, err
+	}
+	minDigit, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || numDigit < minDigit {
+		return false, err
+	}
+	v, err = variable.GetGlobalSystemVar(s, variable.ValidatePasswordSpecialCharCount)
+	if err != nil {
+		return false, err
+	}
+	minSpecial, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || numSpecial < minSpecial {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// TODO: Support validating password by dictionary file
+func validateByDictionary(s *variable.SessionVars, pwd string) (bool, error) {
+	return true, nil
+}
+
 type validatePasswordStrengthFunctionClass struct {
 	baseFunctionClass
 }
 
 func (c *validatePasswordStrengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "VALIDATE_PASSWORD_STRENGTH")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf.tp.Flag = mysql.MaxIntWidth
+	sig := &builtinValidatePasswordStrengthSig{bf}
+	return sig, nil
+}
+
+type builtinValidatePasswordStrengthSig struct {
+	baseBuiltinFunc
+}
+
+func (c *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
+	newSig := &builtinValidatePasswordStrengthSig{}
+	newSig.cloneFrom(&c.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals VALIDATE_PASSWORD_STRENGTH(str).
+// See https://dev.mysql.com/doc/refman/8.0/en/encryption-functions.html#function_validate-password-strength
+func (c *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool, error) {
+	sv := c.ctx.GetSessionVars()
+	pwd, isNull, err := c.args[0].EvalString(c.ctx, row)
+	score := int64(0)
+
+	if isNull || err != nil {
+		return score, true, err
+	}
+
+	// In MySQL, the max length of a password is 100
+	l := int64(0)
+	for index := range pwd {
+		l++
+		if l >= 100 {
+			pwd = pwd[:index-1]
+			break
+		}
+	}
+
+	valid, err := validateByUser(sv, pwd)
+	if err != nil || !valid {
+		return score, err != nil, err
+	}
+
+	if l < 4 {
+		return score, false, nil
+	}
+	score += 25
+
+	v, err := variable.GetGlobalSystemVar(sv, variable.ValidatePasswordLength)
+	if err != nil {
+		return score, false, nil
+	}
+	valPwdLen, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || l < valPwdLen {
+		return score, err != nil, err
+	}
+	score += 25
+
+	valid, err = validateByMixedDigitSpecial(sv, pwd)
+	if err != nil || !valid {
+		return score, err != nil, err
+	}
+	score += 25
+
+	valid, err = validateByDictionary(sv, pwd)
+	if err != nil || !valid {
+		return score, err != nil, nil
+	}
+	score += 25
+
+	return score, false, nil
 }
