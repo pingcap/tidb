@@ -348,7 +348,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case ValidatePasswordLength, ValidatePasswordMixedCaseCount, ValidatePasswordNumberCount, ValidatePasswordSpecialCharCount:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case ValidatePasswordPolicy:
-
+		if strings.EqualFold(value, "LOW") || value == "0" {
+			return "0", nil
+		} else if strings.EqualFold(value, "MEDIUM") || value == "1" {
+			return "1", nil
+		} else if strings.EqualFold(value, "STRONG") || value == "2" {
+			return "2", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
