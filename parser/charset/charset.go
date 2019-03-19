@@ -40,6 +40,8 @@ type Collation struct {
 }
 
 var charsets = make(map[string]*Charset)
+var collationsMap = make(map[int]*Collation)
+var descs = make([]*Desc, 0, len(charsetInfos))
 
 // All the supported charsets should be in the following table.
 var charsetInfos = []*Charset{
@@ -60,21 +62,6 @@ type Desc struct {
 
 // GetAllCharsets gets all charset descriptions in the local charsets.
 func GetAllCharsets() []*Desc {
-	descs := make([]*Desc, 0, len(charsets))
-	// The charsetInfos is an array, so the iterate order will be stable.
-	for _, ci := range charsetInfos {
-		c, ok := charsets[ci.Name]
-		if !ok {
-			continue
-		}
-		desc := &Desc{
-			Name:             c.Name,
-			DefaultCollation: c.DefaultCollation,
-			Desc:             c.Desc,
-			Maxlen:           c.Maxlen,
-		}
-		descs = append(descs, desc)
-	}
 	return descs
 }
 
@@ -150,10 +137,8 @@ func GetCharsetInfoByID(coID int) (string, string, error) {
 	if coID == mysql.DefaultCollationID {
 		return mysql.DefaultCharset, mysql.DefaultCollationName, nil
 	}
-	for _, collation := range collations {
-		if coID == collation.ID {
-			return collation.CharsetName, collation.Name, nil
-		}
+	if collation, ok := collationsMap[coID]; ok {
+		return collation.CharsetName, collation.Name, nil
 	}
 	return "", "", errors.Errorf("Unknown charset id %d", coID)
 }
@@ -412,8 +397,17 @@ var collations = []*Collation{
 func init() {
 	for _, c := range charsetInfos {
 		charsets[c.Name] = c
+		desc := &Desc{
+			Name:             c.Name,
+			DefaultCollation: c.DefaultCollation,
+			Desc:             c.Desc,
+			Maxlen:           c.Maxlen,
+		}
+		descs = append(descs, desc)
 	}
+
 	for _, c := range collations {
+		collationsMap[c.ID] = c
 		charset, ok := charsets[c.CharsetName]
 		if !ok {
 			continue
