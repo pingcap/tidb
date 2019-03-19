@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
-	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -458,7 +457,6 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, hashTabl
 		return false, joinResult
 	}
 	for i := range selected {
-		logrus.Warning("outerRow[", i, "]", outerChk.GetRow(i).GetInt64(0))
 		if !selected[i] || hashTable.MVMap == nil { // process unmatched outer rows
 			e.joiners[workerID].onMissMatch(false, outerChk.GetRow(i), joinResult.chk)
 		} else { // process matched outer rows
@@ -467,7 +465,6 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, hashTabl
 				return false, joinResult
 			}
 		}
-		logrus.Warning("joinResult", joinResult.chk.NumRows())
 		if joinResult.chk.NumRows() == e.maxChunkSize {
 			e.joinResultCh <- joinResult
 			ok, joinResult = e.getNewJoinResult(workerID)
