@@ -13,12 +13,12 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/chunk"
+	"strings"
 )
 
 // ChangeExec represents a change executor.
@@ -32,17 +32,14 @@ type ChangeExec struct {
 func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 	stmt := e.Statement
-	fmt.Println(stmt.NodeID)
 	cfg := config.GetGlobalConfig()
 	return updateNodeState(cfg.Path, stmt.NodeType, stmt.NodeID, stmt.State)
 }
 
 // updateNodeState update pump or drainer's state.
 func updateNodeState(urls, kind, nodeID, state string) error {
-	/*
-		node's state can be online, pausing, paused, closing and offline.
-		if the state is one of them, will update the node's state saved in etcd directly.
-	*/
+
+	kind = strings.ToLower(kind)
 	registry, err := createRegistry(urls)
 	if err != nil {
 		return errors.Trace(err)
