@@ -78,6 +78,7 @@ require (
 	golang.org/x/net v0.0.0-20190108225652-1e06a53dbb7e
 	golang.org/x/sys v0.0.0-20190109145017-48ac38b7c8cb // indirect
 	golang.org/x/text v0.3.0
+	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	golang.org/x/tools v0.0.0-20190130214255-bb1329dc71a0
 	google.golang.org/genproto v0.0.0-20190108161440-ae2f86662275 // indirect
 	google.golang.org/grpc v1.17.0
