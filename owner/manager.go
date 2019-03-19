@@ -251,7 +251,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		elec := concurrency.NewElection(etcdSession, m.key)
 		err = elec.Campaign(ctx, m.id)
 		if err != nil {
-			logutil.Logger(context.Background()).Info("failed to campaign.", zap.String("logPrefix", logPrefix), zap.Error(err))
+			logutil.Logger(context.Background()).Info("failed to campaign", zap.String("logPrefix", logPrefix), zap.Error(err))
 			continue
 		}
 
