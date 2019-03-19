@@ -550,19 +550,19 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	}
 
 	nh := GetHistory(s)
-	var schemaVersion int64
+	//var schemaVersion int64
 	sessVars := s.GetSessionVars()
 	orgStartTS := sessVars.TxnCtx.StartTS
 	label := s.getSQLLabel()
 	for {
 		s.PrepareTxnCtx(ctx)
 		s.sessionVars.RetryInfo.ResetOffset()
-		for i, sr := range nh.history {
+		for _, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
-			schemaVersion, err = st.RebuildPlan()
+			_, err = st.RebuildPlan()
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -885,10 +885,10 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	//startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
-		if !kv.ErrKeyExists.Equal(err) {
-			log.Warnf("con:%d schema_ver:%d session error:\n%v\n%s",
-				connID, s.sessionVars.TxnCtx.SchemaVersion, errors.ErrorStack(err), s)
-		}
+		//if !kv.ErrKeyExists.Equal(err) {
+		//log.Warnf("con:%d schema_ver:%d session error:\n%v\n%s",
+		//	connID, s.sessionVars.TxnCtx.SchemaVersion, errors.ErrorStack(err), s)
+		//}
 		return nil, errors.Trace(err)
 	}
 	//metrics.SessionExecuteRunDuration.WithLabelValues(s.getSQLLabel()).Observe(time.Since(startTime).Seconds())
