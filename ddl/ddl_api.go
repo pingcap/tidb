@@ -235,7 +235,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 				return errors.Trace(err)
 			}
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			tp.Collate = charset.NULL
+			tp.Charset = charset.NULL
 			tp.Collate = charset.NULL
 		default:
 			tp.Charset = charset.CharsetBin
