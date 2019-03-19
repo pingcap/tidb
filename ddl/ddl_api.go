@@ -2465,7 +2465,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate strin
 	origCollate := tblInfo.Collate
 	if origCharset == toCharset && origCollate == toCollate {
 		// nothing to do.
-		var doNothing = true
+		doNothing := true
 		for _, col := range tblInfo.Columns {
 			if col.Charset == charset.CharsetBin {
 				continue
@@ -2489,13 +2489,13 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate strin
 	}
 
 	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 
 	for _, col := range tblInfo.Columns {
 		if col.Tp == mysql.TypeVarchar {
 			if err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset); err != nil {
-				return false, errors.Trace(err)
+				return false, err
 			}
 		}
 	}
