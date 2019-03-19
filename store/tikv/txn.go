@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
 )
@@ -221,7 +220,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 	//metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	//metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
-	start := time.Now()
+	//start := time.Now()
 	//defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
 
 	// connID is used for log.
