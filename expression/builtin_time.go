@@ -3521,13 +3521,13 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 			retDecimal = types.UnspecifiedLength
 			var tmpStr string
 			var err error
-			o := false
+			o := true
 			if cnst, ok := args[0].(*Constant); ok {
 				tmpStr, _, err = cnst.EvalString(ctx, chunk.Row{})
-				o = true
 			} else if sf, ok := args[0].(*ScalarFunction); ok && sf.FuncName.L == ast.GetVar {
 				tmpStr, _, err = sf.EvalString(ctx, chunk.Row{})
-				o = true
+			} else {
+				o = false
 			}
 			if o {
 				if err != nil {
