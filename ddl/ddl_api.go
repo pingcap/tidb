@@ -2461,13 +2461,12 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
-func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate string) (bool, error) {
-	var err error
+func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate string) (doNothing bool, err error) {
 	origCharset := tblInfo.Charset
 	origCollate := tblInfo.Collate
 	if origCharset == toCharset && origCollate == toCollate {
 		// nothing to do.
-		doNothing := true
+		doNothing = true
 		for _, col := range tblInfo.Columns {
 			if col.Charset == charset.CharsetBin {
 				continue
@@ -2478,7 +2477,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate strin
 			doNothing = false
 		}
 		if doNothing {
-			return true, nil
+			return doNothing, err
 		}
 	}
 
@@ -2491,17 +2490,17 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate strin
 	}
 
 	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
-		return false, err
+		return doNothing, err
 	}
 
 	for _, col := range tblInfo.Columns {
 		if col.Tp == mysql.TypeVarchar {
 			if err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset); err != nil {
-				return false, err
+				return doNothing, err
 			}
 		}
 	}
-	return false, nil
+	return doNothing, nil
 }
 
 // RenameIndex renames an index.
