@@ -472,7 +472,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 				return
 			}
 			do.SchemaValidator.Restart()
-			logutil.Logger(context.Background()).Info("schema syncer restarted.")
+			logutil.Logger(context.Background()).Info("schema syncer restarted")
 		case <-do.exit:
 			return
 		}
