@@ -266,7 +266,7 @@ func (e *RadixHashJoinExec) doProbe(workerID uint, wg *sync.WaitGroup) {
 		for i, part := range task.outerParts {
 			if part != nil && part.NumRows() != 0 {
 				hashTable.MVMap = e.hashTables[i]
-				hashTable.srcChk = task.outerParts[i]
+				hashTable.srcChk = e.innerParts[i]
 				ok, joinResult = e.join2Chunk(workerID, part, hashTable, joinResult, selected)
 				if !ok {
 					break
@@ -329,7 +329,11 @@ func (e *RadixHashJoinExec) evalRadixBit() {
 	}
 	// Take the rightmost radixBitsNum bits as the bitmask.
 	e.radixBits = ^(math.MaxUint32 << uint(radixBitsNum))
-	e.innerParts = make([]partition, 1<<uint(radixBitsNum))
+	// The last slot is an extra slot, which stores nothing for inner relation.
+	// We keep an empty slot here to make the length of `innerParts` equals to
+	// the length `outerParts`. Thus we can avoid the checking of boundary when
+	// do probing.
+	e.innerParts = make([]partition, 1<<uint(radixBitsNum)+1)
 	e.wait4EvalRadixBitsCh <- struct{}{}
 }
 
@@ -441,23 +445,31 @@ func (e *RadixHashJoinExec) preAlloc4RawData(task *partitionTask) (err error) {
 		rawData = task.rawData
 	)
 	if task.isOuter {
+		// The last slot of outerTask.parts is for the rows with null-key.
 		task.parts = make([]partition, len(e.innerParts))
 	}
 	for chkIdx, chkNum := 0, rawData.NumChunks(); chkIdx < chkNum; chkIdx++ {
-		chk := rawData.GetChunk(chkIdx)
-		partPtrs := make([]partRowPtr, chk.NumRows())
+		var (
+			chk      = rawData.GetChunk(chkIdx)
+			partPtrs = make([]partRowPtr, chk.NumRows())
+			partIdx  uint32
+		)
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			row := chk.GetRow(rowIdx)
 			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(task.isOuter, row, keyBuf)
 			if err != nil {
 				return err
 			}
-			if hasNull {
+			switch {
+			case hasNull && !task.isOuter:
 				partPtrs[rowIdx] = partPtr4NullKey
 				continue
+			case hasNull && task.isOuter:
+				partIdx = uint32(len(task.parts)) - 1
+			default:
+				joinHash := murmur3.Sum32(keyBuf)
+				partIdx = e.radixBits & joinHash
 			}
-			joinHash := murmur3.Sum32(keyBuf)
-			partIdx := e.radixBits & joinHash
 			partPtrs[rowIdx].partitionIdx = partIdx
 			partPtrs[rowIdx].rowIdx = e.getPartition(task.parts, partIdx, task.isOuter).PreAlloc(row)
 		}

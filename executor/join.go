@@ -396,10 +396,6 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 
 func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row,
 	hashTable *hashTable4HashJoin, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	if hashTable.MVMap == nil {
-		e.joiners[workerID].onMissMatch(false, outerRow, joinResult.chk)
-		return true, joinResult
-	}
 	buffer := e.hashJoinBuffers[workerID]
 	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, buffer.bytes)
 	if err != nil {
@@ -462,7 +458,8 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, hashTabl
 		return false, joinResult
 	}
 	for i := range selected {
-		if !selected[i] { // process unmatched outer rows
+		logrus.Warning("outerRow[", i, "]", outerChk.GetRow(i).GetInt64(0))
+		if !selected[i] || hashTable.MVMap == nil { // process unmatched outer rows
 			e.joiners[workerID].onMissMatch(false, outerChk.GetRow(i), joinResult.chk)
 		} else { // process matched outer rows
 			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), hashTable, joinResult)
@@ -470,6 +467,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, hashTabl
 				return false, joinResult
 			}
 		}
+		logrus.Warning("joinResult", joinResult.chk.NumRows())
 		if joinResult.chk.NumRows() == e.maxChunkSize {
 			e.joinResultCh <- joinResult
 			ok, joinResult = e.getNewJoinResult(workerID)
@@ -733,7 +731,6 @@ type hashTable4HashJoin struct {
 }
 
 func (ht *hashTable4HashJoin) getRows(key []byte, valBuf [][]byte) []chunk.Row {
-	logrus.Warning("ht.mvmap", ht.MVMap, ht.MVMap.Len())
 	valBuf = ht.Get(key, valBuf[:0])
 	if len(valBuf) == 0 {
 		return nil
