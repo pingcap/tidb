@@ -68,6 +68,12 @@ const (
 	AntiLeftOuterSemiJoin
 )
 
+// IsOuterJoin returns if this joiner is a outer joiner
+func (tp JoinType) IsOuterJoin() bool {
+	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
 func (tp JoinType) String() string {
 	switch tp {
 	case InnerJoin:
