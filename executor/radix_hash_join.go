@@ -66,7 +66,8 @@ type RadixHashJoinExec struct {
 	//outerPartitionsResourceCh chan outerPartitionsResource
 	partitionTaskCh chan *partitionTask
 	probeTaskCh     chan *probeTask
-	partitionWg     *sync.WaitGroup
+	outerPartFinish sync.WaitGroup
+	innerPartFinish sync.WaitGroup
 }
 
 // partition stores the sub-relations of inner relation and outer relation after
@@ -104,7 +105,8 @@ func (e *RadixHashJoinExec) init4Prepare() {
 	for i := range e.outerKeys {
 		e.outerKeyColIdx[i] = e.outerKeys[i].Index
 	}
-	e.partitionWg = &sync.WaitGroup{}
+	e.outerPartFinish = sync.WaitGroup{}
+	e.innerPartFinish = sync.WaitGroup{}
 	e.probeTaskCh = make(chan *probeTask, e.concurrency)
 	e.startPartitionWorkers()
 }
@@ -125,7 +127,8 @@ func (e *RadixHashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (e
 	}
 	if !e.prepared {
 		e.init4Prepare()
-		e.partitionWg.Add(2)
+		e.outerPartFinish.Add(1)
+		e.innerPartFinish.Add(1)
 		go util.WithRecovery(func() { e.partitionInnerAndBuildHashTables(ctx) }, e.handlePartitionInnerAndBuildHashTablePanic)
 		go util.WithRecovery(func() { e.fetchOuterAndPartition(ctx) }, e.handleFetchOuterAndPartitionPanic)
 		go e.wait4InnerAndOuterPartitionFinish()
@@ -155,7 +158,8 @@ func (e *RadixHashJoinExec) handlePartitionInnerAndBuildHashTablePanic(r interfa
 }
 
 func (e *RadixHashJoinExec) wait4InnerAndOuterPartitionFinish() {
-	e.partitionWg.Wait()
+	e.innerPartFinish.Wait()
+	e.outerPartFinish.Wait()
 	close(e.partitionTaskCh)
 }
 
@@ -218,7 +222,7 @@ func (e *RadixHashJoinExec) doPartition(workerID int, wg *sync.WaitGroup) {
 		task.Unlock()
 		if !task.isOuter {
 			if allFinished {
-				e.partitionWg.Done()
+				e.innerPartFinish.Done()
 			}
 			continue
 		}
@@ -317,9 +321,6 @@ func (e *RadixHashJoinExec) getPartition(parts []partition, idx uint32, isOuter 
 // cache when the input data obeys the uniform distribution, we suppose every
 // sub-partition of inner relation using three quarters of the L2 cache size.
 func (e *RadixHashJoinExec) evalRadixBit() {
-	defer func() {
-		close(e.wait4EvalRadixBitsCh)
-	}()
 	sv := e.ctx.GetSessionVars()
 	innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
 	l2CacheSize := float64(sv.L2CacheSize) * 3 / 4
@@ -334,7 +335,7 @@ func (e *RadixHashJoinExec) evalRadixBit() {
 	// the length `outerParts`. Thus we can avoid the checking of boundary when
 	// do probing.
 	e.innerParts = make([]partition, 1<<uint(radixBitsNum)+1)
-	e.wait4EvalRadixBitsCh <- struct{}{}
+	close(e.wait4EvalRadixBitsCh)
 }
 
 // partitionInnerAndBuildHashTables fetches all the inner rows into memory,
@@ -351,14 +352,12 @@ func (e *RadixHashJoinExec) partitionInnerAndBuildHashTables(ctx context.Context
 		isOuter: false,
 		parts:   e.innerParts,
 	}
+
 	if err := e.partitionRawData(task); err != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: err}
 		return
 	}
-	// This loop is used for waiting the inner-part phase.
-	// TODO: find a better way to solve this.
-	for task.numFinished < int(e.concurrency) {
-	}
+	e.innerPartFinish.Wait()
 	if err := e.buildHashTable4Partitions(); err != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: err}
 		return
@@ -491,7 +490,7 @@ func (e *RadixHashJoinExec) partitionRawData(task *partitionTask) (err error) {
 }
 
 func (e *RadixHashJoinExec) fetchOuterAndPartition(ctx context.Context) {
-	defer e.partitionWg.Done()
+	defer e.outerPartFinish.Done()
 	var (
 		err           error
 		ok            bool
@@ -523,10 +522,7 @@ func (e *RadixHashJoinExec) fetchOuterAndPartition(ctx context.Context) {
 			if task.rawData.Len() > 0 {
 				if !isRadixBitsOk {
 					select {
-					case _, ok = <-e.wait4EvalRadixBitsCh:
-						if !ok {
-							return
-						}
+					case <-e.wait4EvalRadixBitsCh:
 					case <-e.closeCh:
 						return
 					}
@@ -539,10 +535,7 @@ func (e *RadixHashJoinExec) fetchOuterAndPartition(ctx context.Context) {
 		if task.rawData.Len() >= e.outerBatchSize {
 			if !isRadixBitsOk {
 				select {
-				case _, ok = <-e.wait4EvalRadixBitsCh:
-					if !ok {
-						return
-					}
+				case <-e.wait4EvalRadixBitsCh:
 					isRadixBitsOk = true
 				case <-e.closeCh:
 					return

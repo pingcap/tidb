@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/sirupsen/logrus"
 )
 
 func (s *testSuite3) TestCharsetDatabase(c *C) {
@@ -296,6 +297,7 @@ func (s *testSuite3) TestFlushPrivileges(c *C) {
 }
 
 func (s *testSuite3) TestDropStats(c *C) {
+	logrus.Warning("TestDropStats start")
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -325,6 +327,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	h.Lease = 0
+	defer logrus.Warning("TestDropStats end")
 }
 
 func (s *testSuite3) TestFlushTables(c *C) {
