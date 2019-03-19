@@ -539,7 +539,7 @@ func (do *Domain) Close() {
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
 	do.wg.Wait()
-	logutil.Logger(context.Background()).Info("closed")
+	logutil.Logger(context.Background()).Info("domain closed")
 }
 
 type ddlCallback struct {
