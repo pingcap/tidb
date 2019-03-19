@@ -1,0 +1,70 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package executor
+
+import (
+	"context"
+	"fmt"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb-tools/tidb-binlog/node"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/chunk"
+)
+
+// ChangeExec represents a change executor.
+type ChangeExec struct {
+	baseExecutor
+
+	Statement *ast.ChangeStmt
+}
+
+// Next implements the Executor Next interface.
+func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+
+	stmt := e.Statement
+	fmt.Println(stmt.NodeID)
+	cfg := config.GetGlobalConfig()
+	return updateNodeState(cfg.Path, stmt.NodeType, stmt.NodeID, stmt.State)
+}
+
+// updateNodeState update pump or drainer's state.
+func updateNodeState(urls, kind, nodeID, state string) error {
+	/*
+		node's state can be online, pausing, paused, closing and offline.
+		if the state is one of them, will update the node's state saved in etcd directly.
+	*/
+	registry, err := createRegistry(urls)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, n := range nodes {
+		if n.NodeID != nodeID {
+			continue
+		}
+		switch state {
+		case node.Online, node.Pausing, node.Paused, node.Closing, node.Offline:
+			n.State = state
+			return registry.UpdateNode(context.Background(), node.NodePrefix[kind], n)
+		default:
+			return errors.Errorf("state %s is illegal", state)
+		}
+	}
+
+	return errors.NotFoundf("node %s, id %s from etcd %s", kind, nodeID, urls)
+}
