@@ -538,7 +538,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.Reflect("err", r),
 				zap.String("stack", string(buf)),
 			)
-			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
+			//metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
 		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
 			err := cc.Close()
@@ -646,53 +646,53 @@ func errStrForLog(err error) string {
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
-	var label string
-	switch cmd {
-	case mysql.ComSleep:
-		label = "Sleep"
-	case mysql.ComQuit:
-		label = "Quit"
-	case mysql.ComQuery:
-		if cc.ctx.Value(sessionctx.LastExecuteDDL) != nil {
-			// Don't take DDL execute time into account.
-			// It's already recorded by other metrics in ddl package.
-			return
-		}
-		label = "Query"
-	case mysql.ComPing:
-		label = "Ping"
-	case mysql.ComInitDB:
-		label = "InitDB"
-	case mysql.ComFieldList:
-		label = "FieldList"
-	case mysql.ComStmtPrepare:
-		label = "StmtPrepare"
-	case mysql.ComStmtExecute:
-		label = "StmtExecute"
-	case mysql.ComStmtFetch:
-		label = "StmtFetch"
-	case mysql.ComStmtClose:
-		label = "StmtClose"
-	case mysql.ComStmtSendLongData:
-		label = "StmtSendLongData"
-	case mysql.ComStmtReset:
-		label = "StmtReset"
-	case mysql.ComSetOption:
-		label = "SetOption"
-	default:
-		label = strconv.Itoa(int(cmd))
-	}
-	if err != nil {
-		metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
-	} else {
-		metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
-	}
-	stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
-	sqlType := metrics.LblGeneral
-	if stmtType != "" {
-		sqlType = stmtType
-	}
-	metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
+	//var label string
+	//switch cmd {
+	//case mysql.ComSleep:
+	//	label = "Sleep"
+	//case mysql.ComQuit:
+	//	label = "Quit"
+	//case mysql.ComQuery:
+	//	if cc.ctx.Value(sessionctx.LastExecuteDDL) != nil {
+	//		// Don't take DDL execute time into account.
+	//		// It's already recorded by other metrics in ddl package.
+	//		return
+	//	}
+	//	label = "Query"
+	//case mysql.ComPing:
+	//	label = "Ping"
+	//case mysql.ComInitDB:
+	//	label = "InitDB"
+	//case mysql.ComFieldList:
+	//	label = "FieldList"
+	//case mysql.ComStmtPrepare:
+	//	label = "StmtPrepare"
+	//case mysql.ComStmtExecute:
+	//	label = "StmtExecute"
+	//case mysql.ComStmtFetch:
+	//	label = "StmtFetch"
+	//case mysql.ComStmtClose:
+	//	label = "StmtClose"
+	//case mysql.ComStmtSendLongData:
+	//	label = "StmtSendLongData"
+	//case mysql.ComStmtReset:
+	//	label = "StmtReset"
+	//case mysql.ComSetOption:
+	//	label = "SetOption"
+	//default:
+	//	label = strconv.Itoa(int(cmd))
+	//}
+	//if err != nil {
+	//	//metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
+	//} else {
+	//	//metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
+	//}
+	//stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
+	//sqlType := metrics.LblGeneral
+	//if stmtType != "" {
+	//	sqlType = stmtType
+	//}
+	//metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -1022,7 +1022,7 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	rs, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
-		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+		//metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
 	if rs != nil {

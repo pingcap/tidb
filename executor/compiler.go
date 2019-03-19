@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -125,17 +124,17 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 		return
 	}
 
-	typeLabel := GetStmtLabel(stmtNode)
-	metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
+	//typeLabel := GetStmtLabel(stmtNode)
+	//metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
 
 	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
 		return
 	}
 
-	dbLabels := getStmtDbLabel(stmtNode)
-	for dbLabel := range dbLabels {
-		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
-	}
+	//dbLabels := getStmtDbLabel(stmtNode)
+	//for dbLabel := range dbLabels {
+	//	metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
+	//}
 }
 
 func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {

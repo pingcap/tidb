@@ -17,14 +17,12 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/metrics"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -84,14 +82,14 @@ func (alloc *allocator) End() int64 {
 // NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
 func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 	var autoID int64
-	startTime := time.Now()
+	//startTime := time.Now()
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		var err1 error
 		m := meta.NewMeta(txn)
 		autoID, err1 = m.GetAutoTableID(alloc.dbID, tableID)
 		return errors.Trace(err1)
 	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.GlobalAutoID, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	//metrics.AutoIDHistogram.WithLabelValues(metrics.GlobalAutoID, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	if alloc.isUnsigned {
 		return int64(uint64(autoID) + 1), err
 	}
@@ -109,7 +107,7 @@ func (alloc *allocator) rebase4Unsigned(tableID int64, requiredBase uint64, allo
 		return nil
 	}
 	var newBase, newEnd uint64
-	startTime := time.Now()
+	//startTime := time.Now()
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := m.GetAutoTableID(alloc.dbID, tableID)
@@ -136,7 +134,7 @@ func (alloc *allocator) rebase4Unsigned(tableID int64, requiredBase uint64, allo
 		_, err1 = m.GenAutoTableID(alloc.dbID, tableID, int64(newEnd-uCurrentEnd))
 		return err1
 	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	//metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		return err
 	}
@@ -155,7 +153,7 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 		return nil
 	}
 	var newBase, newEnd int64
-	startTime := time.Now()
+	//startTime := time.Now()
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := m.GetAutoTableID(alloc.dbID, tableID)
@@ -181,7 +179,7 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 		_, err1 = m.GenAutoTableID(alloc.dbID, tableID, newEnd-currentEnd)
 		return err1
 	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	//metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		return err
 	}
@@ -209,7 +207,7 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 	if alloc.base == alloc.end { // step
 		var newBase, newEnd int64
-		startTime := time.Now()
+		//startTime := time.Now()
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
@@ -221,7 +219,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
 			return err1
 		})
-		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		//metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
 			return 0, err
 		}
@@ -239,7 +237,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 	if alloc.base == alloc.end { // step
 		var newBase, newEnd int64
-		startTime := time.Now()
+		//startTime := time.Now()
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
@@ -251,7 +249,7 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
 			return err1
 		})
-		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		//metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
 			return 0, err
 		}

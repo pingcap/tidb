@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -80,11 +79,11 @@ func (r *selectResult) Fetch(ctx context.Context) {
 }
 
 func (r *selectResult) fetch(ctx context.Context) {
-	startTime := time.Now()
+	//startTime := time.Now()
 	defer func() {
 		close(r.results)
-		duration := time.Since(startTime)
-		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
+		//duration := time.Since(startTime)
+		//metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
 	}()
 	for {
 		resultSubset, err := r.resp.Next(ctx)
