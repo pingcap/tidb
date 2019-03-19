@@ -58,9 +58,43 @@ const (
 
 var (
 	wordBufLen = 9
-	powers10   = [10]int32{ten0, ten1, ten2, ten3, ten4, ten5, ten6, ten7, ten8, ten9}
-	dig2bytes  = [10]int{0, 1, 1, 2, 2, 3, 3, 4, 4, 4}
-	fracMax    = [8]int32{
+	mod9       = [128]int8{
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1,
+	}
+	div9 = [128]int{
+		0, 0, 0, 0, 0, 0, 0, 0, 0,
+		1, 1, 1, 1, 1, 1, 1, 1, 1,
+		2, 2, 2, 2, 2, 2, 2, 2, 2,
+		3, 3, 3, 3, 3, 3, 3, 3, 3,
+		4, 4, 4, 4, 4, 4, 4, 4, 4,
+		5, 5, 5, 5, 5, 5, 5, 5, 5,
+		6, 6, 6, 6, 6, 6, 6, 6, 6,
+		7, 7, 7, 7, 7, 7, 7, 7, 7,
+		8, 8, 8, 8, 8, 8, 8, 8, 8,
+		9, 9, 9, 9, 9, 9, 9, 9, 9,
+		10, 10, 10, 10, 10, 10, 10, 10, 10,
+		11, 11, 11, 11, 11, 11, 11, 11, 11,
+		12, 12, 12, 12, 12, 12, 12, 12, 12,
+		13, 13, 13, 13, 13, 13, 13, 13, 13,
+		14, 14,
+	}
+	powers10  = [10]int32{ten0, ten1, ten2, ten3, ten4, ten5, ten6, ten7, ten8, ten9}
+	dig2bytes = [10]int{0, 1, 1, 2, 2, 3, 3, 4, 4, 4}
+	fracMax   = [8]int32{
 		900000000,
 		990000000,
 		999000000,
@@ -174,6 +208,9 @@ func countTrailingZeroes(i int, word int32) int {
 }
 
 func digitsToWords(digits int) int {
+	if digits > 0 && digits < 118 {
+		return div9[digits+digitsPerWord-1]
+	}
 	return (digits + digitsPerWord - 1) / digitsPerWord
 }
 
@@ -909,7 +946,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 		}
 	}
 	/* Here we check 999.9 -> 1000 case when we need to increase intDigCnt */
-	firstDig := to.digitsInt % digitsPerWord
+	firstDig := mod9[to.digitsInt]
 	if firstDig > 0 && to.wordBuf[toIdx] >= powers10[firstDig] {
 		to.digitsInt++
 	}
