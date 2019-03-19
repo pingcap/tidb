@@ -102,7 +102,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		}
 		err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), latestSchemaVersion)
 		if err != nil {
-			logutil.Logger(context.Background()).Info("update self version failed.", zap.Int64("usedSchemaVersion", usedSchemaVersion),
+			logutil.Logger(context.Background()).Info("update self version failed", zap.Int64("usedSchemaVersion", usedSchemaVersion),
 				zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Error(err))
 		}
 	}()
