@@ -97,7 +97,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	// Update self schema version to etcd.
 	defer func() {
 		if err != nil {
-			logutil.Logger(context.Background()).Info("cannot update self schema version to etcd.")
+			logutil.Logger(context.Background()).Info("cannot update self schema version to etcd")
 			return
 		}
 		err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), latestSchemaVersion)
