@@ -61,6 +61,9 @@ type HashJoinExec struct {
 	joinType plannercore.JoinType
 	innerIdx int
 
+	isOuterJoin  bool
+	requiredRows int64
+
 	// We build individual joiner for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	joiners []joiner
@@ -211,6 +214,10 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			}
 		}
 		outerResult := outerResource.chk
+		if e.isOuterJoin {
+			required := int(atomic.LoadInt64(&e.requiredRows))
+			outerResult.SetRequiredRows(required, e.maxChunkSize)
+		}
 		err := e.outerExec.Next(ctx, chunk.NewRecordBatch(outerResult))
 		if err != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{
@@ -496,6 +503,9 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err er
 		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.handleFetchInnerAndBuildHashTablePanic)
 		e.fetchOuterAndProbeHashTable(ctx)
 		e.prepared = true
+	}
+	if e.isOuterJoin {
+		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
 	req.Reset()
 	if e.joinResultCh == nil {
