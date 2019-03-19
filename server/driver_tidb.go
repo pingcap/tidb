@@ -300,9 +300,10 @@ func (tc *TiDBContext) FieldList(table string) (columns []*ColumnInfo, err error
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	columns = make([]*ColumnInfo, 0, len(fields))
-	for _, f := range fields {
-		columns = append(columns, convertColumnInfo(f))
+	columns = make([]*ColumnInfo, len(fields))
+	colSpan := make([]ColumnInfo, len(fields))
+	for i, f := range fields {
+		columns[i] = convertColumnInfo(&colSpan[i], f)
 	}
 	return columns, nil
 }
@@ -331,8 +332,9 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	}
 	statement = stmt
 	columns = make([]*ColumnInfo, len(fields))
+	colSpan := make([]ColumnInfo, len(fields))
 	for i := range fields {
-		columns[i] = convertColumnInfo(fields[i])
+		columns[i] = convertColumnInfo(&colSpan[i], fields[i])
 	}
 	params = make([]*ColumnInfo, paramCount)
 	for i := range params {
@@ -396,35 +398,112 @@ func (trs *tidbResultSet) Close() error {
 func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	if trs.columns == nil {
 		fields := trs.recordSet.Fields()
-		for _, v := range fields {
-			trs.columns = append(trs.columns, convertColumnInfo(v))
+		trs.columns = make([]*ColumnInfo, len(fields))
+		colSpan := make([]ColumnInfo, len(fields))
+		for i, v := range fields {
+			trs.columns[i] = convertColumnInfo(&colSpan[i], v)
 		}
 	}
 	return trs.columns
 }
 
-func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
-	ci = new(ColumnInfo)
-	ci.Name = fld.ColumnAsName.O
-	ci.OrgName = fld.Column.Name.O
-	ci.Table = fld.TableAsName.O
-	if fld.Table != nil {
-		ci.OrgTable = fld.Table.Name.O
+func charsetID(name string) int {
+	switch name {
+	case "big5":
+		return 1
+	case "dec8":
+		return 3
+	case "cp850":
+		return 4
+	case "hp8":
+		return 6
+	case "koi8r":
+		return 7
+	case "latin1":
+		return 8
+	case "latin2":
+		return 9
+	case "swe7":
+		return 10
+	case "ascii":
+		return 11
+	case "ujis":
+		return 12
+	case "sjis":
+		return 13
+	case "hebrew":
+		return 16
+	case "tis620":
+		return 18
+	case "euckr":
+		return 19
+	case "koi8u":
+		return 22
+	case "gb2312":
+		return 24
+	case "greek":
+		return 25
+	case "cp1250":
+		return 26
+	case "gbk":
+		return 28
+	case "latin5":
+		return 30
+	case "armscii8":
+		return 32
+	case "utf8":
+		return 33
+	case "ucs2":
+		return 35
+	case "cp866":
+		return 36
+	case "keybcs2":
+		return 37
+	case "macce":
+		return 38
+	case "macroman":
+		return 39
+	case "cp852":
+		return 40
+	case "latin7":
+		return 41
+	case "utf8mb4":
+		return 45
+	case "cp1251":
+		return 51
+	case "utf16":
+		return 54
+	case "utf16le":
+		return 56
+	case "cp1256":
+		return 57
+	case "cp1257":
+		return 59
+	case "utf32":
+		return 60
+	case "binary":
+		return 63
+	case "geostd8":
+		return 92
+	case "cp932":
+		return 95
+	case "eucjpms":
+		return 97
 	}
-	ci.Schema = fld.DBName.O
-	ci.Flag = uint16(fld.Column.Flag)
-	ci.Charset = uint16(mysql.CharsetIDs[fld.Column.Charset])
-	if fld.Column.Flen == types.UnspecifiedLength {
-		ci.ColumnLength = 0
-	} else {
-		ci.ColumnLength = uint32(fld.Column.Flen)
+	return 0
+}
+
+func convertColumnInfo(ci *ColumnInfo, fld *ast.ResultField) *ColumnInfo {
+	var colLength uint32
+	if fld.Column.Flen != types.UnspecifiedLength {
+		colLength = uint32(fld.Column.Flen)
 	}
 	if fld.Column.Tp == mysql.TypeNewDecimal {
 		// Consider the negative sign.
-		ci.ColumnLength++
+		colLength++
 		if fld.Column.Decimal > types.DefaultFsp {
 			// Consider the decimal point.
-			ci.ColumnLength++
+			colLength++
 		}
 	} else if types.IsString(fld.Column.Tp) {
 		// Fix issue #4540.
@@ -441,27 +520,46 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// client such as Navicat. Now we only allow string type enter this branch.
 		charsetDesc, err := charset.GetCharsetDesc(fld.Column.Charset)
 		if err != nil {
-			ci.ColumnLength = ci.ColumnLength * 4
+			colLength = colLength * 4
 		} else {
-			ci.ColumnLength = ci.ColumnLength * uint32(charsetDesc.Maxlen)
+			colLength = colLength * uint32(charsetDesc.Maxlen)
 		}
 	}
 
+	var colDecimal uint8
 	if fld.Column.Decimal == types.UnspecifiedLength {
 		if fld.Column.Tp == mysql.TypeDuration {
-			ci.Decimal = types.DefaultFsp
+			colDecimal = types.DefaultFsp
 		} else {
-			ci.Decimal = mysql.NotFixedDec
+			colDecimal = mysql.NotFixedDec
 		}
 	} else {
-		ci.Decimal = uint8(fld.Column.Decimal)
+		colDecimal = uint8(fld.Column.Decimal)
 	}
-	ci.Type = fld.Column.Tp
 
+	colType := fld.Column.Tp
 	// Keep things compatible for old clients.
 	// Refer to mysql-server/sql/protocol.cc send_result_set_metadata()
-	if ci.Type == mysql.TypeVarchar {
-		ci.Type = mysql.TypeVarString
+	if colType == mysql.TypeVarchar {
+		colType = mysql.TypeVarString
 	}
-	return
+
+	var orgTable string
+	if fld.Table != nil {
+		orgTable = fld.Table.Name.O
+	}
+
+	*ci = ColumnInfo{
+		Name:         fld.ColumnAsName.O,
+		OrgName:      fld.Column.Name.O,
+		Table:        fld.TableAsName.O,
+		OrgTable:     orgTable,
+		Schema:       fld.DBName.O,
+		Flag:         uint16(fld.Column.Flag),
+		Type:         colType,
+		Decimal:      colDecimal,
+		ColumnLength: colLength,
+		Charset:      uint16(charsetID(fld.Column.Charset)),
+	}
+	return ci
 }
