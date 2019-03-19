@@ -296,7 +296,7 @@ func GetOwnerInfo(ctx context.Context, elec *concurrency.Election, logPrefix, id
 	resp, err := elec.Leader(ctx)
 	if err != nil {
 		// If no leader elected currently, it returns ErrElectionNoLeader.
-		logutil.Logger(context.Background()).Info("failed to get leader.", zap.String("logPrefix", logPrefix), zap.Error(err))
+		logutil.Logger(context.Background()).Info("failed to get leader", zap.String("logPrefix", logPrefix), zap.Error(err))
 		return "", errors.Trace(err)
 	}
 	ownerID := string(resp.Kvs[0].Value)
