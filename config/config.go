@@ -143,6 +143,7 @@ func (s *Security) ToTLSConfig() (*tls.Config, error) {
 // Status is the status section of the config.
 type Status struct {
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
+	StatusHost      string `toml:"status-host" json:"status-host"`
 	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
@@ -297,6 +298,7 @@ var defaultConf = Config{
 	},
 	Status: Status{
 		ReportStatus:    true,
+		StatusHost:      "0.0.0.0",
 		StatusPort:      10080,
 		MetricsInterval: 15,
 		RecordQPSbyDB:   false,

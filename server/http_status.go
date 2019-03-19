@@ -35,7 +35,7 @@ import (
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
 
-const defaultStatusAddr = ":10080"
+const defaultStatusPort = 10080
 
 func (s *Server) startStatusHTTP() {
 	go s.startHTTPServer()
@@ -82,9 +82,9 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	}
-	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
+	addr := fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
-		addr = defaultStatusAddr
+		addr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
 	}
 
 	// HTTP path for web UI.

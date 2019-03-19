@@ -76,6 +76,7 @@ const (
 	nmLogFile          = "log-file"
 	nmLogSlowQuery     = "log-slow-query"
 	nmReportStatus     = "report-status"
+	nmStatusHost       = "status-host"
 	nmStatusPort       = "status"
 	nmMetricsAddr      = "metrics-addr"
 	nmMetricsInterval  = "metrics-interval"
@@ -114,6 +115,7 @@ var (
 
 	// Status
 	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
+	statusHost      = flag.String(nmStatusHost, "0.0.0.0", "tidb server status host")
 	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
@@ -360,6 +362,9 @@ func overrideConfig() {
 	// Status
 	if actualFlags[nmReportStatus] {
 		cfg.Status.ReportStatus = *reportStatus
+	}
+	if actualFlags[nmStatusHost] {
+		cfg.Status.StatusHost = *statusHost
 	}
 	if actualFlags[nmStatusPort] {
 		var p int
