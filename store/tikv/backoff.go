@@ -231,7 +231,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.totalSleep += f(b.ctx)
 	b.types = append(b.types, typ)
 
-	var startTs interface{} = ""
+	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
 		startTs = ts
 	}

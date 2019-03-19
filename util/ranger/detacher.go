@@ -384,7 +384,7 @@ func ExtractAccessConditionsForColumn(conds []expression.Expression, uniqueID in
 	return expression.Filter(accessConds, conds, checker.check)
 }
 
-// DetachCondsForTableRange detaches the conditions used for range calculation form other useless conditions for
+// DetachCondsForTableRange detaches the conditions used for range calculation from other useless conditions for
 // calculating the table range.
 func DetachCondsForTableRange(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{

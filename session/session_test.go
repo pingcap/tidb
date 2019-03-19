@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -1696,7 +1697,7 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	tk2.MustExec("begin")
 
 	// Make sure loading information schema is failed and server is invalid.
-	domain.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
+	gofail.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`)
 	err := domain.GetDomain(tk.Se).Reload()
 	c.Assert(err, NotNil)
 
@@ -1717,7 +1718,7 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 
-	domain.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
+	gofail.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed")
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")

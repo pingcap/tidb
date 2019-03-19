@@ -52,10 +52,38 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitXor(aggFuncDesc, ordinal)
 	case ast.AggFuncBitAnd:
 		return buildBitAnd(aggFuncDesc, ordinal)
-	case ast.WindowFuncRowNumber:
-		return buildRowNumber(aggFuncDesc, ordinal)
 	}
 	return nil
+}
+
+// BuildWindowFunctions builds specific window function according to function description and order by columns.
+func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.AggFuncDesc, ordinal int, orderByCols []*expression.Column) AggFunc {
+	switch windowFuncDesc.Name {
+	case ast.WindowFuncRank:
+		return buildRank(ordinal, orderByCols, false)
+	case ast.WindowFuncDenseRank:
+		return buildRank(ordinal, orderByCols, true)
+	case ast.WindowFuncRowNumber:
+		return buildRowNumber(windowFuncDesc, ordinal)
+	case ast.WindowFuncFirstValue:
+		return buildFirstValue(windowFuncDesc, ordinal)
+	case ast.WindowFuncLastValue:
+		return buildLastValue(windowFuncDesc, ordinal)
+	case ast.WindowFuncCumeDist:
+		return buildCumeDist(ordinal, orderByCols)
+	case ast.WindowFuncNthValue:
+		return buildNthValue(windowFuncDesc, ordinal)
+	case ast.WindowFuncNtile:
+		return buildNtile(windowFuncDesc, ordinal)
+	case ast.WindowFuncPercentRank:
+		return buildPercenRank(ordinal, orderByCols)
+	case ast.WindowFuncLead:
+		return buildLead(windowFuncDesc, ordinal)
+	case ast.WindowFuncLag:
+		return buildLag(windowFuncDesc, ordinal)
+	default:
+		return Build(ctx, windowFuncDesc, ordinal)
+	}
 }
 
 // buildCount builds the AggFunc implementation for function "COUNT".
@@ -323,4 +351,87 @@ func buildRowNumber(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 	return &rowNumber{base}
+}
+
+func buildRank(ordinal int, orderByCols []*expression.Column, isDense bool) AggFunc {
+	base := baseAggFunc{
+		ordinal: ordinal,
+	}
+	r := &rank{baseAggFunc: base, isDense: isDense, rowComparer: buildRowComparer(orderByCols)}
+	return r
+}
+
+func buildFirstValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	return &firstValue{baseAggFunc: base, tp: aggFuncDesc.RetTp}
+}
+
+func buildLastValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	return &lastValue{baseAggFunc: base, tp: aggFuncDesc.RetTp}
+}
+
+func buildCumeDist(ordinal int, orderByCols []*expression.Column) AggFunc {
+	base := baseAggFunc{
+		ordinal: ordinal,
+	}
+	r := &cumeDist{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
+	return r
+}
+
+func buildNthValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	// Already checked when building the function description.
+	nth, _, _ := expression.GetUint64FromConstant(aggFuncDesc.Args[1])
+	return &nthValue{baseAggFunc: base, tp: aggFuncDesc.RetTp, nth: nth}
+}
+
+func buildNtile(aggFuncDes *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDes.Args,
+		ordinal: ordinal,
+	}
+	n, _, _ := expression.GetUint64FromConstant(aggFuncDes.Args[0])
+	return &ntile{baseAggFunc: base, n: n}
+}
+
+func buildPercenRank(ordinal int, orderByCols []*expression.Column) AggFunc {
+	base := baseAggFunc{
+		ordinal: ordinal,
+	}
+	return &percentRank{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
+}
+
+func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
+	offset := uint64(1)
+	if len(aggFuncDesc.Args) >= 2 {
+		offset, _, _ = expression.GetUint64FromConstant(aggFuncDesc.Args[1])
+	}
+	var defaultExpr expression.Expression
+	defaultExpr = expression.Null
+	if len(aggFuncDesc.Args) == 3 {
+		defaultExpr = aggFuncDesc.Args[2]
+	}
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: buildValueEvaluator(aggFuncDesc.RetTp)}
+}
+
+func buildLead(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	return &lead{buildLeadLag(aggFuncDesc, ordinal)}
+}
+
+func buildLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	return &lag{buildLeadLag(aggFuncDesc, ordinal)}
 }

@@ -254,6 +254,7 @@ type TiKVClient struct {
 // Binlog is the config for binlog.
 type Binlog struct {
 	Enable       bool   `toml:"enable" json:"enable"`
+	AutoMode     bool   `toml:"auto-mode" json:"auto-mode"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
 	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
@@ -292,6 +293,7 @@ var defaultConf = Config{
 		Level:              "info",
 		Format:             "text",
 		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
+		SlowQueryFile:      "tidb-slow.log",
 		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
 		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,

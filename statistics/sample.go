@@ -42,7 +42,7 @@ type SampleItem struct {
 // SortSampleItems sorts a slice of SampleItem.
 func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	sorter := sampleItemSorter{items: items, sc: sc}
-	sort.Sort(&sorter)
+	sort.Stable(&sorter)
 	return sorter.err
 }
 

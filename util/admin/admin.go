@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -83,38 +83,30 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-func isJobRollbackable(job *model.Job, id int64) error {
+// IsJobRollbackable checks whether the job can be rollback.
+func IsJobRollbackable(job *model.Job) bool {
 	switch job.Type {
 	case model.ActionDropIndex:
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
 		if job.SchemaState == model.StateDeleteOnly ||
 			job.SchemaState == model.StateDeleteReorganization {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
-		}
-	case model.ActionDropColumn:
-		if job.SchemaState != model.StateNone {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
-		}
-	case model.ActionDropTablePartition, model.ActionAddTablePartition:
-		if job.SchemaState != model.StateNone {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+			return false
 		}
 	case model.ActionDropSchema, model.ActionDropTable:
 		// To simplify the rollback logic, cannot be canceled in the following states.
 		if job.SchemaState == model.StateWriteOnly ||
 			job.SchemaState == model.StateDeleteOnly {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+			return false
 		}
-	case model.ActionTruncateTable:
-		if job.SchemaState != model.StateNone {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
-		}
-	case model.ActionRebaseAutoID, model.ActionShardRowID:
-		if job.SchemaState != model.StateNone {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
-		}
+	case model.ActionDropColumn, model.ActionModifyColumn,
+		model.ActionDropTablePartition, model.ActionAddTablePartition,
+		model.ActionRebaseAutoID, model.ActionShardRowID,
+		model.ActionTruncateTable, model.ActionAddForeignKey,
+		model.ActionDropForeignKey, model.ActionRenameTable,
+		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition:
+		return job.SchemaState == model.StateNone
 	}
-	return nil
+	return true
 }
 
 // CancelJobs cancels the DDL jobs.
@@ -147,8 +139,8 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
 				continue
 			}
-			errs[i] = isJobRollbackable(job, id)
-			if errs[i] != nil {
+			if !IsJobRollbackable(job) {
+				errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
 				continue
 			}
 
@@ -599,13 +591,13 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 	for _, v := range decodeCol {
 		col := cols[v.Offset]
 		tpExpr := decoder.Column{
-			Info: col.ToInfo(),
+			Col: col,
 		}
 		if col.IsGenerated() && !col.GeneratedStored {
 			for _, c := range cols {
 				if _, ok := col.Dependences[c.Name.L]; ok {
 					decodeColsMap[c.ID] = decoder.Column{
-						Info: c.ToInfo(),
+						Col: c,
 					}
 				}
 			}
@@ -613,7 +605,7 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	return decoder.NewRowDecoder(cols, decodeColsMap)
+	return decoder.NewRowDecoder(t, decodeColsMap)
 }
 
 // genExprs use to calculate generated column value.
@@ -641,7 +633,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 	}
 
-	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
+	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, h, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -702,7 +694,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

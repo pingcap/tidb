@@ -23,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -38,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var _ = Suite(&testStateChangeSuite{})
@@ -926,7 +927,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 				break
 			}
 			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
-			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
+			log.Info("sleep in TestParallelDDLBeforeRunDDLJob", zap.String("interval", interval.String()))
 			time.Sleep(interval)
 		}
 
@@ -939,7 +940,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 				break
 			}
 			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
-			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
+			log.Info("sleep in TestParallelDDLBeforeRunDDLJob", zap.String("interval", interval.String()))
 			time.Sleep(interval)
 		}
 

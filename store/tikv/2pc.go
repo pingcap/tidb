@@ -67,7 +67,7 @@ type twoPhaseCommitter struct {
 	txn       *tikvTxn
 	startTS   uint64
 	keys      [][]byte
-	mutations map[string]*pb.Mutation
+	mutations map[string]*mutationEx
 	lockTTL   uint64
 	commitTS  uint64
 	mu        struct {
@@ -88,6 +88,11 @@ type twoPhaseCommitter struct {
 	detail        *execdetails.CommitDetails
 }
 
+type mutationEx struct {
+	pb.Mutation
+	asserted bool
+}
+
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
 	var (
@@ -97,23 +102,27 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		delCnt  int
 		lockCnt int
 	)
-	mutations := make(map[string]*pb.Mutation)
+	mutations := make(map[string]*mutationEx)
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
 			op := pb.Op_Put
 			if c := txn.us.LookupConditionPair(k); c != nil && c.ShouldNotExist() {
 				op = pb.Op_Insert
 			}
-			mutations[string(k)] = &pb.Mutation{
-				Op:    op,
-				Key:   k,
-				Value: v,
+			mutations[string(k)] = &mutationEx{
+				Mutation: pb.Mutation{
+					Op:    op,
+					Key:   k,
+					Value: v,
+				},
 			}
 			putCnt++
 		} else {
-			mutations[string(k)] = &pb.Mutation{
-				Op:  pb.Op_Del,
-				Key: k,
+			mutations[string(k)] = &mutationEx{
+				Mutation: pb.Mutation{
+					Op:  pb.Op_Del,
+					Key: k,
+				},
 			}
 			delCnt++
 		}
@@ -130,9 +139,11 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	}
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
-			mutations[string(lockKey)] = &pb.Mutation{
-				Op:  pb.Op_Lock,
-				Key: lockKey,
+			mutations[string(lockKey)] = &mutationEx{
+				Mutation: pb.Mutation{
+					Op:  pb.Op_Lock,
+					Key: lockKey,
+				},
 			}
 			lockCnt++
 			keys = append(keys, lockKey)
@@ -142,6 +153,28 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	if len(keys) == 0 {
 		return nil, nil
 	}
+
+	for _, pair := range txn.assertions {
+		mutation, ok := mutations[string(pair.key)]
+		if !ok {
+			log.Error("ASSERTION FAIL!!! assertion exists but no mutation?", pair)
+			continue
+		}
+		// Only apply the first assertion!
+		if mutation.asserted {
+			continue
+		}
+		switch pair.assertion {
+		case kv.Exist:
+			mutation.Assertion = pb.Assertion_Exist
+		case kv.NotExist:
+			mutation.Assertion = pb.Assertion_NotExist
+		default:
+			mutation.Assertion = pb.Assertion_None
+		}
+		mutation.asserted = true
+	}
+
 	entrylimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	if len(keys) > int(entrylimit) || size > kv.TxnTotalSizeLimit {
 		return nil, kv.ErrTxnTooLarge
@@ -156,6 +189,13 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 
 	// Convert from sec to ms
 	maxTxnTimeUse := uint64(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse) * 1000
+
+	// Sanity check for startTS.
+	if txn.StartTS() == math.MaxUint64 {
+		err = errors.Errorf("try to commit with invalid startTS: %d", txn.StartTS())
+		log.Errorf("con:%d 2PC commit err: %v", connID, err)
+		return nil, errors.Trace(err)
+	}
 
 	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: len(keys)}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
@@ -365,7 +405,8 @@ func (c *twoPhaseCommitter) updateMaxReadTs(ts uint64) {
 func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
-		mutations[i] = c.mutations[string(k)]
+		tmp := c.mutations[string(k)]
+		mutations[i] = &tmp.Mutation
 	}
 
 	req := &tikvrpc.Request{
@@ -684,6 +725,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	if err = c.checkSchemaValid(); err != nil {
 		return errors.Trace(err)
 	}
+
+	// gofail: var tmpMaxTxnTime uint64
+	// if tmpMaxTxnTime > 0 {
+	//  c.maxTxnTimeUse = tmpMaxTxnTime
+	// }
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
 		err = errors.Errorf("con:%d txn takes too much time, start: %d, commit: %d", c.connID, c.startTS, c.commitTS)
