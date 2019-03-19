@@ -2145,6 +2145,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.GeneratedExprString = buf.String()
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
+			col.GeneratedExpr = opt.Expr
 			for _, colName := range findColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}

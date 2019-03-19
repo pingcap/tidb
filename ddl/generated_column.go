@@ -156,8 +156,10 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 	}
 
 	// rule 3
-	if err := checkIllegalFn4GeneratedColumn(newCol.Name.L, newCol.GeneratedExpr); err != nil {
-		return errors.Trace(err)
+	if newCol.IsGenerated() {
+		if err := checkIllegalFn4GeneratedColumn(newCol.Name.L, newCol.GeneratedExpr); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -182,6 +184,9 @@ func (c *illegalFunctionChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 }
 
 func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
+	if expr == nil {
+		return nil
+	}
 	var c illegalFunctionChecker
 	expr.Accept(&c)
 	if c.found {
