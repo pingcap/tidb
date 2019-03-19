@@ -592,7 +592,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	}
 
 	// double check.
-	_, err = checkAlterTableCharsetAble(tblInfo, toCharset, toCollate)
+	_, err = checkAlterTableCharset(tblInfo, toCharset, toCollate)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

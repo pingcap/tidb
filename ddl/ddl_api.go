@@ -2439,7 +2439,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		}
 	}
 
-	doNothing, err := checkAlterTableCharsetAble(tb.Meta(), toCharset, toCollate)
+	doNothing, err := checkAlterTableCharset(tb.Meta(), toCharset, toCollate)
 	if err != nil {
 		return err
 	}
@@ -2459,7 +2459,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
-func checkAlterTableCharsetAble(tblInfo *model.TableInfo, toCharset, toCollate string) (bool, error) {
+func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate string) (bool, error) {
 	var err error
 	origCharset := tblInfo.Charset
 	origCollate := tblInfo.Collate
@@ -2483,7 +2483,8 @@ func checkAlterTableCharsetAble(tblInfo *model.TableInfo, toCharset, toCollate s
 	if len(origCharset) == 0 {
 		// The table charset may be "", if the table is create in old TiDB version.
 		// This DDL will update the table charset to default charset.
-		// use default charset or database charset? show create table is uses the default charset.
+		// Use default charset or database charset?
+		// show create table is uses the default charset.
 		origCharset, origCollate = charset.GetDefaultCharsetAndCollate()
 	}
 

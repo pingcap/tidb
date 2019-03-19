@@ -590,7 +590,7 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 	rs, err = tk.Exec("alter table t charset utf8mb4 collate utf8mb4_bin")
 	c.Assert(err, NotNil)
 
-	// test change column charset when change table charset.
+	// Test change column charset when change table charset.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10) character set ascii) charset utf8")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
@@ -605,7 +605,7 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 		}
 	}
 	checkCharset()
-	// test when table charset is equal to target charset but column is not  equal to the target charset.
+	// Test when table charset is equal to target charset but column charset is not equal.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10) character set ascii) charset utf8mb4")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
