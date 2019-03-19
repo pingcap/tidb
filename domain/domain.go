@@ -497,7 +497,7 @@ func (do *Domain) mustRestartSyncer() error {
 		default:
 		}
 		time.Sleep(time.Second)
-		logutil.Logger(context.Background()).Info("restart the schema syncer failed.", zap.Error(err))
+		logutil.Logger(context.Background()).Info("restart the schema syncer failed", zap.Error(err))
 	}
 }
 
@@ -507,15 +507,15 @@ func (do *Domain) mustReload() (exitLoop bool) {
 	for {
 		err := do.Reload()
 		if err == nil {
-			logutil.Logger(context.Background()).Info("mustReload succeed.")
+			logutil.Logger(context.Background()).Info("mustReload succeed")
 			return false
 		}
 
-		logutil.Logger(context.Background()).Info("reload the schema failed.", zap.Error(err))
+		logutil.Logger(context.Background()).Info("reload the schema failed", zap.Error(err))
 		// If the domain is closed, we returns immediately.
 		select {
 		case <-do.exit:
-			logutil.Logger(context.Background()).Info("domain is closed.")
+			logutil.Logger(context.Background()).Info("domain is closed")
 			return true
 		default:
 		}
@@ -773,7 +773,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			case <-time.After(duration):
 			}
 			if !ok {
-				logutil.Logger(context.Background()).Error("load privilege loop watch channel closed.")
+				logutil.Logger(context.Background()).Error("load privilege loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
 				count++
 				if count > 10 {
@@ -786,9 +786,9 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			err := do.privHandle.Update(ctx)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				logutil.Logger(context.Background()).Error("load privilege failed.", zap.Error(err))
+				logutil.Logger(context.Background()).Error("load privilege failed", zap.Error(err))
 			} else {
-				logutil.Logger(context.Background()).Debug("reload privilege success.")
+				logutil.Logger(context.Background()).Debug("reload privilege success")
 			}
 		}
 	}()
@@ -896,7 +896,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	// TODO: Need to do something when err is not nil.
 	err := statsOwner.CampaignOwner(cancelCtx)
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("campaign owner failed.", zap.Error(err))
+		logutil.Logger(context.Background()).Warn("campaign owner failed", zap.Error(err))
 	}
 	return statsOwner
 }
@@ -921,9 +921,9 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
-		logutil.Logger(context.Background()).Debug("init stats info failed.", zap.Error(err))
+		logutil.Logger(context.Background()).Debug("init stats info failed", zap.Error(err))
 	} else {
-		logutil.Logger(context.Background()).Info("init stats info time.", zap.Duration("time", time.Since(t)))
+		logutil.Logger(context.Background()).Info("init stats info time", zap.Duration("time", time.Since(t)))
 	}
 	defer func() {
 		do.SetStatsUpdating(false)
@@ -934,7 +934,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case <-loadTicker.C:
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("update stats info failed.", zap.Error(err))
+				logutil.Logger(context.Background()).Debug("update stats info failed", zap.Error(err))
 			}
 		case <-do.exit:
 			statsHandle.FlushStats()
@@ -943,18 +943,18 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case t := <-statsHandle.DDLEventCh():
 			err = statsHandle.HandleDDLEvent(t)
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("handle ddl event failed.", zap.Error(err))
+				logutil.Logger(context.Background()).Debug("handle ddl event failed", zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
 			err = statsHandle.DumpStatsDeltaToKV(statistics.DumpDelta)
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("dump stats delta failed.", zap.Error(err))
+				logutil.Logger(context.Background()).Debug("dump stats delta failed", zap.Error(err))
 			}
 			statsHandle.UpdateErrorRate(do.InfoSchema())
 		case <-loadHistogramTicker.C:
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("load histograms failed.", zap.Error(err))
+				logutil.Logger(context.Background()).Debug("load histograms failed", zap.Error(err))
 			}
 		case <-loadFeedbackTicker.C:
 			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
@@ -963,12 +963,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 			err = statsHandle.HandleUpdateStats(do.InfoSchema())
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("update stats using feedback failed.", zap.Error(err))
+				logutil.Logger(context.Background()).Debug("update stats using feedback failed", zap.Error(err))
 			}
 		case <-dumpFeedbackTicker.C:
 			err = statsHandle.DumpStatsFeedbackToKV()
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("dump stats feedback failed.", zap.Error(err))
+				logutil.Logger(context.Background()).Debug("dump stats feedback failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {
@@ -976,7 +976,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 			err = statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
-				logutil.Logger(context.Background()).Debug("GC stats failed.", zap.Error(err))
+				logutil.Logger(context.Background()).Debug("GC stats failed", zap.Error(err))
 			}
 		}
 	}
@@ -1017,7 +1017,7 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	// update locally
 	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, `FLUSH PRIVILEGES`)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("unable to update privileges.", zap.Error(err))
+		logutil.Logger(context.Background()).Error("unable to update privileges", zap.Error(err))
 	}
 }
 
@@ -1027,7 +1027,7 @@ func recoverInDomain(funcName string, quit bool) {
 		return
 	}
 	buf := util.GetStack()
-	logutil.Logger(context.Background()).Error("recover in domain failed.", zap.String("function name", funcName),
+	logutil.Logger(context.Background()).Error("recover in domain failed", zap.String("function name", funcName),
 		zap.Any("error", r), zap.String("buffer", string(buf)))
 	metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
 	if quit {

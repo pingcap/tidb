@@ -140,7 +140,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 	err := ddl.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("remove server info failed.", zap.Error(err))
+		logutil.Logger(context.Background()).Error("remove server info failed", zap.Error(err))
 	}
 }
 
@@ -189,7 +189,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 		resp, err = etcdCli.Get(childCtx, key, opts...)
 		cancel()
 		if err != nil {
-			logutil.Logger(context.Background()).Info("get key failed.", zap.String("key", key), zap.Error(err))
+			logutil.Logger(context.Background()).Info("get key failed", zap.String("key", key), zap.Error(err))
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -197,7 +197,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			info := &ServerInfo{}
 			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
-				logutil.Logger(context.Background()).Info("get key failed.", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
+				logutil.Logger(context.Background()).Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
 					zap.Error(err))
 				return nil, errors.Trace(err)
 			}
