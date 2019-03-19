@@ -461,7 +461,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			do.SchemaValidator.Stop()
 			err := do.mustRestartSyncer()
 			if err != nil {
-				logutil.Logger(context.Background()).Error("reload schema in loop, schema syncer restart err.", zap.Error(err))
+				logutil.Logger(context.Background()).Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
 				break
 			}
 			// The schema maybe changed, must reload schema then the schema validator can restart.
