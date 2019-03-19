@@ -49,7 +49,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -700,24 +699,25 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
-	span := opentracing.StartSpan("server.dispatch")
-	ctx = opentracing.ContextWithSpan(ctx, span)
+	//	span := opentracing.StartSpan("server.dispatch")
+	// ctx = opentracing.ContextWithSpan(ctx, span)
 
-	ctx1, cancelFunc := context.WithCancel(ctx)
-	cc.mu.Lock()
-	cc.mu.cancelFunc = cancelFunc
-	cc.mu.Unlock()
+	// ctx1, cancelFunc := context.WithCancel(ctx)
+	// cc.mu.Lock()
+	// cc.mu.cancelFunc = cancelFunc
+	// cc.mu.Unlock()
+	ctx1 := context.TODO()
 
-	t := time.Now()
+	//t := time.Now()
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = string(hack.String(data))
 	//token := cc.server.getToken()
-	defer func() {
-		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
-		//cc.server.releaseToken(token)
-		span.Finish()
-	}()
+	// defer func() {
+	// 	cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
+	// 	//cc.server.releaseToken(token)
+	// 	span.Finish()
+	// }()
 
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
@@ -727,9 +727,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
-		cc.ctx.SetProcessInfo("", t, cmd)
+		//cc.ctx.SetProcessInfo("", t, cmd)
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd)
+		//cc.ctx.SetProcessInfo("use "+dataStr, t, cmd)
 	}
 
 	switch cmd {
