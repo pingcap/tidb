@@ -74,3 +74,5 @@ require (
 )
 
 replace github.com/pingcap/pd => github.com/pingcap/pd v0.0.0-20190317111748-76608ee125a0
+
+replace github.com/pingcap/kvproto => github.com/MyonKeminta/kvproto v0.0.0-20190227051826-efa537e2c3f5
