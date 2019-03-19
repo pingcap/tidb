@@ -14,7 +14,7 @@
 package executor
 
 import (
-	contxt "context"
+	"context"
 	"fmt"
 	"sort"
 	"sync"
@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
@@ -268,7 +267,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			err := errors.Errorf("%v", r)
-			logutil.Logger(contxt.Background()).Error("outerMergeWorker panic in the recoverable goroutine", zap.Error(err))
+			logutil.Logger(context.Background()).Error("outerMergeWorker panic in the recoverable goroutine", zap.Error(err))
 			task := &lookUpMergeJoinTask{
 				results: make(chan *chunk.Chunk, 1),
 				doneErr: make(chan error, 1),
@@ -392,7 +391,7 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			err := errors.Errorf("%v", r)
-			logutil.Logger(contxt.Background()).Error("innerMergeWorker panic in the recoverable goroutine", zap.Error(err))
+			logutil.Logger(context.Background()).Error("innerMergeWorker panic in the recoverable goroutine", zap.Error(err))
 			task.doneErr = make(chan error, 1)
 			task.doneErr <- err
 		}
