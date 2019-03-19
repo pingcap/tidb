@@ -336,7 +336,7 @@ func (do *Domain) Reload() error {
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
 	if fullLoad {
-		logutil.Logger(context.Background()).Info("full load and reset schema validator.")
+		logutil.Logger(context.Background()).Info("full load and reset schema validator")
 		do.SchemaValidator.Reset()
 	}
 	do.SchemaValidator.Update(ver.Ver, schemaVersion, latestSchemaVersion, changedTableIDs)
