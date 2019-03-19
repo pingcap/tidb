@@ -346,7 +346,7 @@ func (do *Domain) Reload() error {
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
 	// some query maybe responded by ErrInfoSchemaExpired error.
 	if sub > (lease/2) && lease > 0 {
-		logutil.Logger(context.Background()).Warn("loading schema takes a long time.", zap.Duration("time", sub))
+		logutil.Logger(context.Background()).Warn("loading schema takes a long time", zap.Duration("time", sub))
 	}
 
 	return nil
