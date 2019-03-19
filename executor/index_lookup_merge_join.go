@@ -56,11 +56,12 @@ type IndexLookUpMergeJoin struct {
 }
 
 type outerMergeCtx struct {
-	rowTypes       []*types.FieldType
-	joinKeys       []*expression.Column
-	keyCols        []int
-	filter         expression.CNFExprs
-	keepOuterOrder bool
+	rowTypes          []*types.FieldType
+	joinKeys          []*expression.Column
+	keyCols           []int
+	filter            expression.CNFExprs
+	enforceOuterOrder bool
+	compareFuncs      []expression.CompareFunc
 }
 
 type innerMergeCtx struct {
@@ -343,18 +344,15 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 	if task.outerResult.NumRows() == 0 {
 		return nil, nil
 	}
-	if omw.outerMergeCtx.keepOuterOrder == false {
+	if omw.outerMergeCtx.enforceOuterOrder == false {
 		c := omw.executor.newFirstChunk()
 		var rows []chunk.Row
 		for i := 0; i < task.outerResult.NumRows(); i++ {
 			rows = append(rows, task.outerResult.GetRow(i))
 		}
-		sc := omw.ctx.GetSessionVars().StmtCtx
 		sort.Slice(rows, func(i, j int) bool {
-			for id := range omw.keyCols {
-				datumI := rows[i].GetDatum(id, omw.rowTypes[id])
-				datumJ := rows[j].GetDatum(id, omw.rowTypes[id])
-				cmp, err := (&datumI).CompareDatum(sc, &datumJ)
+			for id := 0; id < len(omw.joinKeys); id++ {
+				cmp, _, err := omw.compareFuncs[id](omw.ctx, omw.joinKeys[id], omw.joinKeys[id], rows[i], rows[j])
 				terror.Log(errors.Trace(err))
 				if cmp != 0 {
 					return cmp < 0

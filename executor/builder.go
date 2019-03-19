@@ -1529,32 +1529,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
-	e := &IndexLookUpJoin{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
-		outerCtx: outerCtx{
-			rowTypes: outerTypes,
-			filter:   outerFilter,
-		},
-		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{innerPlan, b},
-			rowTypes:      innerTypes,
-		},
-		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
-		indexRanges:   v.Ranges,
-		keyOff2IdxOff: v.KeyOff2IdxOff,
-	}
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
-	e.outerCtx.keyCols = outerKeyCols
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
-	e.innerCtx.keyCols = innerKeyCols
-	e.joinResult = e.newFirstChunk()
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
 
 	// If the inner join keys are the suffix set of the index, then return the IndexLookUpMergeJoin
@@ -1568,49 +1550,69 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 	if isIndexScan {
 		idx := is.Index.Columns
-		if len(v.InnerJoinKeys) <= len(idx) {
-			isInnerKeysSuffix := true
-			for i, innerKey := range v.InnerJoinKeys {
-				if innerKey.ColName != idx[i].Name {
-					isInnerKeysSuffix = false
-					break
-				}
+		isInnerKeysPrefix := true
+		for i, innerKey := range v.InnerJoinKeys {
+			if innerKey.ColName != idx[i].Name {
+				isInnerKeysPrefix = false
+				break
 			}
-			if isInnerKeysSuffix {
-				is.KeepOrder = true
-				// keepOuterOrder means the outerJoinKeys must be the suffix of the prop items of PhysicalIndexJoin
-				keepOuterOrder := v.KeepOuterOrder && len(v.OuterJoinKeys) < len(v.PropItems)
-				compareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
-				for i := range v.OuterJoinKeys {
-					if keepOuterOrder && v.PropItems[i].Col.ColName != v.OuterJoinKeys[i].ColName {
-						keepOuterOrder = false
-					}
-					compareFuncs = append(compareFuncs, expression.GetCmpFunction(v.OuterJoinKeys[i], v.InnerJoinKeys[i]))
+		}
+		if isInnerKeysPrefix {
+			is.KeepOrder = true
+			// enforceOuterOrder means the outerJoinKeys must be the prefix of the prop items of PhysicalIndexJoin
+			enforceOuterOrder := v.KeepOuterOrder && len(v.OuterJoinKeys) < len(v.PropItems)
+			compareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
+			outerCompareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
+			for i := range v.OuterJoinKeys {
+				if enforceOuterOrder && v.PropItems[i].Col.ColName != v.OuterJoinKeys[i].ColName {
+					enforceOuterOrder = false
 				}
-				return &IndexLookUpMergeJoin{
-					baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
-					outerMergeCtx: outerMergeCtx{
-						rowTypes:       outerTypes,
-						filter:         outerFilter,
-						joinKeys:       v.OuterJoinKeys,
-						keyCols:        outerKeyCols,
-						keepOuterOrder: keepOuterOrder,
-					},
-					innerMergeCtx: innerMergeCtx{
-						readerBuilder: &dataReaderBuilder{innerPlan, b},
-						rowTypes:      innerTypes,
-						joinKeys:      v.InnerJoinKeys,
-						keyCols:       innerKeyCols,
-						compareFuncs:  compareFuncs,
-					},
-					workerWg:      new(sync.WaitGroup),
-					joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
-					indexRanges:   v.Ranges,
-					keyOff2IdxOff: v.KeyOff2IdxOff,
-				}
+				compareFuncs = append(compareFuncs, expression.GetCmpFunction(v.OuterJoinKeys[i], v.InnerJoinKeys[i]))
+				outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(v.OuterJoinKeys[i], v.OuterJoinKeys[i]))
+			}
+			return &IndexLookUpMergeJoin{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
+				outerMergeCtx: outerMergeCtx{
+					rowTypes:          outerTypes,
+					filter:            outerFilter,
+					joinKeys:          v.OuterJoinKeys,
+					keyCols:           outerKeyCols,
+					enforceOuterOrder: enforceOuterOrder,
+					compareFuncs:      outerCompareFuncs,
+				},
+				innerMergeCtx: innerMergeCtx{
+					readerBuilder: &dataReaderBuilder{innerPlan, b},
+					rowTypes:      innerTypes,
+					joinKeys:      v.InnerJoinKeys,
+					keyCols:       innerKeyCols,
+					compareFuncs:  compareFuncs,
+				},
+				workerWg:      new(sync.WaitGroup),
+				joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+				indexRanges:   v.Ranges,
+				keyOff2IdxOff: v.KeyOff2IdxOff,
 			}
 		}
 	}
+	e := &IndexLookUpJoin{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
+		outerCtx: outerCtx{
+			rowTypes: outerTypes,
+			filter:   outerFilter,
+			keyCols:  outerKeyCols,
+		},
+		innerCtx: innerCtx{
+			readerBuilder: &dataReaderBuilder{innerPlan, b},
+			rowTypes:      innerTypes,
+			keyCols:       innerKeyCols,
+		},
+		workerWg:      new(sync.WaitGroup),
+		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		indexRanges:   v.Ranges,
+		keyOff2IdxOff: v.KeyOff2IdxOff,
+	}
+	e.joinResult = e.newFirstChunk()
+
 	return e
 }
 
