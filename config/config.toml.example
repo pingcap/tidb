@@ -110,6 +110,10 @@ cluster-ssl-key = ""
 # If enable status report HTTP service.
 report-status = true
 
+# TiDB status host.
+status-host = "0.0.0.0"
+
+# Prometheus pushgateway address, leaves it empty will disable prometheus push.
 # TiDB status port.
 status-port = 10080
 
