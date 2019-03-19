@@ -115,7 +115,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		logutil.Logger(context.Background()).Error("failed to load schema diff", zap.Error(err))
 	}
 	if ok {
-		logutil.Logger(context.Background()).Info("diff load InfoSchema from version failed.", zap.Int64("usedSchemaVersion", usedSchemaVersion),
+		logutil.Logger(context.Background()).Info("diff load InfoSchema from version failed", zap.Int64("usedSchemaVersion", usedSchemaVersion),
 			zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Duration("time", time.Since(startTime)), zap.Int64s("tblIDs", tblIDs))
 		return latestSchemaVersion, tblIDs, fullLoad, nil
 	}
