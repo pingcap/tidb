@@ -846,6 +846,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			leftExec.retTypes(),
 			rightExec.retTypes(),
 		),
+		isOuterJoin: IsOuterJoiner(v.JoinType),
 	}
 
 	leftKeys := v.LeftKeys
@@ -1552,6 +1553,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		isOuterJoin:   IsOuterJoiner(v.JoinType),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 	}

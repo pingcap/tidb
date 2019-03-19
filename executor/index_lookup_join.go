@@ -63,9 +63,9 @@ type IndexLookUpJoin struct {
 	joinResult *chunk.Chunk
 	innerIter  chunk.Iterator
 
-	joiner joiner
+	joiner      joiner
+	isOuterJoin bool
 
-	isOuterJoin  bool
 	requiredRows int64
 
 	indexRanges   []*ranger.Range
@@ -171,8 +171,6 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 }
 
 func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
-	e.isOuterJoin = IsOuterJoiner(e.joiner)
-	e.requiredRows = int64(e.maxChunkSize)
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
