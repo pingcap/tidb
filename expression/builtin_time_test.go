@@ -1616,6 +1616,22 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(d.IsNull(), Equals, true)
 
+	// https://github.com/pingcap/tidb/issues/9729
+	// Test UNIX_TIMESTAMP(@a).
+	resetStmtContext(s.ctx)
+	s.ctx.GetSessionVars().Users["a"] = "1970-01-01 08:00:01"
+	args = []types.Datum{types.NewStringDatum("a")}
+	getVarFunc, err := newFunctionForTest(s.ctx, ast.GetVar, s.datumsToConstants(args)...)
+	c.Assert(err, IsNil)
+	funcArgs := make([]Expression, 0, 1)
+	funcArgs = append(funcArgs, getVarFunc)
+	f, err = fc.getFunction(s.ctx, funcArgs)
+	c.Assert(err, IsNil)
+	d, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindInt64)
+	c.Assert(d.GetInt64(), Equals, int64(28801))
+
 	// Set the time_zone variable, because UnixTimestamp() result depends on it.
 	s.ctx.GetSessionVars().TimeZone = time.UTC
 	tests := []struct {

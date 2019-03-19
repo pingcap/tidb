@@ -28,6 +28,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -3518,27 +3519,23 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 		if argEvaltp == types.ETString {
 			// Treat types.ETString as unspecified decimal.
 			retDecimal = types.UnspecifiedLength
+			var tmpStr string
+			var err error
+			o := false
 			if cnst, ok := args[0].(*Constant); ok {
-				tmpStr, _, err := cnst.EvalString(ctx, chunk.Row{})
+				tmpStr, _, err = cnst.EvalString(ctx, chunk.Row{})
+				o = true
+			} else if sf, ok := args[0].(*ScalarFunction); ok && sf.FuncName.L == ast.GetVar {
+				tmpStr, _, err = sf.EvalString(ctx, chunk.Row{})
+				o = true
+			}
+			if o {
 				if err != nil {
 					return nil, err
 				}
 				retDecimal = 0
 				if dotIdx := strings.LastIndex(tmpStr, "."); dotIdx >= 0 {
 					retDecimal = len(tmpStr) - dotIdx - 1
-				}
-			}
-			if sf, ok := args[0].(*ScalarFunction); ok {
-				_, isGetVarSig := sf.Function.(*builtinGetVarSig)
-				if isGetVarSig {
-					tmpStr, _, err := sf.EvalString(ctx, chunk.Row{})
-					if err != nil {
-						return nil, err
-					}
-					retDecimal = 0
-					if dotIdx := strings.LastIndex(tmpStr, "."); dotIdx >= 0 {
-						retDecimal = len(tmpStr) - dotIdx - 1
-					}
 				}
 			}
 		} else {
