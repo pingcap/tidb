@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -49,7 +48,7 @@ type MergeJoinExec struct {
 
 	childrenResults []*chunk.Chunk
 
-	memTracker *memory.Tracker
+	//memTracker *memory.Tracker
 }
 
 type mergeJoinOuterTable struct {
@@ -85,7 +84,7 @@ type mergeJoinInnerTable struct {
 	resultQueue    []*chunk.Chunk
 	resourceQueue  []*chunk.Chunk
 
-	memTracker *memory.Tracker
+	//memTracker *memory.Tracker
 }
 
 func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk) (err error) {
@@ -98,7 +97,7 @@ func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk)
 	t.curRow = t.curIter.End()
 	t.curResultInUse = false
 	t.resultQueue = append(t.resultQueue, chk4Reader)
-	t.memTracker.Consume(chk4Reader.MemoryUsage())
+	//t.memTracker.Consume(chk4Reader.MemoryUsage())
 	t.firstRow4Key, err = t.nextRow()
 	t.keyCmpFuncs = make([]chunk.CompareFunc, 0, len(t.joinKeys))
 	for i := range t.joinKeys {
@@ -138,15 +137,15 @@ func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 	for {
 		if t.curRow == t.curIter.End() {
 			t.reallocReaderResult()
-			oldMemUsage := t.curResult.MemoryUsage()
+			//oldMemUsage := t.curResult.MemoryUsage()
 			err := t.reader.Next(t.ctx, chunk.NewRecordBatch(t.curResult))
 			// error happens or no more data.
 			if err != nil || t.curResult.NumRows() == 0 {
 				t.curRow = t.curIter.End()
 				return t.curRow, errors.Trace(err)
 			}
-			newMemUsage := t.curResult.MemoryUsage()
-			t.memTracker.Consume(newMemUsage - oldMemUsage)
+			//newMemUsage := t.curResult.MemoryUsage()
+			//t.memTracker.Consume(newMemUsage - oldMemUsage)
 			t.curRow = t.curIter.Begin()
 		}
 
@@ -183,7 +182,7 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 	// available chunk in "resourceQueue".
 	if len(t.resourceQueue) == 0 {
 		newChunk := t.reader.newFirstChunk()
-		t.memTracker.Consume(newChunk.MemoryUsage())
+		//t.memTracker.Consume(newChunk.MemoryUsage())
 		t.resourceQueue = append(t.resourceQueue, newChunk)
 	}
 
@@ -198,9 +197,9 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
-	e.memTracker.Detach()
+	//e.memTracker.Detach()
 	e.childrenResults = nil
-	e.memTracker = nil
+	//e.memTracker = nil
 
 	return errors.Trace(e.baseExecutor.Close())
 }
@@ -212,16 +211,16 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaMergeJoin)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	//e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaMergeJoin)
+	//e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
 	for _, child := range e.children {
 		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
 	}
 
-	e.innerTable.memTracker = memory.NewTracker("innerTable", -1)
-	e.innerTable.memTracker.AttachTo(e.memTracker)
+	//e.innerTable.memTracker = memory.NewTracker("innerTable", -1)
+	//e.innerTable.memTracker.AttachTo(e.memTracker)
 
 	return nil
 }

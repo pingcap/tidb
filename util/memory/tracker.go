@@ -50,13 +50,13 @@ type Tracker struct {
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit < 0" means no limit.
-func NewTracker(label string, bytesLimit int64) *Tracker {
-	return &Tracker{
-		label:          label,
-		bytesLimit:     bytesLimit,
-		actionOnExceed: &LogOnExceed{},
-	}
-}
+//func NewTracker(label string, bytesLimit int64) *Tracker {
+//	return &Tracker{
+//		label:          label,
+//		bytesLimit:     bytesLimit,
+//		actionOnExceed: &LogOnExceed{},
+//	}
+//}
 
 // SetActionOnExceed sets the action when memory usage is out of memory quota.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {

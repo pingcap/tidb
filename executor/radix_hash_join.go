@@ -197,7 +197,9 @@ func (e *RadixHashJoinExec) getPartition(idx uint32) partition {
 // sub-partition of inner relation using three quarters of the L2 cache size.
 func (e *RadixHashJoinExec) evalRadixBit() {
 	sv := e.ctx.GetSessionVars()
-	innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
+	// RadixHashJoin will be never chosen in this version, so I give a fake size.
+	//innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
+	innerResultSize := float64(4096)
 	l2CacheSize := float64(sv.L2CacheSize) * 3 / 4
 	radixBitsNum := math.Ceil(math.Log2(innerResultSize / l2CacheSize))
 	if radixBitsNum <= 0 {

@@ -25,7 +25,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 // SortExec represents sorting executor.
@@ -48,13 +47,13 @@ type SortExec struct {
 	// rowPointer store the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
 
-	memTracker *memory.Tracker
+	//memTracker *memory.Tracker
 }
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	e.memTracker.Detach()
-	e.memTracker = nil
+	//e.memTracker.Detach()
+	//e.memTracker = nil
 	return errors.Trace(e.children[0].Close())
 }
 
@@ -64,10 +63,10 @@ func (e *SortExec) Open(ctx context.Context) error {
 	e.Idx = 0
 
 	// To avoid duplicated initialization for TopNExec.
-	if e.memTracker == nil {
-		e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	}
+	//if e.memTracker == nil {
+	//	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
+	//	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	//}
 	return errors.Trace(e.children[0].Open(ctx))
 }
 
@@ -104,8 +103,8 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	fields := e.retTypes()
 	e.rowChunks = chunk.NewList(fields, e.initCap, e.maxChunkSize)
-	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
+	//e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+	//e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for {
 		chk := e.children[0].newFirstChunk()
 		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
@@ -123,7 +122,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 
 func (e *SortExec) initPointers() {
 	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
-	e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
+	//e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		rowChk := e.rowChunks.GetChunk(chkIdx)
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
@@ -230,8 +229,8 @@ func (h *topNChunkHeap) Swap(i, j int) {
 
 // Open implements the Executor Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaTopn)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	//e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaTopn)
+	//e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return errors.Trace(e.SortExec.Open(ctx))
 }
 
@@ -273,8 +272,8 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
 	e.rowChunks = chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
-	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
+	//e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+	//e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
 		srcChk := e.children[0].newFirstChunk()
 		// adjust required rows by total limit
@@ -352,12 +351,12 @@ func (e *TopNExec) doCompaction() error {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
-	newRowChunks.GetMemTracker().SetLabel("rowChunks")
-	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
+	//newRowChunks.GetMemTracker().SetLabel("rowChunks")
+	//e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
 
-	e.memTracker.Consume(int64(-8 * len(e.rowPtrs)))
-	e.memTracker.Consume(int64(8 * len(newRowPtrs)))
+	//e.memTracker.Consume(int64(-8 * len(e.rowPtrs)))
+	//e.memTracker.Consume(int64(8 * len(newRowPtrs)))
 	e.rowPtrs = newRowPtrs
 	return nil
 }

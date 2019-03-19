@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 const (
@@ -105,10 +104,10 @@ type StatementContext struct {
 	InsertID uint64
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone         *time.Location
-	Priority         mysql.PriorityEnum
-	NotFillCache     bool
-	MemTracker       *memory.Tracker
+	TimeZone     *time.Location
+	Priority     mysql.PriorityEnum
+	NotFillCache bool
+	//MemTracker       *memory.Tracker
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexIDs         []int64

@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"runtime"
 	"sort"
 	"sync"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
@@ -71,7 +69,7 @@ type IndexLookUpJoin struct {
 	// lastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
 	lastColHelper *plannercore.ColWithCmpFuncManager
 
-	memTracker *memory.Tracker // track memory usage.
+	//memTracker *memory.Tracker // track memory usage.
 }
 
 type outerCtx struct {
@@ -100,7 +98,7 @@ type lookUpJoinTask struct {
 	hasMatch bool
 	hasNull  bool
 
-	memTracker *memory.Tracker // track memory usage.
+	//memTracker *memory.Tracker // track memory usage.
 }
 
 type outerWorker struct {
@@ -117,7 +115,7 @@ type outerWorker struct {
 	resultCh chan<- *lookUpJoinTask
 	innerCh  chan<- *lookUpJoinTask
 
-	parentMemTracker *memory.Tracker
+	//parentMemTracker *memory.Tracker
 }
 
 type innerWorker struct {
@@ -161,8 +159,8 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupJoin)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	//e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupJoin)
+	//e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	e.startWorkers(ctx)
 	return nil
@@ -185,15 +183,15 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask) *outerWorker {
 	ow := &outerWorker{
-		outerCtx:         e.outerCtx,
-		ctx:              e.ctx,
-		executor:         e.children[0],
-		executorChk:      chunk.NewChunkWithCapacity(e.outerCtx.rowTypes, e.maxChunkSize),
-		resultCh:         resultCh,
-		innerCh:          innerCh,
-		batchSize:        32,
-		maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
-		parentMemTracker: e.memTracker,
+		outerCtx:     e.outerCtx,
+		ctx:          e.ctx,
+		executor:     e.children[0],
+		executorChk:  chunk.NewChunkWithCapacity(e.outerCtx.rowTypes, e.maxChunkSize),
+		resultCh:     resultCh,
+		innerCh:      innerCh,
+		batchSize:    32,
+		maxBatchSize: e.ctx.GetSessionVars().IndexJoinBatchSize,
+		//parentMemTracker: e.memTracker,
 	}
 	return ow
 }
@@ -287,7 +285,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	}
 
 	if e.task != nil {
-		e.task.memTracker.Detach()
+		//e.task.memTracker.Detach()
 	}
 	e.task = task
 	return task, nil
@@ -361,12 +359,12 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		encodedLookUpKeys: chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, ow.ctx.GetSessionVars().MaxChunkSize),
 		lookupMap:         mvmap.NewMVMap(),
 	}
-	task.memTracker = memory.NewTracker(fmt.Sprintf("lookup join task %p", task), -1)
-	task.memTracker.AttachTo(ow.parentMemTracker)
+	//task.memTracker = memory.NewTracker(fmt.Sprintf("lookup join task %p", task), -1)
+	//task.memTracker.AttachTo(ow.parentMemTracker)
 
 	ow.increaseBatchSize()
 
-	task.memTracker.Consume(task.outerResult.MemoryUsage())
+	//task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for task.outerResult.NumRows() < ow.batchSize {
 		err := ow.executor.Next(ctx, chunk.NewRecordBatch(ow.executorChk))
 		if err != nil {
@@ -376,10 +374,10 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 			break
 		}
 
-		oldMemUsage := task.outerResult.MemoryUsage()
+		//oldMemUsage := task.outerResult.MemoryUsage()
 		task.outerResult.Append(ow.executorChk, 0, ow.executorChk.NumRows())
-		newMemUsage := task.outerResult.MemoryUsage()
-		task.memTracker.Consume(newMemUsage - oldMemUsage)
+		//newMemUsage := task.outerResult.MemoryUsage()
+		//task.memTracker.Consume(newMemUsage - oldMemUsage)
 	}
 	if task.outerResult.NumRows() == 0 {
 		return nil, nil
@@ -392,7 +390,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		if err != nil {
 			return task, errors.Trace(err)
 		}
-		task.memTracker.Consume(int64(cap(task.outerMatch)))
+		//task.memTracker.Consume(int64(cap(task.outerMatch)))
 	}
 	return task, nil
 }
@@ -480,7 +478,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(i)})
 	}
 
-	task.memTracker.Consume(task.encodedLookUpKeys.MemoryUsage())
+	//task.memTracker.Consume(task.encodedLookUpKeys.MemoryUsage())
 	return lookUpContents, nil
 }
 
@@ -561,8 +559,8 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	}
 	defer terror.Call(innerExec.Close)
 	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
-	innerResult.GetMemTracker().SetLabel("inner result")
-	innerResult.GetMemTracker().AttachTo(task.memTracker)
+	//innerResult.GetMemTracker().SetLabel("inner result")
+	//innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
 		err := innerExec.Next(ctx, chunk.NewRecordBatch(iw.executorChk))
 		if err != nil {
@@ -621,7 +619,7 @@ func (e *IndexLookUpJoin) Close() error {
 		e.cancelFunc()
 	}
 	e.workerWg.Wait()
-	e.memTracker.Detach()
-	e.memTracker = nil
+	//e.memTracker.Detach()
+	//e.memTracker = nil
 	return errors.Trace(e.children[0].Close())
 }

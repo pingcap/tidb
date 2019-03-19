@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 )
 
@@ -74,7 +73,7 @@ type HashJoinExec struct {
 	joinResultCh       chan *hashjoinWorkerResult
 	hashTableValBufs   [][][]byte
 
-	memTracker *memory.Tracker // track memory usage.
+	//memTracker *memory.Tracker // track memory usage.
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -130,8 +129,8 @@ func (e *HashJoinExec) Close() error {
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
 	}
-	e.memTracker.Detach()
-	e.memTracker = nil
+	//e.memTracker.Detach()
+	//e.memTracker = nil
 
 	err := e.baseExecutor.Close()
 	return errors.Trace(err)
@@ -144,8 +143,8 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	//e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
+	//e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.hashTableValBufs = make([][][]byte, e.concurrency)
 	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
@@ -261,8 +260,8 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 // e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context) error {
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
-	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
-	e.innerResult.GetMemTracker().SetLabel("innerResult")
+	//e.innerResult.GetMemTracker().AttachTo(e.memTracker)
+	//e.innerResult.GetMemTracker().SetLabel("innerResult")
 	var err error
 	for {
 		if e.finished.Load().(bool) {
@@ -592,15 +591,15 @@ type NestedLoopApplyExec struct {
 	hasMatch         bool
 	hasNull          bool
 
-	memTracker *memory.Tracker // track memory usage.
+	//memTracker *memory.Tracker // track memory usage.
 }
 
 // Close implements the Executor interface.
 func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 
-	e.memTracker.Detach()
-	e.memTracker = nil
+	//e.memTracker.Detach()
+	//e.memTracker = nil
 	return errors.Trace(e.outerExec.Close())
 }
 
@@ -616,11 +615,11 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerChunk = e.innerExec.newFirstChunk()
 	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-
-	e.innerList.GetMemTracker().SetLabel("innerList")
-	e.innerList.GetMemTracker().AttachTo(e.memTracker)
+	//e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
+	//e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	//
+	//e.innerList.GetMemTracker().SetLabel("innerList")
+	//e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
 	return nil
 }

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -44,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -1288,17 +1286,17 @@ func (e *UnionExec) Close() error {
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
-		TimeZone:   vars.Location(),
-		MemTracker: memory.NewTracker(s.Text(), vars.MemQuotaQuery),
+		TimeZone: vars.Location(),
+		//MemTracker: memory.NewTracker(s.Text(), vars.MemQuotaQuery),
 	}
-	switch config.GetGlobalConfig().OOMAction {
-	case config.OOMActionCancel:
-		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
-	case config.OOMActionLog:
-		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
-	default:
-		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
-	}
+	//switch config.GetGlobalConfig().OOMAction {
+	//case config.OOMActionCancel:
+	//	sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
+	//case config.OOMActionLog:
+	//	sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+	//default:
+	//	sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+	//}
 
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = getPreparedStmt(execStmt, vars)

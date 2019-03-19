@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
@@ -80,8 +79,8 @@ type lookupTableTask struct {
 	//
 	// Step 1~3 are completed in "tableWorker.executeTask".
 	// Step 4   is  completed in "IndexLookUpExecutor.Next".
-	memUsage   int64
-	memTracker *memory.Tracker
+	memUsage int64
+	//memTracker *memory.Tracker
 }
 
 func (task *lookupTableTask) Len() int {
@@ -347,7 +346,7 @@ type IndexLookUpExecutor struct {
 	feedback   *statistics.QueryFeedback
 
 	// memTracker is used to track the memory usage of this executor.
-	memTracker *memory.Tracker
+	//memTracker *memory.Tracker
 
 	// isCheckOp is used to determine whether we need to check the consistency of the index data.
 	isCheckOp bool
@@ -387,8 +386,8 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	//e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
+	//e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
@@ -492,9 +491,9 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:      e.keepOrder,
 			handleIdx:      e.handleIdx,
 			isCheckOp:      e.isCheckOp,
-			memTracker:     memory.NewTracker("tableWorker", -1),
+			//memTracker:     memory.NewTracker("tableWorker", -1),
 		}
-		worker.memTracker.AttachTo(e.memTracker)
+		//worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
 			worker.pickAndExecTask(ctx1)
@@ -536,8 +535,8 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.idxWorkerWg.Wait()
 	e.tblWorkerWg.Wait()
 	e.finished = nil
-	e.memTracker.Detach()
-	e.memTracker = nil
+	//e.memTracker.Detach()
+	//e.memTracker = nil
 	if e.runtimeStats != nil {
 		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[0].ExplainID())
 		copStats.SetRowNum(e.feedback.Actual())
@@ -584,7 +583,7 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 
 	// Release the memory usage of last task before we handle a new task.
 	if e.resultCurr != nil {
-		e.resultCurr.memTracker.Consume(-e.resultCurr.memUsage)
+		//e.resultCurr.memTracker.Consume(-e.resultCurr.memUsage)
 	}
 	e.resultCurr = task
 	return e.resultCurr, nil
@@ -698,7 +697,7 @@ type tableWorker struct {
 	handleIdx      int
 
 	// memTracker is used to track the memory usage of this executor.
-	memTracker *memory.Tracker
+	//memTracker *memory.Tracker
 
 	// isCheckOp is used to determine whether we need to check the consistency of the index data.
 	isCheckOp bool
@@ -744,10 +743,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	}
 	defer terror.Call(tableReader.Close)
 
-	task.memTracker = w.memTracker
+	//task.memTracker = w.memTracker
 	memUsage := int64(cap(task.handles) * 8)
 	task.memUsage = memUsage
-	task.memTracker.Consume(memUsage)
+	//task.memTracker.Consume(memUsage)
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
@@ -762,7 +761,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 		memUsage = chk.MemoryUsage()
 		task.memUsage += memUsage
-		task.memTracker.Consume(memUsage)
+		//task.memTracker.Consume(memUsage)
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
@@ -770,7 +769,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	}
 	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
 	task.memUsage += memUsage
-	task.memTracker.Consume(memUsage)
+	//task.memTracker.Consume(memUsage)
 	if w.keepOrder {
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for i := range task.rows {
@@ -779,7 +778,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 		memUsage = int64(cap(task.rowIdx) * 4)
 		task.memUsage += memUsage
-		task.memTracker.Consume(memUsage)
+		//task.memTracker.Consume(memUsage)
 		sort.Sort(task)
 	}
 
