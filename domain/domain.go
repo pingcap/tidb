@@ -416,7 +416,7 @@ func (do *Domain) infoSyncerKeeper() {
 			if err := do.info.Restart(context.Background()); err != nil {
 				logutil.Logger(context.Background()).Error("server restart failed", zap.Error(err))
 			}
-			logutil.Logger(context.Background()).Info("server info syncer restarted.")
+			logutil.Logger(context.Background()).Info("server info syncer restarted")
 		case <-do.exit:
 			return
 		}
