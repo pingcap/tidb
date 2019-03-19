@@ -77,9 +77,9 @@ gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
 check-static: tools/bin/golangci-lint
-	@ # TODO: gometalinter has been DEPRECATED.
-	@ # https://github.com/alecthomas/gometalinter/issues/590
-	GOPACKAGESPRINTGOLISTERRORS=1 tools/bin/golangci-lint run --disable-all --deadline 120s \
+	tools/bin/golangci-lint run \
+	  --disable-all \
+	  --deadline 2m \
 	  --enable misspell \
 	  --enable ineffassign
 
