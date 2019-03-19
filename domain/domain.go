@@ -445,7 +445,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 				logutil.Logger(context.Background()).Error("reload schema in loop", zap.Error(err))
 			}
 			if !ok {
-				logutil.Logger(context.Background()).Warn("Reload schema in loop, schema syncer need rewatch")
+				logutil.Logger(context.Background()).Warn("reload schema in loop, schema syncer need rewatch")
 				// Make sure the rewatch doesn't affect load schema, so we watch the global schema version asynchronously.
 				syncer.WatchGlobalSchemaVer(context.Background())
 			}
