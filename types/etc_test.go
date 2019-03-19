@@ -45,7 +45,6 @@ func testIsTypeChar(c *C, tp byte, expect bool) {
 }
 
 func (s *testTypeEtcSuite) TestIsType(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	testIsTypeBlob(c, mysql.TypeTinyBlob, true)
 	testIsTypeBlob(c, mysql.TypeMediumBlob, true)
@@ -69,7 +68,6 @@ func testTypeToStr(c *C, tp byte, charset string, expect string) {
 }
 
 func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	testTypeStr(c, mysql.TypeYear, "year")
 	testTypeStr(c, 0xdd, "")
@@ -107,7 +105,6 @@ func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestEOFAsNil(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	err := EOFAsNil(io.EOF)
 	c.Assert(err, IsNil)
@@ -116,7 +113,6 @@ func (s *testTypeEtcSuite) TestEOFAsNil(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Flen    int
@@ -136,7 +132,6 @@ func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  float64
@@ -160,7 +155,6 @@ func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestRound(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  float64
@@ -182,7 +176,6 @@ func (s *testTypeEtcSuite) TestRound(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestTruncate(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input   float64
@@ -205,7 +198,6 @@ func (s *testTypeEtcSuite) TestTruncate(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestIsTypeTemporal(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	res := IsTypeTemporal(mysql.TypeDuration)
 	c.Assert(res, Equals, true)
@@ -222,7 +214,6 @@ func (s *testTypeEtcSuite) TestIsTypeTemporal(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestIsBinaryStr(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	in := FieldType{
 		Tp:      mysql.TypeBit,
@@ -247,7 +238,6 @@ func (s *testTypeEtcSuite) TestIsBinaryStr(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestIsNonBinaryStr(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 	in := FieldType{
 		Tp:      mysql.TypeBit,
@@ -272,7 +262,6 @@ func (s *testTypeEtcSuite) TestIsNonBinaryStr(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestIsTemporalWithDate(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 
 	res := IsTemporalWithDate(mysql.TypeDatetime)
@@ -290,7 +279,6 @@ func (s *testTypeEtcSuite) TestIsTemporalWithDate(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestIsTypePrefixable(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 
 	res := IsTypePrefixable('t')
@@ -302,7 +290,6 @@ func (s *testTypeEtcSuite) TestIsTypePrefixable(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestIsTypeFractionable(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 
 	res := IsTypeFractionable(mysql.TypeDatetime)
@@ -319,7 +306,6 @@ func (s *testTypeEtcSuite) TestIsTypeFractionable(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestIsTypeNumeric(c *C) {
-	c.Parallel()
 	defer testleak.AfterTest(c)()
 
 	res := IsTypeNumeric(mysql.TypeBit)
