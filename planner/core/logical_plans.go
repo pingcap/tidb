@@ -68,7 +68,7 @@ const (
 	AntiLeftOuterSemiJoin
 )
 
-// IsOuterJoiner returns if this joiner is a outer joiner
+// IsOuterJoin returns if this joiner is a outer joiner
 func (tp JoinType) IsOuterJoin() bool {
 	return tp == LeftOuterJoin || tp == RightOuterJoin ||
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
