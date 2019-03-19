@@ -217,8 +217,14 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
+	case *ast.ChangeStmt:
+		return b.buildChange(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
+}
+func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
+	exe := &Change{Statement: v}
+	return exe, nil
 }
 
 func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {

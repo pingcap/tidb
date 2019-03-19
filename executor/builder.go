@@ -71,6 +71,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	switch v := p.(type) {
 	case nil:
 		return nil
+	case *plannercore.Change:
+		return b.buildChange(v)
 	case *plannercore.CheckTable:
 		return b.buildCheckTable(v)
 	case *plannercore.CheckIndex:
@@ -192,6 +194,12 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
+	}
+	return e
+}
+func (b *executorBuilder) buildChange(v *plannercore.Change) Executor {
+	e := &ChangeExec{
+		Statement: v.Statement,
 	}
 	return e
 }
