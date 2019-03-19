@@ -59,7 +59,7 @@ format = "text"
 disable-timestamp = false
 
 # Stores slow query log into separated files.
-slow-query-file = ""
+slow-query-file = "tidb-slow.log"
 
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
@@ -258,8 +258,11 @@ enabled = true
 capacity = 2048000
 
 [binlog]
-# enable to write binlog.
+# Enable to write binlog. This config will be disabled if auto-mode is true.
 enable = false
+
+# If auto-mode is true, will enable binlog according to the system variables 'tidb_log_bin'.
+auto-mode = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
 write-timeout = "15s"
