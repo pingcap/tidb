@@ -559,14 +559,14 @@ func (cc *clientConn) Run(ctx context.Context) {
 		// close connection when idle time is more than wait_timout
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
-		start := time.Now()
+		//start := time.Now()
 		data, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					idleTime := time.Since(start)
+					//idleTime := time.Since(start)
 					logutil.Logger(ctx).Info("read packet timeout, close this connection",
-						zap.Duration("idle", idleTime),
+						//zap.Duration("idle", idleTime),
 						zap.Uint64("waitTimeout", waitTimeout),
 					)
 				} else {
@@ -583,10 +583,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
-		startTime := time.Now()
+		//startTime := time.Now()
 		if err = cc.dispatch(ctx, data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
-				cc.addMetrics(data[0], startTime, nil)
+				//cc.addMetrics(data[0], startTime, nil)
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))

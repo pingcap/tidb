@@ -238,8 +238,8 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 const rangesPerTask = 25000
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool) ([]*copTask, error) {
-	start := time.Now()
-	rangesLen := ranges.len()
+	//start := time.Now()
+	//rangesLen := ranges.len()
 	cmdType := tikvrpc.CmdCop
 	if streaming {
 		cmdType = tikvrpc.CmdCopStream
@@ -270,9 +270,9 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	if desc {
 		reverseTasks(tasks)
 	}
-	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
-	}
+	//if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
+	//	log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
+	//}
 	//metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
 	return tasks, nil
 }
@@ -614,18 +614,18 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			ScanDetail:     true,
 		},
 	}
-	startTime := time.Now()
+	//startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = sender.storeAddr
-	costTime := time.Since(startTime)
-	if costTime > minLogCopTaskTime {
-		worker.logTimeCopTask(costTime, task, bo, resp)
-	}
-	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
+	//costTime := time.Since(startTime)
+	//if costTime > minLogCopTaskTime {
+	//	worker.logTimeCopTask(costTime, task, bo, resp)
+	//}
+	//metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 
 	if task.cmdType == tikvrpc.CmdCopStream {
 		return worker.handleCopStreamResult(bo, rpcCtx, resp.CopStream, task, ch)

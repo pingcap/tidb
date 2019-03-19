@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/pd/client"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	log "github.com/sirupsen/logrus"
 )
@@ -81,9 +80,9 @@ type tsFuture struct {
 
 // Wait implements the oracle.Future interface.
 func (f *tsFuture) Wait() (uint64, error) {
-	now := time.Now()
+	//now := time.Now()
 	physical, logical, err := f.TSFuture.Wait()
-	metrics.TSFutureWaitDuration.Observe(time.Since(now).Seconds())
+	//metrics.TSFutureWaitDuration.Observe(time.Since(now).Seconds())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -98,15 +97,15 @@ func (o *pdOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
 }
 
 func (o *pdOracle) getTimestamp(ctx context.Context) (uint64, error) {
-	now := time.Now()
+	//now := time.Now()
 	physical, logical, err := o.c.GetTS(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	dist := time.Since(now)
-	if dist > slowDist {
-		log.Warnf("get timestamp too slow: %s", dist)
-	}
+	//dist := time.Since(now)
+	//if dist > slowDist {
+	//	log.Warnf("get timestamp too slow: %s", dist)
+	//}
 	return oracle.ComposeTS(physical, logical), nil
 }
 

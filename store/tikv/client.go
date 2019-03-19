@@ -339,7 +339,7 @@ func fetchMorePendingRequests(
 	entries *[]*batchCommandsEntry,
 	requests *[]*tikvpb.BatchCommandsRequest_Request,
 ) {
-	waitStart := time.Now()
+	//waitStart := time.Now()
 
 	// Try to collect `batchWaitSize` requests, or wait `maxWaitTime`.
 	after := time.NewTimer(maxWaitTime)
@@ -351,8 +351,8 @@ func fetchMorePendingRequests(
 			}
 			*entries = append(*entries, entry)
 			*requests = append(*requests, entry.req)
-		case waitEnd := <-after.C:
-			metrics.TiKVBatchWaitDuration.Observe(float64(waitEnd.Sub(waitStart)))
+		case <-after.C:
+			//metrics.TiKVBatchWaitDuration.Observe(float64(waitEnd.Sub(waitStart)))
 			return
 		}
 	}
@@ -370,7 +370,7 @@ func fetchMorePendingRequests(
 			*entries = append(*entries, entry)
 			*requests = append(*requests, entry.req)
 		default:
-			metrics.TiKVBatchWaitDuration.Observe(float64(time.Since(waitStart)))
+			//metrics.TiKVBatchWaitDuration.Observe(float64(time.Since(waitStart)))
 			return
 		}
 	}

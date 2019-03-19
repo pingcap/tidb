@@ -261,7 +261,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	var sizeFunc = c.keySize
 	if action == actionPrewrite {
 		sizeFunc = c.keyValueSize
-		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
+		//atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
 	}
 	// Make sure the group that contains primary key goes first.
 	batches = appendBatchBySize(batches, firstRegion, groups[firstRegion], sizeFunc, txnCommitBatchSize)
@@ -446,12 +446,12 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			log.Debugf("con:%d 2PC prewrite encounters lock: %v", c.connID, lock)
 			locks = append(locks, lock)
 		}
-		start := time.Now()
+		//start := time.Now()
 		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		atomic.AddInt64(&c.detail.ResolveLockTime, int64(time.Since(start)))
+		//atomic.AddInt64(&c.detail.ResolveLockTime, int64(time.Since(start)))
 		if !ok {
 			err = bo.Backoff(BoTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
@@ -658,10 +658,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 
 	binlogChan := c.prewriteBinlog()
 	prewriteBo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars)
-	start := time.Now()
+	//start := time.Now()
 	err := c.prewriteKeys(prewriteBo, c.keys)
-	c.detail.PrewriteTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(prewriteBo.totalSleep) * time.Millisecond
+	//c.detail.PrewriteTime = time.Since(start)
+	//c.detail.TotalBackoffTime += time.Duration(prewriteBo.totalSleep) * time.Millisecond
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
@@ -673,13 +673,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	start = time.Now()
+	//start = time.Now()
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
 	if err != nil {
 		log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
 		return errors.Trace(err)
 	}
-	c.detail.GetCommitTsTime = time.Since(start)
+	//c.detail.GetCommitTsTime = time.Since(start)
 
 	// check commitTS
 	if commitTS <= c.startTS {
@@ -703,11 +703,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
-	start = time.Now()
+	//start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
 	err = c.commitKeys(commitBo, c.keys)
-	c.detail.CommitTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond
+	//c.detail.CommitTime = time.Since(start)
+	//c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
 			log.Warnf("con:%d 2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", c.connID, err, undeterminedErr, c.startTS)

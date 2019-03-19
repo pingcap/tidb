@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
+	//"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -173,7 +173,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, nil
 	}
 
-	startTime := time.Now()
+	//startTime := time.Now()
 	txnInfos := make(map[uint64]uint64)
 	for _, l := range expiredLocks {
 		if _, ok := txnInfos[l.TxnID]; ok {
@@ -186,7 +186,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		}
 		txnInfos[l.TxnID] = uint64(status)
 	}
-	log.Infof("BatchResolveLocks: it took %v to lookup %v txn status", time.Since(startTime), len(txnInfos))
+	//log.Infof("BatchResolveLocks: it took %v to lookup %v txn status", time.Since(startTime), len(txnInfos))
 
 	var listTxnInfos []*kvrpcpb.TxnInfo
 	for txnID, status := range txnInfos {
@@ -202,7 +202,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			TxnInfos: listTxnInfos,
 		},
 	}
-	startTime = time.Now()
+	//startTime = time.Now()
 	resp, err := lr.store.SendReq(bo, req, loc, readTimeoutShort)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -229,7 +229,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, errors.Errorf("unexpected resolve err: %s", keyErr)
 	}
 
-	log.Infof("BatchResolveLocks: it took %v to resolve %v locks in a batch.", time.Since(startTime), len(expiredLocks))
+	//log.Infof("BatchResolveLocks: it took %v to resolve %v locks in a batch.", time.Since(startTime), len(expiredLocks))
 	return true, nil
 }
 

@@ -15,14 +15,13 @@ package latch
 
 import (
 	"bytes"
+	"github.com/cznic/mathutil"
+	log "github.com/sirupsen/logrus"
+	"github.com/spaolacci/murmur3"
 	"math/bits"
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/cznic/mathutil"
-	log "github.com/sirupsen/logrus"
-	"github.com/spaolacci/murmur3"
 )
 
 type node struct {
@@ -288,7 +287,9 @@ func (latches *Latches) recycle(currentTS uint64) {
 		total += latch.recycle(currentTS)
 		latch.Unlock()
 	}
-	log.Debugf("recycle run at %v, recycle count = %d...\n", time.Now(), total)
+	if log.IsLevelEnabled(log.DebugLevel) {
+		log.Debugf("recycle run at %v, recycle count = %d...\n", time.Now(), total)
+	}
 }
 
 func findNode(list *node, key []byte) *node {
