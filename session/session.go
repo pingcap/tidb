@@ -570,10 +570,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d sql:%s%s", connID, schemaVersion, retryCnt,
-					i, sqlForLog(st.OriginText()), sessVars.GetExecuteArgumentsInfo())
+				//log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d sql:%s%s", connID, schemaVersion, retryCnt,
+				//	i, sqlForLog(st.OriginText()), sessVars.GetExecuteArgumentsInfo())
 			} else {
-				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d", connID, schemaVersion, retryCnt, i)
+				//log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d", connID, schemaVersion, retryCnt, i)
 			}
 			_, err = st.Exec(ctx)
 			if err != nil {
