@@ -1094,7 +1094,6 @@ func (s *testTimeSuite) TestInvalidZero(c *C) {
 }
 
 func (s *testTimeSuite) TestGetFsp(c *C) {
-
 	res := types.GetFsp("2019:04:12 14:00:00.123456")
 	c.Assert(res, Equals, 6)
 
@@ -1109,7 +1108,6 @@ func (s *testTimeSuite) TestGetFsp(c *C) {
 }
 
 func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
-
 	in := types.Time{
 		Time: types.FromDate(2019, 04, 12, 14, 00, 00, 0000),
 		Type: mysql.TypeTimestamp,
@@ -1162,9 +1160,7 @@ func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
 }
 
 func (s *testTimeSuite) TestExtractDurationNum(c *C) {
-
 	in := types.Duration{Duration: time.Duration(3600 * 24 * 365), Fsp: types.DefaultFsp}
-
 	tbl := []struct {
 		unit   string
 		expect int64
@@ -1255,7 +1251,6 @@ func (s *testTimeSuite) TestIsClockUnit(c *C) {
 }
 
 func (s *testTimeSuite) TestIsDateFormat(c *C) {
-
 	input := "1234:321"
 	output := types.IsDateFormat(input)
 	c.Assert(output, Equals, false)
@@ -1270,7 +1265,6 @@ func (s *testTimeSuite) TestIsDateFormat(c *C) {
 }
 
 func (s *testTimeSuite) TestParseTimeFromInt64(c *C) {
-
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 
