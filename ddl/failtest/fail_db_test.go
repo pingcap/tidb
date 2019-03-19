@@ -27,18 +27,18 @@ import (
 	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/testutil"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/ddl"
+	"github.com/pingcap/tidb/v3/ddl/testutil"
+	ddlutil "github.com/pingcap/tidb/v3/ddl/util"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v3/util/logutil"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -92,8 +92,8 @@ func (s *testFailDBSuite) TearDownSuite(c *C) {
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
 func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/truncateTableErr", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/truncateTableErr")
+	gofail.Enable("github.com/pingcap/tidb/v3/ddl/truncateTableErr", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/v3/ddl/truncateTableErr")
 
 	// test for truncating table
 	_, err := s.se.Execute(context.Background(), "create database cancel_job_db")
@@ -131,8 +131,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(err, IsNil)
 
 	// test for renaming table
-	gofail.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/renameTableErr")
+	gofail.Enable("github.com/pingcap/tidb/v3/ddl/renameTableErr", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/v3/ddl/renameTableErr")
 	_, err = s.se.Execute(context.Background(), "create table tx(a int)")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tx values(1)")
@@ -176,14 +176,14 @@ func (s *testFailDBSuite) TestInitializeOffsetAndState(c *C) {
 	tk.MustExec("create table t(a int, b int, c int)")
 	defer tk.MustExec("drop table t")
 
-	gofail.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/v3/ddl/uninitializedOffsetAndState", `return(true)`)
 	tk.MustExec("ALTER TABLE t MODIFY COLUMN b int FIRST;")
-	gofail.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState")
+	gofail.Disable("github.com/pingcap/tidb/v3/ddl/uninitializedOffsetAndState")
 }
 
 func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle")
+	gofail.Enable("github.com/pingcap/tidb/v3/ddl/errorUpdateReorgHandle", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/v3/ddl/errorUpdateReorgHandle")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_handle_failed")
 	defer tk.MustExec("drop database test_handle_failed")
@@ -197,8 +197,8 @@ func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
 }
 
 func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr")
+	gofail.Enable("github.com/pingcap/tidb/v3/ddl/mockAddIndexErr", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/v3/ddl/mockAddIndexErr")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_add_index_failed")
 	defer tk.MustExec("drop database test_add_index_failed")
@@ -270,7 +270,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 }
 
 func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail")
+	defer gofail.Disable("github.com/pingcap/tidb/v3/ddl/mockGenGlobalIDFail")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists gen_global_id_fail")
 	tk.MustExec("use gen_global_id_fail")
@@ -301,11 +301,11 @@ func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 
 	for idx, test := range testcases {
 		if test.mockErr {
-			gofail.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(true)`)
+			gofail.Enable("github.com/pingcap/tidb/v3/ddl/mockGenGlobalIDFail", `return(true)`)
 			_, err := tk.Exec(test.sql)
 			c.Assert(err, NotNil, Commentf("the %dth test case '%s' fail", idx, test.sql))
 		} else {
-			gofail.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(false)`)
+			gofail.Enable("github.com/pingcap/tidb/v3/ddl/mockGenGlobalIDFail", `return(false)`)
 			tk.MustExec(test.sql)
 			tk.MustExec(fmt.Sprintf("insert into %s values (%d, 42)", test.table, rand.Intn(65536)))
 			tk.MustExec(fmt.Sprintf("admin check table %s", test.table))
@@ -349,8 +349,8 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
-	gofail.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum")
+	gofail.Enable("github.com/pingcap/tidb/v3/ddl/checkIndexWorkerNum", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/v3/ddl/checkIndexWorkerNum")
 
 	testutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 	checkNum := 0

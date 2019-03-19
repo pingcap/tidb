@@ -20,11 +20,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/infoschema"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/infoschema"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/planner/property"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/util/testleak"
 )
 
 func TestT(t *testing.T) {

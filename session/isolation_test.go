@@ -17,13 +17,13 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testleak"
 )
 
 var _ = Suite(&testIsolationSuite{})

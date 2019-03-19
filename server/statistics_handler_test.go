@@ -23,13 +23,13 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v3/config"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/statistics"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/store/mockstore/mocktikv"
 )
 
 type testDumpStatsSuite struct {

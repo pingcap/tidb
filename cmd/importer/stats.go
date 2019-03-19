@@ -21,10 +21,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	stats "github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
+	stats "github.com/pingcap/tidb/v3/statistics"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/codec"
 	log "github.com/sirupsen/logrus"
 )
 

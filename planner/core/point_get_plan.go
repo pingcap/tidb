@@ -22,12 +22,12 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/planner/property"
+	"github.com/pingcap/tidb/v3/privilege"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/types/parser_driver"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

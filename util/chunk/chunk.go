@@ -19,8 +19,8 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/types/json"
 )
 
 // Chunk stores multiple rows of data in Apache Arrow format.

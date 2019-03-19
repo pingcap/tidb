@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/v3/store/tikv/tikvrpc"
 )
 
 // DeleteRangeTask is used to delete all keys in a range. After

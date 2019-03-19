@@ -18,10 +18,10 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/expression/aggregation"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/types"
 )
 
 type aggregationEliminator struct {

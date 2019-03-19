@@ -17,7 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/v3/store/tikv/oracle"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.

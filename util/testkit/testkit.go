@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/util/sqlexec"
+	"github.com/pingcap/tidb/v3/util/testutil"
 )
 
 // TestKit is a utility to run sql test.

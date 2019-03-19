@@ -16,7 +16,7 @@ package mock
 import (
 	"context"
 
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/v3/kv"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

@@ -16,11 +16,11 @@ package planner
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/planner/cascades"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/planner/cascades"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/privilege"
+	"github.com/pingcap/tidb/v3/sessionctx"
 )
 
 // Optimize does optimization and creates a Plan.

@@ -18,14 +18,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/statistics"
+	"github.com/pingcap/tidb/v3/tablecodec"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/codec"
+	"github.com/pingcap/tidb/v3/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

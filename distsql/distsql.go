@@ -17,11 +17,11 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/metrics"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/statistics"
+	"github.com/pingcap/tidb/v3/types"
 )
 
 // XAPI error codes.

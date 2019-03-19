@@ -17,8 +17,8 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/util/chunk"
 )
 
 // RestrictedSQLExecutor is an interface provides executing restricted sql statement.

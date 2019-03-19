@@ -21,10 +21,10 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pingcap/tidb/v3/util"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/logutil"
+	"github.com/pingcap/tidb/v3/util/mvmap"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
 )

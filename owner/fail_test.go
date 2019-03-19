@@ -25,8 +25,8 @@ import (
 	. "github.com/pingcap/check"
 	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/util/logutil"
+	"github.com/pingcap/tidb/v3/util/testleak"
 	"google.golang.org/grpc"
 )
 
@@ -76,7 +76,7 @@ func (s *testSuite) TestFailNewSession(c *C) {
 				cli.Close()
 			}
 		}()
-		gofail.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`)
+		gofail.Enable("github.com/pingcap/tidb/v3/owner/closeClient", `return(true)`)
 		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
 		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
 		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
@@ -93,7 +93,7 @@ func (s *testSuite) TestFailNewSession(c *C) {
 				cli.Close()
 			}
 		}()
-		gofail.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`)
+		gofail.Enable("github.com/pingcap/tidb/v3/owner/closeGrpc", `return(true)`)
 		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
 		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
 		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))

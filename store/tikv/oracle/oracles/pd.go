@@ -20,8 +20,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/pd/client"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/v3/metrics"
+	"github.com/pingcap/tidb/v3/store/tikv/oracle"
 	log "github.com/sirupsen/logrus"
 )
 

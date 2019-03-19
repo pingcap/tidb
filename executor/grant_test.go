@@ -20,8 +20,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v3/executor"
+	"github.com/pingcap/tidb/v3/util/testkit"
 )
 
 func (s *testSuite3) TestGrantGlobal(c *C) {

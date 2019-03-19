@@ -20,12 +20,12 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/distsql"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/v3/distsql"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/statistics"
+	"github.com/pingcap/tidb/v3/table"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

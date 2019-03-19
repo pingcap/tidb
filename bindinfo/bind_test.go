@@ -21,17 +21,17 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/bindinfo"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/meta/autoid"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v3/util/logutil"
+	"github.com/pingcap/tidb/v3/util/mock"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testleak"
 )
 
 func TestT(t *testing.T) {

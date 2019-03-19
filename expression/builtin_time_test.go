@@ -24,15 +24,15 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/mock"
+	"github.com/pingcap/tidb/v3/util/testleak"
+	"github.com/pingcap/tidb/v3/util/testutil"
+	"github.com/pingcap/tidb/v3/util/timeutil"
 )
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
@@ -545,7 +545,7 @@ func (s *testEvaluatorSuite) TestDayOfYear(c *C) {
 func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 	defer testleak.AfterTest(c)()
 
-	// Test case for https://github.com/pingcap/tidb/issues/2908
+	// Test case for https://github.com/pingcap/tidb/v3/issues/2908
 	// SELECT DATE_FORMAT(null,'%Y-%M-%D')
 	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%Y-%M-%D")}
 	fc := funcs[ast.DateFormat]
@@ -1586,7 +1586,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
 	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
 
-	// https://github.com/pingcap/tidb/issues/2496
+	// https://github.com/pingcap/tidb/v3/issues/2496
 	// Test UNIX_TIMESTAMP(NOW()).
 	resetStmtContext(s.ctx)
 	now, isNull, err := evalNowWithFsp(s.ctx, 0)
@@ -1604,7 +1604,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	c.Assert(val-time.Now().Unix(), GreaterEqual, int64(-1))
 	c.Assert(val-time.Now().Unix(), LessEqual, int64(1))
 
-	// https://github.com/pingcap/tidb/issues/2852
+	// https://github.com/pingcap/tidb/v3/issues/2852
 	// Test UNIX_TIMESTAMP(NULL).
 	args = []types.Datum{types.NewDatum(nil)}
 	resetStmtContext(s.ctx)

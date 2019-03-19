@@ -23,8 +23,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/v3/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v3/store/tikv/tikvrpc"
 )
 
 type testCommitterSuite struct {

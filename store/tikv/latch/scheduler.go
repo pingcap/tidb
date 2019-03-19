@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/v3/store/tikv/oracle"
 )
 
 const lockChanSize = 100

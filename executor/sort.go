@@ -21,11 +21,11 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/v3/expression"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/memory"
 )
 
 // SortExec represents sorting executor.

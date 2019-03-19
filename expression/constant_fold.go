@@ -17,8 +17,8 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/logutil"
 	"go.uber.org/zap"
 )
 

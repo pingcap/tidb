@@ -16,7 +16,7 @@ package kv_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/v3/kv"
 )
 
 type testFaultInjectionSuite struct{}

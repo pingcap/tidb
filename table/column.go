@@ -28,15 +28,15 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/v3/config"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/types/json"
+	"github.com/pingcap/tidb/v3/util/hack"
+	"github.com/pingcap/tidb/v3/util/logutil"
+	"github.com/pingcap/tidb/v3/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -117,7 +117,7 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 }
 
 // truncateTrailingSpaces trancates trailing spaces for CHAR[(M)] column.
-// fix: https://github.com/pingcap/tidb/issues/3660
+// fix: https://github.com/pingcap/tidb/v3/issues/3660
 func truncateTrailingSpaces(v *types.Datum) {
 	if v.Kind() == types.KindNull {
 		return

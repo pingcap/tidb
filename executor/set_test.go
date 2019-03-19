@@ -18,11 +18,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testutil"
 )
 
 func (s *testSuite2) TestSetVar(c *C) {

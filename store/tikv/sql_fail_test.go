@@ -22,11 +22,11 @@ import (
 	. "github.com/pingcap/check"
 	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/session"
-	. "github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/session"
+	. "github.com/pingcap/tidb/v3/store/tikv"
+	"github.com/pingcap/tidb/v3/util/mock"
+	"github.com/pingcap/tidb/v3/util/testkit"
 )
 
 var _ = Suite(new(testSQLSuite))
@@ -52,14 +52,14 @@ func (s *testSQLSuite) TearDownSuite(c *C) {
 }
 
 func (s *testSQLSuite) TestInsertSleepOverMaxTxnTime(c *C) {
-	defer gofail.Disable("github.com/pingcap/tidb/store/tmpMaxTxnTime")
+	defer gofail.Disable("github.com/pingcap/tidb/v3/store/tmpMaxTxnTime")
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "drop table if exists test.t")
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "create table test.t(a int)")
 	c.Assert(err, IsNil)
-	gofail.Enable("github.com/pingcap/tidb/store/tmpMaxTxnTime", `return(2)->return(0)`)
+	gofail.Enable("github.com/pingcap/tidb/v3/store/tmpMaxTxnTime", `return(2)->return(0)`)
 	start := time.Now()
 	_, err = se.Execute(context.Background(), "insert into test.t (a) select sleep(3)")
 	c.Assert(err, IsNil)
@@ -73,11 +73,11 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/v3/store/mockstore/mocktikv/rpcServerBusy", `return(true)`)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy")
+		gofail.Disable("github.com/pingcap/tidb/v3/store/mockstore/mocktikv/rpcServerBusy")
 	}()
 
 	go func() {

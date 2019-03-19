@@ -17,7 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/util/testleak"
 )
 
 var _ = Suite(&testFieldTypeSuite{})

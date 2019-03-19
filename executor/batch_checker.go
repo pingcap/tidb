@@ -16,12 +16,12 @@ package executor
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/table"
+	"github.com/pingcap/tidb/v3/table/tables"
+	"github.com/pingcap/tidb/v3/tablecodec"
+	"github.com/pingcap/tidb/v3/types"
 )
 
 type keyValue struct {

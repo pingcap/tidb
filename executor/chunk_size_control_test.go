@@ -22,17 +22,17 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v3/store/tikv"
+	"github.com/pingcap/tidb/v3/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/v3/tablecodec"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/codec"
+	"github.com/pingcap/tidb/v3/util/testkit"
 )
 
 var (

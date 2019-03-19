@@ -23,13 +23,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/meta"
+	"github.com/pingcap/tidb/v3/meta/autoid"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/tablecodec"
 	log "github.com/sirupsen/logrus"
 )
 

@@ -17,8 +17,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/plugin"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
 )
 
 func TestExportManifest(t *testing.T) {

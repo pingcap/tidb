@@ -21,11 +21,11 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/util"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/logutil"
 	"go.uber.org/zap"
 )
 

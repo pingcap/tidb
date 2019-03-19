@@ -20,7 +20,7 @@ import (
 	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v3/types"
 )
 
 func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
@@ -52,10 +52,10 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 			stateCnt++
 		} else if job.SchemaState == model.StateWriteReorganization {
 			if first {
-				gofail.Enable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs", `return(true)`)
+				gofail.Enable("github.com/pingcap/tidb/v3/ddl/errorBeforeDecodeArgs", `return(true)`)
 				first = false
 			} else {
-				gofail.Disable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs")
+				gofail.Disable("github.com/pingcap/tidb/v3/ddl/errorBeforeDecodeArgs")
 			}
 		}
 	}

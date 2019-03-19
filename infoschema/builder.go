@@ -19,10 +19,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/v3/meta"
+	"github.com/pingcap/tidb/v3/meta/autoid"
+	"github.com/pingcap/tidb/v3/table"
+	"github.com/pingcap/tidb/v3/table/tables"
 )
 
 // Builder builds a new InfoSchema.

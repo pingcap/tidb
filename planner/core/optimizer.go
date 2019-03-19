@@ -18,11 +18,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/planner/property"
+	"github.com/pingcap/tidb/v3/privilege"
+	"github.com/pingcap/tidb/v3/sessionctx"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.

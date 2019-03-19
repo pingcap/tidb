@@ -18,11 +18,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/planner"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v3/executor"
+	"github.com/pingcap/tidb/v3/planner"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/util/testkit"
 )
 
 func (s *testSuite2) TestStmtLabel(c *C) {

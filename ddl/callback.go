@@ -17,8 +17,8 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/sessionctx"
 )
 
 // Interceptor is used for DDL.

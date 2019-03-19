@@ -15,18 +15,18 @@ package executor_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/v3/planner/core"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/executor"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/util/testkit"
 )
 
 func (s *testSuite3) TestCharsetDatabase(c *C) {

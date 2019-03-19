@@ -20,10 +20,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v3/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/types/json"
+	"github.com/pingcap/tidb/v3/util/chunk"
 )
 
 // First byte in the encoded value which specifies the encoding type.

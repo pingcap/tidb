@@ -27,21 +27,21 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/kv"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/table"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/mock"
+	"github.com/pingcap/tidb/v3/util/sqlexec"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testleak"
+	"github.com/pingcap/tidb/v3/util/testutil"
 )
 
 var _ = Suite(&testIntegrationSuite{})
@@ -2340,7 +2340,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("2442"))
 
 	// for regexp, rlike
-	// https://github.com/pingcap/tidb/issues/4080
+	// https://github.com/pingcap/tidb/v3/issues/4080
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a char(10), b varchar(10), c binary(10), d varbinary(10));`)
 	tk.MustExec(`insert into t values ('text','text','text','text');`)

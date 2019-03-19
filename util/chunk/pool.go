@@ -16,7 +16,7 @@ package chunk
 import (
 	"sync"
 
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v3/types"
 )
 
 // Pool is the column pool.

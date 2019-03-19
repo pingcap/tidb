@@ -21,13 +21,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/meta"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/testleak"
+	"github.com/pingcap/tidb/v3/util/testutil"
 )
 
 func TestT(t *testing.T) {

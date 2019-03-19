@@ -20,11 +20,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v3/executor"
+	"github.com/pingcap/tidb/v3/table/tables"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/mock"
+	"github.com/pingcap/tidb/v3/util/testkit"
 )
 
 func (s *testSuite1) TestAdminCheckIndexRange(c *C) {

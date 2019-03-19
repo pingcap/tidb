@@ -19,7 +19,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/v3/kv"
 )
 
 // HashPair is the pair for (field, value) in a hash.

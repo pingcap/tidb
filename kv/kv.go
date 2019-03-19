@@ -16,8 +16,8 @@ package kv
 import (
 	"context"
 
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/v3/store/tikv/oracle"
+	"github.com/pingcap/tidb/v3/util/execdetails"
 )
 
 // Transaction options

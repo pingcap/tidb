@@ -20,9 +20,9 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/util"
+	"github.com/pingcap/tidb/v3/util/chunk"
 )
 
 // IDriver opens IContext.

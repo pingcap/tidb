@@ -20,13 +20,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/meta"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/statistics"
+	"github.com/pingcap/tidb/v3/util/testleak"
 )
 
 var _ = Suite(&testBootstrapSuite{})
@@ -97,7 +97,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	se.Close()
 
 	// Try to do bootstrap dml jobs on an already bootstraped TiDB system will not cause fatal.
-	// For https://github.com/pingcap/tidb/issues/1096
+	// For https://github.com/pingcap/tidb/v3/issues/1096
 	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	doDMLWorks(se)

@@ -25,17 +25,17 @@ import (
 	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v3/ddl"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/meta"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/util/admin"
+	"github.com/pingcap/tidb/v3/util/gcutil"
+	"github.com/pingcap/tidb/v3/util/mock"
+	"github.com/pingcap/tidb/v3/util/testkit"
 )
 
 var _ = SerialSuites(&testSerialSuite{})
@@ -69,8 +69,8 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorMockPanic")
+	gofail.Enable("github.com/pingcap/tidb/v3/ddl/errorMockPanic", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/v3/ddl/errorMockPanic")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -377,8 +377,8 @@ func (s *testSerialSuite) TestRestoreTableByJobIDFail(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRestoreTable {
-			gofail.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`)
-			gofail.Enable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr", `return(true)`)
+			gofail.Enable("github.com/pingcap/tidb/v3/store/tikv/mockCommitError", `return(true)`)
+			gofail.Enable("github.com/pingcap/tidb/v3/ddl/mockRestoreTableCommitErr", `return(true)`)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()
@@ -387,8 +387,8 @@ func (s *testSerialSuite) TestRestoreTableByJobIDFail(c *C) {
 
 	// do restore table.
 	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
-	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
-	gofail.Disable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr")
+	gofail.Disable("github.com/pingcap/tidb/v3/store/tikv/mockCommitError")
+	gofail.Disable("github.com/pingcap/tidb/v3/ddl/mockRestoreTableCommitErr")
 
 	// make sure enable GC after restore table.
 	enable, err := gcutil.CheckGCEnable(tk.Se)
@@ -437,8 +437,8 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRestoreTable {
-			gofail.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`)
-			gofail.Enable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr", `return(true)`)
+			gofail.Enable("github.com/pingcap/tidb/v3/store/tikv/mockCommitError", `return(true)`)
+			gofail.Enable("github.com/pingcap/tidb/v3/ddl/mockRestoreTableCommitErr", `return(true)`)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()
@@ -447,8 +447,8 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 
 	// do restore table.
 	tk.MustExec("admin restore table t_recover")
-	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
-	gofail.Disable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr")
+	gofail.Disable("github.com/pingcap/tidb/v3/store/tikv/mockCommitError")
+	gofail.Disable("github.com/pingcap/tidb/v3/ddl/mockRestoreTableCommitErr")
 
 	// make sure enable GC after restore table.
 	enable, err := gcutil.CheckGCEnable(tk.Se)
@@ -464,8 +464,8 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 
 func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	gofail.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit")
+	gofail.Enable("github.com/pingcap/tidb/v3/ddl/mockExceedErrorLimit", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/v3/ddl/mockExceedErrorLimit")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	_, err := tk.Exec("create table t (a int)")

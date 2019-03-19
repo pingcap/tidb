@@ -17,10 +17,10 @@ import (
 	"container/list"
 	"math"
 
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/planner/memo"
-	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/sessionctx"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/planner/memo"
+	"github.com/pingcap/tidb/v3/planner/property"
+	"github.com/pingcap/tidb/v3/sessionctx"
 )
 
 // FindBestPlan is the optimization entrance of the cascades planner. The

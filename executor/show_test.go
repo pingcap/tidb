@@ -22,13 +22,13 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/executor"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testutil"
 )
 
 func (s *testSuite2) TestShowVisibility(c *C) {

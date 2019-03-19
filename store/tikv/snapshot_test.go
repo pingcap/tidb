@@ -20,7 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/v3/kv"
 	log "github.com/sirupsen/logrus"
 )
 

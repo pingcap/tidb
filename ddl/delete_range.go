@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/v3/ddl/util"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/tablecodec"
+	"github.com/pingcap/tidb/v3/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
 

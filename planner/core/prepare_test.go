@@ -20,13 +20,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/executor"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/metrics"
+	"github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testleak"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
@@ -264,7 +264,7 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	}
 }
 
-// unit test for issue https://github.com/pingcap/tidb/issues/8518
+// unit test for issue https://github.com/pingcap/tidb/v3/issues/8518
 func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

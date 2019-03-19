@@ -18,9 +18,9 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/types/json"
+	"github.com/pingcap/tidb/v3/util/hack"
 )
 
 // Row represents a row of data, can be used to access values.

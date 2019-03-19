@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v3/util/chunk"
 )
 
 // GlobalVariableCache caches global variables.

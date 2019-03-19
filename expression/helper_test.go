@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/mock"
+	"github.com/pingcap/tidb/v3/util/testleak"
 )
 
 func (s *testExpressionSuite) TestGetTimeValue(c *C) {

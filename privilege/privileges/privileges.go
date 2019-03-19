@@ -18,9 +18,9 @@ import (
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v3/privilege"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/types"
 	log "github.com/sirupsen/logrus"
 )
 

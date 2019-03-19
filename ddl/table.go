@@ -21,14 +21,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/v3/ddl/util"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/meta"
+	"github.com/pingcap/tidb/v3/meta/autoid"
+	"github.com/pingcap/tidb/v3/table"
+	"github.com/pingcap/tidb/v3/tablecodec"
+	"github.com/pingcap/tidb/v3/util/gcutil"
 	log "github.com/sirupsen/logrus"
 )
 

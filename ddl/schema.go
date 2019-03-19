@@ -16,8 +16,8 @@ package ddl
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/meta"
 )
 
 func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {

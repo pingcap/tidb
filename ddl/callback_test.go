@@ -18,8 +18,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/sessionctx"
 	log "github.com/sirupsen/logrus"
 )
 

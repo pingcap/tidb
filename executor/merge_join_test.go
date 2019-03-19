@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testkit"
 )
 
 const plan1 = `[[TableScan_12 {

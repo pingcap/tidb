@@ -30,11 +30,11 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/v3/ddl"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/timeutil"
 	log "github.com/sirupsen/logrus"
 )
 

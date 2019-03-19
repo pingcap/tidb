@@ -15,9 +15,9 @@ package aggregation
 
 import (
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/sessionctx/stmtctx"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

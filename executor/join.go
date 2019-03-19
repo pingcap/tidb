@@ -22,14 +22,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pingcap/tidb/v3/expression"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/codec"
+	"github.com/pingcap/tidb/v3/util/memory"
+	"github.com/pingcap/tidb/v3/util/mvmap"
 )
 
 var (

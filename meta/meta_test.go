@@ -21,9 +21,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/meta"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/util/testleak"
 )
 
 func TestT(t *testing.T) {

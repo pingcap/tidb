@@ -19,8 +19,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/util/logutil"
 )
 
 func (s *testSuite) TestParseSlowLogFile(c *C) {

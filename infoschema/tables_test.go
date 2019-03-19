@@ -20,13 +20,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/statistics"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testleak"
+	"github.com/pingcap/tidb/v3/util/testutil"
 )
 
 func (s *testSuite) TestInfoschemaFieldValue(c *C) {

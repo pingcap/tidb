@@ -24,17 +24,17 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/meta/autoid"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v3/ddl"
+	ddlutil "github.com/pingcap/tidb/v3/ddl/util"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/meta/autoid"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/table"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testutil"
 )
 
 func (s *testSuite3) TestTruncateTable(c *C) {
@@ -83,7 +83,7 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	// Test "if not exist"
 	tk.MustExec("CREATE TABLE if not exists test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
 
-	// Testcase for https://github.com/pingcap/tidb/issues/312
+	// Testcase for https://github.com/pingcap/tidb/v3/issues/312
 	tk.MustExec(`create table issue312_1 (c float(24));`)
 	tk.MustExec(`create table issue312_2 (c float(25));`)
 	rs, err := tk.Exec(`desc issue312_1`)
@@ -646,7 +646,7 @@ func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
 }
 
 // Test issue #9205, fix the precision problem for time type default values
-// See https://github.com/pingcap/tidb/issues/9205 for details
+// See https://github.com/pingcap/tidb/v3/issues/9205 for details
 func (s *testSuite3) TestIssue9205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

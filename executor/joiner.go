@@ -15,11 +15,11 @@ package executor
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v3/expression"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/chunk"
 )
 
 var (
@@ -155,7 +155,7 @@ func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInne
 
 func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 	// Call AppendRow() first to increment the virtual rows.
-	// Fix: https://github.com/pingcap/tidb/issues/5771
+	// Fix: https://github.com/pingcap/tidb/v3/issues/5771
 	chk.AppendRow(lhs)
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }

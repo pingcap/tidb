@@ -19,8 +19,8 @@ import (
 	"fmt"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/v3/config"
+	"github.com/pingcap/tidb/v3/util/israce"
 	log "github.com/sirupsen/logrus"
 )
 

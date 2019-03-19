@@ -23,11 +23,11 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/v3/config"
+	"github.com/pingcap/tidb/v3/ddl"
+	"github.com/pingcap/tidb/v3/owner"
+	"github.com/pingcap/tidb/v3/util/hack"
+	"github.com/pingcap/tidb/v3/util/printer"
 	log "github.com/sirupsen/logrus"
 )
 

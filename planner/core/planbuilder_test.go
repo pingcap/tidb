@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/v3/expression"
 )
 
 var _ = Suite(&testPlanBuilderSuite{})

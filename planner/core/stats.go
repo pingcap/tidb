@@ -17,10 +17,10 @@ import (
 	"context"
 	"math"
 
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/planner/property"
+	"github.com/pingcap/tidb/v3/statistics"
+	"github.com/pingcap/tidb/v3/util/logutil"
 	"go.uber.org/zap"
 )
 

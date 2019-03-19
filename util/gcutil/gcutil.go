@@ -18,10 +18,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/util"
+	"github.com/pingcap/tidb/v3/util/sqlexec"
 )
 
 const (

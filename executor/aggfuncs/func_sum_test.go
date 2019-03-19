@@ -17,11 +17,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v3/executor/aggfuncs"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/expression/aggregation"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/chunk"
 )
 
 func (s *testSuite) TestMergePartialResult4SumDecimal(c *C) {

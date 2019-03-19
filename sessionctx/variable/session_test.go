@@ -19,8 +19,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/v3/util/execdetails"
+	"github.com/pingcap/tidb/v3/util/mock"
 )
 
 var _ = Suite(&testSessionSuite{})

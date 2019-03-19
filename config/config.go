@@ -21,7 +21,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v3/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 

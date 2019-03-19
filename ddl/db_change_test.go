@@ -27,17 +27,17 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v3/ddl"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/executor"
+	"github.com/pingcap/tidb/v3/infoschema"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/util/admin"
+	"github.com/pingcap/tidb/v3/util/sqlexec"
+	"github.com/pingcap/tidb/v3/util/testkit"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -465,7 +465,7 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	checkResult(result, testkit.Rows(expected...))
 }
 
-// https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
+// https://github.com/pingcap/tidb/v3/pull/6249 fixes the following two test cases.
 func (s *testStateChangeSuite) TestWriteOnlyWriteNULL(c *C) {
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 8 on duplicate key update c1 = values(c1)", nil}

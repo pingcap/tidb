@@ -14,8 +14,8 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/util/disjointset"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/util/disjointset"
 )
 
 // ResolveIndices implements Plan interface.

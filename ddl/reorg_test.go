@@ -19,9 +19,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/meta"
+	"github.com/pingcap/tidb/v3/types"
 )
 
 type testCtxKeyType int

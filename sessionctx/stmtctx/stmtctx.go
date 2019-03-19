@@ -20,8 +20,8 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/v3/util/execdetails"
+	"github.com/pingcap/tidb/v3/util/memory"
 )
 
 const (

@@ -14,7 +14,7 @@
 package set
 
 import (
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v3/types"
 )
 
 // DecimalSet is a decimal set.

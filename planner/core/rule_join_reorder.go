@@ -14,8 +14,8 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/sessionctx"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous

@@ -18,8 +18,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/session"
 )
 
 // StatsHandler is the handler for dumping statistics.

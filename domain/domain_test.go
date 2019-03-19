@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/metrics"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/util/mock"
+	"github.com/pingcap/tidb/v3/util/testleak"
 	dto "github.com/prometheus/client_model/go"
 )
 

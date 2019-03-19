@@ -18,10 +18,10 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/statistics"
+	"github.com/pingcap/tidb/v3/util/chunk"
 )
 
 var _ Executor = &LoadStatsExec{}

@@ -28,9 +28,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	tmysql "github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/util/logutil"
+	"github.com/pingcap/tidb/v3/util/printer"
 	log "github.com/sirupsen/logrus"
 )
 

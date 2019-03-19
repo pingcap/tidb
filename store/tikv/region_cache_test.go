@@ -22,7 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v3/store/mockstore/mocktikv"
 )
 
 type testRegionCacheSuite struct {

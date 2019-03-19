@@ -33,19 +33,19 @@ import (
 	"github.com/pingcap/tidb-tools/pkg/etcd"
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/infoschema"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/v3/config"
+	"github.com/pingcap/tidb/v3/infoschema"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/plugin"
+	"github.com/pingcap/tidb/v3/privilege"
+	"github.com/pingcap/tidb/v3/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/table"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/types/json"
+	"github.com/pingcap/tidb/v3/util/chunk"
+	"github.com/pingcap/tidb/v3/util/format"
+	"github.com/pingcap/tidb/v3/util/sqlexec"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -1013,7 +1013,7 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 		return errors.Trace(err)
 	}
 
-	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
+	nodes, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
 	if err != nil {
 		return errors.Trace(err)
 	}

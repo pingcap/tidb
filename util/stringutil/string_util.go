@@ -18,7 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/v3/util/hack"
 )
 
 // ErrSyntax indicates that a value does not have the right syntax for the target type.

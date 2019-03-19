@@ -19,8 +19,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/store/tikv/oracle"
+	"github.com/pingcap/tidb/v3/util/testleak"
 )
 
 type leaseGrantItem struct {

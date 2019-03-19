@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/v3/sessionctx"
 )
 
 var _ SchemaSyncer = &MockSchemaSyncer{}

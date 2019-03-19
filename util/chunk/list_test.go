@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/types/json"
 )
 
 func (s *testChunkSuite) TestList(c *check.C) {

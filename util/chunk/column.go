@@ -16,8 +16,8 @@ package chunk
 import (
 	"unsafe"
 
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/types/json"
 )
 
 func (c *column) appendDuration(dur types.Duration) {

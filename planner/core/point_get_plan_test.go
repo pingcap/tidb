@@ -17,10 +17,10 @@ import (
 	"math"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v3/metrics"
+	"github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testleak"
 	dto "github.com/prometheus/client_model/go"
 )
 

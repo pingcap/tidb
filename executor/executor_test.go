@@ -34,36 +34,36 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/planner"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/v3/config"
+	"github.com/pingcap/tidb/v3/ddl"
+	"github.com/pingcap/tidb/v3/domain"
+	"github.com/pingcap/tidb/v3/executor"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/meta/autoid"
+	"github.com/pingcap/tidb/v3/planner"
+	plannercore "github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/session"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/store/mockstore"
+	"github.com/pingcap/tidb/v3/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v3/store/tikv"
+	"github.com/pingcap/tidb/v3/store/tikv/oracle"
+	"github.com/pingcap/tidb/v3/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/v3/table"
+	"github.com/pingcap/tidb/v3/table/tables"
+	"github.com/pingcap/tidb/v3/tablecodec"
+	"github.com/pingcap/tidb/v3/types"
+	"github.com/pingcap/tidb/v3/util/admin"
+	"github.com/pingcap/tidb/v3/util/codec"
+	"github.com/pingcap/tidb/v3/util/logutil"
+	"github.com/pingcap/tidb/v3/util/mock"
+	"github.com/pingcap/tidb/v3/util/testkit"
+	"github.com/pingcap/tidb/v3/util/testleak"
+	"github.com/pingcap/tidb/v3/util/testutil"
+	"github.com/pingcap/tidb/v3/util/timeutil"
 	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
@@ -795,7 +795,7 @@ func (s *testSuite) TestOrderBy(c *C) {
 	tk.MustExec("create table t (c1 int, c2 int, c3 varchar(20))")
 	tk.MustExec("insert into t values (1, 2, 'abc'), (2, 1, 'bcd')")
 
-	// Fix issue https://github.com/pingcap/tidb/issues/337
+	// Fix issue https://github.com/pingcap/tidb/v3/issues/337
 	tk.MustQuery("select c1 as a, c1 as b from t order by c1").Check(testkit.Rows("1 1", "2 2"))
 
 	tk.MustQuery("select c1 as a, t.c1 as a from t order by a desc").Check(testkit.Rows("2 2", "1 1"))
@@ -841,7 +841,7 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 	c.Assert(err, NotNil)
 }
 
-// TestIssue2612 is related with https://github.com/pingcap/tidb/issues/2612
+// TestIssue2612 is related with https://github.com/pingcap/tidb/v3/issues/2612
 func (s *testSuite) TestIssue2612(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -859,7 +859,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	rs.Close()
 }
 
-// TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
+// TestIssue345 is related with https://github.com/pingcap/tidb/v3/issues/345
 func (s *testSuite) TestIssue345(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2012,7 +2012,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	}
 	rs.Close()
 
-	// Test issue https://github.com/pingcap/tidb/issues/9639 .
+	// Test issue https://github.com/pingcap/tidb/v3/issues/9639 .
 	// Both window function and expression appear in final result field.
 	tk.MustExec("set @@tidb_enable_window_function = 1")
 	rs, err = tk.Exec("select 1+1, row_number() over() num from t")
@@ -2170,7 +2170,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 		tk.MustQuery("select * from t").Check(testkit.Rows(tt.expect))
 	}
 
-	// For issue https://github.com/pingcap/tidb/issues/3467
+	// For issue https://github.com/pingcap/tidb/v3/issues/3467
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`CREATE TABLE t1 (
  	      id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -2189,7 +2189,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	r = tk.MustQuery("select * from t1 where datetime='2014-03-31 08:57:10';")
 	r.Check(testkit.Rows("123381351 1734 2014-03-31 08:57:10 127.0.0.1")) // Cover IndexLookupExec
 
-	// For issue https://github.com/pingcap/tidb/issues/3485
+	// For issue https://github.com/pingcap/tidb/v3/issues/3485
 	tk.MustExec("set time_zone = 'Asia/Shanghai'")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`CREATE TABLE t1 (
@@ -2407,7 +2407,7 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
 }
 
-// TestIssue4024 This tests https://github.com/pingcap/tidb/issues/4024
+// TestIssue4024 This tests https://github.com/pingcap/tidb/v3/issues/4024
 func (s *testSuite) TestIssue4024(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database test2")

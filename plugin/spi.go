@@ -19,7 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/v3/sessionctx/variable"
 )
 
 const (

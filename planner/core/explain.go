@@ -18,8 +18,8 @@ import (
 	"fmt"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/expression/aggregation"
 )
 
 // ExplainInfo implements PhysicalPlan interface.

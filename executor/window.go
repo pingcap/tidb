@@ -21,11 +21,11 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v3/executor/aggfuncs"
+	"github.com/pingcap/tidb/v3/expression"
+	"github.com/pingcap/tidb/v3/planner/core"
+	"github.com/pingcap/tidb/v3/sessionctx"
+	"github.com/pingcap/tidb/v3/util/chunk"
 )
 
 // WindowExec is the executor for window functions.

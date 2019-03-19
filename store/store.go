@@ -18,8 +18,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/v3/kv"
+	"github.com/pingcap/tidb/v3/util"
 	log "github.com/sirupsen/logrus"
 )
 
