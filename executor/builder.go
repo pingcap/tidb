@@ -1560,7 +1560,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		if isInnerKeysPrefix {
 			is.KeepOrder = true
 			// enforceOuterOrder means the outerJoinKeys must be the prefix of the prop items of PhysicalIndexJoin
-			enforceOuterOrder := v.KeepOuterOrder && len(v.OuterJoinKeys) < len(v.PropItems)
+			enforceOuterOrder := len(v.OuterJoinKeys) < len(v.PropItems)
 			compareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
 			outerCompareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
 			for i := range v.OuterJoinKeys {

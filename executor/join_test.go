@@ -873,8 +873,8 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk.MustExec("create table t3(a int, key(a))")
 	tk.MustExec("insert into t3 values(0)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t3)*/ * from t1 left join t3 on t1.b = t3.a;").Check(testkit.Rows(
-		`1 0 0`,
 		`2 <nil> <nil>`,
+		`1 0 0`,
 	))
 }
 
