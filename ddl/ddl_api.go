@@ -431,7 +431,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
 			case ast.ColumnOptionFulltext:
-				// TODO: Support this type.
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			}
 		}
 	}
@@ -1582,6 +1582,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
 				err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("add")
+			case ast.ConstraintFulltext:
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			default:
 				// Nothing to do now.
 			}
