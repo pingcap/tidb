@@ -19,6 +19,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 var (
@@ -167,7 +169,9 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum.SetNull()
+		param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		param.Datum.SetNull()
+		param.InExecute = false
 	}
 	var p plannercore.Plan
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
@@ -222,6 +226,7 @@ func (e *ExecuteExec) Build() error {
 	b := newExecutorBuilder(e.ctx, e.is)
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
+		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("name label of PREPARE statement", e.name))
 		return errors.Trace(b.err)
 	}
 	e.stmtExec = stmtExec
