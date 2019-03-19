@@ -18,7 +18,7 @@ import (
 	"net"
 )
 
-const defaultReaderSize = 16 * 1024
+const defaultReaderSize = 32 * 1024
 
 // bufferedReadConn is a net.Conn compatible structure that reads from bufio.Reader.
 type bufferedReadConn struct {
