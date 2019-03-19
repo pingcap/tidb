@@ -520,7 +520,7 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	} else {
 		var uVal uint64
 		sc := b.ctx.GetSessionVars().StmtCtx
-		uVal, err = types.ConvertIntToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		uVal, err = types.ConvertIntToUint(sc, val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		res = float64(uVal)
 	}
 	return res, false, err
@@ -548,7 +548,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	} else {
 		var uVal uint64
 		sc := b.ctx.GetSessionVars().StmtCtx
-		uVal, err = types.ConvertIntToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		uVal, err = types.ConvertIntToUint(sc, val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		if err != nil {
 			return res, false, err
 		}
@@ -578,7 +578,7 @@ func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNul
 	} else {
 		var uVal uint64
 		sc := b.ctx.GetSessionVars().StmtCtx
-		uVal, err = types.ConvertIntToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		uVal, err = types.ConvertIntToUint(sc, val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		if err != nil {
 			return res, false, err
 		}
@@ -803,13 +803,13 @@ func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		return res, isNull, err
 	}
 	if !mysql.HasUnsignedFlag(b.tp.Flag) {
-		res, err = types.ConvertFloatToInt(val, types.SignedLowerBound[mysql.TypeLonglong], types.SignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
+		res, err = types.ConvertFloatToInt(val, types.IntergerSignedLowerBound(mysql.TypeLonglong), types.IntergerSignedUpperBound(mysql.TypeLonglong), mysql.TypeDouble)
 	} else if b.inUnion && val < 0 {
 		res = 0
 	} else {
 		var uintVal uint64
 		sc := b.ctx.GetSessionVars().StmtCtx
-		uintVal, err = types.ConvertFloatToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
+		uintVal, err = types.ConvertFloatToUint(sc, val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeDouble)
 		res = int64(uintVal)
 	}
 	return res, isNull, err
