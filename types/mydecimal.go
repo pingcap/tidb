@@ -23,7 +23,7 @@ import (
 )
 
 // RoundMode is the type for round mode.
-type RoundMode string
+type RoundMode int32
 
 // constant values.
 const (
@@ -49,11 +49,11 @@ const (
 	DivFracIncr = 4
 
 	// ModeHalfEven rounds normally.
-	ModeHalfEven RoundMode = "ModeHalfEven"
+	ModeHalfEven RoundMode = 5
 	// Truncate just truncates the decimal.
-	ModeTruncate RoundMode = "Truncate"
+	ModeTruncate RoundMode = 10
 	// Ceiling is not supported now.
-	modeCeiling RoundMode = "Ceiling"
+	modeCeiling RoundMode = 0
 )
 
 var (
@@ -756,16 +756,8 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 	wordsFrac := digitsToWords(int(d.digitsFrac))
 	wordsInt := digitsToWords(int(d.digitsInt))
 
-	var roundDigit int32
+	roundDigit := int32(roundMode)
 	/* TODO - fix this code as it won't work for CEILING mode */
-	switch roundMode {
-	case modeCeiling:
-		roundDigit = 0
-	case ModeHalfEven:
-		roundDigit = 5
-	case ModeTruncate:
-		roundDigit = 10
-	}
 
 	if wordsInt+wordsFracTo > wordBufLen {
 		wordsFracTo = wordBufLen - wordsInt
@@ -802,9 +794,9 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 	toIdx := wordsInt + wordsFracTo - 1
 	if frac == wordsFracTo*digitsPerWord {
 		doInc := false
-		switch roundDigit {
+		switch roundMode {
 		// Notice: No support for ceiling mode now.
-		case 0:
+		case modeCeiling:
 			// If any word after scale is not zero, do increment.
 			// e.g ceiling 3.0001 to scale 1, gets 3.1
 			idx := toIdx + (wordsFrac - wordsFracTo)
@@ -815,11 +807,11 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 				}
 				idx--
 			}
-		case 5:
+		case ModeHalfEven:
 			digAfterScale := d.wordBuf[toIdx+1] / digMask // the first digit after scale.
 			// If first digit after scale is 5 and round even, do increment if digit at scale is odd.
 			doInc = (digAfterScale > 5) || (digAfterScale == 5)
-		case 10:
+		case ModeTruncate:
 			// Never round, just truncate.
 			doInc = false
 		}
