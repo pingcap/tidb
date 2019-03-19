@@ -53,7 +53,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test 
+dev: checklist check test
 
 build:
 	$(GOBUILD)
@@ -92,15 +92,14 @@ check-slow:tools/bin/gometalinter tools/bin/gosec
 
 errcheck:tools/bin/errcheck
 	@echo "errcheck"
-	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(	PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES)
 
 vet:
-	@echo "vet"
-	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
+	make -C v3 vet
 
 tidy:
 	@echo "go mod tidy"
@@ -111,7 +110,7 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-test: checklist checkdep gotest explaintest
+test: checklist gotest explaintest
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -124,18 +123,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 endif
 
 gotest: gofail-enable
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	@echo "Running in TRAVIS_COVERAGE mode."
-	@export log_level=error; \
-	$(GO) get github.com/go-playground/overalls
-	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor,cmd,docs,LICENSES,ddl/failtest,ddl/testutil/,executor/esqtest' \
-			-concurrency=1 || { $(GOFAIL_DISABLE); exit 1; }
-else
-	@echo "Running in native mode."
-	@export log_level=error; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
-endif
-	@$(GOFAIL_DISABLE)
+	make -C v3 gotest
 
 race: gofail-enable
 	@export log_level=debug; \
@@ -163,30 +151,22 @@ ifeq ("$(WITH_CHECK)", "1")
 endif
 
 server:
-ifeq ($(TARGET), "")
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
-else
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
-endif
+	make -C v3 server
 
 server_check:
-ifeq ($(TARGET), "")
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server tidb-server/main.go
-else
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
-endif
+	make -C v3 server_check
 
 benchkv:
-	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchkv cmd/benchkv/main.go
+	make -C v3 benchkv
 
 benchraw:
-	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchraw cmd/benchraw/main.go
+	make -C v3 benchraw
 
 benchdb:
-	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
+	make -C v3 benchdb
 
 importer:
-	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
+	make -C v3 importer
 
 checklist:
 	cat checklist.md
@@ -198,9 +178,6 @@ gofail-enable: tools/bin/gofail
 gofail-disable: tools/bin/gofail
 # Restoring gofail failpoints...
 	@$(GOFAIL_DISABLE)
-
-checkdep:
-	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1
 
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
@@ -226,8 +203,8 @@ tools/bin/errcheck: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
 
-tools/bin/gofail: go.mod
-	$(GO) build -o $@ github.com/pingcap/gofail
+tools/bin/gofail:
+	make -C v3 tools/bin/gofail
 
 tools/bin/misspell:tools/check/go.mod
 	$(GO) get -u github.com/client9/misspell/cmd/misspell

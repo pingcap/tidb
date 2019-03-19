@@ -1013,7 +1013,7 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 		return errors.Trace(err)
 	}
 
-	nodes, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
+	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
 	if err != nil {
 		return errors.Trace(err)
 	}
