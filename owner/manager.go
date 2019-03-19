@@ -243,7 +243,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		if terror.ErrorEqual(err, rpctypes.ErrLeaseNotFound) {
 			if etcdSession != nil {
 				err = etcdSession.Close()
-				logutil.Logger(context.Background()).Info("etcd session encounters the error of lease not found, closes it.", zap.String("logPrefix", logPrefix), zap.Error(err))
+				logutil.Logger(context.Background()).Info("etcd session encounters the error of lease not found, closes it", zap.String("logPrefix", logPrefix), zap.Error(err))
 			}
 			continue
 		}
