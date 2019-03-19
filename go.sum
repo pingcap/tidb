@@ -110,6 +110,8 @@ github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596 h1:t2OQTpPJnrPDGlvA+3F
 github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596/go.mod h1:WpHUKhNZ18v116SvGrmjkA9CBhYmuUTKL+p8JC9ANEw=
 github.com/pingcap/parser v0.0.0-20190311093336-9fca026d9c49 h1:dnac5Z4hlmf8Ocd+RasmkuEuI0ZJRH+QJAh3K6vMySQ=
 github.com/pingcap/parser v0.0.0-20190311093336-9fca026d9c49/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20190319074401-551b5174e72b h1:aOocdRJcPO0FJ1nfgnC/phNiopMx25pKcN+OtDSfC+c=
+github.com/pingcap/parser v0.0.0-20190319074401-551b5174e72b/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v0.0.0-20190317111748-76608ee125a0 h1:QvPl2AuMHsy5uDZ2TNwdBdICgAIfLU/YGIxe4hrYBR8=
 github.com/pingcap/pd v0.0.0-20190317111748-76608ee125a0/go.mod h1:tSfzZWwori4IICac4SoNiSwFnrs8ZVCRzuFw3YraqRs=
 github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible h1:e9Gi/LP9181HT3gBfSOeSBA+5JfemuE4aEAhqNgoE4k=
