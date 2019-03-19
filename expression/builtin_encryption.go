@@ -1014,7 +1014,7 @@ func (c *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool
 	l := int64(0)
 	for index := range pwd {
 		l++
-		if l >= 100 {
+		if l > 100 {
 			pwd = pwd[:index-1]
 			break
 		}

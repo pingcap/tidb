@@ -346,7 +346,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		_, err := parseTimeZone(value)
 		return value, err
 	case ValidatePasswordLength, ValidatePasswordMixedCaseCount, ValidatePasswordNumberCount, ValidatePasswordSpecialCharCount:
-		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+		return checkUInt64SystemVar(name, value, 0, 100, vars)
 	case ValidatePasswordPolicy:
 		if strings.EqualFold(value, "LOW") || value == "0" {
 			return "0", nil
