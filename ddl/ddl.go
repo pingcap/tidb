@@ -426,7 +426,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 				func() { w.start(d.ddlCtx) },
 				func(r interface{}) {
 					if r != nil {
-						logutil.Logger(ddlLogCtx).Error("[ddl] DDL worker meet panic", zap.String("worker", w.String()), zap.String("ID", d.uuid))
+						logutil.Logger(w.logCtx).Error("[ddl] DDL worker meet panic", zap.String("ID", d.uuid))
 						metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 					}
 				})
