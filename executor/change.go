@@ -1,3 +1,5 @@
+// Copyright 2018 PingCAP, Inc.
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -13,12 +15,13 @@ package executor
 
 import (
 	"context"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/chunk"
-	"strings"
 )
 
 // ChangeExec represents a change executor.

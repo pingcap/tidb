@@ -222,6 +222,7 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
+
 func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
 	exe := &Change{Statement: v}
 	return exe, nil
