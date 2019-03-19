@@ -370,10 +370,11 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	task.memTracker.AttachTo(ow.parentMemTracker)
 
 	ow.increaseBatchSize()
-	task.outerResult.SetRequiredRows(ow.batchSize, ow.maxBatchSize)
 	if ow.lookup.isOuterJoin { // if is outerJoin, push the requiredRows down
 		requiredRows := int(atomic.LoadInt64(&ow.lookup.requiredRows))
 		task.outerResult.SetRequiredRows(requiredRows, ow.maxBatchSize)
+	} else {
+		task.outerResult.SetRequiredRows(ow.batchSize, ow.maxBatchSize)
 	}
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
