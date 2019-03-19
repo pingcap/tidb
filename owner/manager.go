@@ -276,7 +276,7 @@ func (m *ownerManager) revokeSession(logPrefix string, leaseID clientv3.LeaseID)
 		time.Duration(ManagerSessionTTL)*time.Second)
 	_, err := m.etcdCli.Revoke(cancelCtx, leaseID)
 	cancel()
-	logutil.Logger(context.Background()).Info("break campaign loop, revoke err.", zap.String("logPrefix", logPrefix), zap.Error(err))
+	logutil.Logger(context.Background()).Info("break campaign loop, revoke err", zap.String("logPrefix", logPrefix), zap.Error(err))
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.
