@@ -28,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -94,7 +95,7 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 	if !dr.storeSupport {
 		dr.emulatorCh <- struct{}{}
 	}
-	log.Infof("[ddl] add job (%d,%s) into delete-range table", job.ID, job.Type.String())
+	logutil.Logger(ddlLogCtx).Info("[ddl] add job into delete-range table", zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()))
 	return nil
 }
 
@@ -119,7 +120,7 @@ func (dr *delRange) start() {
 
 // clear implements delRangeManager interface.
 func (dr *delRange) clear() {
-	log.Infof("[ddl] closing delRange")
+	logutil.Logger(ddlLogCtx).Info("[ddl] closing delRange")
 	close(dr.quitCh)
 	dr.wait.Wait()
 }
@@ -129,7 +130,7 @@ func (dr *delRange) clear() {
 // deletes all keys in each DelRangeTask.
 func (dr *delRange) startEmulator() {
 	defer dr.wait.Done()
-	log.Infof("[ddl] start delRange emulator")
+	logutil.Logger(ddlLogCtx).Info("[ddl] start delRange emulator")
 	for {
 		select {
 		case <-dr.emulatorCh:
@@ -161,20 +162,20 @@ func IsEmulatorGCEnable() bool {
 func (dr *delRange) doDelRangeWork() error {
 	ctx, err := dr.sessPool.get()
 	if err != nil {
-		log.Errorf("[ddl] delRange emulator get session fail: %s", err)
+		logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator get session failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	defer dr.sessPool.put(ctx)
 
 	ranges, err := util.LoadDeleteRanges(ctx, math.MaxInt64)
 	if err != nil {
-		log.Errorf("[dd] delRange emulator load tasks fail: %s", err)
+		logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator load tasks failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	for _, r := range ranges {
 		if err := dr.doTask(ctx, r); err != nil {
-			log.Errorf("[ddl] delRange emulator do task fail: %s", err)
+			logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator do task failed", zap.Error(err))
 			return errors.Trace(err)
 		}
 	}
@@ -220,14 +221,14 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 		}
 		if finish {
 			if err := util.CompleteDeleteRange(ctx, r); err != nil {
-				log.Errorf("[ddl] delRange emulator complete task fail: %s", err)
+				logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator complete task failed", zap.Error(err))
 				return errors.Trace(err)
 			}
-			log.Infof("[ddl] delRange emulator complete task: (%d, %d)", r.JobID, r.ElementID)
+			logutil.Logger(ddlLogCtx).Info("[ddl] delRange emulator complete task", zap.Int64("jobID", r.JobID), zap.Int64("elementID", r.ElementID))
 			break
 		}
 		if err := util.UpdateDeleteRange(ctx, r, newStartKey, oldStartKey); err != nil {
-			log.Errorf("[ddl] delRange emulator update task fail: %s", err)
+			logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator update task failed", zap.Error(err))
 		}
 		oldStartKey = newStartKey
 	}
@@ -333,7 +334,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 }
 
 func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts uint64) error {
-	log.Infof("[ddl] insert into delete-range table with key: (%d,%d)", jobID, elementID)
+	logutil.Logger(ddlLogCtx).Info("[ddl] insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64("elementID", elementID))
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
 	sql := fmt.Sprintf(insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
