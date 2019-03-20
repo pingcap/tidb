@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
@@ -234,9 +234,6 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 			if err != nil {
 				return errors.Trace(err)
 			}
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			tp.Collate = charset.NULL
-			tp.Collate = charset.NULL
 		default:
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
