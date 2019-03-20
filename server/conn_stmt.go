@@ -72,11 +72,10 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 		return errors.Trace(err)
 	}
 
-	memo := make(map[string][]byte)
 	if len(params) > 0 {
 		for i := 0; i < len(params); i++ {
 			data = data[0:4]
-			data = params[i].Dump2(data, memo)
+			data = params[i].Dump2(data, cc.colMemo)
 
 			if err := cc.writePacket(data); err != nil {
 				return errors.Trace(err)
@@ -91,7 +90,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	if len(columns) > 0 {
 		for i := 0; i < len(columns); i++ {
 			data = data[0:4]
-			data = columns[i].Dump2(data, memo)
+			data = columns[i].Dump2(data, cc.colMemo)
 
 			if err := cc.writePacket(data); err != nil {
 				return errors.Trace(err)

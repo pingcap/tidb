@@ -81,6 +81,7 @@ func newClientConn(s *Server) *clientConn {
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 		status:       connStatusDispatching,
+		colMemo:      make(map[string][]byte),
 	}
 }
 
@@ -108,6 +109,7 @@ type clientConn struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+	colMemo map[string][]byte
 }
 
 func (cc *clientConn) String() string {
@@ -1062,7 +1064,6 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 		return errors.Trace(err)
 	}
 	data := cc.alloc.AllocWithLen(4, 1024)
-	memo := make(map[string][]byte)
 	for _, column := range columns {
 		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
 		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
@@ -1071,7 +1072,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 		column.DefaultValue = []byte{}
 
 		data = data[0:4]
-		data = column.Dump2(data, memo)
+		data = column.Dump2(data, cc.colMemo)
 		if err := cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
@@ -1125,10 +1126,9 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 	if err := cc.writePacket(data); err != nil {
 		return errors.Trace(err)
 	}
-	memo := make(map[string][]byte)
 	for _, v := range columns {
 		data = data[0:4]
-		data = v.Dump2(data, memo)
+		data = v.Dump2(data, cc.colMemo)
 		if err := cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}

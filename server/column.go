@@ -60,17 +60,18 @@ func (column *ColumnInfo) Dump(buffer []byte) []byte {
 }
 
 func (column *ColumnInfo) Dump2(buffer []byte, headerMemo map[string][]byte) []byte {
-	header, ok := headerMemo[column.Schema+"-"+column.Table+"-"+column.OrgTable]
+	key := column.Schema + "-" + column.Table + "-" + column.OrgTable + "-" + column.Name + "-" + column.OrgName
+	header, ok := headerMemo[key]
 	if !ok {
 		header = append(header, defBytes...)
 		header = dumpLengthEncodedString(header, []byte(column.Schema))
 		header = dumpLengthEncodedString(header, []byte(column.Table))
 		header = dumpLengthEncodedString(header, []byte(column.OrgTable))
-		headerMemo[column.Schema+"-"+column.Table+"-"+column.OrgTable] = header
+		header = dumpLengthEncodedString(header, []byte(column.Name))
+		header = dumpLengthEncodedString(header, []byte(column.OrgName))
+		headerMemo[key] = header
 	}
 	buffer = append(buffer, header...)
-	buffer = dumpLengthEncodedString(buffer, []byte(column.Name))
-	buffer = dumpLengthEncodedString(buffer, []byte(column.OrgName))
 
 	buffer = append(buffer, 0x0c)
 
