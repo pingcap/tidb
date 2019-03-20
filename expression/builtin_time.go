@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -31,11 +32,13 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const ( // GET_FORMAT first argument.
@@ -1285,7 +1288,16 @@ func (b *builtinWeekWithoutModeSig) evalInt(row chunk.Row) (int64, bool, error) 
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
 	}
 
-	week := date.Time.Week(0)
+	mode := 0
+	modeStr, ok := b.ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
+	if ok && modeStr != "" {
+		mode, err = strconv.Atoi(modeStr)
+		if err != nil {
+			return 0, true, handleInvalidTimeError(b.ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))
+		}
+	}
+
+	week := date.Time.Week(mode)
 	return int64(week), false, nil
 }
 
@@ -5282,7 +5294,7 @@ func (b *builtinTimeFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	dur, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	// if err != nil, then dur is ZeroDuration, outputs 00:00:00 in this case which follows the behavior of mysql.
 	if err != nil {
-		log.Warnf("Expression.EvalDuration() in time_format() failed, due to %s", err.Error())
+		logutil.Logger(context.Background()).Warn("time_format.args[0].EvalDuration failed", zap.Error(err))
 	}
 	if isNull {
 		return "", isNull, err
@@ -5629,7 +5641,7 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	tm := arg.Time
 	var day int
 	year, month := tm.Year(), tm.Month()
-	if year == 0 && month == 0 && tm.Day() == 0 {
+	if month == 0 {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
 	}
 	day = types.GetLastDay(year, month)

@@ -15,6 +15,7 @@ package infoschema
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var slowQueryCols = []columnInfo{
@@ -46,6 +47,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogDBStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogIndexIDsStr, mysql.TypeVarchar, 100, 0, nil, nil},
 	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeVarchar, 4096, 0, nil, nil},
 }
 
@@ -62,7 +64,7 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 	}
 	defer func() {
 		if err = file.Close(); err != nil {
-			log.Error(err)
+			logutil.Logger(context.Background()).Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
 		}
 	}()
 
@@ -91,8 +93,8 @@ func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, e
 
 		if startFlag {
 			// Parse slow log field.
-			if strings.Contains(line, variable.SlowLogPrefixStr) {
-				line = line[len(variable.SlowLogPrefixStr):]
+			if strings.Contains(line, variable.SlowLogRowPrefixStr) {
+				line = line[len(variable.SlowLogRowPrefixStr):]
 				fieldValues := strings.Split(line, " ")
 				for i := 0; i < len(fieldValues)-1; i += 2 {
 					field := fieldValues[i]
@@ -134,8 +136,9 @@ type slowQueryTuple struct {
 	totalKeys    uint64
 	processKeys  uint64
 	db           string
-	indexNames   string
+	indexIDs     string
 	isInternal   bool
+	digest       string
 	sql          string
 }
 
@@ -209,9 +212,11 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 	case variable.SlowLogDBStr:
 		st.db = value
 	case variable.SlowLogIndexIDsStr:
-		st.indexNames = value
+		st.indexIDs = value
 	case variable.SlowLogIsInternalStr:
 		st.isInternal = value == "true"
+	case variable.SlowLogDigestStr:
+		st.digest = value
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
 	}
@@ -236,8 +241,9 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewUintDatum(st.totalKeys))
 	record = append(record, types.NewUintDatum(st.processKeys))
 	record = append(record, types.NewStringDatum(st.db))
-	record = append(record, types.NewStringDatum(st.indexNames))
+	record = append(record, types.NewStringDatum(st.indexIDs))
 	record = append(record, types.NewDatum(st.isInternal))
+	record = append(record, types.NewStringDatum(st.digest))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
 }
