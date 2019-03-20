@@ -663,6 +663,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, true)
 	txn1, err := dbt.db.Begin()
 	c.Assert(err, IsNil)
+	config.GetGlobalConfig().IgnoreColumnUTF8Charset = false
 	_, err = txn1.Exec("insert t2 values (unhex('F0A48BAE'));")
 	c.Assert(err, NotNil)
 	txn1.Commit()

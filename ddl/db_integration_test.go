@@ -1289,11 +1289,21 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 	s.tk.MustExec("drop table if exists t")
 	defer s.tk.MustExec("drop table if exists t")
 
-	s.tk.MustExec("create table t (a varchar(10) character set utf8) charset=utf8mb4;")
-	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` varchar(10) DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
+	s.tk.MustExec("create table t (a varchar(10) character set utf8, b varchar(10) character set ascii) charset=utf8mb4;")
 	c.Assert(config.GetGlobalConfig().IgnoreColumnUTF8Charset, IsTrue)
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, IsTrue)
+	s.tk.MustExec("insert into t set a= x'f09f8c80'")
+	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` varchar(10) DEFAULT NULL,\n" +
+		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
 	config.GetGlobalConfig().IgnoreColumnUTF8Charset = false
-	assertErrorCode(c, s.tk, "insert into t values(x'f09f8c80');", mysql.ErrTruncatedWrongValueForField)
-	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	assertErrorCode(c, s.tk, "insert into t set a= x'f09f8c80';", mysql.ErrTruncatedWrongValueForField)
+	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
+		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	config.GetGlobalConfig().IgnoreColumnUTF8Charset = true
 }

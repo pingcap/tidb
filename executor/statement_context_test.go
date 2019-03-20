@@ -88,6 +88,7 @@ func (s *testSuite1) TestStatementContext(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a varchar(100) charset utf8);")
 	defer tk.MustExec("drop table if exists t1")
+	config.GetGlobalConfig().IgnoreColumnUTF8Charset = false
 	tk.MustExec("insert t1 values (unhex('f09f8c80'))")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
 	tk.MustQuery("select * from t1").Check(testkit.Rows(""))
