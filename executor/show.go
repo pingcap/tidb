@@ -386,14 +386,15 @@ func (e *ShowExec) fetchShowColumns() error {
 				columnDefault = defaultValStr
 			}
 		}
+		switch col.Tp {
+		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime,
+			mysql.TypeYear, mysql.TypeNewDate:
+			desc.Collation = "NULL"
+		}
 
 		// The FULL keyword causes the output to include the column collation and comments,
 		// as well as the privileges you have for each column.
 		if e.Full {
-			switch desc.Type {
-			case "date", "datetime", "timestamp":
-				desc.Collation = "NULL"
-			}
 			e.appendRow([]interface{}{
 				desc.Field,
 				desc.Type,
