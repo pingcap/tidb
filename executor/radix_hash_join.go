@@ -325,8 +325,8 @@ func (e *RadixHashJoinExec) evalRadixBit() {
 	innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
 	l2CacheSize := float64(sv.L2CacheSize) * 3 / 4
 	radixBitsNum := math.Ceil(math.Log2(innerResultSize / l2CacheSize))
-	if radixBitsNum <= 0 {
-		radixBitsNum = 1
+	if radixBitsNum < 0 {
+		radixBitsNum = 0
 	}
 	// Take the rightmost radixBitsNum bits as the bitmask.
 	e.radixBits = ^(math.MaxUint32 << uint(radixBitsNum))
