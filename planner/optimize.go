@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/cascades"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
@@ -43,11 +42,11 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	// Check privilege. Maybe it's better to move this to the Preprocess, but
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if err := plannercore.CheckPrivilege(pm, builder.GetVisitInfo()); err != nil {
-			return nil, err
-		}
-	}
+	//if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+	//	if err := plannercore.CheckPrivilege(pm, builder.GetVisitInfo()); err != nil {
+	//		return nil, err
+	//	}
+	//}
 
 	// Handle the execute statement.
 	if execPlan, ok := p.(*plannercore.Execute); ok {
