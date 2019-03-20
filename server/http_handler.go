@@ -743,6 +743,17 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
+		if ignoreColumnUTF8Charset := req.Form.Get("ignore-column-utf8-charset"); ignoreColumnUTF8Charset != "" {
+			switch ignoreColumnUTF8Charset {
+			case "0":
+				config.GetGlobalConfig().IgnoreColumnUTF8Charset = false
+			case "1":
+				config.GetGlobalConfig().IgnoreColumnUTF8Charset = true
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}

@@ -675,6 +675,20 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, false)
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
+
+	// Test enable ignore-column-utf8-charset.
+	form.Set("ignore-column-utf8-charset", "0")
+	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(config.GetGlobalConfig().IgnoreColumnUTF8Charset, Equals, false)
+
+	// Test Disable ignore-column-utf8-charset.
+	form.Set("ignore-column-utf8-charset", "1")
+	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(config.GetGlobalConfig().IgnoreColumnUTF8Charset, Equals, true)
 }
 
 func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {

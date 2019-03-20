@@ -51,6 +51,9 @@ compatible-kill-query = false
 # check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
 check-mb4-value-in-utf8 = true
 
+# ignore-column-utf8-charset use for upgrade compatibility. Set to true will ignore column charset and use table charset when column charset is UTF8.
+ignore-column-utf8-charset = true
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

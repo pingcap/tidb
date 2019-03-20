@@ -63,18 +63,19 @@ type Config struct {
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
-	Log                 Log               `toml:"log" json:"log"`
-	Security            Security          `toml:"security" json:"security"`
-	Status              Status            `toml:"status" json:"status"`
-	Performance         Performance       `toml:"performance" json:"performance"`
-	PreparedPlanCache   PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
-	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
-	Binlog              Binlog            `toml:"binlog" json:"binlog"`
-	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	Plugin              Plugin            `toml:"plugin" json:"plugin"`
-	CheckMb4ValueInUtf8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	Log                     Log               `toml:"log" json:"log"`
+	Security                Security          `toml:"security" json:"security"`
+	Status                  Status            `toml:"status" json:"status"`
+	Performance             Performance       `toml:"performance" json:"performance"`
+	PreparedPlanCache       PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing             OpenTracing       `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol           ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient              TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog                  Binlog            `toml:"binlog" json:"binlog"`
+	CompatibleKillQuery     bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	Plugin                  Plugin            `toml:"plugin" json:"plugin"`
+	CheckMb4ValueInUtf8     bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	IgnoreColumnUTF8Charset bool              `toml:"ignore-column-utf8-charset" json:"ignore-column-utf8-charset"`
 }
 
 // Log is the log section of config.
@@ -267,20 +268,21 @@ type Plugin struct {
 }
 
 var defaultConf = Config{
-	Host:                "0.0.0.0",
-	AdvertiseAddress:    "",
-	Port:                4000,
-	Cors:                "",
-	Store:               "mocktikv",
-	Path:                "/tmp/tidb",
-	RunDDL:              true,
-	SplitTable:          true,
-	Lease:               "45s",
-	TokenLimit:          1000,
-	OOMAction:           "log",
-	MemQuotaQuery:       32 << 30,
-	EnableStreaming:     false,
-	CheckMb4ValueInUtf8: true,
+	Host:                    "0.0.0.0",
+	AdvertiseAddress:        "",
+	Port:                    4000,
+	Cors:                    "",
+	Store:                   "mocktikv",
+	Path:                    "/tmp/tidb",
+	RunDDL:                  true,
+	SplitTable:              true,
+	Lease:                   "45s",
+	TokenLimit:              1000,
+	OOMAction:               "log",
+	MemQuotaQuery:           32 << 30,
+	EnableStreaming:         false,
+	CheckMb4ValueInUtf8:     true,
+	IgnoreColumnUTF8Charset: true,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,
