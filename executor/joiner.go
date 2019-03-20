@@ -225,6 +225,7 @@ func (j *semiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, ch
 		}
 	}
 	return false, false, nil
+
 }
 
 // tryToMatchOuters implements joiner interface.
