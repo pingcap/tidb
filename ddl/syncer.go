@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -123,7 +124,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[etcd-cli] put key: %s value: %s failed %v no.%d", key, val, err, i)
+		logutil.Logger(ddlLogCtx).Warn("[ddl] etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(keyOpRetryInterval)
 	}
 	return errors.Trace(err)
@@ -221,7 +222,7 @@ func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context) {
 		s.mu.Lock()
 		s.mu.globalVerCh = ch
 		s.mu.Unlock()
-		log.Info("[syncer] watch global schema finished")
+		logutil.Logger(ddlLogCtx).Info("[ddl] syncer watch global schema finished")
 	}()
 }
 
@@ -270,7 +271,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[etcd-cli] delete key %s failed %v no.%d", key, err, i)
+		logutil.Logger(ddlLogCtx).Warn("[ddl] etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
 	}
 	return errors.Trace(err)
 }
@@ -292,7 +293,7 @@ func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx context.Context) (int64, 
 	for {
 		if err != nil {
 			if failedCnt%intervalCnt == 0 {
-				log.Infof("[syncer] get global version failed %v", err)
+				logutil.Logger(ddlLogCtx).Info("[ddl] syncer get global version failed", zap.Error(err))
 			}
 			time.Sleep(keyOpRetryInterval)
 			failedCnt++
@@ -346,7 +347,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 
 		resp, err := s.etcdCli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		if err != nil {
-			log.Infof("[syncer] check all versions failed %v, continue checking.", err)
+			logutil.Logger(ddlLogCtx).Info("[ddl] syncer check all versions failed, continue checking.", zap.Error(err))
 			continue
 		}
 
@@ -358,14 +359,14 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 
 			ver, err := strconv.Atoi(string(kv.Value))
 			if err != nil {
-				log.Infof("[syncer] check all versions, ddl %s convert %v to int failed %v, continue checking.", kv.Key, kv.Value, err)
+				logutil.Logger(ddlLogCtx).Info("[ddl] syncer check all versions, convert value to int failed, continue checking.", zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
 				succ = false
 				break
 			}
 			if int64(ver) < latestVer {
 				if notMatchVerCnt%intervalCnt == 0 {
-					log.Infof("[syncer] check all versions, ddl %s is not synced, current ver %v, latest version %v, continue checking",
-						kv.Key, ver, latestVer)
+					logutil.Logger(ddlLogCtx).Info("[ddl] syncer check all versions, someone is not synced, continue checking",
+						zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
 				}
 				succ = false
 				notMatchVerCnt++
