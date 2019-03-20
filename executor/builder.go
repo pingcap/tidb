@@ -210,10 +210,9 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 }
 
 func (b *executorBuilder) buildChange(v *plannercore.Change) Executor {
-	e := &ChangeExec{
+	return &ChangeExec{
 		Statement: v.Statement,
 	}
-	return e
 }
 
 func (b *executorBuilder) buildShowNextRowID(v *plannercore.ShowNextRowID) Executor {
