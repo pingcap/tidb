@@ -1282,3 +1282,12 @@ func (s *testIntegrationSuite) TestAlterAlgorithm(c *C) {
 	s.assertAlterErrorExec(c, "alter table t default charset = utf8mb4, ALGORITHM=INPLACE")
 	s.tk.MustExec("alter table t default charset = utf8mb4, ALGORITHM=INSTANT")
 }
+
+func (s *testIntegrationSuite) TestFulltextIndexIgnore(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t_ft")
+	defer s.tk.MustExec("drop table if exists t_ft")
+	s.assertWarningExec(c, "create table t_ft (a text, fulltext key (a))", ddl.ErrTableCantHandleFt)
+	s.assertWarningExec(c, "alter table t_ft add fulltext key (a)", ddl.ErrTableCantHandleFt)
+}
