@@ -175,13 +175,14 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 
 // StrToInt converts a string to an integer at the best-effort.
 func StrToInt(sc *stmtctx.StatementContext, str string) (int64, error) {
-	str = strings.TrimSpace(str)
-	validPrefix, err := getValidIntPrefix(sc, str)
-	iVal, err1 := strconv.ParseInt(validPrefix, 10, 64)
+	//  TODO: self-define a one pass ParserInt to do it's best & trim logic in a pass
+	//str = strings.TrimSpace(str)
+	//validPrefix, err := getValidIntPrefix(sc, str)
+	iVal, err1 := strconv.ParseInt(str, 10, 64)
 	if err1 != nil {
-		return iVal, ErrOverflow.GenWithStackByArgs("BIGINT", validPrefix)
+		return iVal, ErrOverflow.GenWithStackByArgs("BIGINT", str)
 	}
-	return iVal, errors.Trace(err)
+	return iVal, nil
 }
 
 // StrToUint converts a string to an unsigned integer at the best-effortt.
