@@ -912,6 +912,7 @@ var MySQLErrName = map[uint16]string{
 	ErrWindowNoGroupOrderUnused:                              "ASC or DESC with GROUP BY isn't allowed with window functions; put ASC or DESC in ORDER BY",
 	ErrWindowExplainJson:                                     "To get information about window functions use EXPLAIN FORMAT=JSON",
 	ErrWindowFunctionIgnoresFrame:                            "Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition",
+	ErrRoleNotGranted:                                        "%s is is not granted to %s",
 
 	// TiDB errors.
 	ErrMemExceedThreshold: "%s holds %dB memory, exceeds threshold %dB.%s",
