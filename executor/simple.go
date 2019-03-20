@@ -89,7 +89,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err erro
 }
 
 func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
-	checkDup := make(map[string]*auth.RoleIdentity)
+	checkDup := make(map[string]*auth.RoleIdentity, len(s.RoleList))
 	// Check whether RoleNameList contain duplicate role name.
 	for _, r := range s.RoleList {
 		key := r.String()
