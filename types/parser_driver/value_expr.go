@@ -64,6 +64,13 @@ var ValueExprPool = sync.Pool{
 	},
 }
 
+var UsingVarsNodePool = sync.Pool{
+	New: func() interface{} {
+		var expr []ast.ExprNode
+		return expr
+	},
+}
+
 var (
 	emptyValueExpr = &ValueExpr{}
 )

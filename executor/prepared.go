@@ -15,9 +15,6 @@ package executor
 
 import (
 	"context"
-	"math"
-	"sort"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -30,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"math"
+	"sort"
 )
 
 var (
@@ -258,7 +257,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 	if err := ResetContextOfStmt(ctx, execStmt); err != nil {
 		return nil, err
 	}
-	execStmt.UsingVars = make([]ast.ExprNode, len(args))
+	execStmt.UsingVars = driver.UsingVarsNodePool.Get().([]ast.ExprNode)
 	for i, val := range args {
 		execStmt.UsingVars[i] = driver.NewValueExprFromPool(val)
 	}
