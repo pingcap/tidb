@@ -34,23 +34,23 @@ type ChangeExec struct {
 // Next implements the Executor Next interface.
 func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	stmt := e.Statement
-	cfg := config.GetGlobalConfig()
-	return updateNodeState(ctx, cfg.Path, stmt.NodeType, stmt.NodeID, stmt.State)
+	return updateNodeState(ctx, stmt)
 }
 
 // updateNodeState update pump or drainer's state.
-func updateNodeState(ctx context.Context, urls, kind, nodeID, state string) error {
-	kind = strings.ToLower(kind)
+func updateNodeState(ctx context.Context, stmt *ast.ChangeStmt) error {
+	kind := strings.ToLower(stmt.NodeType)
+	urls := config.GetGlobalConfig().Path
 	registry, err := createRegistry(urls)
 	if err != nil {
 		return err
 	}
-
 	nodes, _, err := registry.Nodes(ctx, node.NodePrefix[kind])
 	if err != nil {
 		return err
 	}
-
+	state := stmt.State
+	nodeID := stmt.NodeID
 	for _, n := range nodes {
 		if n.NodeID != nodeID {
 			continue
@@ -63,6 +63,5 @@ func updateNodeState(ctx context.Context, urls, kind, nodeID, state string) erro
 			return errors.Errorf("state %s is illegal", state)
 		}
 	}
-
 	return errors.NotFoundf("node %s, id %s from etcd %s", kind, nodeID, urls)
 }
