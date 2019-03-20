@@ -176,6 +176,8 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = val
 		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
+
+	UsingVarsNode1Pool.Put(e.UsingVars[:0])
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.

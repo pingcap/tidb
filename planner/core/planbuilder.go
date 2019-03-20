@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -221,8 +222,15 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
 
+var UsingVarsNode1Pool = sync.Pool{
+	New: func() interface{} {
+		var expr []expression.Expression
+		return expr
+	},
+}
+
 func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
-	vars := make([]expression.Expression, 0, len(v.UsingVars))
+	vars := UsingVarsNode1Pool.Get().([]expression.Expression)
 	for _, expr := range v.UsingVars {
 		newExpr, _, err := b.rewrite(expr, nil, nil, true)
 		if err != nil {
