@@ -2384,6 +2384,27 @@ func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
 
 	tk1.MustExec("update no_retry set id = 7")
 	tk1.MustExec("commit")
+
+	// test for disable transaction local latch
+	tk1.Se.GetSessionVars().InRestrictedSQL = false
+	config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+	tk1.MustExec("begin")
+	tk1.MustExec("update no_retry set id = 9")
+
+	tk2.MustExec("update no_retry set id = 8")
+
+	_, err = tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(err, NotNil)
+	tk1.MustExec("rollback")
+
+	// other errors could retry
+	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
+	tk1.MustExec("begin")
+	tk2.MustExec("alter table no_retry add index idx(id)")
+	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
+	tk1.MustExec("update no_retry set id = 10")
+	tk1.MustExec("commit")
+	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("10"))
 }
 
 // TestSetGroupConcatMaxLen is for issue #7034
