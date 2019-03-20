@@ -35,11 +35,11 @@ type ChangeExec struct {
 func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	stmt := e.Statement
 	cfg := config.GetGlobalConfig()
-	return updateNodeState(cfg.Path, stmt.NodeType, stmt.NodeID, stmt.State, ctx)
+	return updateNodeState(ctx, cfg.Path, stmt.NodeType, stmt.NodeID, stmt.State)
 }
 
 // updateNodeState update pump or drainer's state.
-func updateNodeState(urls, kind, nodeID, state string, ctx context.Context) error {
+func updateNodeState(ctx context.Context, urls, kind, nodeID, state string) error {
 	kind = strings.ToLower(kind)
 	registry, err := createRegistry(urls)
 	if err != nil {
