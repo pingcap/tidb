@@ -784,7 +784,7 @@ func (n *SelectStmt) Restore(ctx *RestoreCtx) error {
 		ctx.WritePlain("/*+ ")
 		for i, tableHint := range n.TableHints {
 			if err := tableHint.Restore(ctx); err != nil {
-				errors.Annotatef(err, "An error occurred while restore SelectStmt.TableHints[%d]", i)
+				return errors.Annotatef(err, "An error occurred while restore SelectStmt.TableHints[%d]", i)
 			}
 		}
 		ctx.WritePlain("*/ ")
@@ -802,7 +802,7 @@ func (n *SelectStmt) Restore(ctx *RestoreCtx) error {
 				ctx.WritePlain(",")
 			}
 			if err := field.Restore(ctx); err != nil {
-				errors.Annotatef(err, "An error occurred while restore SelectStmt.Fields[%d]", i)
+				return errors.Annotatef(err, "An error occurred while restore SelectStmt.Fields[%d]", i)
 			}
 		}
 	}
@@ -810,7 +810,7 @@ func (n *SelectStmt) Restore(ctx *RestoreCtx) error {
 	if n.From != nil {
 		ctx.WriteKeyWord(" FROM ")
 		if err := n.From.Restore(ctx); err != nil {
-			errors.Annotate(err, "An error occurred while restore SelectStmt.From")
+			return errors.Annotate(err, "An error occurred while restore SelectStmt.From")
 		}
 	}
 
@@ -820,21 +820,21 @@ func (n *SelectStmt) Restore(ctx *RestoreCtx) error {
 	if n.Where != nil {
 		ctx.WriteKeyWord(" WHERE ")
 		if err := n.Where.Restore(ctx); err != nil {
-			errors.Annotate(err, "An error occurred while restore SelectStmt.Where")
+			return errors.Annotate(err, "An error occurred while restore SelectStmt.Where")
 		}
 	}
 
 	if n.GroupBy != nil {
 		ctx.WritePlain(" ")
 		if err := n.GroupBy.Restore(ctx); err != nil {
-			errors.Annotate(err, "An error occurred while restore SelectStmt.GroupBy")
+			return errors.Annotate(err, "An error occurred while restore SelectStmt.GroupBy")
 		}
 	}
 
 	if n.Having != nil {
 		ctx.WritePlain(" ")
 		if err := n.Having.Restore(ctx); err != nil {
-			errors.Annotate(err, "An error occurred while restore SelectStmt.Having")
+			return errors.Annotate(err, "An error occurred while restore SelectStmt.Having")
 		}
 	}
 
@@ -845,7 +845,7 @@ func (n *SelectStmt) Restore(ctx *RestoreCtx) error {
 				ctx.WritePlain(",")
 			}
 			if err := windowsSpec.Restore(ctx); err != nil {
-				errors.Annotatef(err, "An error occurred while restore SelectStmt.WindowSpec[%d]", i)
+				return errors.Annotatef(err, "An error occurred while restore SelectStmt.WindowSpec[%d]", i)
 			}
 		}
 	}
@@ -853,14 +853,14 @@ func (n *SelectStmt) Restore(ctx *RestoreCtx) error {
 	if n.OrderBy != nil {
 		ctx.WritePlain(" ")
 		if err := n.OrderBy.Restore(ctx); err != nil {
-			errors.Annotate(err, "An error occurred while restore SelectStmt.OrderBy")
+			return errors.Annotate(err, "An error occurred while restore SelectStmt.OrderBy")
 		}
 	}
 
 	if n.Limit != nil {
 		ctx.WritePlain(" ")
 		if err := n.Limit.Restore(ctx); err != nil {
-			errors.Annotate(err, "An error occurred while restore SelectStmt.Limit")
+			return errors.Annotate(err, "An error occurred while restore SelectStmt.Limit")
 		}
 	}
 
@@ -982,7 +982,7 @@ func (n *UnionSelectList) Restore(ctx *RestoreCtx) error {
 			ctx.WritePlain("(")
 		}
 		if err := selectStmt.Restore(ctx); err != nil {
-			errors.Annotate(err, "An error occurred while restore UnionSelectList.SelectStmt")
+			return errors.Annotate(err, "An error occurred while restore UnionSelectList.SelectStmt")
 		}
 		if selectStmt.IsInBraces {
 			ctx.WritePlain(")")
@@ -1022,20 +1022,20 @@ type UnionStmt struct {
 // Restore implements Node interface.
 func (n *UnionStmt) Restore(ctx *RestoreCtx) error {
 	if err := n.SelectList.Restore(ctx); err != nil {
-		errors.Annotate(err, "An error occurred while restore UnionStmt.SelectList")
+		return errors.Annotate(err, "An error occurred while restore UnionStmt.SelectList")
 	}
 
 	if n.OrderBy != nil {
 		ctx.WritePlain(" ")
 		if err := n.OrderBy.Restore(ctx); err != nil {
-			errors.Annotate(err, "An error occurred while restore UnionStmt.OrderBy")
+			return errors.Annotate(err, "An error occurred while restore UnionStmt.OrderBy")
 		}
 	}
 
 	if n.Limit != nil {
 		ctx.WritePlain(" ")
 		if err := n.Limit.Restore(ctx); err != nil {
-			errors.Annotate(err, "An error occurred while restore UnionStmt.Limit")
+			return errors.Annotate(err, "An error occurred while restore UnionStmt.Limit")
 		}
 	}
 	return nil
