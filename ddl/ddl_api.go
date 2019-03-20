@@ -336,10 +336,6 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 				return defaultVal, errors.Trace(err)
 			}
 			defaultVal = t.String()
-			// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
-			//              This will fix bug in version 0.
-			// TODO: remove this version field after there is no old version 0.
-			col.Version = model.ColumnInfoVersion1
 		}
 	}
 	return defaultVal, nil
@@ -361,6 +357,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		Offset:    offset,
 		Name:      colDef.Name.Name,
 		FieldType: *colDef.Tp,
+		// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
+		//              This will fix bug in version 0.
+		// TODO: remove this version field after there is no old version 0.
+		Version: model.ColumnInfoVersion1,
 	})
 
 	if !isExplicitTimeStamp() {
@@ -2208,6 +2208,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *specNewColumn.Tp,
 		Name:               newColName,
+		// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
+		//              This will fix bug in version 0.
+		// TODO: remove this version field after there is no old version 0.
+		Version: model.ColumnInfoVersion1,
 	})
 
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.

@@ -621,6 +621,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if len(tblCollate) == 0 {
 		tblCollate = getDefaultCollate(tblCharset)
 	}
+	if tb.Meta().Version == model.TableInfoVersion0 && config.GetGlobalConfig().IgnoreColumnUTF8Charset && tblCharset == charset.CharsetUTF8 {
+		tblCharset = charset.CharsetUTF8MB4
+		tblCollate = charset.CollationUTF8MB4
+	}
 
 	fmt.Fprintf(&buf, "CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode))
 	var pkCol *table.Column
@@ -628,10 +632,13 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
-			if col.Charset != tblCharset || col.Collate != tblCollate {
-				if col.Charset != charset.CharsetUTF8 || !config.GetGlobalConfig().IgnoreColumnUTF8Charset {
-					fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
-				}
+			colCharset, colCollate := col.Charset, col.Collate
+			if col.Version == model.ColumnInfoVersion0 && config.GetGlobalConfig().IgnoreColumnUTF8Charset && colCharset == charset.CharsetUTF8 {
+				colCharset = charset.CharsetUTF8MB4
+				colCollate = charset.CollationUTF8MB4
+			}
+			if colCharset != tblCharset || colCollate != tblCollate {
+				fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", colCharset, colCollate)
 			}
 		}
 		if col.IsGenerated() {
