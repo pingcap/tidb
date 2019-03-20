@@ -398,7 +398,8 @@ func (e *RadixHashJoinExec) doBuild(workerID int, finishedCh chan error) {
 		e.hashTables[i] = mvmap.NewMVMap()
 		keyBuf = keyBuf[:0]
 		for rowIdx, numRows := 0, e.innerParts[i].NumRows(); rowIdx < numRows; rowIdx++ {
-			// Join-key can be promised to be NOT NULL in a partition(see `partPtr4NullKey`), so we do not check it.
+			// Join-key can be promised to be NOT NULL in a partition of inner
+			// relation(see `partPtr4NullKey`), so we do not check it.
 			_, keyBuf, err = e.getJoinKeyFromChkRow(false, e.innerParts[i].GetRow(rowIdx), keyBuf)
 			if err != nil {
 				e.finished.Store(true)

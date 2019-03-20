@@ -897,7 +897,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-
 	//e := &HashJoinExec{
 	//	baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
 	//	concurrency:  v.Concurrency,
@@ -949,9 +948,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	metrics.ExecutorCounter.WithLabelValues("HashJoinExec").Inc()
-	//if e.ctx.GetSessionVars().EnableRadixJoin {
-	//	return &RadixHashJoinExec{HashJoinExec: e}
-	//}
 	return e
 }
 

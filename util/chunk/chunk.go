@@ -381,6 +381,7 @@ func (c *Chunk) PreAlloc(row Row) (rowIdx uint32) {
 		}
 		dstCol.data = make([]byte, len(dstCol.data)+elemLen, newCap)
 	}
+	c.numVirtualRows++
 	return
 }
 
