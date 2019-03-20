@@ -1740,7 +1740,6 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 
 	// create table
 	tk.MustExec(`create table t (id int, c int);`)
-	tk.MustExec(`create table t1 (id int, c int);`)
 	// insert data
 	tk.MustExec(`insert into t values(1, 1);`)
 
