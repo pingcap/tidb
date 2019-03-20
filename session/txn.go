@@ -323,14 +323,13 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 }
 
 func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
-	dt := dirtyDB.GetDirtyTable(op.tid)
 	switch op.kind {
 	case table.DirtyTableAddRow:
-		dt.AddRow(op.handle, op.row)
+		dirtyDB.AddRow(op.tid, op.handle, op.row)
 	case table.DirtyTableDeleteRow:
-		dt.DeleteRow(op.handle)
+		dirtyDB.DeleteRow(op.tid, op.handle)
 	case table.DirtyTableTruncate:
-		dt.TruncateTable()
+		dirtyDB.TruncateTable(op.tid)
 	}
 }
 
