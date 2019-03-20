@@ -258,8 +258,8 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 		return nil, err
 	}
 	execStmt.UsingVars = driver.UsingVarsNodePool.Get().([]ast.ExprNode)
-	for i, val := range args {
-		execStmt.UsingVars[i] = driver.NewValueExprFromPool(val)
+	for _, val := range args {
+		execStmt.UsingVars = append(execStmt.UsingVars, driver.NewValueExprFromPool(val))
 	}
 	is := GetInfoSchema(ctx)
 	execPlan, err := planner.Optimize(ctx, execStmt, is)
