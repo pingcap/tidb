@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
-func ExampleLoadRunShutdownPlugin() {
+func LoadRunShutdownPluginExample() {
 	ctx := context.Background()
 	var pluginVarNames []string
 	cfg := plugin.Config{

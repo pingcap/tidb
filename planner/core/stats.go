@@ -77,6 +77,19 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo) (*proper
 	return profile, nil
 }
 
+// getColumnNDV computes estimated NDV of specified column using the original
+// histogram of `DataSource` which is retrieved from storage(not the derived one).
+func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
+	hist, ok := ds.statisticTable.Columns[colID]
+	if ok && hist.Count > 0 {
+		factor := float64(ds.statisticTable.Count) / float64(hist.Count)
+		ndv = float64(hist.NDV) * factor
+	} else {
+		ndv = float64(ds.statisticTable.Count) * distinctFactor
+	}
+	return ndv
+}
+
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.StatsInfo, *statistics.HistColl) {
 	profile := &property.StatsInfo{
 		RowCount:       float64(ds.statisticTable.Count),
@@ -85,13 +98,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.Sta
 		UsePseudoStats: ds.statisticTable.Pseudo,
 	}
 	for i, col := range ds.Columns {
-		hist, ok := ds.statisticTable.Columns[col.ID]
-		if ok && hist.Count > 0 {
-			factor := float64(ds.statisticTable.Count) / float64(hist.Count)
-			profile.Cardinality[i] = float64(hist.NDV) * factor
-		} else {
-			profile.Cardinality[i] = profile.RowCount * distinctFactor
-		}
+		profile.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}
 	ds.stats = profile
 	selectivity, nodes, err := profile.HistColl.Selectivity(ds.ctx, conds)
@@ -337,12 +344,14 @@ func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo) (*prope
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
-	childLen := len(childProfile.Cardinality)
 	p.stats = &property.StatsInfo{
 		RowCount:    childProfile.RowCount,
-		Cardinality: make([]float64, childLen+1),
+		Cardinality: make([]float64, p.schema.Len()),
 	}
-	copy(p.stats.Cardinality, childProfile.Cardinality)
-	p.stats.Cardinality[childLen] = childProfile.RowCount
+	for i := 0; i < p.schema.Len()-1; i++ {
+		colIdx := p.children[0].Schema().ColumnIndex(p.schema.Columns[i])
+		p.stats.Cardinality[i] = childProfile.Cardinality[colIdx]
+	}
+	p.stats.Cardinality[p.schema.Len()-1] = childProfile.RowCount
 	return p.stats, nil
 }

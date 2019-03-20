@@ -2428,6 +2428,8 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 		"0000-00-00",
 		"1992-13-00",
 		"2007-10-07 23:59:61",
+		"2005-00-00",
+		"2005-00-01",
 		123456789}
 
 	for _, i := range testsNull {
