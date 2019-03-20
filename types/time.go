@@ -59,7 +59,7 @@ const (
 	// MaxDuration is the maximum for duration.
 	MaxDuration int64 = 838*10000 + 59*100 + 59
 	// MinTime is the minimum for mysql time type.
-	MinTime = -gotime.Duration(838*3600+59*60+59) * gotime.Second
+	MinTime = -gotime.Duration(838*3600 + 59*60 + 59) * gotime.Second
 	// MaxTime is the maximum for mysql time type.
 	MaxTime = gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// ZeroDatetimeStr is the string representation of a zero datetime.
@@ -2590,39 +2590,48 @@ func DateFSP(date string) (fsp int) {
 	return
 }
 
-var (
-	dateRange = []gotime.Time{
-		gotime.Date(1000, 1, 1, 0, 0, 0, 0, gotime.Local),
-		gotime.Date(9999, 12, 31, 0, 0, 0, 0, gotime.Local),
-	}
-	timestampRange = []gotime.Time{
-		gotime.Date(1970, 1, 1, 0, 0, 1, 0, gotime.Local),
-		gotime.Date(2038, 1, 19, 3, 14, 7, 0, gotime.Local),
-	}
-	datetimeRange = []gotime.Time{
-		gotime.Date(1000, 1, 1, 0, 0, 0, 0, gotime.Local),
-		gotime.Date(9999, 12, 31, 23, 59, 59, 0, gotime.Local),
-	}
-)
-
 // DateTimeIsOverflow return if this date is overflow.
 // See: https://dev.mysql.com/doc/refman/8.0/en/datetime.html
-func DateTimeIsOverflow(date Time) (bool, error) {
-	var b, e gotime.Time
+func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
+	tz := sc.TimeZone
+	if tz == nil {
+		tz = gotime.Local
+	}
+
+	var err error
+	var b, e, t gotime.Time
 	switch date.Type {
-	case mysql.TypeDate:
-		b, e = dateRange[0], dateRange[1]
+	case mysql.TypeDate, mysql.TypeDatetime:
+		if b, err = MinDatetime.GoTime(tz); err != nil {
+			return false, err
+		}
+		if e, err = MaxDatetime.GoTime(tz); err != nil {
+			return false, err
+		}
 	case mysql.TypeTimestamp:
-		b, e = timestampRange[0], timestampRange[1]
-	case mysql.TypeDatetime:
-		b, e = datetimeRange[0], datetimeRange[1]
+		minTS, maxTS := MinTimestamp, MaxTimestamp
+		if tz != gotime.UTC {
+			if err = minTS.ConvertTimeZone(gotime.UTC, tz); err != nil {
+				return false, err
+			}
+			if err = maxTS.ConvertTimeZone(gotime.UTC, tz); err != nil {
+				return false, err
+			}
+		}
+		if b, err = minTS.Time.GoTime(tz); err != nil {
+			return false, err
+		}
+		if e, err = maxTS.Time.GoTime(tz); err != nil {
+			return false, err
+		}
 	default:
 		return false, nil
 	}
-	t, err := date.Time.GoTime(gotime.Local)
-	if err != nil {
+
+	if t, err = date.Time.GoTime(tz); err != nil {
 		return false, err
 	}
+
 	inRange := (t.After(b) || t.Equal(b)) && (t.Before(e) || t.Equal(e))
 	return !inRange, nil
 }

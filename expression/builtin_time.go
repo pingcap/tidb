@@ -2678,7 +2678,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 	}
 
 	date.Time = types.FromGoTime(goTime)
-	overflow, err := types.DateTimeIsOverflow(date)
+	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
 	if err != nil {
 		return types.Time{}, true, err
 	}
@@ -2711,7 +2711,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 	}
 
 	date.Time = types.FromGoTime(goTime)
-	overflow, err := types.DateTimeIsOverflow(date)
+	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
 	if err != nil {
 		return types.Time{}, true, err
 	}
