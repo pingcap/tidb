@@ -14,6 +14,7 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -21,12 +22,17 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/url"
+	"runtime"
+	rpprof "runtime/pprof"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
@@ -112,6 +118,104 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	serveError := func(w http.ResponseWriter, status int, txt string) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("X-Go-Pprof", "1")
+		w.Header().Del("Content-Disposition")
+		w.WriteHeader(status)
+		_, err := fmt.Fprintln(w, txt)
+		terror.Log(err)
+	}
+
+	sleep := func(w http.ResponseWriter, d time.Duration) {
+		var clientGone <-chan bool
+		if cn, ok := w.(http.CloseNotifier); ok {
+			clientGone = cn.CloseNotify()
+		}
+		select {
+		case <-time.After(d):
+		case <-clientGone:
+		}
+	}
+
+	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
+
+		// dump goroutine/heap/mutex
+		items := []struct {
+			name   string
+			gc     int
+			debug  int
+			second int
+		}{
+			{name: "goroutine", debug: 2},
+			{name: "heap", gc: 1},
+			{name: "mutex"},
+		}
+		zw := zip.NewWriter(w)
+		for _, item := range items {
+			p := rpprof.Lookup(item.name)
+			if p == nil {
+				serveError(w, http.StatusNotFound, "Unknown profile")
+				return
+			}
+			if item.gc > 0 {
+				runtime.GC()
+			}
+			fw, err := zw.Create(item.name)
+			if err != nil {
+				serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", item.name, err))
+				return
+			}
+			err = p.WriteTo(fw, item.debug)
+			terror.Log(err)
+		}
+
+		// dump profile
+		fw, err := zw.Create("profile")
+		if err != nil {
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "profile", err))
+			return
+		}
+		if err := rpprof.StartCPUProfile(fw); err != nil {
+			serveError(w, http.StatusInternalServerError,
+				fmt.Sprintf("Could not enable CPU profiling: %s", err))
+			return
+		}
+		sec, err := strconv.ParseInt(r.FormValue("seconds"), 10, 64)
+		if sec <= 0 || err != nil {
+			sec = 10
+		}
+		sleep(w, time.Duration(sec)*time.Second)
+		rpprof.StopCPUProfile()
+
+		// dump config
+		fw, err = zw.Create("config")
+		if err != nil {
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "config", err))
+			return
+		}
+		js, err := json.MarshalIndent(config.GetGlobalConfig(), "", " ")
+		if err != nil {
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("get config info fail%v", err))
+			return
+		}
+		_, err = fw.Write(js)
+		terror.Log(err)
+
+		// dump version
+		fw, err = zw.Create("version")
+		if err != nil {
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "version", err))
+			return
+		}
+		_, err = fw.Write([]byte(printer.GetTiDBInfo()))
+		terror.Log(err)
+
+		err = zw.Close()
+		terror.Log(err)
+	})
 
 	var (
 		err            error
