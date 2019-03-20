@@ -35,20 +35,20 @@ type ChangeExec struct {
 func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	stmt := e.Statement
 	cfg := config.GetGlobalConfig()
-	return updateNodeState(cfg.Path, stmt.NodeType, stmt.NodeID, stmt.State)
+	return updateNodeState(cfg.Path, stmt.NodeType, stmt.NodeID, stmt.State, ctx)
 }
 
 // updateNodeState update pump or drainer's state.
-func updateNodeState(urls, kind, nodeID, state string) error {
+func updateNodeState(urls, kind, nodeID, state string, ctx context.Context) error {
 	kind = strings.ToLower(kind)
 	registry, err := createRegistry(urls)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
-	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
+	nodes, _, err := registry.Nodes(ctx, node.NodePrefix[kind])
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	for _, n := range nodes {
@@ -58,7 +58,7 @@ func updateNodeState(urls, kind, nodeID, state string) error {
 		switch state {
 		case node.Online, node.Pausing, node.Paused, node.Closing, node.Offline:
 			n.State = state
-			return registry.UpdateNode(context.Background(), node.NodePrefix[kind], n)
+			return registry.UpdateNode(ctx, node.NodePrefix[kind], n)
 		default:
 			return errors.Errorf("state %s is illegal", state)
 		}
