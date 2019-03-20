@@ -1740,6 +1740,7 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 
 	// create table
 	tk.MustExec(`create table t (id int, c int);`)
+	tk.MustExec(`create table t1 (id int, c int);`)
 	// insert data
 	tk.MustExec(`insert into t values(1, 1);`)
 
@@ -1762,7 +1763,7 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 
 	// But the transaction related table IDs aren't in the updated table IDs.
 	tk.MustExec(`begin;`)
-	tk1.MustExec(`alter table t add index idx2(c);`)
+	tk1.MustExec(`alter table t1 add index idx2(c);`)
 	tk.MustExec(`insert into t values(4, 4);`)
 	tk.MustExec(`commit;`)
 
