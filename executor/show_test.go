@@ -171,12 +171,17 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
 
 	tk.MustExec("drop table if exists test_full_column")
-	tk.MustExec(`create table if not exists test_full_column (a date, b datetime, c timestamp)`)
+	tk.MustExec(`create table test_full_column( a date , b datetime , c year(4), d timestamp,e time ,f year, h datetime(2) );`)
+
 	tk.MustQuery(`show full columns from test_full_column`).Check(testkit.Rows(
 		"" +
 			"a date NULL YES  <nil>  select,insert,update,references ]\n" +
 			"[b datetime NULL YES  <nil>  select,insert,update,references ]\n" +
-			"[c timestamp NULL YES  <nil>  select,insert,update,references "))
+			"[c year(4) NULL YES  <nil>  select,insert,update,references ]\n" +
+			"[d timestamp NULL YES  <nil>  select,insert,update,references ]\n" +
+			"[e time NULL YES  <nil>  select,insert,update,references ]\n" +
+			"[f year(4) NULL YES  <nil>  select,insert,update,references ]\n" +
+			"[h datetime(2) NULL YES  <nil>  select,insert,update,references "))
 	tk.MustExec("drop table if exists test_full_column")
 
 	tk.MustExec("drop table if exists t")
