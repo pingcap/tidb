@@ -1747,7 +1747,7 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	// The schema version is out of date in the first transaction, but the SQL can be retried.
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t add index idx(c);`)
-	tk.MustExec(`insert into t1 values(2, 2);`)
+	tk.MustExec(`insert into t values(2, 2);`)
 	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
@@ -1764,7 +1764,7 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	// But the transaction related table IDs aren't in the updated table IDs.
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t add index idx2(c);`)
-	tk.MustExec(`insert into t1 values(4, 4);`)
+	tk.MustExec(`insert into t values(4, 4);`)
 	tk.MustExec(`commit;`)
 
 	// Test for "select for update".
@@ -2349,7 +2349,7 @@ func (s *testSessionSuite) TestCommitRetryCount(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
+func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("create table no_retry (id int)")
