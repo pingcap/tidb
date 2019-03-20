@@ -629,7 +629,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
 			if col.Charset != tblCharset || col.Collate != tblCollate {
-				fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
+				if col.Charset != charset.CharsetUTF8 || !config.GetGlobalConfig().IgnoreColumnUTF8Charset {
+					fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
+				}
 			}
 		}
 		if col.IsGenerated() {

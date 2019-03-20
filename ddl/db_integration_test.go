@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -1221,8 +1222,7 @@ func (s *testIntegrationSuite) assertAlterErrorExec(c *C, sql string) {
 func (s *testIntegrationSuite) TestAlterAlgorithm(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	s.tk.MustExec("drop table if exists t")
-	s.tk.MustExec("drop table if exists t1")
+	s.tk.MustExec("drop table if exists t, t1")
 	defer s.tk.MustExec("drop table if exists t")
 
 	s.tk.MustExec(`create table t(
@@ -1281,4 +1281,19 @@ func (s *testIntegrationSuite) TestAlterAlgorithm(c *C) {
 	s.assertAlterWarnExec(c, "alter table t default charset = utf8mb4, ALGORITHM=COPY")
 	s.assertAlterErrorExec(c, "alter table t default charset = utf8mb4, ALGORITHM=INPLACE")
 	s.tk.MustExec("alter table t default charset = utf8mb4, ALGORITHM=INSTANT")
+}
+
+func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	defer s.tk.MustExec("drop table if exists t")
+
+	s.tk.MustExec("create table t (a varchar(10) character set utf8) charset=utf8mb4;")
+	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` varchar(10) DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	c.Assert(config.GetGlobalConfig().IgnoreColumnUTF8Charset, IsTrue)
+	config.GetGlobalConfig().IgnoreColumnUTF8Charset = false
+	assertErrorCode(c, s.tk, "insert into t values(x'f09f8c80');", mysql.ErrTruncatedWrongValueForField)
+	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }

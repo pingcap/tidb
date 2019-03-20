@@ -192,7 +192,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 			}
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
-		} else if width > 3 && utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUtf8 {
+		} else if width > 3 && utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUtf8 && !config.GetGlobalConfig().IgnoreColumnUTF8Charset {
 			// Handle non-BMP characters.
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
