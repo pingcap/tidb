@@ -894,6 +894,7 @@ const (
 	ErrInvalidJSONPathWildcard                                      = 3149
 	ErrInvalidJSONContainsPathType                                  = 3150
 	ErrJSONUsedAsKey                                                = 3152
+	ErrRoleNotGranted                                               = 3530
 	ErrWindowNoSuchWindow                                           = 3579
 	ErrWindowCircularityInWindowGraph                               = 3580
 	ErrWindowNoChildPartitioning                                    = 3581
