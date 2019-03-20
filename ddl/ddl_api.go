@@ -2461,6 +2461,10 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
+// checkAlterTableCharset uses to check is it possible to change the charset of table.
+// This function returns 2 variable:
+// doNothing: if doNothing is true, means no need to change any more, because the target charset is same with the charset of table.
+// err: if err is not nil, means it is not possible to change table charset to target charset.
 func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate string) (doNothing bool, err error) {
 	origCharset := tblInfo.Charset
 	origCollate := tblInfo.Collate
