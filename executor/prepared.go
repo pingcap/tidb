@@ -21,13 +21,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -192,13 +191,12 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 type ExecuteExec struct {
 	baseExecutor
 
-	is        infoschema.InfoSchema
-	name      string
-	usingVars []expression.Expression
-	id        uint32
-	stmtExec  Executor
-	stmt      ast.StmtNode
-	plan      plannercore.Plan
+	is       infoschema.InfoSchema
+	name     string
+	id       uint32
+	stmtExec Executor
+	stmt     ast.StmtNode
+	plan     plannercore.Plan
 }
 
 // Next implements the Executor Next interface.
@@ -262,7 +260,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 	}
 	execStmt.UsingVars = make([]ast.ExprNode, len(args))
 	for i, val := range args {
-		execStmt.UsingVars[i] = ast.NewValueExpr(val)
+		execStmt.UsingVars[i] = driver.NewValueExprFromPool(val)
 	}
 	is := GetInfoSchema(ctx)
 	execPlan, err := planner.Optimize(ctx, execStmt, is)

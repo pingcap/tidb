@@ -229,7 +229,11 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 			return nil, errors.Trace(err)
 		}
 		vars = append(vars, newExpr)
+		if valueExpr, ok := expr.(ast.ValueExpr); ok {
+			driver.ValueExprPool.Put(valueExpr)
+		}
 	}
+	v.UsingVars = nil
 	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
 	return exe, nil
 }

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -56,6 +57,16 @@ func init() {
 		return b, err
 	}
 }
+
+var ValueExprPool = sync.Pool{
+	New: func() interface{} {
+		return &ValueExpr{}
+	},
+}
+
+var (
+	emptyValueExpr = &ValueExpr{}
+)
 
 var (
 	_ ast.ParamMarkerExpr = &ParamMarkerExpr{}
@@ -167,6 +178,18 @@ func newValueExpr(value interface{}) ast.ValueExpr {
 		return ve
 	}
 	ve := &ValueExpr{}
+	ve.SetValue(value)
+	types.DefaultTypeForValue(value, &ve.Type)
+	ve.projectionOffset = -1
+	return ve
+}
+
+func NewValueExprFromPool(value interface{}) ast.ValueExpr {
+	if ve, ok := value.(*ValueExpr); ok {
+		return ve
+	}
+	ve := ValueExprPool.Get().(*ValueExpr)
+	*ve = *emptyValueExpr
 	ve.SetValue(value)
 	types.DefaultTypeForValue(value, &ve.Type)
 	ve.projectionOffset = -1

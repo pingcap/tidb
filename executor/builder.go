@@ -499,7 +499,6 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		is:           b.is,
 		name:         v.Name,
-		usingVars:    v.UsingVars,
 		id:           v.ExecID,
 		stmt:         v.Stmt,
 		plan:         v.Plan,
