@@ -152,7 +152,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	}
 	for _, tt := range tests {
 		err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
-		if err != nil {
+		if tt.err != nil {
 			c.Assert(err, NotNil)
 			continue
 		}
