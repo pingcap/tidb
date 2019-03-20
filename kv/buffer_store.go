@@ -66,7 +66,7 @@ func (s *BufferStore) Get(k Key) ([]byte, error) {
 		val, err = s.r.Get(k)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(val) == 0 {
 		return nil, ErrNotExist

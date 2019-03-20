@@ -164,10 +164,15 @@ func dumpUint64(buffer []byte, n uint64) []byte {
 
 var tinyIntCache [251][]byte
 
+var defBytes []byte
+
 func init() {
 	for i := 0; i < len(tinyIntCache); i++ {
 		tinyIntCache[i] = []byte{byte(i)}
 	}
+	var tmp []byte
+	tmp = dumpLengthEncodedString(tmp, []byte("def"))
+	defBytes = tmp
 }
 
 func dumpBinaryTime(dur time.Duration) (data []byte) {

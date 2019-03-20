@@ -201,7 +201,7 @@ func (e *InsertValues) insertRows(ctx context.Context, exec func(ctx context.Con
 			}
 		}
 	}
-	return errors.Trace(exec(ctx, rows))
+	return exec(ctx, rows)
 }
 
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
