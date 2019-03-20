@@ -65,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	tipb "github.com/pingcap/tipb/go-tipb"
-	"github.com/sirupsen/logrus"
 )
 
 func TestT(t *testing.T) {
@@ -1347,7 +1346,6 @@ func (s *testSuite) TestTableReverseOrder(c *C) {
 }
 
 func (s *testSuite) TestDefaultNull(c *C) {
-	logrus.Warning("TestDefaultNull start")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1361,7 +1359,6 @@ func (s *testSuite) TestDefaultNull(c *C) {
 	tk.MustExec("delete from t where a = 1")
 	tk.MustExec("insert t (a) values (1)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 <nil>"))
-	defer logrus.Warning("TestDefaultNull end")
 }
 
 func (s *testSuite) TestUnsignedPKColumn(c *C) {
@@ -1759,7 +1756,6 @@ func (s *testSuite) TestToPBExpr(c *C) {
 }
 
 func (s *testSuite) TestDatumXAPI(c *C) {
-	logrus.Warning("TestDatumXAPI start")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1782,7 +1778,6 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
 	result = tk.MustQuery("select * from t where b > '11:11:11.5'")
 	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
-	logrus.Warning("TestDatumXAPI end")
 }
 
 func (s *testSuite) TestSQLMode(c *C) {
@@ -3410,7 +3405,6 @@ func (s *testSuite3) TestRowID(c *C) {
 }
 
 func (s *testSuite3) TestDoSubquery(c *C) {
-	logrus.Warning("TestDoSubquery start")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -3421,7 +3415,6 @@ func (s *testSuite3) TestDoSubquery(c *C) {
 	r, err := tk.Exec(`do 1 in (select * from t)`)
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
-	defer logrus.Warning("TestDoSubquery end")
 }
 
 func (s *testSuite3) TestTSOFail(c *C) {

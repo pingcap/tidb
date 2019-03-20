@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/sirupsen/logrus"
 )
 
 type testBypassSuite struct{}
@@ -1572,7 +1571,6 @@ func (s *testSuite2) TestMultipleTableUpdate(c *C) {
 }
 
 func (s *testSuite) TestDelete(c *C) {
-	logrus.Warning("TestDelete start")
 	tk := testkit.NewTestKit(c, s.store)
 	s.fillData(tk, "delete_test")
 
@@ -1613,7 +1611,6 @@ func (s *testSuite) TestDelete(c *C) {
 	_, err = tk.Exec("delete from v where name = 'aaa'")
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
-	defer logrus.Warning("TestDelete end")
 }
 
 func (s *testSuite2) TestPartitionedTableDelete(c *C) {
@@ -2309,7 +2306,6 @@ func (s *testSuite2) TestInsertCalculatedValue(c *C) {
 }
 
 func (s *testSuite2) TestDataTooLongErrMsg(c *C) {
-	logrus.Warning("TestDataTooLongErrMsg start")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(2));")
@@ -2320,7 +2316,6 @@ func (s *testSuite2) TestDataTooLongErrMsg(c *C) {
 	_, err = tk.Exec("update t set a = '123' where a = '12';")
 	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
-	defer logrus.Warning("TestDataTooLongErrMsg end")
 }
 
 func (s *testSuite2) TestUpdateSelect(c *C) {
@@ -2442,7 +2437,6 @@ func (s *testSuite2) TestRebaseIfNeeded(c *C) {
 }
 
 func (s *testSuite2) TestDeferConstraintCheckForInsert(c *C) {
-	logrus.Warning("TestDeferConstraintCheckForInsert start")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t;create table t (i int key);`)
@@ -2454,17 +2448,14 @@ func (s *testSuite2) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustExec(`update t set i = 2 where i = 1;`)
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
-	defer logrus.Warning("TestDeferConstraintCheckForInsert end")
 }
 
 func (s *testSuite2) TestDefEnumInsert(c *C) {
-	logrus.Warning("TestDefEnumInsert start")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
 	tk.MustExec("insert into test (id)  values (1)")
 	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
-	logrus.Warning("TestDefEnumInsert end")
 }
 
 func (s *testSuite2) TestAutoIDInRetry(c *C) {

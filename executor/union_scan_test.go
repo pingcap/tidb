@@ -16,11 +16,9 @@ package executor_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/sirupsen/logrus"
 )
 
 func (s *testSuite2) TestDirtyTransaction(c *C) {
-	logrus.Warning("TestDirtyTransaction start")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -94,7 +92,6 @@ func (s *testSuite2) TestDirtyTransaction(c *C) {
 	tk.MustQuery("select * from t where c1 < 5").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select c2 from t").Check(testkit.Rows("1"))
 	tk.MustExec("commit")
-	defer logrus.Warning("TestDirtyTransaction end")
 }
 
 func (s *testSuite2) TestUnionScanWithCastCondition(c *C) {
