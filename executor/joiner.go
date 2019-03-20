@@ -365,7 +365,7 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 		chkForJoin = chk
 	}
 
-	numToAppend := j.maxChunkSize - chk.NumRows()
+	numToAppend := chk.RequiredRows() - chk.NumRows()
 	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
 		j.makeJoinRowToChunk(chkForJoin, outer, inners.Current())
 		inners.Next()
@@ -403,7 +403,7 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 		chkForJoin = chk
 	}
 
-	numToAppend := j.maxChunkSize - chk.NumRows()
+	numToAppend := chk.RequiredRows() - chk.NumRows()
 	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
 		j.makeJoinRowToChunk(chkForJoin, inners.Current(), outer)
 		inners.Next()
@@ -438,7 +438,7 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	if len(j.conditions) == 0 {
 		chkForJoin = chk
 	}
-	inner, numToAppend := inners.Current(), j.maxChunkSize-chk.NumRows()
+	inner, numToAppend := inners.Current(), chk.RequiredRows()-chk.NumRows()
 	for ; inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
 		if j.outerIsRight {
 			j.makeJoinRowToChunk(chkForJoin, inner, outer)

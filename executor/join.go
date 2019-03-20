@@ -61,6 +61,9 @@ type HashJoinExec struct {
 	joinType plannercore.JoinType
 	innerIdx int
 
+	isOuterJoin  bool
+	requiredRows int64
+
 	// We build individual joiner for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	joiners []joiner
@@ -211,6 +214,10 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			}
 		}
 		outerResult := outerResource.chk
+		if e.isOuterJoin {
+			required := int(atomic.LoadInt64(&e.requiredRows))
+			outerResult.SetRequiredRows(required, e.maxChunkSize)
+		}
 		err := e.outerExec.Next(ctx, chunk.NewRecordBatch(outerResult))
 		if err != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{
@@ -427,7 +434,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		hasMatch = hasMatch || matched
 		hasNull = hasNull || isNull
 
-		if joinResult.chk.NumRows() == e.maxChunkSize {
+		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
 			ok, joinResult := e.getNewJoinResult(workerID)
 			if !ok {
@@ -471,7 +478,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 				return false, joinResult
 			}
 		}
-		if joinResult.chk.NumRows() == e.maxChunkSize {
+		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
 			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
@@ -496,6 +503,9 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err er
 		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.handleFetchInnerAndBuildHashTablePanic)
 		e.fetchOuterAndProbeHashTable(ctx)
 		e.prepared = true
+	}
+	if e.isOuterJoin {
+		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
 	req.Reset()
 	if e.joinResultCh == nil {
@@ -649,7 +659,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 			return &outerRow, nil
 		} else if e.outer {
 			e.joiner.onMissMatch(false, outerRow, chk)
-			if chk.NumRows() == e.maxChunkSize {
+			if chk.IsFull() {
 				return nil, nil
 			}
 		}
@@ -720,7 +730,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) 
 		e.hasMatch = e.hasMatch || matched
 		e.hasNull = e.hasNull || isNull
 
-		if err != nil || req.NumRows() == e.maxChunkSize {
+		if err != nil || req.IsFull() {
 			return errors.Trace(err)
 		}
 	}
