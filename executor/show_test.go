@@ -178,9 +178,9 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`create table if not exists t (a date, b datetime, c timestamp)`)
-	tk.MustQuery(`show full columns from t`).Check(testkit.Rows(
+	tk.MustExec("drop table if exists test_full_column")
+	tk.MustExec(`create table if not exists test_full_column (a date, b datetime, c timestamp)`)
+	tk.MustQuery(`show full columns from test_full_column`).Check(testkit.Rows(
 		"" +
 			"a date NULL YES  <nil>  select,insert,update,references ]\n" +
 			"[b datetime NULL YES  <nil>  select,insert,update,references ]\n" +
