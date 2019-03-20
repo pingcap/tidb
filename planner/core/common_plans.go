@@ -133,7 +133,7 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
-// Change represents deallocate plan.
+// Change represents a change plan.
 type Change struct {
 	baseSchemaProducer
 
