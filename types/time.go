@@ -690,8 +690,13 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
 	case 4:
-		// YYYY-MM-DD HH
-		err = scanTimeArgs(seps, &year, &month, &day, &hour)
+		if strings.Contains(str, "-") {
+			// YYYY-MM-DD HH
+			err = scanTimeArgs(seps, &year, &month, &day, &hour)
+		} else {
+			// DD HH:MM:SS
+			err = scanTimeArgs(seps, &day, &hour, &minute, &second)
+		}
 	case 5:
 		// YYYY-MM-DD HH-MM
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute)
@@ -1482,19 +1487,19 @@ func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
 	case "DAY_MICROSECOND":
 		h, m, s := t.Clock()
 		d := t.Time.Day()
-		return int64(d*1000000+h*10000+m*100+s)*1000000 + int64(t.Time.Microsecond()), nil
+		return int64(d*240000+h*10000+m*100+s)*1000000 + int64(t.Time.Microsecond()), nil
 	case "DAY_SECOND":
 		h, m, s := t.Clock()
 		d := t.Time.Day()
-		return int64(d)*1000000 + int64(h)*10000 + int64(m)*100 + int64(s), nil
+		return int64(d)*240000 + int64(h)*10000 + int64(m)*100 + int64(s), nil
 	case "DAY_MINUTE":
 		h, m, _ := t.Clock()
 		d := t.Time.Day()
-		return int64(d)*10000 + int64(h)*100 + int64(m), nil
+		return int64(d)*2400 + int64(h)*100 + int64(m), nil
 	case "DAY_HOUR":
 		h, _, _ := t.Clock()
 		d := t.Time.Day()
-		return int64(d)*100 + int64(h), nil
+		return int64(d)*24 + int64(h), nil
 	case "YEAR_MONTH":
 		y, m := t.Time.Year(), t.Time.Month()
 		return int64(y)*100 + int64(m), nil
