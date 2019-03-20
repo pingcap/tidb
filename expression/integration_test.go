@@ -4032,3 +4032,32 @@ func (s *testIntegrationSuite) TestIssue9325(c *C) {
 	result = tk.MustQuery("select * from t where a < timestamp'2019-02-16 14:21:00'")
 	result.Check(testkit.Rows("2019-02-16 14:19:59", "2019-02-16 14:20:01"))
 }
+
+func (s *testIntegrationSuite) TestTimeExtract(c *C) {
+	testCases := []struct {
+		SQL string
+		Res string
+	}{
+		{
+			SQL: "select extract(DAY_HOUR FROM '01 23:45:56.89')",
+			Res: "47",
+		},
+		{
+			SQL: "select extract(DAY_MINUTE FROM '01 23:45:56.89')",
+			Res: "4745",
+		},
+		{
+			SQL: "select extract(DAY_SECOND FROM '01 23:45:56.89')",
+			Res: "474556",
+		},
+		{
+			SQL: "select extract(DAY_MICROSECOND FROM '01 23:45:56.89')",
+			Res: "474556890000",
+		},
+	}
+
+	tk := testkit.NewTestKit(c, s.store)
+	for _, testCase := range testCases {
+		tk.MustQuery(testCase.SQL).Check(testkit.Rows(testCase.Res))
+	}
+}
