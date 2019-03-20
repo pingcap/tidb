@@ -916,7 +916,11 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	case KindMysqlSet:
 		val, err = ConvertFloatToUint(sc, d.GetMysqlSet().ToNumber(), upperBound, tp)
 	case KindBinaryLiteral, KindMysqlBit:
-		val, err = d.GetBinaryLiteral().ToInt(sc)
+		ival, err1 := d.GetBinaryLiteral().ToInt(sc)
+		val, err = ConvertUintToUint(ival, upperBound, tp)
+		if err == nil {
+			err = err1
+		}
 	case KindMysqlJSON:
 		var i64 int64
 		i64, err = ConvertJSONToInt(sc, d.GetMysqlJSON(), true)
@@ -1478,6 +1482,11 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral().ToInt(sc)
+		// Note: We don't truncate val to upperBound is overflow
+		// For `select cast(0x99999999999999999999999999 as sign)`, result should be -1
+		if val > uint64(upperBound) {
+			err = overflow(val, tp)
+		}
 		return int64(val), errors.Trace(err)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
