@@ -159,6 +159,11 @@ func GetCollations() []*Collation {
 	return collations
 }
 
+// GetDefaultCharsetAndCollate returns the default charset and collation.
+func GetDefaultCharsetAndCollate() (string, string) {
+	return mysql.DefaultCharset, mysql.DefaultCollationName
+}
+
 const (
 	// CharsetBin is used for marking binary charset.
 	CharsetBin = "binary"
