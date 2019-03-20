@@ -197,8 +197,8 @@ type semiJoiner struct {
 	baseJoiner
 }
 
+// tryToMatchInners implements joiner interface.
 func (j *semiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
-
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -227,8 +227,8 @@ func (j *semiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, ch
 	return false, false, nil
 }
 
+// tryToMatchOuters implements joiner interface.
 func (j *semiJoiner) tryToMatchOuters(inner chunk.Row, outers chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
-
 	if outers.Len() == 0 {
 		return false, false, nil
 	}
@@ -264,7 +264,7 @@ type antiSemiJoiner struct {
 	baseJoiner
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchInners implements joiner interface.
 func (j *antiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
@@ -291,7 +291,7 @@ func (j *antiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator
 	return false, hasNull, nil
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchOuters implements joiner interface.
 func (j *antiSemiJoiner) tryToMatchOuters(inner chunk.Row, outers chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if outers.Len() == 0 {
 		return false, false, nil
@@ -328,7 +328,7 @@ type leftOuterSemiJoiner struct {
 	baseJoiner
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchInners implements joiner interface.
 func (j *leftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
@@ -357,7 +357,7 @@ func (j *leftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Ite
 	return false, hasNull, nil
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchOuters implements joiner interface.
 func (j *leftOuterSemiJoiner) tryToMatchOuters(inner chunk.Row, outers chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if outers.Len() == 0 {
 		return false, false, nil
@@ -404,7 +404,7 @@ type antiLeftOuterSemiJoiner struct {
 	baseJoiner
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchInners implements joiner interface.
 func (j *antiLeftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
@@ -433,7 +433,7 @@ func (j *antiLeftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk
 	return false, hasNull, nil
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchOuters implements joiner interface.
 func (j *antiLeftOuterSemiJoiner) tryToMatchOuters(inner chunk.Row, outers chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if outers.Len() == 0 {
 		return false, false, nil
@@ -480,7 +480,7 @@ type leftOuterJoiner struct {
 	baseJoiner
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchInners implements joiner interface.
 func (j *leftOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, bool, error) {
 	if inners.Len() == 0 {
 		return false, false, nil
@@ -508,7 +508,7 @@ func (j *leftOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterato
 	return matched, false, nil
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchOuters implements joiner interface.
 func (j *leftOuterJoiner) tryToMatchOuters(inner chunk.Row, outers chunk.Iterator, chk *chunk.Chunk) (bool, bool, error) {
 	if outers.Len() == 0 {
 		return false, false, nil
@@ -545,7 +545,7 @@ type rightOuterJoiner struct {
 	baseJoiner
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchInners implements joiner interface.
 func (j *rightOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, bool, error) {
 	if inners.Len() == 0 {
 		return false, false, nil
@@ -573,7 +573,7 @@ func (j *rightOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterat
 	return matched, false, nil
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchOuters implements joiner interface.
 func (j *rightOuterJoiner) tryToMatchOuters(inner chunk.Row, outers chunk.Iterator, chk *chunk.Chunk) (bool, bool, error) {
 	if outers.Len() == 0 {
 		return false, false, nil
@@ -610,7 +610,7 @@ type innerJoiner struct {
 	baseJoiner
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchInners implements joiner interface.
 func (j *innerJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, bool, error) {
 	if inners.Len() == 0 {
 		return false, false, nil
@@ -640,7 +640,7 @@ func (j *innerJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, c
 	return matched, false, nil
 }
 
-// tryToMatch implements joiner interface.
+// tryToMatchOuters implements joiner interface.
 func (j *innerJoiner) tryToMatchOuters(inner chunk.Row, outers chunk.Iterator, chk *chunk.Chunk) (bool, bool, error) {
 	if outers.Len() == 0 {
 		return false, false, nil
