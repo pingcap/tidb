@@ -208,7 +208,7 @@ func countTrailingZeroes(i int, word int32) int {
 }
 
 func digitsToWords(digits int) int {
-	if digits > 0 && digits < 118 {
+	if digits+digitsPerWord-1 >= 0 && digits+digitsPerWord-1 < 128 {
 		return div9[digits+digitsPerWord-1]
 	}
 	return (digits + digitsPerWord - 1) / digitsPerWord
