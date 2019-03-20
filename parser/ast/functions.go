@@ -233,6 +233,7 @@ const (
 	Collation      = "collation"
 	ConnectionID   = "connection_id"
 	CurrentUser    = "current_user"
+	CurrentRole    = "current_role"
 	Database       = "database"
 	FoundRows      = "found_rows"
 	LastInsertId   = "last_insert_id"

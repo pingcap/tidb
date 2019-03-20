@@ -95,6 +95,7 @@ import (
 	currentTime 		"CURRENT_TIME"
 	currentTs		"CURRENT_TIMESTAMP"
 	currentUser		"CURRENT_USER"
+	currentRole		"CURRENT_ROLE"
 	database		"DATABASE"
 	databases		"DATABASES"
 	dayHour			"DAY_HOUR"
@@ -3730,6 +3731,7 @@ OptionalBraces:
 FunctionNameOptionalBraces:
 	"CURRENT_USER"
 |	"CURRENT_DATE"
+|	"CURRENT_ROLE"
 |	"UTC_DATE"
 
 FunctionNameDatetimePrecision:
@@ -5604,6 +5606,7 @@ SetStmt:
 SetRoleStmt:
 	"SET" "ROLE" SetRoleOpt
 	{
+		$$ = $3.(*ast.SetRoleStmt)
 	}
 
 SetDefaultRoleStmt:
@@ -5614,23 +5617,29 @@ SetDefaultRoleStmt:
 SetDefaultRoleOpt:
 	"NONE"
 	{
+		$$ = &ast.SetRoleStmt{SetRoleOpt: ast.SetRoleNone, RoleList: nil}
 	}
 |	"ALL"
 	{
+		$$ = &ast.SetRoleStmt{SetRoleOpt: ast.SetRoleAll, RoleList: nil}
 	}
 |	RolenameList
 	{
+		$$ = &ast.SetRoleStmt{SetRoleOpt: ast.SetRoleRegular, RoleList: $1.([]*auth.RoleIdentity)}
 	}
 
 SetRoleOpt:
 	"ALL" "EXCEPT" RolenameList
 	{
+		$$ = &ast.SetRoleStmt{SetRoleOpt: ast.SetRoleAllExcept, RoleList: $3.([]*auth.RoleIdentity)}
 	}
 |	SetDefaultRoleOpt
 	{
+		$$ = $1
 	}
 |	"DEFAULT"
 	{
+		$$ = &ast.SetRoleStmt{SetRoleOpt: ast.SetRoleDefault, RoleList: nil}
 	}
 
 
