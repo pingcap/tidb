@@ -112,15 +112,12 @@ func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan
 }
 
 func (b *PlanBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expressionRewriter) {
-	defer func() {
-		if p != nil {
-			rewriter.schema = p.Schema()
-		}
-	}()
-
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{p: p, b: b, ctx: b.ctx}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
+		if p != nil {
+			rewriter.schema = p.Schema()
+		}
 		return
 	}
 
@@ -132,6 +129,9 @@ func (b *PlanBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expression
 	rewriter.insertPlan = nil
 	rewriter.disableFoldCounter = 0
 	rewriter.ctxStack = rewriter.ctxStack[:0]
+	if p != nil {
+		rewriter.schema = p.Schema()
+	}
 	return
 }
 
