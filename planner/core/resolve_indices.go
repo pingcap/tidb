@@ -337,14 +337,14 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 		}
 	}
 	if p.Frame != nil {
-		if p.Frame.Start.CalcFunc != nil {
-			p.Frame.Start.CalcFunc, err = p.Frame.Start.CalcFunc.ResolveIndices(p.children[0].Schema())
+		for i := range p.Frame.Start.CalcFuncs {
+			p.Frame.Start.CalcFuncs[i], err = p.Frame.Start.CalcFuncs[i].ResolveIndices(p.children[0].Schema())
 			if err != nil {
 				return err
 			}
 		}
-		if p.Frame.End.CalcFunc != nil {
-			p.Frame.End.CalcFunc, err = p.Frame.End.CalcFunc.ResolveIndices(p.children[0].Schema())
+		for i := range p.Frame.End.CalcFuncs {
+			p.Frame.End.CalcFuncs[i], err = p.Frame.End.CalcFuncs[i].ResolveIndices(p.children[0].Schema())
 			if err != nil {
 				return err
 			}

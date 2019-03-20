@@ -110,10 +110,10 @@ func (s *testSuite1) TestBatchIndexJoinUnionScan(c *C) {
 	tk.MustQuery("explain select /*+ TIDB_INLJ(t1, t2)*/ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
 		"StreamAgg_13 1.00 root funcs:count(1)",
 		"└─IndexJoin_27 12487.50 root inner join, inner:UnionScan_26, outer key:test.t1.a, inner key:test.t2.a",
-		"  ├─UnionScan_28 9990.00 root not(isnull(test.t1.a))",
-		"  │ └─TableReader_31 9990.00 root data:Selection_30",
-		"  │   └─Selection_30 9990.00 cop not(isnull(test.t1.a))",
-		"  │     └─TableScan_29 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  ├─UnionScan_19 9990.00 root not(isnull(test.t1.a))",
+		"  │ └─TableReader_22 9990.00 root data:Selection_21",
+		"  │   └─Selection_21 9990.00 cop not(isnull(test.t1.a))",
+		"  │     └─TableScan_20 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─UnionScan_26 0.00 root not(isnull(test.t2.a))",
 		"    └─IndexReader_25 0.00 root index:Selection_24",
 		"      └─Selection_24 0.00 cop not(isnull(test.t2.a))",
@@ -123,4 +123,23 @@ func (s *testSuite1) TestBatchIndexJoinUnionScan(c *C) {
 		"4",
 	))
 	tk.MustExec("rollback")
+}
+
+func (s *testSuite1) TestInapplicableIndexJoinHint(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(a bigint, b bigint);`)
+	tk.MustExec(`create table t2(a bigint, b bigint);`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t1, t2) */ * from t1, t2;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ TIDB_INLJ(t1, t2) */ is inapplicable without column equal ON condition`))
+	tk.MustQuery(`select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ TIDB_INLJ(t1, t2) */ is inapplicable`))
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(a bigint, b bigint, index idx_a(a));`)
+	tk.MustExec(`create table t2(a bigint, b bigint);`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t1) */ * from t1 left join t2 on t1.a=t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ TIDB_INLJ(t1) */ is inapplicable`))
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t1 right join t2 on t1.a=t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ TIDB_INLJ(t2) */ is inapplicable`))
 }

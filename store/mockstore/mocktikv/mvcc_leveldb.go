@@ -588,6 +588,13 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// Check assertions.
+	if (ok && mutation.Assertion == kvrpcpb.Assertion_NotExist) ||
+		(!ok && mutation.Assertion == kvrpcpb.Assertion_Exist) {
+		log.Error("ASSERTION FAIL!!!", mutation)
+	}
+
 	batch.Put(writeKey, writeValue)
 	return nil
 }

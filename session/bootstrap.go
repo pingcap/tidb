@@ -214,6 +214,19 @@ const (
 		index hist(table_id, is_index, hist_id)
 	);`
 
+	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
+	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
+		original_sql text NOT NULL  ,
+      	bind_sql text NOT NULL ,
+      	default_db text  NOT NULL,
+		status text NOT NULL,
+		create_time timestamp NOT NULL,
+		update_time timestamp NOT NULL,
+		charset text NOT NULL,
+		collation text NOT NULL,
+		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+
 	// CreateRoleEdgesTable stores the role and user relationship information.
 	CreateRoleEdgesTable = `CREATE TABLE IF NOT EXISTS mysql.role_edges (
 		FROM_HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
@@ -288,6 +301,7 @@ const (
 	version25 = 25
 	version26 = 26
 	version27 = 27
+	version28 = 28
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -452,6 +466,10 @@ func upgrade(s Session) {
 
 	if ver < version27 {
 		upgradeToVer27(s)
+	}
+
+	if ver < version28 {
+		upgradeToVer28(s)
 	}
 
 	updateBootstrapVer(s)
@@ -729,6 +747,10 @@ func upgradeToVer27(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `correlation` double NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer28(s Session) {
+	doReentrantDDL(s, CreateBindInfoTable)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -783,6 +805,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateRoleEdgesTable)
 	// Create default_roles table.
 	mustExecute(s, CreateDefaultRolesTable)
+	// Create bind_info table.
+	mustExecute(s, CreateBindInfoTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

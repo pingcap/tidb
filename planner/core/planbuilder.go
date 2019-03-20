@@ -14,6 +14,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -82,6 +83,18 @@ func (info *tableHintInfo) matchTableName(tables []*model.CIStr, tablesInHints [
 		}
 	}
 	return false
+}
+
+func (info *tableHintInfo) restore2IndexJoinHint() string {
+	buffer := bytes.NewBufferString("/*+ TIDB_INLJ(")
+	for i, tableName := range info.indexNestedLoopJoinTables {
+		buffer.WriteString(tableName.O)
+		if i < len(info.indexNestedLoopJoinTables)-1 {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(") */")
+	return buffer.String()
 }
 
 // clauseCode indicates in which clause the column is currently.
@@ -863,6 +876,7 @@ func buildShowSlowSchema() *expression.Schema {
 	schema.Append(buildColumn("", "TABLE_IDS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumn("", "INDEX_IDS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumn("", "INTERNAL", mysql.TypeTiny, tinySize))
+	schema.Append(buildColumn("", "DIGEST", mysql.TypeVarchar, 64))
 	return schema
 }
 
@@ -1006,7 +1020,15 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 		}
-	case *ast.DropUserStmt, *ast.AlterUserStmt:
+	case *ast.DropUserStmt:
+		if raw.IsDropRole {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropRolePriv, "", "", "", err)
+		} else {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
+		}
+	case *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:

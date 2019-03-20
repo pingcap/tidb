@@ -36,6 +36,16 @@ type UnionStore interface {
 	GetMemBuffer() MemBuffer
 }
 
+// AssertionType is the type of a assertion.
+type AssertionType int
+
+// The AssertionType constants.
+const (
+	None AssertionType = iota
+	Exist
+	NotExist
+)
+
 // Option is used for customizing kv store's behaviors during a transaction.
 type Option int
 

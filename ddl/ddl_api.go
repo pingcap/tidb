@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -40,10 +41,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -571,13 +573,13 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
 			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
-				log.Error(errors.ErrorStack(err))
+				context.Background()
+				logutil.Logger(ddlLogCtx).Error("set default value failed", zap.Error(err))
 			}
 		} else {
 			if err := c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp)); err != nil {
-				log.Error(errors.ErrorStack(err))
+				logutil.Logger(ddlLogCtx).Error("set default value failed", zap.Error(err))
 			}
-
 		}
 	}
 }
@@ -1009,10 +1011,7 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 
-	tblInfo := *referTbl.Meta()
-	tblInfo.Name = ident.Name
-	tblInfo.AutoIncID = 0
-	tblInfo.ForeignKeys = nil
+	tblInfo := buildTableInfoWithLike(ident, referTbl.Meta())
 	tblInfo.ID, err = d.genGlobalID()
 	if err != nil {
 		return errors.Trace(err)
@@ -1028,6 +1027,24 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) model.TableInfo {
+	tblInfo := *referTblInfo
+	// Check non-public column and adjust column offset.
+	newColumns := referTblInfo.Cols()
+	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StatePublic {
+			newIndices = append(newIndices, idx)
+		}
+	}
+	tblInfo.Columns = newColumns
+	tblInfo.Indices = newIndices
+	tblInfo.Name = ident.Name
+	tblInfo.AutoIncID = 0
+	tblInfo.ForeignKeys = nil
+	return tblInfo
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
@@ -1302,6 +1319,9 @@ func checkPartitionByHash(pi *model.PartitionInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return errors.Trace(err)
 	}
+	if err := checkNoHashPartitions(pi.Num); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -1315,6 +1335,10 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 	}
 
 	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1339,6 +1363,10 @@ func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo
 
 	if err := checkRangeColumnsPartitionValue(ctx, tbInfo, pi); err != nil {
 		return err
+	}
+
+	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
+		return errors.Trace(err)
 	}
 
 	return checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions)))

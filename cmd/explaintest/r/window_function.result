@@ -17,7 +17,7 @@ Projection_7	10000.00	root	sum(a) over(partition by a)
 explain select sum(a) over(partition by a order by b) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	sum(a) over(partition by a order by b)
-└─Window_8	10000.00	root	sum(cast(test.t.a)) over(partition by test.t.a order by test.t.b asc)
+└─Window_8	10000.00	root	sum(cast(test.t.a)) over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row)
   └─Sort_12	10000.00	root	test.t.a:asc, test.t.b:asc
     └─TableReader_11	10000.00	root	data:TableScan_10
       └─TableScan_10	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo

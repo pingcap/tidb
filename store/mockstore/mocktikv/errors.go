@@ -58,5 +58,5 @@ func (e ErrAbort) Error() string {
 type ErrAlreadyCommitted uint64
 
 func (e ErrAlreadyCommitted) Error() string {
-	return fmt.Sprint("txn already committed")
+	return "txn already committed"
 }

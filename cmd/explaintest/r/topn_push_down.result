@@ -186,9 +186,8 @@ Projection_13	0.00	root	te.expect_time
         └─IndexScan_101	10.00	cop	table:p, index:relate_id, range: decided by [tr.id], keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	count	task	operator info
-Projection_7	1.00	root	1
-└─Limit_8	1.00	root	offset:0, count:1
-  └─TableDual_11	1.00	root	rows:1
+Projection_6	1.00	root	1
+└─TableDual_7	1.00	root	rows:1
 drop table if exists t1;
 drop table if exists t2;
 create table t1(a bigint, b bigint);
@@ -218,3 +217,56 @@ Apply_17	9990.00	root	semi join, inner:Selection_21, equal:[eq(test.t1.a, x.a)]
         └─Limit_28	1.00	cop	offset:0, count:1
           └─Selection_27	1.00	cop	gt(test.t2.b, test.t1.b)
             └─TableScan_26	1.25	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int not null, index idx(a));
+explain select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+id	count	task	operator info
+Limit_11	5.00	root	offset:0, count:5
+└─IndexJoin_15	5.00	root	inner join, inner:IndexReader_14, outer key:t1.a, inner key:t2.a
+  ├─TableReader_17	4.00	root	data:TableScan_16
+  │ └─TableScan_16	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─IndexReader_14	10.00	root	index:IndexScan_13
+    └─IndexScan_13	10.00	cop	table:t2, index:a, range: decided by [t1.a], keep order:false, stats:pseudo
+explain select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+id	count	task	operator info
+Limit_12	5.00	root	offset:0, count:5
+└─Selection_13	5.00	root	isnull(t2.a)
+  └─IndexJoin_17	5.00	root	left outer join, inner:IndexReader_16, outer key:t1.a, inner key:t2.a
+    ├─TableReader_19	4.00	root	data:TableScan_18
+    │ └─TableScan_18	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─IndexReader_16	10.00	root	index:IndexScan_15
+      └─IndexScan_15	10.00	cop	table:t2, index:a, range: decided by [t1.a], keep order:false, stats:pseudo
+explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+id	count	task	operator info
+Limit_11	5.00	root	offset:0, count:5
+└─MergeJoin_12	5.00	root	inner join, left key:t1.a, right key:t2.a
+  ├─IndexReader_14	4.00	root	index:IndexScan_13
+  │ └─IndexScan_13	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+  └─IndexReader_16	4.00	root	index:IndexScan_15
+    └─IndexScan_15	4.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+id	count	task	operator info
+Limit_12	5.00	root	offset:0, count:5
+└─Selection_13	5.00	root	isnull(t2.a)
+  └─MergeJoin_14	5.00	root	left outer join, left key:t1.a, right key:t2.a
+    ├─IndexReader_16	4.00	root	index:IndexScan_15
+    │ └─IndexScan_15	4.00	cop	table:t1, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+    └─IndexReader_18	4.00	root	index:IndexScan_17
+      └─IndexScan_17	4.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+id	count	task	operator info
+Limit_11	5.00	root	offset:0, count:5
+└─HashLeftJoin_19	5.00	root	inner join, inner:TableReader_24, equal:[eq(t1.a, t2.a)]
+  ├─TableReader_22	4.00	root	data:TableScan_21
+  │ └─TableScan_21	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_24	10000.00	root	data:TableScan_23
+    └─TableScan_23	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+id	count	task	operator info
+Limit_12	5.00	root	offset:0, count:5
+└─Selection_13	5.00	root	isnull(t2.a)
+  └─HashLeftJoin_18	5.00	root	left outer join, inner:TableReader_22, equal:[eq(t1.a, t2.a)]
+    ├─TableReader_20	4.00	root	data:TableScan_19
+    │ └─TableScan_19	4.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableReader_22	10000.00	root	data:TableScan_21
+      └─TableScan_21	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo

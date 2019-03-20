@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -67,6 +68,10 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 
 func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	defer func() {
+		if r.expectedRowsRet == nil {
+			r.numNextCalled++
+			return
+		}
 		rowsRet := req.NumRows()
 		expected := r.expectedRowsRet[r.numNextCalled]
 		if rowsRet != expected {
@@ -588,4 +593,214 @@ func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, 
 		numWorkers:    int64(numWorkers),
 		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 	}
+}
+
+func divGenerator(factor int) func(valType *types.FieldType) interface{} {
+	closureCountInt := 0
+	closureCountDouble := 0
+	return func(valType *types.FieldType) interface{} {
+		switch valType.Tp {
+		case mysql.TypeLong, mysql.TypeLonglong:
+			ret := int64(closureCountInt / factor)
+			closureCountInt++
+			return ret
+		case mysql.TypeDouble:
+			ret := float64(closureCountInt / factor)
+			closureCountDouble++
+			return ret
+		default:
+			panic("not implement")
+		}
+	}
+}
+
+func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		aggFunc        string
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+		gen            func(valType *types.FieldType) interface{}
+	}{
+		{
+			totalRows:      1000000,
+			aggFunc:        ast.AggFuncSum,
+			requiredRows:   []int{1, 2, 3, 4, 5, 6, 7},
+			expectedRows:   []int{1, 2, 3, 4, 5, 6, 7},
+			expectedRowsDS: []int{maxChunkSize},
+			gen:            divGenerator(1),
+		},
+		{
+			totalRows:      maxChunkSize * 3,
+			aggFunc:        ast.AggFuncAvg,
+			requiredRows:   []int{1, 3},
+			expectedRows:   []int{1, 2},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
+			gen:            divGenerator(maxChunkSize),
+		},
+		{
+			totalRows:      maxChunkSize*2 - 1,
+			aggFunc:        ast.AggFuncMax,
+			requiredRows:   []int{maxChunkSize/2 + 1},
+			expectedRows:   []int{maxChunkSize/2 + 1},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize - 1},
+			gen:            divGenerator(2),
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
+		ds := newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
+		childCols := ds.Schema().Columns
+		schema := expression.NewSchema(childCols...)
+		groupBy := []expression.Expression{childCols[1]}
+		aggFunc := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
+		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
+		exec := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+		}
+		c.Assert(exec.Close(), IsNil)
+		c.Assert(ds.checkNumNextCalled(), IsNil)
+	}
+}
+
+func (s *testExecSuite) TestHashAggParallelRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		aggFunc        string
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+		gen            func(valType *types.FieldType) interface{}
+	}{
+		{
+			totalRows:      maxChunkSize,
+			aggFunc:        ast.AggFuncSum,
+			requiredRows:   []int{1, 2, 3, 4, 5, 6, 7},
+			expectedRows:   []int{1, 2, 3, 4, 5, 6, 7},
+			expectedRowsDS: []int{maxChunkSize, 0},
+			gen:            divGenerator(1),
+		},
+		{
+			totalRows:      maxChunkSize * 3,
+			aggFunc:        ast.AggFuncAvg,
+			requiredRows:   []int{1, 3},
+			expectedRows:   []int{1, 2},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
+			gen:            divGenerator(maxChunkSize),
+		},
+		{
+			totalRows:      maxChunkSize * 3,
+			aggFunc:        ast.AggFuncAvg,
+			requiredRows:   []int{maxChunkSize, maxChunkSize},
+			expectedRows:   []int{maxChunkSize, maxChunkSize / 2},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
+			gen:            divGenerator(2),
+		},
+	}
+
+	for _, hasDistinct := range []bool{false, true} {
+		for _, testCase := range testCases {
+			sctx := defaultCtx()
+			ctx := context.Background()
+			ds := newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
+			childCols := ds.Schema().Columns
+			schema := expression.NewSchema(childCols...)
+			groupBy := []expression.Expression{childCols[1]}
+			aggFunc := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, hasDistinct)
+			aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
+			exec := buildHashAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
+			c.Assert(exec.Open(ctx), IsNil)
+			chk := exec.newFirstChunk()
+			for i := range testCase.requiredRows {
+				chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+				c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+				c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+			}
+			c.Assert(exec.Close(), IsNil)
+			c.Assert(ds.checkNumNextCalled(), IsNil)
+		}
+	}
+}
+
+func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
+	justReturn1 := func(valType *types.FieldType) interface{} {
+		switch valType.Tp {
+		case mysql.TypeLong, mysql.TypeLonglong:
+			return int64(1)
+		case mysql.TypeDouble:
+			return float64(1)
+		default:
+			panic("not support")
+		}
+	}
+	joinTypes := []plannercore.JoinType{plannercore.RightOuterJoin, plannercore.LeftOuterJoin,
+		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin}
+	for _, joinType := range joinTypes {
+		ctx := defaultCtx()
+		required := make([]int, 100)
+		for i := range required {
+			required[i] = rand.Int()%ctx.GetSessionVars().MaxChunkSize + 1
+		}
+		innerSrc := newRequiredRowsDataSourceWithGenerator(ctx, 1, nil, justReturn1)             // just return one row: (1, 1)
+		outerSrc := newRequiredRowsDataSourceWithGenerator(ctx, 10000000, required, justReturn1) // always return (1, 1)
+		exec := buildMergeJoinExec(ctx, joinType, innerSrc, outerSrc)
+		c.Assert(exec.Open(context.Background()), IsNil)
+
+		chk := exec.newFirstChunk()
+		for i := range required {
+			chk.SetRequiredRows(required[i], ctx.GetSessionVars().MaxChunkSize)
+			c.Assert(exec.Next(context.Background(), chunk.NewRecordBatch(chk)), IsNil)
+		}
+		c.Assert(exec.Close(), IsNil)
+		c.Assert(outerSrc.checkNumNextCalled(), IsNil)
+	}
+}
+
+func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc Executor) Executor {
+	if joinType == plannercore.RightOuterJoin {
+		innerSrc, outerSrc = outerSrc, innerSrc
+	}
+
+	innerCols := innerSrc.Schema().Columns
+	outerCols := outerSrc.Schema().Columns
+	j := plannercore.PhysicalMergeJoin{
+		JoinType:        joinType,
+		LeftConditions:  nil,
+		RightConditions: nil,
+		DefaultValues:   []types.Datum{types.NewDatum(1), types.NewDatum(1)},
+		LeftKeys:        outerCols,
+		RightKeys:       innerCols,
+	}.Init(ctx, nil)
+
+	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
+	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
+	schema := expression.NewSchema(cols...)
+	j.SetSchema(schema)
+
+	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftKeys))
+	for i := range j.LeftKeys {
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(j.LeftKeys[i], j.RightKeys[i]))
+	}
+
+	b := newExecutorBuilder(ctx, nil)
+	return b.build(j)
+}
+
+type mockPlan struct {
+	MockPhysicalPlan
+	exec Executor
+}
+
+func (mp *mockPlan) GetExecutor() Executor {
+	return mp.exec
 }
