@@ -246,6 +246,9 @@ type TiKVClient struct {
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
+	// Calculate commit_ts instead of allocating commit_ts from PD to reduce latency of committing. This optimization
+	// guarantees Snapshot Isolation but will cause problem to tidb-binlog and lose the transactions' real commit time.
+	UseCalculatedCommitTs bool `toml:"use-calculated-commit-ts" json:"use-calculated-commit-ts"`
 }
 
 // Binlog is the config for binlog.
@@ -340,7 +343,9 @@ var defaultConf = Config{
 		MaxBatchSize:      1280,
 		OverloadThreshold: 200,
 		MaxBatchWaitTime:  0,
-		BatchWaitSize:     80,
+		BatchWaitSize:     8,
+
+		UseCalculatedCommitTs: true,
 	},
 	Binlog: Binlog{
 		Enable:       "auto",
