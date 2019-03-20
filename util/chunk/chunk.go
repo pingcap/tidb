@@ -123,9 +123,9 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 // newFixedLenColumn creates a fixed length column with elemLen and initial data capacity.
 func newFixedLenColumn(elemLen, cap int) *column {
 	return &column{
-		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, cap*elemLen),
-		nullBitmap: make([]byte, 0, cap>>3),
+		elemBuf: make([]byte, elemLen),
+		data:    make([]byte, 0, cap*elemLen),
+		//nullBitmap: make([]byte, 0, cap>>3),
 	}
 }
 
@@ -139,9 +139,9 @@ func newVarLenColumn(cap int, old *column) *column {
 		estimatedElemLen = (len(old.data) + len(old.data)/8) / old.length
 	}
 	return &column{
-		offsets:    make([]int32, 1, cap+1),
-		data:       make([]byte, 0, cap*estimatedElemLen),
-		nullBitmap: make([]byte, 0, cap>>3),
+		offsets: make([]int32, 1, cap+1),
+		data:    make([]byte, 0, cap*estimatedElemLen),
+		//nullBitmap: make([]byte, 0, cap>>3),
 	}
 }
 
