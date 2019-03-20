@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/parser/terror"
 )
 
-const defaultWriterSize = 64 * 1024
+const defaultWriterSize = 128 * 1024
 
 // packetIO is a helper to read and write data in packet format.
 type packetIO struct {
