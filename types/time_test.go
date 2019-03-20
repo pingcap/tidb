@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -1068,5 +1069,100 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 		} else {
 			c.Assert(validTimestamp, IsNil, Commentf("For %s", t.input))
 		}
+	}
+}
+
+func (s *testTimeSuite) TestExtractDurationValue(c *C) {
+	tests := []struct {
+		unit   string
+		format string
+		ans    string
+	}{
+		{
+			unit:   "MICROSECOND",
+			format: "50",
+			ans:    "00:00:00.000050",
+		},
+		{
+			unit:   "SECOND",
+			format: "50",
+			ans:    "00:00:50",
+		},
+		{
+			unit:   "MINUTE",
+			format: "10",
+			ans:    "00:10:00",
+		},
+		{
+			unit:   "HOUR",
+			format: "10",
+			ans:    "10:00:00",
+		},
+		{
+			unit:   "DAY",
+			format: "1",
+			ans:    "24:00:00",
+		},
+		{
+			unit:   "WEEK",
+			format: "2",
+			ans:    "336:00:00",
+		},
+		{
+			unit:   "SECOND_MICROSECOND",
+			format: "61.01",
+			ans:    "00:01:01.010000",
+		},
+		{
+			unit:   "MINUTE_MICROSECOND",
+			format: "01:61.01",
+			ans:    "00:02:01.010000",
+		},
+		{
+			unit:   "MINUTE_SECOND",
+			format: "61:61",
+			ans:    "01:02:01.000000",
+		},
+		{
+			unit:   "HOUR_MICROSECOND",
+			format: "01:61:01.01",
+			ans:    "02:01:01.010000",
+		},
+		{
+			unit:   "HOUR_SECOND",
+			format: "01:61:01",
+			ans:    "02:01:01.000000",
+		},
+		{
+			unit:   "HOUR_MINUTE",
+			format: "2:2",
+			ans:    "02:02:00",
+		},
+		{
+			unit:   "DAY_MICROSECOND",
+			format: "1 1:1:1.02",
+			ans:    "25:01:01.020000",
+		},
+		{
+			unit:   "DAY_SECOND",
+			format: "1 02:03:04",
+			ans:    "26:03:04.000000",
+		},
+		{
+			unit:   "DAY_MINUTE",
+			format: "1 1:2",
+			ans:    "25:02:00",
+		},
+		{
+			unit:   "DAY_HOUR",
+			format: "1 1",
+			ans:    "25:00:00",
+		},
+	}
+	failedComment := "failed at case %d, unit: %s, format: %s"
+	for i, tt := range tests {
+		dur, err := types.ExtractDurationValue(tt.unit, tt.format)
+		c.Assert(err, IsNil, Commentf(failedComment+", error stack", i, tt.unit, tt.format, errors.ErrorStack(err)))
+		c.Assert(dur.String(), Equals, tt.ans, Commentf(failedComment, i, tt.unit, tt.format))
 	}
 }

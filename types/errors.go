@@ -58,29 +58,31 @@ var (
 	// See https://dev.mysql.com/doc/refman/5.5/en/out-of-range-and-overflow.html for details
 	ErrWarnDataOutOfRange = terror.ClassTypes.New(codeDataOutOfRange, mysql.MySQLErrName[mysql.ErrWarnDataOutOfRange])
 	// ErrDuplicatedValueInType is returned when enum column has duplicated value.
-	ErrDuplicatedValueInType = terror.ClassTypes.New(codeDuplicatedValueInType, mysql.MySQLErrName[mysql.ErrDuplicatedValueInType])
+	ErrDuplicatedValueInType    = terror.ClassTypes.New(codeDuplicatedValueInType, mysql.MySQLErrName[mysql.ErrDuplicatedValueInType])
+	ErrDatetimeFunctionOverflow = terror.ClassTypes.New(codeDatetimeFunctionOverflow, mysql.MySQLErrName[mysql.ErrDatetimeFunctionOverflow])
 )
 
 const (
 	codeBadNumber terror.ErrCode = 1
 
-	codeDataTooLong           = terror.ErrCode(mysql.ErrDataTooLong)
-	codeIllegalValueForType   = terror.ErrCode(mysql.ErrIllegalValueForType)
-	codeTruncated             = terror.ErrCode(mysql.WarnDataTruncated)
-	codeOverflow              = terror.ErrCode(mysql.ErrDataOutOfRange)
-	codeDivByZero             = terror.ErrCode(mysql.ErrDivisionByZero)
-	codeTooBigDisplayWidth    = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
-	codeTooBigFieldLength     = terror.ErrCode(mysql.ErrTooBigFieldlength)
-	codeTooBigSet             = terror.ErrCode(mysql.ErrTooBigSet)
-	codeTooBigScale           = terror.ErrCode(mysql.ErrTooBigScale)
-	codeTooBigPrecision       = terror.ErrCode(mysql.ErrTooBigPrecision)
-	codeWrongFieldSpec        = terror.ErrCode(mysql.ErrWrongFieldSpec)
-	codeTruncatedWrongValue   = terror.ErrCode(mysql.ErrTruncatedWrongValue)
-	codeUnknown               = terror.ErrCode(mysql.ErrUnknown)
-	codeInvalidDefault        = terror.ErrCode(mysql.ErrInvalidDefault)
-	codeMBiggerThanD          = terror.ErrCode(mysql.ErrMBiggerThanD)
-	codeDataOutOfRange        = terror.ErrCode(mysql.ErrWarnDataOutOfRange)
-	codeDuplicatedValueInType = terror.ErrCode(mysql.ErrDuplicatedValueInType)
+	codeDataTooLong              = terror.ErrCode(mysql.ErrDataTooLong)
+	codeIllegalValueForType      = terror.ErrCode(mysql.ErrIllegalValueForType)
+	codeTruncated                = terror.ErrCode(mysql.WarnDataTruncated)
+	codeOverflow                 = terror.ErrCode(mysql.ErrDataOutOfRange)
+	codeDivByZero                = terror.ErrCode(mysql.ErrDivisionByZero)
+	codeTooBigDisplayWidth       = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
+	codeTooBigFieldLength        = terror.ErrCode(mysql.ErrTooBigFieldlength)
+	codeTooBigSet                = terror.ErrCode(mysql.ErrTooBigSet)
+	codeTooBigScale              = terror.ErrCode(mysql.ErrTooBigScale)
+	codeTooBigPrecision          = terror.ErrCode(mysql.ErrTooBigPrecision)
+	codeWrongFieldSpec           = terror.ErrCode(mysql.ErrWrongFieldSpec)
+	codeTruncatedWrongValue      = terror.ErrCode(mysql.ErrTruncatedWrongValue)
+	codeUnknown                  = terror.ErrCode(mysql.ErrUnknown)
+	codeInvalidDefault           = terror.ErrCode(mysql.ErrInvalidDefault)
+	codeMBiggerThanD             = terror.ErrCode(mysql.ErrMBiggerThanD)
+	codeDataOutOfRange           = terror.ErrCode(mysql.ErrWarnDataOutOfRange)
+	codeDuplicatedValueInType    = terror.ErrCode(mysql.ErrDuplicatedValueInType)
+	codeDatetimeFunctionOverflow = terror.ErrCode(mysql.ErrDatetimeFunctionOverflow)
 )
 
 var (
@@ -92,23 +94,24 @@ var (
 
 func init() {
 	typesMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDataTooLong:           mysql.ErrDataTooLong,
-		codeIllegalValueForType:   mysql.ErrIllegalValueForType,
-		codeTruncated:             mysql.WarnDataTruncated,
-		codeOverflow:              mysql.ErrDataOutOfRange,
-		codeDivByZero:             mysql.ErrDivisionByZero,
-		codeTooBigDisplayWidth:    mysql.ErrTooBigDisplaywidth,
-		codeTooBigFieldLength:     mysql.ErrTooBigFieldlength,
-		codeTooBigSet:             mysql.ErrTooBigSet,
-		codeTooBigScale:           mysql.ErrTooBigScale,
-		codeTooBigPrecision:       mysql.ErrTooBigPrecision,
-		codeWrongFieldSpec:        mysql.ErrWrongFieldSpec,
-		codeTruncatedWrongValue:   mysql.ErrTruncatedWrongValue,
-		codeUnknown:               mysql.ErrUnknown,
-		codeInvalidDefault:        mysql.ErrInvalidDefault,
-		codeMBiggerThanD:          mysql.ErrMBiggerThanD,
-		codeDataOutOfRange:        mysql.ErrWarnDataOutOfRange,
-		codeDuplicatedValueInType: mysql.ErrDuplicatedValueInType,
+		codeDataTooLong:              mysql.ErrDataTooLong,
+		codeIllegalValueForType:      mysql.ErrIllegalValueForType,
+		codeTruncated:                mysql.WarnDataTruncated,
+		codeOverflow:                 mysql.ErrDataOutOfRange,
+		codeDivByZero:                mysql.ErrDivisionByZero,
+		codeTooBigDisplayWidth:       mysql.ErrTooBigDisplaywidth,
+		codeTooBigFieldLength:        mysql.ErrTooBigFieldlength,
+		codeTooBigSet:                mysql.ErrTooBigSet,
+		codeTooBigScale:              mysql.ErrTooBigScale,
+		codeTooBigPrecision:          mysql.ErrTooBigPrecision,
+		codeWrongFieldSpec:           mysql.ErrWrongFieldSpec,
+		codeTruncatedWrongValue:      mysql.ErrTruncatedWrongValue,
+		codeUnknown:                  mysql.ErrUnknown,
+		codeInvalidDefault:           mysql.ErrInvalidDefault,
+		codeMBiggerThanD:             mysql.ErrMBiggerThanD,
+		codeDataOutOfRange:           mysql.ErrWarnDataOutOfRange,
+		codeDuplicatedValueInType:    mysql.ErrDuplicatedValueInType,
+		codeDatetimeFunctionOverflow: mysql.ErrDatetimeFunctionOverflow,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
 }

@@ -150,6 +150,14 @@ var (
 	}
 )
 
+var (
+	GoDurationDay     = gotime.Hour * 24
+	GoDurationWeek    = GoDurationDay * 7
+	GoDurationMonth   = GoDurationDay * 30
+	GoDurationQuarter = GoDurationMonth * 3
+	GoDurationYear    = GoDurationMonth * 12
+)
+
 // FromGoTime translates time.Time to mysql time internal representation.
 func FromGoTime(t gotime.Time) MysqlTime {
 	year, month, day := t.Date()
@@ -1110,9 +1118,9 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration,
 // TruncateOverflowMySQLTime truncates d when it overflows, and return ErrTruncatedWrongVal.
 func TruncateOverflowMySQLTime(d gotime.Duration) (gotime.Duration, error) {
 	if d > MaxTime {
-		return MaxTime, ErrTruncatedWrongVal.GenWithStackByArgs("time", d.String())
+		return MaxTime, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	} else if d < MinTime {
-		return MinTime, ErrTruncatedWrongVal.GenWithStackByArgs("time", d.String())
+		return MinTime, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	}
 
 	return d, nil
@@ -1820,8 +1828,110 @@ func ExtractTimeValue(unit string, format string) (int64, int64, int64, float64,
 	case "YEAR_MONTH":
 		return extractYearMonth(format)
 	default:
-		return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
+		return 0, 0, 0, 0, errors.Errorf("invalid single timeunit - %s", unit)
 	}
+}
+
+func ExtractDurationValue(unit string, format string) (Duration, error) {
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
+		return extractSingleDurationValue(unit, format)
+	case "SECOND_MICROSECOND":
+		_, _, _, d, err := extractSecondMicrosecond(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+	case "MINUTE_MICROSECOND":
+		_, _, _, d, err := extractMinuteMicrosecond(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+	case "MINUTE_SECOND":
+		_, _, _, d, err := extractMinuteSecond(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+	case "HOUR_MICROSECOND":
+		_, _, _, d, err := extractHourMicrosecond(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+	case "HOUR_SECOND":
+		_, _, _, d, err := extractHourSecond(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return Duration{Duration: gotime.Duration(d), Fsp: MaxFsp}, nil
+	case "HOUR_MINUTE":
+		_, _, _, d, err := extractHourMinute(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return Duration{Duration: gotime.Duration(d), Fsp: 0}, nil
+	case "DAY_MICROSECOND":
+		_, _, day, dur, err := extractDayMicrosecond(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return Duration{Duration: gotime.Duration(day*int64(GoDurationDay) + int64(dur)), Fsp: MaxFsp}, nil
+	case "DAY_SECOND":
+		_, _, day, dur, err := extractDaySecond(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return Duration{Duration: gotime.Duration(day*int64(GoDurationDay) + int64(dur)), Fsp: MaxFsp}, nil
+	case "DAY_MINUTE":
+		_, _, day, dur, err := extractDayMinute(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return Duration{Duration: gotime.Duration(day*int64(GoDurationDay) + int64(dur)), Fsp: 0}, nil
+	case "DAY_HOUR":
+		_, _, day, dur, err := extractDayHour(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return Duration{Duration: gotime.Duration(day*int64(GoDurationDay) + int64(dur)), Fsp: 0}, nil
+	case "YEAR_MONTH":
+		_, _, _, _, err := extractYearMonth(format)
+		if err != nil {
+			return ZeroDuration, err
+		}
+		return ZeroDuration, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+	default:
+		return ZeroDuration, errors.Errorf("invalid single timeunit - %s", unit)
+	}
+}
+
+func extractSingleDurationValue(unit string, format string) (Duration, error) {
+	fv, err := strconv.ParseFloat(format, 64)
+	if err != nil {
+		return ZeroDuration, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+	}
+	iv := int64(math.Round(fv))
+
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND":
+		return Duration{Duration: gotime.Duration(fv * float64(gotime.Microsecond)), Fsp: MaxFsp}, nil
+	case "SECOND":
+		return Duration{Duration: gotime.Duration(fv * float64(gotime.Second)), Fsp: 0}, nil
+	case "MINUTE":
+		return Duration{Duration: gotime.Duration(fv * float64(gotime.Minute)), Fsp: 0}, nil
+	case "HOUR":
+		return Duration{Duration: gotime.Duration(float64(iv * int64(gotime.Hour))), Fsp: 0}, nil
+	case "DAY":
+		return Duration{Duration: gotime.Duration(float64(iv * int64(GoDurationDay))), Fsp: 0}, nil
+	case "WEEK":
+		return Duration{Duration: gotime.Duration(float64(iv * int64(GoDurationWeek))), Fsp: 0}, nil
+	case "MONTH", "QUARTER", "YEAR":
+		return ZeroDuration, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+	}
+
+	return ZeroDuration, errors.Errorf("invalid single timeunit - %s", unit)
 }
 
 // IsClockUnit returns true when unit is interval unit with hour, minute or second.
