@@ -15,6 +15,9 @@ package executor
 
 import (
 	"context"
+	"math"
+	"sort"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -27,8 +30,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"math"
-	"sort"
 )
 
 var (
@@ -273,9 +274,9 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 		StmtNode:   execStmt,
 		Ctx:        ctx,
 	}
-	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID]; ok {
-		stmt.Text = prepared.Stmt.Text()
-	}
+	//if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID]; ok {
+	//	stmt.Text = prepared.Stmt.Text()
+	//}
 	return stmt, nil
 }
 
