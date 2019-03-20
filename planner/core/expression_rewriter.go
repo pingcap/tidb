@@ -91,7 +91,6 @@ func (b *PlanBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper ma
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
 func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (expression.Expression, LogicalPlan, error) {
 	b.rewriterCounter++
-	defer func() { b.rewriterCounter-- }()
 
 	rewriter := b.getExpressionRewriter(p)
 	// The rewriter maybe is obtained from "b.rewriterPool", "rewriter.err" is
@@ -99,6 +98,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan
 	// Here we give us one more chance to make a correct behavior by handling
 	// this missed error.
 	if rewriter.err != nil {
+		b.rewriterCounter--
 		return nil, nil, rewriter.err
 	}
 
@@ -107,7 +107,8 @@ func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan
 	rewriter.preprocess = preprocess
 
 	expr, resultPlan, err := b.rewriteExprNode(rewriter, exprNode, asScalar)
-	return expr, resultPlan, errors.Trace(err)
+	b.rewriterCounter--
+	return expr, resultPlan, err
 }
 
 func (b *PlanBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expressionRewriter) {
