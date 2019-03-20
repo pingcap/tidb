@@ -1290,4 +1290,11 @@ func (s *testIntegrationSuite) TestFulltextIndexIgnore(c *C) {
 	defer s.tk.MustExec("drop table if exists t_ft")
 	s.assertWarningExec(c, "create table t_ft (a text, fulltext key (a))", ddl.ErrTableCantHandleFt)
 	s.assertWarningExec(c, "alter table t_ft add fulltext key (a)", ddl.ErrTableCantHandleFt)
+
+	//t := s.testGetTable(c, "t_anonymous_index")
+	//c.Assert(t.Indices(), HasLen, 0)
+	r := s.tk.MustQuery("show index from t_ft")
+	c.Assert(r.Rows(), HasLen, 0)
+	r = s.tk.MustQuery("select * from information_schema.statistics where table_schema='test' and table_name='t_ft'")
+	c.Assert(r.Rows(), HasLen, 0)
 }
