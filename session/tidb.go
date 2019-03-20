@@ -190,11 +190,11 @@ func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, s
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (sqlexec.RecordSet, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
-		span1.LogKV("sql", s.OriginText())
-		defer span1.Finish()
-	}
+	//if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+	//	span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
+	//	span1.LogKV("sql", s.OriginText())
+	//	defer span1.Finish()
+	//}
 
 	var err error
 	var rs sqlexec.RecordSet

@@ -18,7 +18,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -123,10 +122,10 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("unionScan.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	//if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+	//	span1 := span.Tracer().StartSpan("unionScan.Next", opentracing.ChildOf(span.Context()))
+	//	defer span1.Finish()
+	//}
 
 	if us.runtimeStats != nil {
 		start := time.Now()

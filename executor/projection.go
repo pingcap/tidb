@@ -153,10 +153,10 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  +------------------------------+       +----------------------+
 //
 func (e *ProjectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("projection.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	//if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+	//	span1 := span.Tracer().StartSpan("projection.Next", opentracing.ChildOf(span.Context()))
+	//	defer span1.Finish()
+	//}
 
 	if e.runtimeStats != nil {
 		start := time.Now()

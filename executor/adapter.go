@@ -104,10 +104,10 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("recordSet.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	//if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+	//	span1 := span.Tracer().StartSpan("recordSet.Next", opentracing.ChildOf(span.Context()))
+	//	defer span1.Finish()
+	//}
 
 	err := a.executor.Next(ctx, req)
 	if err != nil {
@@ -276,10 +276,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 }
 
 func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	//if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+	//	span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
+	//	defer span1.Finish()
+	//}
 
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.

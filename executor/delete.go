@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
@@ -45,10 +44,10 @@ type DeleteExec struct {
 
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("delete.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	//if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+	//	span1 := span.Tracer().StartSpan("delete.Next", opentracing.ChildOf(span.Context()))
+	//	defer span1.Finish()
+	//}
 
 	req.Reset()
 	if e.IsMultiTable {

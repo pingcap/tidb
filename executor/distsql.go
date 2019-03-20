@@ -23,7 +23,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -250,10 +249,10 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tableReader.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	//if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+	//	span1 := span.Tracer().StartSpan("tableReader.Next", opentracing.ChildOf(span.Context()))
+	//	defer span1.Finish()
+	//}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()

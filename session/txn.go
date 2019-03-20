@@ -371,10 +371,10 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	//if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+	//	span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
+	//	defer span1.Finish()
+	//}
 
 	oracleStore := s.store.GetOracle()
 	tsFuture := oracleStore.GetTimestampAsync(ctx)

@@ -35,10 +35,10 @@ type Compiler struct {
 
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	//if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+	//	span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
+	//	defer span1.Finish()
+	//}
 
 	infoSchema := GetInfoSchema(c.Ctx)
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
