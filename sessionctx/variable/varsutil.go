@@ -488,13 +488,18 @@ func parseTimeZone(s string) (*time.Location, error) {
 	}
 
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
-	// Hour should not greater than 12, like '+13:00', or '-13:00' is invalid.
+	// The time zone's value should in [-12:59,+13:00].
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
 		d, err := types.ParseDuration(nil, s[1:], 0)
 		if err == nil {
-			hofst := int(d.Duration / time.Hour)
-			if hofst > 12 {
-				return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+			if s[0] == '-' {
+				if d.Duration > 12*time.Hour+59*time.Minute {
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+				}
+			} else {
+				if d.Duration > 13*time.Hour {
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+				}
 			}
 
 			ofst := int(d.Duration / time.Second)
