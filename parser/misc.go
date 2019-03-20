@@ -204,6 +204,7 @@ var tokenMap = map[string]int{
 	"CURRENT_TIME":             currentTime,
 	"CURRENT_TIMESTAMP":        currentTs,
 	"CURRENT_USER":             currentUser,
+	"CURRENT_ROLE":             currentRole,
 	"CURTIME":                  curTime,
 	"DATA":                     data,
 	"DATABASE":                 database,
