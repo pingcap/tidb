@@ -498,7 +498,6 @@ func parseTimeZone(s string) (*time.Location, error) {
 			}
 
 			ofst := int(d.Duration / time.Second)
-
 			if s[0] == '-' {
 				ofst = -ofst
 			}
