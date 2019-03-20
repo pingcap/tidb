@@ -55,12 +55,12 @@ type IndexLookUpMergeJoin struct {
 }
 
 type outerMergeCtx struct {
-	rowTypes       []*types.FieldType
-	joinKeys       []*expression.Column
-	keyCols        []int
-	filter         expression.CNFExprs
-	keepOuterOrder bool
-	compareFuncs   []expression.CompareFunc
+	rowTypes      []*types.FieldType
+	joinKeys      []*expression.Column
+	keyCols       []int
+	filter        expression.CNFExprs
+	needOuterSort bool
+	compareFuncs  []expression.CompareFunc
 }
 
 type innerMergeCtx struct {
@@ -343,7 +343,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 	if task.outerResult.NumRows() == 0 {
 		return nil, nil
 	}
-	if omw.outerMergeCtx.keepOuterOrder == false {
+	if omw.outerMergeCtx.needOuterSort == false {
 		c := omw.executor.newFirstChunk()
 		var rows []chunk.Row
 		for i := 0; i < task.outerResult.NumRows(); i++ {

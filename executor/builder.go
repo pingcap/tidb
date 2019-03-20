@@ -1559,34 +1559,53 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		}
 		if isInnerKeysPrefix {
 			is.KeepOrder = true
-			// enforceOuterOrder means the outerJoinKeys must be the prefix of the prop items of PhysicalIndexJoin
+			// needOuterSort means whether the outer join keys are the prefix of the prop items.
+			needOuterSort := len(v.PropItems) > 0 && len(v.OuterJoinKeys) <= len(v.PropItems)
 			compareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
 			outerCompareFuncs := make([]expression.CompareFunc, 0, len(v.OuterJoinKeys))
 			for i := range v.OuterJoinKeys {
+				if needOuterSort && v.PropItems[i].Col.ColName != v.OuterJoinKeys[i].ColName {
+					needOuterSort = false
+				}
 				compareFuncs = append(compareFuncs, expression.GetCmpFunction(v.OuterJoinKeys[i], v.InnerJoinKeys[i]))
 				outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(v.OuterJoinKeys[i], v.OuterJoinKeys[i]))
 			}
-			return &IndexLookUpMergeJoin{
-				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
-				outerMergeCtx: outerMergeCtx{
-					rowTypes:       outerTypes,
-					filter:         outerFilter,
-					joinKeys:       v.OuterJoinKeys,
-					keyCols:        outerKeyCols,
-					keepOuterOrder: v.KeepOuterOrder,
-					compareFuncs:   outerCompareFuncs,
-				},
-				innerMergeCtx: innerMergeCtx{
-					readerBuilder: &dataReaderBuilder{innerPlan, b},
-					rowTypes:      innerTypes,
-					joinKeys:      v.InnerJoinKeys,
-					keyCols:       innerKeyCols,
-					compareFuncs:  compareFuncs,
-				},
-				workerWg:      new(sync.WaitGroup),
-				joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
-				indexRanges:   v.Ranges,
-				keyOff2IdxOff: v.KeyOff2IdxOff,
+			// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
+			canKeepOuterOrder := len(v.PropItems) <= len(v.OuterJoinKeys)
+			for i := range v.PropItems {
+				if !canKeepOuterOrder {
+					break
+				}
+				if v.PropItems[i].Col.ColName != v.OuterJoinKeys[i].ColName {
+					canKeepOuterOrder = false
+				}
+			}
+			// If the prop items are NOT the prefix of the outer join keys,
+			// or the outer join keys are NOT the prefix of the prop items,
+			// then we can't execute merge join.
+			if canKeepOuterOrder || needOuterSort {
+				return &IndexLookUpMergeJoin{
+					baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
+					outerMergeCtx: outerMergeCtx{
+						rowTypes:      outerTypes,
+						filter:        outerFilter,
+						joinKeys:      v.OuterJoinKeys,
+						keyCols:       outerKeyCols,
+						needOuterSort: needOuterSort,
+						compareFuncs:  outerCompareFuncs,
+					},
+					innerMergeCtx: innerMergeCtx{
+						readerBuilder: &dataReaderBuilder{innerPlan, b},
+						rowTypes:      innerTypes,
+						joinKeys:      v.InnerJoinKeys,
+						keyCols:       innerKeyCols,
+						compareFuncs:  compareFuncs,
+					},
+					workerWg:      new(sync.WaitGroup),
+					joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+					indexRanges:   v.Ranges,
+					keyOff2IdxOff: v.KeyOff2IdxOff,
+				}
 			}
 		}
 	}
