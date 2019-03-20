@@ -79,6 +79,10 @@ func buildRowComparer(cols []*expression.Column) rowComparer {
 	rc.colIdx = make([]int, 0, len(cols))
 	rc.cmpFuncs = make([]chunk.CompareFunc, 0, len(cols))
 	for _, col := range cols {
+		cmpFunc := chunk.GetCompareFunc(col.RetType)
+		if cmpFunc == nil {
+			continue
+		}
 		rc.cmpFuncs = append(rc.cmpFuncs, chunk.GetCompareFunc(col.RetType))
 		rc.colIdx = append(rc.colIdx, col.Index)
 	}
