@@ -621,7 +621,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if len(tblCollate) == 0 {
 		tblCollate = getDefaultCollate(tblCharset)
 	}
-	if tb.Meta().Version == model.TableInfoVersion0 && config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 && tblCharset == charset.CharsetUTF8 {
+	if tb.Meta().Version < model.CurrLatestTableInfoVersion && config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 && tblCharset == charset.CharsetUTF8 {
 		tblCharset = charset.CharsetUTF8MB4
 		tblCollate = charset.CollationUTF8MB4
 	}
@@ -633,7 +633,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
 			colCharset, colCollate := col.Charset, col.Collate
-			if col.Version == model.ColumnInfoVersion0 && config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 && colCharset == charset.CharsetUTF8 {
+			if col.Version < model.CurrLatestColumnInfoVersion && config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 && colCharset == charset.CharsetUTF8 {
 				colCharset = charset.CharsetUTF8MB4
 				colCollate = charset.CollationUTF8MB4
 			}

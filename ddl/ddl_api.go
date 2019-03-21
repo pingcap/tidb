@@ -357,10 +357,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		Offset:    offset,
 		Name:      colDef.Name.Name,
 		FieldType: *colDef.Tp,
-		// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
-		//              This will fix bug in version 0.
-		// TODO: remove this version field after there is no old version 0.
-		Version: model.ColumnInfoVersion1,
+		// TODO: remove this version field after there is no old version.
+		Version: model.CurrLatestColumnInfoVersion,
 	})
 
 	if !isExplicitTimeStamp() {
@@ -1298,7 +1296,7 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 				ID:      int64(i),
 				Offset:  i,
 				State:   model.StatePublic,
-				Version: model.ColumnInfoVersion1,
+				Version: model.CurrLatestColumnInfoVersion,
 			})
 		}
 	} else {
@@ -1308,7 +1306,7 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 				ID:      int64(i),
 				Offset:  i,
 				State:   model.StatePublic,
-				Version: model.ColumnInfoVersion1,
+				Version: model.CurrLatestColumnInfoVersion,
 			})
 		}
 	}

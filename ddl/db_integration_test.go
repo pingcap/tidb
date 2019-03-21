@@ -1299,24 +1299,26 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Mock old version table info with column charset is utf8.
-	mockCtx := mock.NewContext()
-	mockCtx.Store = s.store
-	err := mockCtx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	txn, err := mockCtx.Txn(true)
-	c.Assert(err, IsNil)
-	mt := meta.NewMeta(txn)
 	db, ok := domain.GetDomain(s.ctx).InfoSchema().SchemaByName(model.NewCIStr("test"))
-	c.Assert(ok, IsTrue)
 	tbl := testGetTableByName(c, s.ctx, "test", "t")
 	tblInfo := tbl.Meta().Clone()
 	tblInfo.Version = model.TableInfoVersion0
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
-	err = mt.UpdateTable(db.ID, tblInfo)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
+	updateTableInfo := func(tblInfo *model.TableInfo) {
+		mockCtx := mock.NewContext()
+		mockCtx.Store = s.store
+		err := mockCtx.NewTxn(context.Background())
+		c.Assert(err, IsNil)
+		txn, err := mockCtx.Txn(true)
+		c.Assert(err, IsNil)
+		mt := meta.NewMeta(txn)
+		c.Assert(ok, IsTrue)
+		err = mt.UpdateTable(db.ID, tblInfo)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}
+	updateTableInfo(tblInfo)
 	s.tk.MustExec("alter table t add column c varchar(10) character set utf8;") //  load latest schema.
 	c.Assert(config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4, IsTrue)
 	s.tk.MustExec("insert into t set a= x'f09f8c80'")
@@ -1335,23 +1337,13 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Mock old version table info with table and column charset is utf8.
-	err = mockCtx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	txn, err = mockCtx.Txn(true)
-	c.Assert(err, IsNil)
-	mt = meta.NewMeta(txn)
-	db, ok = domain.GetDomain(s.ctx).InfoSchema().SchemaByName(model.NewCIStr("test"))
-	c.Assert(ok, IsTrue)
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
 	tblInfo = tbl.Meta().Clone()
 	tblInfo.Charset = charset.CharsetUTF8
 	tblInfo.Collate = charset.CollationUTF8
 	tblInfo.Version = model.TableInfoVersion0
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
-	err = mt.UpdateTable(db.ID, tblInfo)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	updateTableInfo(tblInfo)
 
 	s.tk.MustExec("alter table t drop column c;") //  load latest schema.
 	config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 = true
@@ -1387,4 +1379,28 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 	c.Assert(tbl.Meta().Columns[0].Charset, Equals, charset.CharsetUTF8MB4)
 	c.Assert(tbl.Meta().Columns[0].Collate, Equals, charset.CollationUTF8MB4)
 	c.Assert(tbl.Meta().Columns[0].Version, Equals, model.ColumnInfoVersion0)
+
+	// Test for v2.1.5 and v2.1.6 that table version is 1 but column version is 0.
+	tbl = testGetTableByName(c, s.ctx, "test", "t")
+	tblInfo = tbl.Meta().Clone()
+	tblInfo.Charset = charset.CharsetUTF8
+	tblInfo.Collate = charset.CollationUTF8
+	tblInfo.Version = model.TableInfoVersion1
+	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
+	tblInfo.Columns[0].Charset = charset.CharsetUTF8
+	tblInfo.Columns[0].Collate = charset.CollationUTF8
+	updateTableInfo(tblInfo)
+	s.tk.MustExec("alter table t change column b b varchar(20)") // load latest column.
+	s.tk.MustExec("insert into t set a= x'f09f8c80'")
+	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` varchar(20) DEFAULT NULL,\n" +
+		"  `b` varchar(20) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 = false
+	assertErrorCode(c, s.tk, "insert into t set a= x'f09f8c80'", mysql.ErrTruncatedWrongValueForField)
+	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` varchar(20) DEFAULT NULL,\n" +
+		"  `b` varchar(20) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 }

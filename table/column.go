@@ -184,7 +184,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	str := casted.GetString()
 	utf8Charset := col.Charset == mysql.UTF8Charset
 	doUTF8Check := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUtf8
-	if doUTF8Check && config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 && col.Version == model.ColumnInfoVersion0 {
+	if doUTF8Check && config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 && col.Version < model.CurrLatestColumnInfoVersion {
 		// Skip utf8 check for old version column. Because old TiDB don't have this check too.
 		// This is for compatibility. We may remove this in future.
 		doUTF8Check = false
