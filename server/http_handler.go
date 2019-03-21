@@ -743,12 +743,12 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
-		if ignoreColumnUTF8Charset := req.Form.Get("ignore-column-utf8-charset"); ignoreColumnUTF8Charset != "" {
+		if ignoreColumnUTF8Charset := req.Form.Get("treat-old-version-utf8-as-utf8mb4"); ignoreColumnUTF8Charset != "" {
 			switch ignoreColumnUTF8Charset {
 			case "0":
-				config.GetGlobalConfig().IgnoreColumnUTF8Charset = false
+				config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 = false
 			case "1":
-				config.GetGlobalConfig().IgnoreColumnUTF8Charset = true
+				config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 = true
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
