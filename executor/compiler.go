@@ -70,6 +70,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 				err = errors.Trace(plannercore.ErrNoDB)
 			}
 		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
