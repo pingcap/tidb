@@ -2208,10 +2208,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *specNewColumn.Tp,
 		Name:               newColName,
-		// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
-		//              This will fix bug in version 0.
-		// TODO: remove this version field after there is no old version 0.
-		Version: model.ColumnInfoVersion1,
+		Version:            col.Version,
 	})
 
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
