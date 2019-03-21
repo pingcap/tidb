@@ -2204,14 +2204,16 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 			break
 		}
 		var durationTokens bool
-		switch token {
-		case "%h", "%H", "%i", "%I", "%s", "%S", "%k", "%l":
-			durationTokens = true
-		}
-		var dateTokens bool
-		switch token {
-		case "%y", "%Y", "%m", "%M", "%c", "%b", "%D", "%d", "%e":
-			dateTokens = true
+		if len(token >= 2) {
+			switch token[1] {
+			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l':
+				durationTokens = true
+			}
+			var dateTokens bool
+			switch token[1] {
+			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
+				dateTokens = true
+			}
 		}
 		if durationTokens {
 			isDuration = true
