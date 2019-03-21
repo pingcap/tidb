@@ -1319,11 +1319,10 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		return errors.Trace(err)
 	}
 
-	cc.ctx.GetSessionVars().ConnectionInfo.User = cc.ctx.GetSessionVars().User.Username
-	connInfo := cc.ctx.GetSessionVars().ConnectionInfo
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
+			connInfo := cc.connectInfo()
 			err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: connInfo.Host}, plugin.ChangeUser, connInfo)
 			if err != nil {
 				return errors.Trace(err)

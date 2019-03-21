@@ -340,9 +340,6 @@ type SessionVars struct {
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
-
-	// ConnectionInfo indicate current connection information.
-	ConnectionInfo *ConnectionInfo
 }
 
 // ConnectionInfo present connection used by audit.

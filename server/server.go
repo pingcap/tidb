@@ -422,10 +422,10 @@ func (s *Server) onConn(conn *clientConn) {
 	s.rwlock.Unlock()
 	metrics.ConnGauge.Set(float64(connections))
 
-	connInfo := s.buildConnectInfo(conn)
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
+			connInfo := conn.connectInfo()
 			return authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars().User, plugin.Connected, connInfo)
 		}
 		return nil
@@ -434,14 +434,14 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
-	conn.ctx.GetSessionVars().ConnectionInfo = connInfo
 	connectedTime := time.Now()
 	conn.Run(ctx)
 
-	connInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
+			connInfo := conn.connectInfo()
+			connInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
 			err := authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars().User, plugin.Disconnect, connInfo)
 			if err != nil {
 				log.Warnf("call Plugin %s OnConnectionEvent(Disconnect) failure, err: %v", authPlugin.Name, err)
@@ -454,30 +454,30 @@ func (s *Server) onConn(conn *clientConn) {
 	}
 }
 
-func (s *Server) buildConnectInfo(conn *clientConn) *variable.ConnectionInfo {
+func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	connType := "Socket"
-	if conn.server.isUnixSocket() {
+	if cc.server.isUnixSocket() {
 		connType = "UnixSocket"
-	} else if conn.tlsConn != nil {
+	} else if cc.tlsConn != nil {
 		connType = "SSL/TLS"
 	}
 	connInfo := &variable.ConnectionInfo{
-		ConnectionID:      conn.connectionID,
+		ConnectionID:      cc.connectionID,
 		ConnectionType:    connType,
-		Host:              conn.peerHost,
-		ClientIP:          conn.peerHost,
-		ClientPort:        conn.peerPort,
+		Host:              cc.peerHost,
+		ClientIP:          cc.peerHost,
+		ClientPort:        cc.peerPort,
 		ServerID:          1,
-		ServerPort:        int(conn.server.cfg.Port),
+		ServerPort:        int(cc.server.cfg.Port),
 		Duration:          0,
-		User:              conn.user,
+		User:              cc.user,
 		ServerOSLoginUser: osUser,
 		OSVersion:         osVersion,
 		ClientVersion:     "",
 		ServerVersion:     mysql.TiDBReleaseVersion,
 		SSLVersion:        "v1.2.0", // for current go version
 		PID:               serverPID,
-		DB:                conn.dbname,
+		DB:                cc.dbname,
 	}
 	return connInfo
 }
