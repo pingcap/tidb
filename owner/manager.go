@@ -190,7 +190,7 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	logutil.Logger(context.Background()).Warn("resign ddl owner success!", zap.String("logPrefix", m.logPrefix))
+	logutil.Logger(context.Background()).Warn("resign ddl owner success", zap.String("logPrefix", m.logPrefix))
 	return nil
 }
 
