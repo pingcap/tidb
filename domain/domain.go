@@ -73,8 +73,6 @@ type Domain struct {
 	wg              sync.WaitGroup
 	gvc             GlobalVariableCache
 	slowQuery       *topNSlowQueries
-
-	MockReloadFailed MockFailure // It mocks reload failed.
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -290,17 +288,13 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
 
-func (do *Domain) mockReloadFailed() error {
-	return errors.New("mock reload failed")
-}
-
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
-	// for test
-	if do.MockReloadFailed.getValue() {
-		return do.mockReloadFailed()
-	}
+	// gofail: var ErrorMockReloadFailed bool
+	// if ErrorMockReloadFailed {
+	// 		return errors.New("mock reload failed")
+	// }
 
 	// Lock here for only once at the same time.
 	do.m.Lock()
@@ -558,26 +552,6 @@ func (c *ddlCallback) OnChanged(err error) error {
 	}
 
 	return nil
-}
-
-// MockFailure mocks reload failed.
-// It's used for fixing data race in tests.
-type MockFailure struct {
-	sync.RWMutex
-	val bool // val is true means we need to mock reload failed.
-}
-
-// SetValue sets whether we need to mock reload failed.
-func (m *MockFailure) SetValue(isFailed bool) {
-	m.Lock()
-	defer m.Unlock()
-	m.val = isFailed
-}
-
-func (m *MockFailure) getValue() bool {
-	m.RLock()
-	defer m.RUnlock()
-	return m.val
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.
