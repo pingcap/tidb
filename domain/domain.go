@@ -549,7 +549,7 @@ func (c *ddlCallback) OnChanged(err error) error {
 
 	err = c.do.Reload()
 	if err != nil {
-		logutil.Logger(context.Background()).Error("doing DDL change failed", zap.Error(err))
+		logutil.Logger(context.Background()).Error("on DDL change failed", zap.Error(err))
 	}
 
 	return nil
