@@ -34,11 +34,6 @@ type ChangeExec struct {
 // Next implements the Executor Next interface.
 func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	stmt := e.Statement
-	return updateNodeState(ctx, stmt)
-}
-
-// updateNodeState update pump or drainer's state.
-func updateNodeState(ctx context.Context, stmt *ast.ChangeStmt) error {
 	kind := strings.ToLower(stmt.NodeType)
 	urls := config.GetGlobalConfig().Path
 	registry, err := createRegistry(urls)
