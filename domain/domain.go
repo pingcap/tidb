@@ -129,7 +129,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		return 0, nil, fullLoad, errors.Trace(err)
 	}
 	logutil.Logger(context.Background()).Info("full load InfoSchema failed", zap.Int64("usedSchemaVersion", usedSchemaVersion),
-		zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Duration("time", time.Since(startTime)))
+		zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Duration("start time", time.Since(startTime)))
 	newISBuilder.Build()
 	return latestSchemaVersion, nil, fullLoad, nil
 }
@@ -340,7 +340,7 @@ func (do *Domain) Reload() error {
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
 	// some query maybe responded by ErrInfoSchemaExpired error.
 	if sub > (lease/2) && lease > 0 {
-		logutil.Logger(context.Background()).Warn("loading schema takes a long time", zap.Duration("time", sub))
+		logutil.Logger(context.Background()).Warn("loading schema takes a long take time", zap.Duration("time", sub))
 	}
 
 	return nil
@@ -897,7 +897,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	if err != nil {
 		logutil.Logger(context.Background()).Debug("init stats info failed", zap.Error(err))
 	} else {
-		logutil.Logger(context.Background()).Info("init stats info time", zap.Duration("time", time.Since(t)))
+		logutil.Logger(context.Background()).Info("init stats info time", zap.Duration("take time", time.Since(t)))
 	}
 	defer func() {
 		do.SetStatsUpdating(false)

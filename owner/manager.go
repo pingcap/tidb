@@ -300,7 +300,7 @@ func GetOwnerInfo(ctx context.Context, elec *concurrency.Election, logPrefix, id
 		return "", errors.Trace(err)
 	}
 	ownerID := string(resp.Kvs[0].Value)
-	logutil.Logger(context.Background()).Info("found owner", zap.String("logPrefix", logPrefix), zap.String("ownerID", ownerID))
+	logutil.Logger(context.Background()).Info("get owner", zap.String("logPrefix", logPrefix), zap.String("ownerID", ownerID))
 	if ownerID != id {
 		logutil.Logger(context.Background()).Warn("is not the owner", zap.String("logPrefix", logPrefix))
 		return "", errors.New("ownerInfoNotMatch")
