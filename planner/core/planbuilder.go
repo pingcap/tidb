@@ -224,7 +224,11 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
-	exe := &Change{Statement: v}
+	exe := &Change{
+		NodeType: v.NodeType,
+		State:    v.State,
+		NodeID:   v.NodeID,
+	}
 	return exe, nil
 }
 

@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/chunk"
@@ -28,13 +27,14 @@ import (
 type ChangeExec struct {
 	baseExecutor
 
-	Statement *ast.ChangeStmt
+	NodeType string
+	State    string
+	NodeID   string
 }
 
 // Next implements the Executor Next interface.
 func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	stmt := e.Statement
-	kind := strings.ToLower(stmt.NodeType)
+	kind := strings.ToLower(e.NodeType)
 	urls := config.GetGlobalConfig().Path
 	registry, err := createRegistry(urls)
 	if err != nil {
@@ -44,8 +44,8 @@ func (e *ChangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if err != nil {
 		return err
 	}
-	state := stmt.State
-	nodeID := stmt.NodeID
+	state := e.State
+	nodeID := e.NodeID
 	for _, n := range nodes {
 		if n.NodeID != nodeID {
 			continue

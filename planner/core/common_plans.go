@@ -137,7 +137,9 @@ type CancelDDLJobs struct {
 type Change struct {
 	baseSchemaProducer
 
-	Statement *ast.ChangeStmt
+	NodeType string
+	State    string
+	NodeID   string
 }
 
 // Prepare represents prepare plan.
