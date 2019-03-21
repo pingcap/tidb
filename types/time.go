@@ -2048,6 +2048,9 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 		_ = yearOfDay
 	}
 	if valueAMorPm, ok := ctx["%p"]; ok {
+		if _, ok := ctx["%H"]; ok {
+			return ErrInvalidTimeFormat.GenWithStackByArgs(t)
+		}
 		if t.hour == 0 {
 			return ErrInvalidTimeFormat.GenWithStackByArgs(t)
 		}
@@ -2430,6 +2433,7 @@ func hour24Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 		return input, false
 	}
 	t.hour = v
+	ctx["%H"] = v
 	return input[length:], true
 }
 
