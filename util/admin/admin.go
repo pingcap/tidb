@@ -82,7 +82,8 @@ func isJobRollbackable(job *model.Job, id int64) error {
 		}
 	case model.ActionDropColumn, model.ActionModifyColumn,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
-		model.ActionAddForeignKey, model.ActionDropForeignKey:
+		model.ActionAddForeignKey, model.ActionDropForeignKey,
+		model.ActionRenameTable:
 		if job.SchemaState != model.StateNone {
 			return ErrCannotCancelDDLJob.GenByArgs(id)
 		}

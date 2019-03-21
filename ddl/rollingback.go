@@ -224,7 +224,7 @@ func convertJob2RollbackJob(d *ddl, t *meta.Meta, job *model.Job) (ver int64, er
 		job.State = model.JobStateRollingback
 	case model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionModifyColumn, model.ActionAddForeignKey,
-		model.ActionDropForeignKey:
+		model.ActionDropForeignKey, model.ActionRenameTable:
 		ver, err = cancelOnlyNotHandledJob(job)
 	default:
 		job.State = model.JobStateCancelled
