@@ -1763,8 +1763,8 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 
 	// But the transaction related table IDs aren't in the updated table IDs.
 	tk.MustExec(`begin;`)
-	tk1.MustExec(`alter table t1 add index idx2(c);`)
-	tk.MustExec(`insert into t values(4, 4);`)
+	tk1.MustExec(`alter table t add index idx2(c);`)
+	tk.MustExec(`insert into t1 values(4, 4);`)
 	tk.MustExec(`commit;`)
 
 	// Test for "select for update".
