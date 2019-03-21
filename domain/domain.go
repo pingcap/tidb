@@ -431,12 +431,12 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-ticker.C:
 			err := do.Reload()
 			if err != nil {
-				logutil.Logger(context.Background()).Error("reload schema in loop", zap.Error(err))
+				logutil.Logger(context.Background()).Error("reload schema in loop failed", zap.Error(err))
 			}
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
-				logutil.Logger(context.Background()).Error("reload schema in loop", zap.Error(err))
+				logutil.Logger(context.Background()).Error("reload schema in loop failed", zap.Error(err))
 			}
 			if !ok {
 				logutil.Logger(context.Background()).Warn("reload schema in loop, schema syncer need rewatch")
