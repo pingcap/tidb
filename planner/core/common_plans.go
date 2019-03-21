@@ -334,6 +334,18 @@ type Set struct {
 	VarAssigns []*expression.VarAssignment
 }
 
+// CreateBindPlan represents a plan for createBind stmt.
+type CreateBindPlan struct {
+	baseSchemaProducer
+
+	OriginSQL string
+	BindSQL   string
+	DefaultDB string
+	IsGlobal  bool
+
+	BindStmt ast.StmtNode
+}
+
 // Simple represents a simple statement plan which doesn't need any optimization.
 type Simple struct {
 	baseSchemaProducer

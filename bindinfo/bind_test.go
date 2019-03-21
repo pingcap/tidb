@@ -16,9 +16,6 @@ package bindinfo_test
 import (
 	"flag"
 	"fmt"
-	"os"
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/bindinfo"
@@ -32,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"os"
+	"testing"
 )
 
 func TestT(t *testing.T) {
@@ -133,4 +132,45 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bindData[0].Collation, Equals, "utf8mb4_bin")
 	c.Check(bindData[0].CreateTime, NotNil)
 	c.Check(bindData[0].UpdateTime, NotNil)
+}
+
+func (s *testSuite) TestGlobalBinding(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(i int, s varchar(20))")
+	tk.MustExec("create table t1(i int, s varchar(20))")
+	tk.MustExec("create index index_t on t(i,s)")
+
+	_, err := tk.Exec("create global binding for select * from t using select * from t use index for join(index_t)")
+	c.Assert(err, IsNil, Commentf("err %v", err))
+	_, err = tk.Exec("create global binding for select * from t using select * from t use index for join(index_t)")
+	c.Assert(err, NotNil)
+
+	bindHandle := bindinfo.NewHandle()
+	bindCacheUpdater := bindinfo.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser)
+	err = bindCacheUpdater.Update(true)
+	c.Check(err, IsNil)
+	c.Check(len(bindHandle.Get()), Equals, 1)
+
+	hash := parser.DigestHash("select * from t")
+	bindData := bindHandle.Get()[hash]
+	c.Check(bindData, NotNil)
+	c.Check(len(bindData), Equals, 1)
+	c.Check(bindData[0].OriginalSQL, Equals, "select * from t")
+	c.Check(bindData[0].BindSQL, Equals, "select * from t use index for join(index_t)")
+	c.Check(bindData[0].Db, Equals, "test")
+	c.Check(bindData[0].Status, Equals, "using")
+	c.Check(bindData[0].Charset, NotNil)
+	c.Check(bindData[0].Collation, NotNil)
+	c.Check(bindData[0].CreateTime, NotNil)
+	c.Check(bindData[0].UpdateTime, NotNil)
+
+	_, err = tk.Exec("delete from mysql.bind_info")
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec("create global binding for select * from t using select * from t1 use index for join(index_t)")
+	c.Assert(err, NotNil, Commentf("err %v", err))
 }

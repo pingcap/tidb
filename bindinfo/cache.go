@@ -29,8 +29,8 @@ import (
 )
 
 const (
-	using   = "using"
-	deleted = "deleted"
+	BindUsing   = "using"
+	BindDeleted = "deleted"
 )
 
 // bindMeta stores the basic bind info and bindSql astNode.
@@ -177,7 +177,7 @@ func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) err
 			}
 		}
 	}
-	if newBindRecord.Status == deleted {
+	if newBindRecord.Status == BindDeleted {
 		return nil
 	}
 	stmtNodes, _, err := sparser.Parse(newBindRecord.BindSQL, newBindRecord.Charset, newBindRecord.Collation)

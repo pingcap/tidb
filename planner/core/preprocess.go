@@ -116,10 +116,21 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// So skip check table name here, otherwise, admin restore table [table_name] syntax will return
 		// table not exists error. But admin restore is use to restore the dropped table. So skip children here.
 		return in, node.Tp == ast.AdminRestoreTable
+	case *ast.CreateBindingStmt:
+		p.checkBindGrammar(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
 	return in, p.err != nil
+}
+
+func (p *preprocessor) checkBindGrammar(createBindingStmt *ast.CreateBindingStmt) {
+	originSql := parser.Normalize(createBindingStmt.OriginSel.(*ast.SelectStmt).Text())
+	hintedSql := parser.Normalize(createBindingStmt.HintedSel.(*ast.SelectStmt).Text())
+
+	if originSql != hintedSql {
+		p.err = errors.New("hinted sql and origin sql don't match when hinted sql erase the hint info")
+	}
 }
 
 func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {

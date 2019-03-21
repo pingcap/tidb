@@ -178,6 +178,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
+	case *plannercore.CreateBindPlan:
+		return b.buildCreateBind(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -1964,6 +1966,24 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		processor:    processor,
 		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
 	}
+}
+
+func (b *executorBuilder) buildCreateBind(v *plannercore.CreateBindPlan) Executor {
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = chunk.ZeroCapacity
+
+	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	e := &CreateBindExec{
+		baseExecutor: base,
+		originSQL:    v.OriginSQL,
+		bindSQL:      v.BindSQL,
+		defaultDB:    v.DefaultDB,
+		charset:      charset,
+		collation:    collation,
+		isGlobal:     v.IsGlobal,
+		bindAst:      v.BindStmt,
+	}
+	return e
 }
 
 func getPhysicalTableID(t table.Table) int64 {

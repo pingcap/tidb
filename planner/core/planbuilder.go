@@ -217,6 +217,8 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
+	case *ast.CreateBindingStmt:
+		return b.buildCreateBind(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -293,6 +295,16 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 			}
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
+	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildCreateBind(v *ast.CreateBindingStmt) (Plan, error) {
+	p := &CreateBindPlan{
+		OriginSQL: v.OriginSel.Text(),
+		BindSQL:   v.HintedSel.Text(),
+		IsGlobal:  v.GlobalScope,
+		BindStmt:  v.HintedSel,
 	}
 	return p, nil
 }

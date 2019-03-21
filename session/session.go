@@ -18,6 +18,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -55,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -851,6 +854,74 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	return errors.Trace(err)
 }
 
+//AddGlobalBind implements GlobalBindAccessor.AddGlobalBind interface.
+func (s *session) AddGlobalBind(originSQL string, bindSQL string, defaultDB string, charset string, collation string) (err error) {
+	ctx := context.Background()
+
+	_, err = s.Execute(ctx, "BEGIN")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err == nil {
+			_, err = s.execute(ctx, "COMMIT")
+		} else {
+			_, rbErr := s.execute(ctx, "ROLLBACK")
+			terror.Log(errors.Trace(rbErr))
+		}
+	}()
+
+	originSQL = getEscapeCharacter(originSQL)
+	sql := fmt.Sprintf("SELECT status FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
+		originSQL, defaultDB)
+	recordSet, err := s.execute(ctx, sql)
+	if err != nil {
+		return
+	}
+	if len(recordSet) == 1 {
+		var rows []chunk.Row
+		rows, err = drainRecordSet(ctx, s, recordSet[0])
+		if err != nil {
+			return
+		}
+
+		if len(rows) > 0 {
+			status := rows[0].GetString(0)
+			if status == bindinfo.BindUsing {
+				err = errors.New("origin sql already has binding sql")
+				return
+			}
+
+			sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' and default_db='%s'", originSQL, defaultDB)
+			_, err = s.execute(ctx, sql)
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	bindSQL = getEscapeCharacter(bindSQL)
+	ts := oracle.GetTimeFromTS(s.txn.StartTS())
+	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
+		originSQL, bindSQL, defaultDB, bindinfo.BindUsing, ts, ts, charset, collation)
+	_, err = s.execute(ctx, sql)
+
+	return
+}
+
+func getEscapeCharacter(str string) string {
+	var buffer bytes.Buffer
+	for _, v := range str {
+		if v == '\'' || v == '"' || v == '\\' {
+			buffer.WriteString("\\")
+		}
+
+		buffer.WriteString(string(v))
+	}
+
+	return buffer.String()
+}
+
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
@@ -1238,6 +1309,11 @@ func CreateSession(store kv.Storage) (Session, error) {
 		Handle: do.PrivilegeHandle(),
 	}
 	privilege.BindPrivilegeManager(s, pm)
+
+	bm := &bindinfo.BindManager{
+		GlobalAccessor: s,
+	}
+	bindinfo.BindBinderManager(s, bm)
 
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
