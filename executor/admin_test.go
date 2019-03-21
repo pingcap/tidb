@@ -96,7 +96,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1, nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -119,7 +119,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10, nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -133,15 +133,15 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1, nil)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), 2)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), 2, nil)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(3), 3)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(3), 3, nil)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10, nil)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), 20)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), 20, nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -193,13 +193,13 @@ func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums("1"), 1)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("1"), 1, nil)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums("2"), 2)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("2"), 2, nil)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums("3"), 3)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("3"), 3, nil)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums("10"), 4)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("10"), 4, nil)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -506,6 +506,14 @@ func (s *testSuite1) TestAdminCheckTable(c *C) {
 	tk.MustExec(`ALTER TABLE td1 ADD COLUMN c4 DECIMAL(12,8) NULL DEFAULT '213.41598062';`)
 	tk.MustExec(`ALTER TABLE td1 ADD INDEX id2 (c4) ;`)
 	tk.MustExec(`ADMIN CHECK TABLE td1;`)
+
+	// Test add not null column, then add index.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1 (a int);`)
+	tk.MustExec(`insert into t1 set a=2;`)
+	tk.MustExec(`alter table t1 add column b timestamp not null;`)
+	tk.MustExec(`alter table t1 add index(b);`)
+	tk.MustExec(`admin check table t1;`)
 }
 
 func (s *testSuite1) TestAdminCheckPrimaryIndex(c *C) {

@@ -20,12 +20,15 @@ import (
 	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestT(t *testing.T) {
@@ -83,7 +86,7 @@ func (*testSuite) TestT(c *C) {
 
 	succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
-	dom.MockReloadFailed.SetValue(true)
+	gofail.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`)
 	err = dom.Reload()
 	c.Assert(err, NotNil)
 	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
@@ -95,7 +98,7 @@ func (*testSuite) TestT(c *C) {
 	ts = ver.Ver
 	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultUnknown)
-	dom.MockReloadFailed.SetValue(false)
+	gofail.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed")
 	err = dom.Reload()
 	c.Assert(err, IsNil)
 	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
@@ -127,6 +130,16 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(res, HasLen, 2)
 	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
 	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+
+	metrics.PanicCounter.Reset()
+	// Since the stats lease is 0 now, so create a new ticker will panic.
+	// Test that they can recover from panic correctly.
+	dom.updateStatsWorker(ctx, nil)
+	dom.autoAnalyzeWorker(nil)
+	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
+	pb := &dto.Metric{}
+	counter.Write(pb)
+	c.Assert(pb.GetCounter().GetValue(), Equals, float64(2))
 
 	err = store.Close()
 	c.Assert(err, IsNil)

@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -242,6 +243,7 @@ type PhysicalMergeJoin struct {
 
 	JoinType JoinType
 
+	CompareFuncs    []expression.CompareFunc
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
@@ -380,4 +382,7 @@ type PhysicalWindow struct {
 	physicalSchemaProducer
 
 	WindowFuncDesc *aggregation.WindowFuncDesc
+	PartitionBy    []property.Item
+	OrderBy        []property.Item
+	Frame          *WindowFrame
 }

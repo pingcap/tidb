@@ -115,7 +115,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeBlob
 	ft = NewFieldType(mysql.TypeBlob)
-	v, err = Convert(&invalidMockType{}, ft)
+	_, err = Convert(&invalidMockType{}, ft)
 	c.Assert(err, NotNil)
 
 	// Nil
@@ -250,7 +250,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
 	sc := new(stmtctx.StatementContext)
-	v, err = d.ToDecimal(sc)
+	_, err = d.ToDecimal(sc)
 	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
 
 	sc.IgnoreTruncate = true
@@ -266,7 +266,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(2015, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(2015))
-	v, err = Convert(1800, ft)
+	_, err = Convert(1800, ft)
 	c.Assert(err, NotNil)
 	dt, err := ParseDate(nil, "2015-11-11")
 	c.Assert(err, IsNil)

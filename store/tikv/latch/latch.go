@@ -45,14 +45,15 @@ type latch struct {
 // Lock is the locks' information required for a transaction.
 type Lock struct {
 	keys [][]byte
+	// requiredSlots represents required slots.
 	// The slot IDs of the latches(keys) that a startTS must acquire before being able to processed.
 	requiredSlots []int
-	// The number of latches that the transaction has acquired. For status is stale, it include the
-	// latch whose front is current lock already.
+	// acquiredCount represents the number of latches that the transaction has acquired.
+	// For status is stale, it include the latch whose front is current lock already.
 	acquiredCount int
-	// Current transaction's startTS.
+	// startTS represents current transaction's.
 	startTS uint64
-	// Current transaction's commitTS.
+	// commitTS represents current transaction's.
 	commitTS uint64
 
 	wg      sync.WaitGroup
@@ -196,7 +197,7 @@ func (latches *Latches) releaseSlot(lock *Lock) (nextLock *Lock) {
 	var idx int
 	for idx = 0; idx < len(latch.waiting); idx++ {
 		waiting := latch.waiting[idx]
-		if bytes.Compare(waiting.keys[waiting.acquiredCount], key) == 0 {
+		if bytes.Equal(waiting.keys[waiting.acquiredCount], key) {
 			break
 		}
 	}
@@ -292,7 +293,7 @@ func (latches *Latches) recycle(currentTS uint64) {
 
 func findNode(list *node, key []byte) *node {
 	for n := list; n != nil; n = n.next {
-		if bytes.Compare(n.key, key) == 0 {
+		if bytes.Equal(n.key, key) {
 			return n
 		}
 	}

@@ -185,6 +185,17 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return tk.ResultSetToResult(rs, comment)
 }
 
+// QueryToErr executes a sql statement and discard results.
+func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
+	comment := check.Commentf("sql:%s, args:%v", sql, args)
+	res, err := tk.Exec(sql, args...)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(res, check.NotNil, comment)
+	_, resErr := session.GetRows4Test(context.Background(), tk.Se, res)
+	tk.c.Assert(res.Close(), check.IsNil)
+	return resErr
+}
+
 // ExecToErr executes a sql statement and discard results.
 func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	res, err := tk.Exec(sql, args...)

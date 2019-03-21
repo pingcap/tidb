@@ -57,6 +57,42 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 	return mysqlPriv.RequestVerification(p.user, p.host, db, table, column, priv)
 }
 
+// RequestVerificationWithUser implements the Manager interface.
+func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool {
+	if SkipWithGrant {
+		return true
+	}
+
+	if user == nil {
+		return false
+	}
+
+	// Skip check for INFORMATION_SCHEMA database.
+	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
+	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+		return true
+	}
+
+	mysqlPriv := p.Handle.Get()
+	return mysqlPriv.RequestVerification(user.Username, user.Hostname, db, table, column, priv)
+}
+
+// GetEncodedPassword implements the Manager interface.
+func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		log.Errorf("Get user privilege record fail: user %v, host %v", user, host)
+		return ""
+	}
+	pwd := record.Password
+	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
+		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
+		return ""
+	}
+	return pwd
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte) (u string, h string, success bool) {
 
@@ -76,6 +112,14 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 
 	u = record.User
 	h = record.Host
+
+	// Login a locked account is not allowed.
+	locked := record.AccountLocked
+	if locked {
+		log.Errorf("Try to login a locked account: user: %v, host: %v", user, host)
+		success = false
+		return
+	}
 
 	pwd := record.Password
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
@@ -141,4 +185,20 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	}
 
 	return
+}
+
+// ActiveRoles implements privilege.Manager ActiveRoles interface.
+func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
+	mysqlPrivilege := p.Handle.Get()
+	u := p.user
+	h := p.host
+	for _, r := range roleList {
+		ok := mysqlPrivilege.FindRole(u, h, r)
+		if !ok {
+			log.Errorf("Role: %+v doesn't grant for user", r)
+			return false, r.String()
+		}
+	}
+	ctx.GetSessionVars().ActiveRoles = roleList
+	return true, ""
 }

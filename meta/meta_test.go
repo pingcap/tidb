@@ -99,7 +99,7 @@ func (s *testSuite) TestMeta(c *C) {
 		ID:   1,
 		Name: model.NewCIStr("t"),
 	}
-	err = t.CreateTable(1, tbInfo)
+	err = t.CreateTableOrView(1, tbInfo)
 	c.Assert(err, IsNil)
 
 	n, err = t.GenAutoTableID(1, 1, 10)
@@ -110,7 +110,7 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 
-	err = t.CreateTable(1, tbInfo)
+	err = t.CreateTableOrView(1, tbInfo)
 	c.Assert(err, NotNil)
 
 	tbInfo.Name = model.NewCIStr("tt")
@@ -129,7 +129,7 @@ func (s *testSuite) TestMeta(c *C) {
 		ID:   2,
 		Name: model.NewCIStr("bb"),
 	}
-	err = t.CreateTable(1, tbInfo2)
+	err = t.CreateTableOrView(1, tbInfo2)
 	c.Assert(err, IsNil)
 
 	tables, err := t.ListTables(1)
@@ -144,7 +144,7 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 
-	err = t.DropTable(1, tbInfo2.ID, true)
+	err = t.DropTableOrView(1, tbInfo2.ID, true)
 	c.Assert(err, IsNil)
 	// Make sure auto id key-value entry is gone.
 	n, err = t.GetAutoTableID(1, 2)
@@ -162,7 +162,7 @@ func (s *testSuite) TestMeta(c *C) {
 		Name: model.NewCIStr("t_rename"),
 	}
 	// Create table.
-	err = t.CreateTable(1, tbInfo100)
+	err = t.CreateTableOrView(1, tbInfo100)
 	c.Assert(err, IsNil)
 	// Update auto ID.
 	currentDBID := int64(1)

@@ -72,8 +72,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 
 	// test for non-existent elements
 	for i := 0; i < 2; i++ {
-		hash := string(keys[i].Hash())
-		element, exists := lru.elements[hash]
+		element, exists := lru.elements[string(keys[i].Hash())]
 		c.Assert(exists, IsFalse)
 		c.Assert(element, IsNil)
 	}
@@ -91,8 +90,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 		c.Assert(key, NotNil)
 		c.Assert(key, Equals, keys[i])
 
-		hash := string(keys[i].Hash())
-		element, exists := lru.elements[hash]
+		element, exists := lru.elements[string(keys[i].Hash())]
 		c.Assert(exists, IsTrue)
 		c.Assert(element, NotNil)
 		c.Assert(element, Equals, root)
@@ -127,8 +125,7 @@ func (s *testLRUCacheSuite) TestOOMGuard(c *C) {
 
 	// test for non-existent elements
 	for i := 0; i < 5; i++ {
-		hash := string(keys[i].Hash())
-		element, exists := lru.elements[hash]
+		element, exists := lru.elements[string(keys[i].Hash())]
 		c.Assert(exists, IsFalse)
 		c.Assert(element, IsNil)
 	}

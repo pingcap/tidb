@@ -83,10 +83,10 @@ type Expression interface {
 	Decorrelate(schema *Schema) Expression
 
 	// ResolveIndices resolves indices by the given schema. It will copy the original expression and return the copied one.
-	ResolveIndices(schema *Schema) Expression
+	ResolveIndices(schema *Schema) (Expression, error)
 
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
-	resolveIndices(schema *Schema)
+	resolveIndices(schema *Schema) error
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
@@ -111,26 +111,57 @@ func (e CNFExprs) Clone() CNFExprs {
 	return cnf
 }
 
-// EvalBool evaluates expression list to a boolean value.
-func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, error) {
+func isColumnInOperand(c *Column) bool {
+	return c.InOperand
+}
+
+// IsEQCondFromIn checks if an expression is equal condition converted from `[not] in (subq)`.
+func IsEQCondFromIn(expr Expression) bool {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok || sf.FuncName.L != ast.EQ {
+		return false
+	}
+	cols := make([]*Column, 0, 1)
+	cols = ExtractColumnsFromExpressions(cols, sf.GetArgs(), isColumnInOperand)
+	return len(cols) > 0
+}
+
+// EvalBool evaluates expression list to a boolean value. The first returned value
+// indicates bool result of the expression list, the second returned value indicates
+// whether the result of the expression list is null, it can only be true when the
+// first returned values is false.
+func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
+	hasNull := false
 	for _, expr := range exprList {
 		data, err := expr.Eval(row)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if data.IsNull() {
-			return false, nil
+			// For queries like `select a in (select a from s where t.b = s.b) from t`,
+			// if result of `t.a = s.a` is null, we cannot return immediately until
+			// we have checked if `t.b = s.b` is null or false, because it means
+			// subquery is empty, and we should return false as the result of the whole
+			// exprList in that case, instead of null.
+			if !IsEQCondFromIn(expr) {
+				return false, false, nil
+			}
+			hasNull = true
+			continue
 		}
 
 		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if i == 0 {
-			return false, nil
+			return false, false, nil
 		}
 	}
-	return true, nil
+	if hasNull {
+		return false, true, nil
+	}
+	return true, false, nil
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.

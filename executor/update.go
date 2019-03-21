@@ -132,13 +132,13 @@ func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 }
 
 // Next implements the Executor Next interface.
-func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *UpdateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("update.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 
-	chk.Reset()
+	req.Reset()
 	if !e.fetched {
 		err := e.fetchChunkRows(ctx)
 		if err != nil {
@@ -181,7 +181,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	chk := e.children[0].newFirstChunk()
 	e.evalBuffer = chunk.MutRowFromTypes(fields)
 	for {
-		err := e.children[0].Next(ctx, chk)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
 			return errors.Trace(err)
 		}

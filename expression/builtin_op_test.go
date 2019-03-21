@@ -49,7 +49,7 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.UnaryMinus, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if t.getErr == false {
+		if !t.getErr {
 			c.Assert(err, IsNil)
 			if !t.overflow {
 				c.Assert(d.GetValue(), Equals, t.expected)

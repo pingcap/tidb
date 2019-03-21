@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testIntegrationSuite{})
@@ -68,7 +67,6 @@ func (s *testIntegrationSuite) TearDownTest(c *C) {
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
-	testleak.BeforeTest()
 	s.lease = 50 * time.Millisecond
 
 	s.cluster = mocktikv.NewCluster()
@@ -95,7 +93,20 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
+}
+
+func (s *testIntegrationSuite) TestNoZeroDateMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	defer tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+
+	tk.MustExec("use test;")
+	tk.MustExec("set session sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION';")
+	assertErrorCode(c, tk, "create table test_zero_date(agent_start_time date NOT NULL DEFAULT '0000-00-00')", mysql.ErrInvalidDefault)
+	assertErrorCode(c, tk, "create table test_zero_date(agent_start_time datetime NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
+	assertErrorCode(c, tk, "create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
+	assertErrorCode(c, tk, "create table test_zero_date(a timestamp default '0000-00-00 00');", mysql.ErrInvalidDefault)
+	assertErrorCode(c, tk, "create table test_zero_date(a timestamp default 0);", mysql.ErrInvalidDefault)
 }
 
 func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
@@ -183,15 +194,6 @@ func (s *testIntegrationSuite) TestEndIncluded(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-func (s *testIntegrationSuite) testErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
-	_, err := tk.Exec(sql)
-	c.Assert(err, NotNil)
-	originErr := errors.Cause(err)
-	tErr, ok := originErr.(*terror.Error)
-	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
-	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
-}
-
 // TestModifyColumnAfterAddIndex Issue 5134
 func (s *testIntegrationSuite) TestModifyColumnAfterAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -206,7 +208,7 @@ func (s *testIntegrationSuite) TestIssue2293(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_issue_2293 (a int)")
 	sql := "alter table t_issue_2293 add b int not null default 'a'"
-	s.testErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
 	tk.MustExec("insert into t_issue_2293 value(1)")
 	tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
 }
@@ -231,9 +233,9 @@ func (s *testIntegrationSuite) TestIssue3833(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table issue3833 (b char(0))")
-	s.testErrorCode(c, tk, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)
-	s.testErrorCode(c, tk, "alter table issue3833 add index idx (b)", tmysql.ErrWrongKeyColumn)
-	s.testErrorCode(c, tk, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "alter table issue3833 add index idx (b)", tmysql.ErrWrongKeyColumn)
+	assertErrorCode(c, tk, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
 }
 
 func (s *testIntegrationSuite) TestIssue2858And2717(c *C) {
@@ -284,129 +286,129 @@ func (s *testIntegrationSuite) TestMySQLErrorCode(c *C) {
 
 	// create database
 	sql := "create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	s.testErrorCode(c, tk, sql, tmysql.ErrTooLongIdent)
+	assertErrorCode(c, tk, sql, tmysql.ErrTooLongIdent)
 	sql = "create database test"
-	s.testErrorCode(c, tk, sql, tmysql.ErrDBCreateExists)
+	assertErrorCode(c, tk, sql, tmysql.ErrDBCreateExists)
 	sql = "create database test1 character set uft8;"
-	s.testErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
+	assertErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
 	sql = "create database test2 character set gkb;"
-	s.testErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
+	assertErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
 	sql = "create database test3 character set laitn1;"
-	s.testErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
+	assertErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
 	// drop database
 	sql = "drop database db_not_exist"
-	s.testErrorCode(c, tk, sql, tmysql.ErrDBDropExists)
+	assertErrorCode(c, tk, sql, tmysql.ErrDBDropExists)
 	// create table
 	tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int, primary key(c3))")
 	sql = "create table test_error_code_succ (c1 int, c2 int, c3 int)"
-	s.testErrorCode(c, tk, sql, tmysql.ErrTableExists)
+	assertErrorCode(c, tk, sql, tmysql.ErrTableExists)
 	sql = "create table test_error_code1 (c1 int, c2 int, c2 int)"
-	s.testErrorCode(c, tk, sql, tmysql.ErrDupFieldName)
+	assertErrorCode(c, tk, sql, tmysql.ErrDupFieldName)
 	sql = "create table test_error_code1 (c1 int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int)"
-	s.testErrorCode(c, tk, sql, tmysql.ErrTooLongIdent)
+	assertErrorCode(c, tk, sql, tmysql.ErrTooLongIdent)
 	sql = "create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int)"
-	s.testErrorCode(c, tk, sql, tmysql.ErrTooLongIdent)
+	assertErrorCode(c, tk, sql, tmysql.ErrTooLongIdent)
 	sql = "create table test_error_code1 (c1 int, c2 int, key aa (c1, c2), key aa (c1))"
-	s.testErrorCode(c, tk, sql, tmysql.ErrDupKeyName)
+	assertErrorCode(c, tk, sql, tmysql.ErrDupKeyName)
 	sql = "create table test_error_code1 (c1 int, c2 int, c3 int, key(c_not_exist))"
-	s.testErrorCode(c, tk, sql, tmysql.ErrKeyColumnDoesNotExits)
+	assertErrorCode(c, tk, sql, tmysql.ErrKeyColumnDoesNotExits)
 	sql = "create table test_error_code1 (c1 int, c2 int, c3 int, primary key(c_not_exist))"
-	s.testErrorCode(c, tk, sql, tmysql.ErrKeyColumnDoesNotExits)
+	assertErrorCode(c, tk, sql, tmysql.ErrKeyColumnDoesNotExits)
 	sql = "create table test_error_code1 (c1 int not null default '')"
-	s.testErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
 	sql = "CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT 2.0 DEFAULT now());"
-	s.testErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
 	sql = "CREATE TABLE `t` (`a` double DEFAULT now());"
-	s.testErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
 	sql = "create table t1(a int) character set uft8;"
-	s.testErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
+	assertErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
 	sql = "create table t1(a int) character set gkb;"
-	s.testErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
+	assertErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
 	sql = "create table t1(a int) character set laitn1;"
-	s.testErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
+	assertErrorCode(c, tk, sql, tmysql.ErrUnknownCharacterSet)
 	sql = "create table test_error_code (a int not null ,b int not null,c int not null, d int not null, foreign key (b, c) references product(id));"
-	s.testErrorCode(c, tk, sql, tmysql.ErrWrongFkDef)
+	assertErrorCode(c, tk, sql, tmysql.ErrWrongFkDef)
 	sql = "create table test_error_code_2;"
-	s.testErrorCode(c, tk, sql, tmysql.ErrTableMustHaveColumns)
+	assertErrorCode(c, tk, sql, tmysql.ErrTableMustHaveColumns)
 	sql = "create table test_error_code_2 (unique(c1));"
-	s.testErrorCode(c, tk, sql, tmysql.ErrTableMustHaveColumns)
+	assertErrorCode(c, tk, sql, tmysql.ErrTableMustHaveColumns)
 	sql = "create table test_error_code_2(c1 int, c2 int, c3 int, primary key(c1), primary key(c2));"
-	s.testErrorCode(c, tk, sql, tmysql.ErrMultiplePriKey)
+	assertErrorCode(c, tk, sql, tmysql.ErrMultiplePriKey)
 	sql = "create table test_error_code_3(pt blob ,primary key (pt));"
-	s.testErrorCode(c, tk, sql, tmysql.ErrBlobKeyWithoutLength)
+	assertErrorCode(c, tk, sql, tmysql.ErrBlobKeyWithoutLength)
 	sql = "create table test_error_code_3(a text, unique (a(3073)));"
-	s.testErrorCode(c, tk, sql, tmysql.ErrTooLongKey)
+	assertErrorCode(c, tk, sql, tmysql.ErrTooLongKey)
 	sql = "create table test_error_code_3(`id` int, key `primary`(`id`));"
-	s.testErrorCode(c, tk, sql, tmysql.ErrWrongNameForIndex)
+	assertErrorCode(c, tk, sql, tmysql.ErrWrongNameForIndex)
 	sql = "create table t2(c1.c2 blob default null);"
-	s.testErrorCode(c, tk, sql, tmysql.ErrWrongTableName)
+	assertErrorCode(c, tk, sql, tmysql.ErrWrongTableName)
 	sql = "create table t2 (id int default null primary key , age int);"
-	s.testErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
 	sql = "create table t2 (id int null primary key , age int);"
-	s.testErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
+	assertErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int default null, age int, primary key(id));"
-	s.testErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
+	assertErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int null, age int, primary key(id));"
-	s.testErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
+	assertErrorCode(c, tk, sql, tmysql.ErrPrimaryCantHaveNull)
 
 	sql = "create table t2 (id int primary key , age int);"
 	tk.MustExec(sql)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
-	s.testErrorCode(c, tk, sql, tmysql.ErrDupFieldName)
+	assertErrorCode(c, tk, sql, tmysql.ErrDupFieldName)
 	sql = "alter table test_error_code_succ add column aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int"
-	s.testErrorCode(c, tk, sql, tmysql.ErrTooLongIdent)
+	assertErrorCode(c, tk, sql, tmysql.ErrTooLongIdent)
 	sql = "alter table test_comment comment 'test comment'"
-	s.testErrorCode(c, tk, sql, tmysql.ErrNoSuchTable)
+	assertErrorCode(c, tk, sql, tmysql.ErrNoSuchTable)
 	sql = "alter table test_error_code_succ add column `a ` int ;"
-	s.testErrorCode(c, tk, sql, tmysql.ErrWrongColumnName)
+	assertErrorCode(c, tk, sql, tmysql.ErrWrongColumnName)
 	tk.MustExec("create table test_on_update (c1 int, c2 int);")
 	sql = "alter table test_on_update add column c3 int on update current_timestamp;"
-	s.testErrorCode(c, tk, sql, tmysql.ErrInvalidOnUpdate)
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidOnUpdate)
 	sql = "create table test_on_update_2(c int on update current_timestamp);"
-	s.testErrorCode(c, tk, sql, tmysql.ErrInvalidOnUpdate)
+	assertErrorCode(c, tk, sql, tmysql.ErrInvalidOnUpdate)
 
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
-	s.testErrorCode(c, tk, sql, tmysql.ErrCantDropFieldOrKey)
+	assertErrorCode(c, tk, sql, tmysql.ErrCantDropFieldOrKey)
 	tk.MustExec("create table test_drop_column (c1 int );")
 	sql = "alter table test_drop_column drop column c1;"
-	s.testErrorCode(c, tk, sql, tmysql.ErrCantRemoveAllFields)
+	assertErrorCode(c, tk, sql, tmysql.ErrCantRemoveAllFields)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
-	s.testErrorCode(c, tk, sql, tmysql.ErrKeyColumnDoesNotExits)
-	tk.Exec("alter table test_error_code_succ add index idx (c1)")
+	assertErrorCode(c, tk, sql, tmysql.ErrKeyColumnDoesNotExits)
+	tk.MustExec("alter table test_error_code_succ add index idx (c1)")
 	sql = "alter table test_error_code_succ add index idx (c1)"
-	s.testErrorCode(c, tk, sql, tmysql.ErrDupKeyName)
+	assertErrorCode(c, tk, sql, tmysql.ErrDupKeyName)
 	// drop index
 	sql = "alter table test_error_code_succ drop index idx_not_exist"
-	s.testErrorCode(c, tk, sql, tmysql.ErrCantDropFieldOrKey)
+	assertErrorCode(c, tk, sql, tmysql.ErrCantDropFieldOrKey)
 	sql = "alter table test_error_code_succ drop column c3"
-	s.testErrorCode(c, tk, sql, int(tmysql.ErrUnknown))
+	assertErrorCode(c, tk, sql, int(tmysql.ErrUnknown))
 	// modify column
 	sql = "alter table test_error_code_succ modify testx.test_error_code_succ.c1 bigint"
-	s.testErrorCode(c, tk, sql, tmysql.ErrWrongDBName)
+	assertErrorCode(c, tk, sql, tmysql.ErrWrongDBName)
 	sql = "alter table test_error_code_succ modify t.c1 bigint"
-	s.testErrorCode(c, tk, sql, tmysql.ErrWrongTableName)
+	assertErrorCode(c, tk, sql, tmysql.ErrWrongTableName)
 	// insert value
 	tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
 	sql = "insert into test_error_code_null (c1) values(null);"
-	s.testErrorCode(c, tk, sql, tmysql.ErrBadNull)
+	assertErrorCode(c, tk, sql, tmysql.ErrBadNull)
 }
 
 func (s *testIntegrationSuite) TestTableDDLWithFloatType(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists t")
-	s.testErrorCode(c, s.tk, "create table t (a decimal(1, 2))", tmysql.ErrMBiggerThanD)
-	s.testErrorCode(c, s.tk, "create table t (a float(1, 2))", tmysql.ErrMBiggerThanD)
-	s.testErrorCode(c, s.tk, "create table t (a double(1, 2))", tmysql.ErrMBiggerThanD)
+	assertErrorCode(c, s.tk, "create table t (a decimal(1, 2))", tmysql.ErrMBiggerThanD)
+	assertErrorCode(c, s.tk, "create table t (a float(1, 2))", tmysql.ErrMBiggerThanD)
+	assertErrorCode(c, s.tk, "create table t (a double(1, 2))", tmysql.ErrMBiggerThanD)
 	s.tk.MustExec("create table t (a double(1, 1))")
-	s.testErrorCode(c, s.tk, "alter table t add column b decimal(1, 2)", tmysql.ErrMBiggerThanD)
+	assertErrorCode(c, s.tk, "alter table t add column b decimal(1, 2)", tmysql.ErrMBiggerThanD)
 	// add multi columns now not support, so no case.
-	s.testErrorCode(c, s.tk, "alter table t modify column a float(1, 4)", tmysql.ErrMBiggerThanD)
-	s.testErrorCode(c, s.tk, "alter table t change column a aa float(1, 4)", tmysql.ErrMBiggerThanD)
+	assertErrorCode(c, s.tk, "alter table t modify column a float(1, 4)", tmysql.ErrMBiggerThanD)
+	assertErrorCode(c, s.tk, "alter table t change column a aa float(1, 4)", tmysql.ErrMBiggerThanD)
 	s.tk.MustExec("drop table t")
 }
 
@@ -414,21 +416,21 @@ func (s *testIntegrationSuite) TestTableDDLWithTimeType(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists t")
-	s.testErrorCode(c, s.tk, "create table t (a time(7))", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, s.tk, "create table t (a datetime(7))", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, s.tk, "create table t (a timestamp(7))", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "create table t (a time(7))", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "create table t (a datetime(7))", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "create table t (a timestamp(7))", tmysql.ErrTooBigPrecision)
 	_, err := s.tk.Exec("create table t (a time(-1))")
 	c.Assert(err, NotNil)
 	s.tk.MustExec("create table t (a datetime)")
-	s.testErrorCode(c, s.tk, "alter table t add column b time(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, s.tk, "alter table t add column b datetime(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, s.tk, "alter table t add column b timestamp(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, s.tk, "alter table t modify column a time(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, s.tk, "alter table t modify column a datetime(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, s.tk, "alter table t modify column a timestamp(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, s.tk, "alter table t change column a aa time(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, s.tk, "alter table t change column a aa datetime(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, s.tk, "alter table t change column a aa timestamp(7)", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "alter table t add column b time(7)", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "alter table t add column b datetime(7)", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "alter table t add column b timestamp(7)", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "alter table t modify column a time(7)", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "alter table t modify column a datetime(7)", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "alter table t modify column a timestamp(7)", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "alter table t change column a aa time(7)", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "alter table t change column a aa datetime(7)", tmysql.ErrTooBigPrecision)
+	assertErrorCode(c, s.tk, "alter table t change column a aa timestamp(7)", tmysql.ErrTooBigPrecision)
 	s.tk.MustExec("alter table t change column a aa datetime(0)")
 	s.tk.MustExec("drop table t")
 }
@@ -513,24 +515,47 @@ func (s *testIntegrationSuite) TestNullGeneratedColumn(c *C) {
 func (s *testIntegrationSuite) TestChangingCharsetToUtf8(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("USE test")
-	tk.MustExec("create table t(a char(10) charset latin1)")
-	tk.MustExec("alter table t modify column a char(10) charset latin1")
-	tk.MustExec("alter table t modify column a char(10) charset utf8")
-	tk.MustExec("alter table t modify column a char(10) charset utf8mb4")
-	rs, err := tk.Exec("alter table t modify column a char(10) charset utf8mb4 collate utf8bin")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_bin")
-	rs, err = tk.Exec("alter table t modify column a char(10) charset utf8 collate utf8_bin")
-	if rs != nil {
-		rs.Close()
-	}
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a varchar(20) charset utf8)")
+	tk.MustExec("insert into t1 values (?)", "t1_value")
 
+	tk.MustExec("alter table t1 modify column a varchar(20) charset utf8mb4")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("t1_value"))
+
+	tk.MustExec("create table t(a varchar(20) charset latin1)")
+	tk.MustExec("insert into t values (?)", "t_value")
+
+	tk.MustExec("alter table t modify column a varchar(20) charset latin1")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("t_value"))
+
+	rs, err := tk.Exec("alter table t modify column a varchar(20) charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
 	c.Assert(err, NotNil)
-	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_general_ci")
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
+
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8 collate utf8_bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
@@ -543,20 +568,24 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 		rs.Close()
 	}
 	c.Assert(err.Error(), Equals, "Unknown charset gbk")
-	tk.MustExec("alter table t charset utf8")
-	tk.MustExec("alter table t charset utf8 collate utf8_bin")
+	rs, err = tk.Exec("alter table t charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
+
 	rs, err = tk.Exec("alter table t charset utf8 collate latin1_bin")
 	if rs != nil {
 		rs.Close()
 	}
 	c.Assert(err, NotNil)
-	tk.MustExec("alter table t charset utf8mb4")
-	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
-
-	rs, err = tk.Exec("alter table t charset utf8 collate utf8_bin")
+	rs, err = tk.Exec("alter table t charset utf8mb4")
 	if rs != nil {
 		rs.Close()
 	}
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
+
+	rs, err = tk.Exec("alter table t charset utf8mb4 collate utf8mb4_bin")
 	c.Assert(err, NotNil)
 }
 
@@ -903,7 +932,7 @@ func (s *testIntegrationSuite) TestCreateTableTooLarge(c *C) {
 		}
 	}
 	sql += ");"
-	s.testErrorCode(c, s.tk, sql, tmysql.ErrTooManyFields)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrTooManyFields)
 
 	originLimit := atomic.LoadUint32(&ddl.TableColumnCountLimit)
 	atomic.StoreUint32(&ddl.TableColumnCountLimit, uint32(cnt*4))
@@ -933,7 +962,7 @@ func (s *testIntegrationSuite) TestChangeColumnPosition(c *C) {
 	s.tk.MustQuery("select * from position1").Check(testkit.Rows("TiDB 2 3.14 1"))
 	s.tk.MustExec("alter table position1 modify column c double first")
 	s.tk.MustQuery("select * from position1").Check(testkit.Rows("3.14 TiDB 2 1"))
-	s.testErrorCode(c, s.tk, "alter table position1 modify column b int after b", tmysql.ErrBadField)
+	assertErrorCode(c, s.tk, "alter table position1 modify column b int after b", tmysql.ErrBadField)
 
 	s.tk.MustExec("create table position2 (a int, b int)")
 	s.tk.MustExec("alter table position2 add index t(a, b)")
@@ -942,7 +971,7 @@ func (s *testIntegrationSuite) TestChangeColumnPosition(c *C) {
 	s.tk.MustQuery("select a from position2 where a = 3").Check(testkit.Rows())
 	s.tk.MustExec("alter table position2 change column b c int first")
 	s.tk.MustQuery("select * from position2 where c = 3").Check(testkit.Rows("3 5"))
-	s.testErrorCode(c, s.tk, "alter table position2 change column c b int after c", tmysql.ErrBadField)
+	assertErrorCode(c, s.tk, "alter table position2 change column c b int after c", tmysql.ErrBadField)
 
 	s.tk.MustExec("create table position3 (a int default 2)")
 	s.tk.MustExec("alter table position3 modify column a int default 5 first")
@@ -971,9 +1000,39 @@ func (s *testIntegrationSuite) TestAddIndexAfterAddColumn(c *C) {
 	s.tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2)")
 	s.tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0'")
 	sql := "alter table test_add_index_after_add_col add unique index cc(c) "
-	s.testErrorCode(c, s.tk, sql, tmysql.ErrDupEntry)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrDupEntry)
 	sql = "alter table test_add_index_after_add_col add index idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);"
-	s.testErrorCode(c, s.tk, sql, tmysql.ErrTooManyKeyParts)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrTooManyKeyParts)
+}
+
+func (s *testIntegrationSuite) TestResolveCharset(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists resolve_charset")
+	s.tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("resolve_charset"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
+	s.tk.MustExec("INSERT INTO resolve_charset VALUES('鰈')")
+
+	s.tk.MustExec("create database resolve_charset charset binary")
+	s.tk.MustExec("use resolve_charset")
+	s.tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
+
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
+	c.Assert(tbl.Meta().Charset, Equals, "latin1")
+
+	s.tk.MustExec(`CREATE TABLE resolve_charset1 (a varchar(255) DEFAULT NULL)`)
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "binary")
+	c.Assert(tbl.Meta().Charset, Equals, "binary")
 }
 
 func (s *testIntegrationSuite) TestAddAnonymousIndex(c *C) {
@@ -1038,7 +1097,7 @@ func (s *testIntegrationSuite) TestAddColumnTooMany(c *C) {
 	s.tk.MustExec(createSQL)
 	s.tk.MustExec("alter table t_column_too_many add column a_512 int")
 	alterSQL := "alter table t_column_too_many add column a_513 int"
-	s.testErrorCode(c, s.tk, alterSQL, tmysql.ErrTooManyFields)
+	assertErrorCode(c, s.tk, alterSQL, tmysql.ErrTooManyFields)
 }
 
 func (s *testIntegrationSuite) TestAlterColumn(c *C) {
@@ -1094,13 +1153,13 @@ func (s *testIntegrationSuite) TestAlterColumn(c *C) {
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
-	s.testErrorCode(c, s.tk, sql, tmysql.ErrNoSuchTable)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrNoSuchTable)
 	sql = "alter table test_not_exist alter column b set default 'c'"
-	s.testErrorCode(c, s.tk, sql, tmysql.ErrNoSuchTable)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrNoSuchTable)
 	sql = "alter table test_alter_column alter column col_not_exist set default 'c'"
-	s.testErrorCode(c, s.tk, sql, tmysql.ErrBadField)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrBadField)
 	sql = "alter table test_alter_column alter column c set default null"
-	s.testErrorCode(c, s.tk, sql, tmysql.ErrInvalidDefault)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrInvalidDefault)
 
 	// The followings tests whether adding constraints via change / modify column
 	// is forbidden as expected.
@@ -1133,6 +1192,7 @@ func (s *testIntegrationSuite) TestAlterColumn(c *C) {
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	c.Assert(createSQL, Equals, expected)
 	s.tk.MustExec("alter table mc modify column a bigint") // Drops auto_increment
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
@@ -1140,4 +1200,85 @@ func (s *testIntegrationSuite) TestAlterColumn(c *C) {
 	c.Assert(createSQL, Equals, expected)
 	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
 	c.Assert(err, NotNil)
+}
+
+func (s *testIntegrationSuite) assertWarningExec(c *C, sql string, expectedWarn *terror.Error) {
+	_, err := s.tk.Exec(sql)
+	c.Assert(err, IsNil)
+	st := s.tk.Se.GetSessionVars().StmtCtx
+	c.Assert(st.WarningCount(), Equals, uint16(1))
+	c.Assert(expectedWarn.Equal(st.GetWarnings()[0].Err), IsTrue, Commentf("error:%v", err))
+}
+
+func (s *testIntegrationSuite) assertAlterWarnExec(c *C, sql string) {
+	s.assertWarningExec(c, sql, ddl.ErrAlterOperationNotSupported)
+}
+
+func (s *testIntegrationSuite) assertAlterErrorExec(c *C, sql string) {
+	assertErrorCode(c, s.tk, sql, mysql.ErrAlterOperationNotSupportedReason)
+}
+
+func (s *testIntegrationSuite) TestAlterAlgorithm(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("drop table if exists t1")
+	defer s.tk.MustExec("drop table if exists t")
+
+	s.tk.MustExec(`create table t(
+	a int, 
+	b varchar(100), 
+	c int, 
+	INDEX idx_c(c)) PARTITION BY RANGE ( a ) (
+	PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+	)`)
+	s.assertAlterErrorExec(c, "alter table t modify column a bigint, ALGORITHM=INPLACE;")
+	s.tk.MustExec("alter table t modify column a bigint, ALGORITHM=INPLACE, ALGORITHM=INSTANT;")
+	s.tk.MustExec("alter table t modify column a bigint, ALGORITHM=DEFAULT;")
+
+	// Test add/drop index
+	s.assertAlterErrorExec(c, "alter table t add index idx_b(b), ALGORITHM=INSTANT")
+	s.assertAlterWarnExec(c, "alter table t add index idx_b1(b), ALGORITHM=COPY")
+	s.tk.MustExec("alter table t add index idx_b2(b), ALGORITHM=INPLACE")
+	s.assertAlterErrorExec(c, "alter table t drop index idx_b, ALGORITHM=INPLACE")
+	s.assertAlterWarnExec(c, "alter table t drop index idx_b1, ALGORITHM=COPY")
+	s.tk.MustExec("alter table t drop index idx_b2, ALGORITHM=INSTANT")
+
+	// Test rename
+	s.assertAlterWarnExec(c, "alter table t rename to t1, ALGORITHM=COPY")
+	s.assertAlterErrorExec(c, "alter table t1 rename to t, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t1 rename to t, ALGORITHM=INSTANT")
+	s.tk.MustExec("alter table t rename to t1, ALGORITHM=DEFAULT")
+	s.tk.MustExec("alter table t1 rename to t")
+
+	// Test rename index
+	s.assertAlterWarnExec(c, "alter table t rename index idx_c to idx_c1, ALGORITHM=COPY")
+	s.assertAlterErrorExec(c, "alter table t rename index idx_c1 to idx_c, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t rename index idx_c1 to idx_c, ALGORITHM=INSTANT")
+	s.tk.MustExec("alter table t rename index idx_c to idx_c1, ALGORITHM=DEFAULT")
+
+	// partition.
+	s.assertAlterWarnExec(c, "alter table t truncate partition p1, ALGORITHM=COPY")
+	s.assertAlterErrorExec(c, "alter table t truncate partition p2, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t truncate partition p3, ALGORITHM=INSTANT")
+
+	s.assertAlterWarnExec(c, "alter table t add partition (partition p4 values less than (2002)), ALGORITHM=COPY")
+	s.assertAlterErrorExec(c, "alter table t add partition (partition p5 values less than (3002)), ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t add partition (partition p6 values less than (4002)), ALGORITHM=INSTANT")
+
+	s.assertAlterWarnExec(c, "alter table t drop partition p4, ALGORITHM=COPY")
+	s.assertAlterErrorExec(c, "alter table t drop partition p5, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t drop partition p6, ALGORITHM=INSTANT")
+
+	// Table options
+	s.assertAlterWarnExec(c, "alter table t comment = 'test', ALGORITHM=COPY")
+	s.assertAlterErrorExec(c, "alter table t comment = 'test', ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t comment = 'test', ALGORITHM=INSTANT")
+
+	s.assertAlterWarnExec(c, "alter table t default charset = utf8mb4, ALGORITHM=COPY")
+	s.assertAlterErrorExec(c, "alter table t default charset = utf8mb4, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t default charset = utf8mb4, ALGORITHM=INSTANT")
 }

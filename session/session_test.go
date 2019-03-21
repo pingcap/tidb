@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -46,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tipb/go-binlog"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	"google.golang.org/grpc"
 )
 
@@ -1128,10 +1129,10 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
-	err = rs.Next(context.Background(), chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.GetRow(0).IsNull(0), IsTrue)
+	c.Assert(req.GetRow(0).IsNull(0), IsTrue)
 	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 }
 
@@ -1503,7 +1504,7 @@ func (s *testSessionSuite) TestUnique(c *C) {
 	tk.MustExec("begin;")
 	tk.MustExec("insert into test(id, val) values(20, 6);")
 	tk.MustExec("commit;")
-	_, err = tk1.Exec("commit")
+	tk1.Exec("commit")
 	tk1.MustExec("insert into test(id, val) values(5, 5);")
 
 	tk.MustExec("drop table test;")
@@ -1515,7 +1516,7 @@ func (s *testSessionSuite) TestUnique(c *C) {
 		);`)
 	tk.MustExec("insert into test(id, val1, val2) values(1, 1, 1);")
 	tk.MustExec("insert into test(id, val1, val2) values(2, 2, 2);")
-	_, err = tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
+	tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
 	tk.MustExec("insert into test(id, val1, val2) values(3, 3, 3);")
 }
 
@@ -1696,7 +1697,7 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	tk2.MustExec("begin")
 
 	// Make sure loading information schema is failed and server is invalid.
-	domain.GetDomain(tk.Se).MockReloadFailed.SetValue(true)
+	gofail.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`)
 	err := domain.GetDomain(tk.Se).Reload()
 	c.Assert(err, NotNil)
 
@@ -1717,7 +1718,7 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 
-	domain.GetDomain(tk.Se).MockReloadFailed.SetValue(false)
+	gofail.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed")
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")
@@ -1824,7 +1825,7 @@ func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
 
 	run := false
 	hook := func() {
-		if run == false {
+		if !run {
 			tk.MustExec("update t set b = 3 where a = 1")
 			run = true
 		}
@@ -1877,18 +1878,18 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}()
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	var count int
 	var numChunks int
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
-		numRows := chk.NumRows()
+		numRows := req.NumRows()
 		if numRows == 0 {
 			break
 		}
 		for i := 0; i < numRows; i++ {
-			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
+			c.Assert(req.GetRow(i).GetInt64(0), Equals, int64(count))
 			count++
 		}
 		numChunks++
@@ -1914,15 +1915,15 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		chk := rs.NewChunk()
-		err = rs.Next(context.TODO(), chk)
+		req := rs.NewRecordBatch()
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
-			row := chk.GetRow(rowIdx)
+		for rowIdx := 0; rowIdx < req.NumRows(); rowIdx++ {
+			row := req.GetRow(rowIdx)
 			c.Assert(row.GetInt64(0), Equals, int64(idx))
 			idx++
 		}
@@ -1948,15 +1949,15 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		chk := rs.NewChunk()
-		err = rs.Next(context.TODO(), chk)
+		req := rs.NewRecordBatch()
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
-			row := chk.GetRow(rowIdx)
+		for rowIdx := 0; rowIdx < req.NumRows(); rowIdx++ {
+			row := req.GetRow(rowIdx)
 			c.Assert(row.GetInt64(0), Equals, int64(idx+100))
 			idx++
 		}
@@ -1983,12 +1984,12 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
 
-	chk := rs.NewChunk()
-	err = rs.Next(context.TODO(), chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 1)
+	c.Assert(req.NumRows(), Equals, 1)
 
-	row := chk.GetRow(0)
+	row := req.GetRow(0)
 	c.Assert(row.GetInt64(0), Equals, int64(99))
 	rs.Close()
 }
@@ -2015,16 +2016,16 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 
 	var idx int
 	for {
-		chk := rs.NewChunk()
-		err = rs.Next(context.TODO(), chk)
+		req := rs.NewRecordBatch()
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 
-		for i := 0; i < chk.NumRows(); i++ {
-			row := chk.GetRow(i)
+		for i := 0; i < req.NumRows(); i++ {
+			row := req.GetRow(i)
 			c.Assert(row.GetInt64(0), Equals, int64(idx+50))
 			idx++
 		}
@@ -2035,10 +2036,10 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	rs, err = tk.Exec("select * from chk2")
 	c.Assert(err, IsNil)
 
-	chk := rs.NewChunk()
-	err = rs.Next(context.TODO(), chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 0)
+	c.Assert(req.NumRows(), Equals, 0)
 	rs.Close()
 }
 
@@ -2058,18 +2059,18 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	tk.Se.GetSessionVars().IndexLookupSize = 10
 	rs, err := tk.Exec("select * from chk order by k")
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	var count int
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
-		numRows := chk.NumRows()
+		numRows := req.NumRows()
 		if numRows == 0 {
 			break
 		}
 		for i := 0; i < numRows; i++ {
-			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
-			c.Assert(chk.GetRow(i).GetInt64(1), Equals, int64(count))
+			c.Assert(req.GetRow(i).GetInt64(0), Equals, int64(count))
+			c.Assert(req.GetRow(i).GetInt64(1), Equals, int64(count))
 			count++
 		}
 	}
@@ -2078,17 +2079,17 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 
 	rs, err = tk.Exec("select k from chk where c < 90 order by k")
 	c.Assert(err, IsNil)
-	chk = rs.NewChunk()
+	req = rs.NewRecordBatch()
 	count = 0
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
-		numRows := chk.NumRows()
+		numRows := req.NumRows()
 		if numRows == 0 {
 			break
 		}
 		for i := 0; i < numRows; i++ {
-			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
+			c.Assert(req.GetRow(i).GetInt64(0), Equals, int64(count))
 			count++
 		}
 	}
@@ -2457,6 +2458,17 @@ func (s *testSessionSuite) TestUpdatePrivilege(c *C) {
 	// In fact, the privlege check for t1 should be update, and for t2 should be select.
 	_, err = tk1.Exec("update t1,t2 set t1.id = t2.id;")
 	c.Assert(err, IsNil)
+
+	// Fix issue 8911
+	tk.MustExec("create database weperk")
+	tk.MustExec("use weperk")
+	tk.MustExec("create table tb_wehub_server (id int, active_count int, used_count int)")
+	tk.MustExec("create user 'weperk'")
+	tk.MustExec("grant all privileges on weperk.* to 'weperk'@'%'")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "weperk", Hostname: "%"},
+		[]byte(""), []byte("")), IsTrue)
+	tk1.MustExec("use weperk")
+	tk1.MustExec("update tb_wehub_server a set a.active_count=a.active_count+1,a.used_count=a.used_count+1 where id=1")
 }
 
 func (s *testSessionSuite) TestTxnGoString(c *C) {

@@ -27,24 +27,28 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
@@ -55,6 +59,7 @@ type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
+	bindHandle      *bindinfo.Handle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
 	statsUpdating   sync2.AtomicInt32
@@ -68,8 +73,6 @@ type Domain struct {
 	wg              sync.WaitGroup
 	gvc             GlobalVariableCache
 	slowQuery       *topNSlowQueries
-
-	MockReloadFailed MockFailure // It mocks reload failed.
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -255,6 +258,15 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 	return snapHandle.Get(), nil
 }
 
+// GetSnapshotMeta gets a new snapshot meta at startTS.
+func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
+	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return meta.NewSnapshotMeta(snapshot), nil
+}
+
 // DDL gets DDL from domain.
 func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
@@ -276,17 +288,13 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
 
-func (do *Domain) mockReloadFailed() error {
-	return errors.New("mock reload failed")
-}
-
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
-	// for test
-	if do.MockReloadFailed.getValue() {
-		return do.mockReloadFailed()
-	}
+	// gofail: var ErrorMockReloadFailed bool
+	// if ErrorMockReloadFailed {
+	// 		return errors.New("mock reload failed")
+	// }
 
 	// Lock here for only once at the same time.
 	do.m.Lock()
@@ -378,10 +386,13 @@ func (do *Domain) topNSlowQueryLoop() {
 			do.slowQuery.Append(info)
 		case msg := <-do.slowQuery.msgCh:
 			req := msg.request
-			if req.Tp == ast.ShowSlowTop {
+			switch req.Tp {
+			case ast.ShowSlowTop:
 				msg.result = do.slowQuery.QueryTop(int(req.Count), req.Kind)
-			} else if req.Tp == ast.ShowSlowRecent {
+			case ast.ShowSlowRecent:
 				msg.result = do.slowQuery.QueryRecent(int(req.Count))
+			default:
+				msg.result = do.slowQuery.QueryAll()
 			}
 			msg.Done()
 		}
@@ -543,26 +554,6 @@ func (c *ddlCallback) OnChanged(err error) error {
 	return nil
 }
 
-// MockFailure mocks reload failed.
-// It's used for fixing data race in tests.
-type MockFailure struct {
-	sync.RWMutex
-	val bool // val is true means we need to mock reload failed.
-}
-
-// SetValue sets whether we need to mock reload failed.
-func (m *MockFailure) SetValue(isFailed bool) {
-	m.Lock()
-	defer m.Unlock()
-	m.val = isFailed
-}
-
-func (m *MockFailure) getValue() bool {
-	m.RLock()
-	defer m.RUnlock()
-	return m.val
-}
-
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
 	EtcdAddrs() []string
@@ -593,8 +584,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
-				Endpoints:   addrs,
-				DialTimeout: 5 * time.Second,
+				Endpoints:        addrs,
+				AutoSyncInterval: 30 * time.Second,
+				DialTimeout:      5 * time.Second,
 				DialOptions: []grpc.DialOption{
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
@@ -720,6 +712,11 @@ func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
 }
 
+// GetEtcdClient returns the etcd client.
+func (do *Domain) GetEtcdClient() *clientv3.Client {
+	return do.etcdClient
+}
+
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
@@ -764,7 +761,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			if err != nil {
 				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
 			} else {
-				log.Info("[domain] reload privilege success.")
+				log.Debug("[domain] reload privilege success.")
 			}
 		}
 	}()
@@ -774,6 +771,41 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 // PrivilegeHandle returns the MySQLPrivilege.
 func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
+}
+
+// BindHandle returns domain's bindHandle.
+func (do *Domain) BindHandle() *bindinfo.Handle {
+	return do.bindHandle
+}
+
+// LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
+// be called only once in BootstrapSession.
+func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	do.bindHandle = bindinfo.NewHandle()
+
+	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser)
+	err := bindCacheUpdater.Update(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	duration := 3 * time.Second
+	go func() {
+		defer recoverInDomain("loadBindInfoLoop", false)
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-time.After(duration):
+			}
+			err = bindCacheUpdater.Update(false)
+			if err != nil {
+				logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
+			}
+		}
+	}()
+	return nil
 }
 
 // StatsHandle returns the statistic handle.
@@ -843,6 +875,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 }
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+	defer recoverInDomain("updateStatsWorker", false)
 	lease := do.statsLease
 	deltaUpdateDuration := lease * 20
 	loadTicker := time.NewTicker(lease)
@@ -863,11 +896,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	if err != nil {
 		log.Debug("[stats] init stats info failed: ", errors.ErrorStack(err))
 	} else {
-		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
+		log.Info("[stats] init stats info takes ", time.Since(t))
 	}
 	defer func() {
 		do.SetStatsUpdating(false)
-		recoverInDomain("updateStatsWorker", false)
 		do.wg.Done()
 	}()
 	for {
@@ -924,21 +956,18 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 }
 
 func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
+	defer recoverInDomain("autoAnalyzeWorker", false)
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
-	defer analyzeTicker.Stop()
 	defer func() {
-		recoverInDomain("autoAnalyzeWorker", false)
+		analyzeTicker.Stop()
 		do.wg.Done()
 	}()
 	for {
 		select {
 		case <-analyzeTicker.C:
 			if owner.IsOwner() {
-				err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
-				if err != nil {
-					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
-				}
+				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
 		case <-do.exit:
 			return

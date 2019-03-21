@@ -223,11 +223,11 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 
 	fcName := ast.ConcatWS
 	// ERROR 1582 (42000): Incorrect parameter count in the call to native function 'concat_ws'
-	f, err := newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants([]interface{}{nil})...)
+	_, err := newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants([]interface{}{nil})...)
 	c.Assert(err, NotNil)
 
 	for _, t := range cases {
-		f, err = newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		val, err1 := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -1608,6 +1608,13 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		ret       interface{}
 		warnings  int
 	}{
+		// issue #8796
+		{1.12345, 4, "1.1235", 0},
+		{9.99999, 4, "10.0000", 0},
+		{1.99999, 4, "2.0000", 0},
+		{1.09999, 4, "1.1000", 0},
+		{-2.5000, 0, "-3", 0},
+
 		{12332.123444, 4, "12,332.1234", 0},
 		{12332.123444, 0, "12,332", 0},
 		{12332.123444, -4, "12,332", 0},

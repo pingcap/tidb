@@ -15,9 +15,11 @@ package expression
 import (
 	"math"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
@@ -319,4 +321,47 @@ func (s *testEvaluatorSuite) TestIsIPv4Compat(c *C) {
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
+}
+
+func (s *testEvaluatorSuite) TestNameConst(c *C) {
+	defer testleak.AfterTest(c)()
+	dec := types.NewDecFromFloatForTest(123.123)
+	tm := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}
+	du := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}
+	cases := []struct {
+		colName string
+		arg     interface{}
+		isNil   bool
+		asserts func(d types.Datum)
+	}{
+		{"test_int", 3, false, func(d types.Datum) {
+			c.Assert(d.GetInt64(), Equals, int64(3))
+		}},
+		{"test_float", 3.14159, false, func(d types.Datum) {
+			c.Assert(d.GetFloat64(), Equals, 3.14159)
+		}},
+		{"test_string", "TiDB", false, func(d types.Datum) {
+			c.Assert(d.GetString(), Equals, "TiDB")
+		}},
+		{"test_null", nil, true, func(d types.Datum) {
+			c.Assert(d.Kind(), Equals, types.KindNull)
+		}},
+		{"test_decimal", dec, false, func(d types.Datum) {
+			c.Assert(d.GetMysqlDecimal().String(), Equals, dec.String())
+		}},
+		{"test_time", tm, false, func(d types.Datum) {
+			c.Assert(d.GetMysqlTime().String(), Equals, tm.String())
+		}},
+		{"test_duration", du, false, func(d types.Datum) {
+			c.Assert(d.GetMysqlDuration().String(), Equals, du.String())
+		}},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.NameConst, s.primitiveValsToConstants([]interface{}{t.colName, t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		t.asserts(d)
+	}
 }

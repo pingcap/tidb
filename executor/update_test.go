@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 type testUpdateSuite struct {
@@ -39,7 +38,6 @@ type testUpdateSuite struct {
 }
 
 func (s *testUpdateSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -65,7 +63,6 @@ func (s *testUpdateSuite) SetUpSuite(c *C) {
 func (s *testUpdateSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testUpdateSuite) TearDownTest(c *C) {

@@ -15,6 +15,7 @@ package types
 
 import (
 	"strings"
+	"testing"
 
 	. "github.com/pingcap/check"
 )
@@ -142,6 +143,114 @@ func (s *testMyDecimalSuite) TestToFloat(c *C) {
 		f, err := dec.ToFloat64()
 		c.Check(err, IsNil)
 		c.Check(f, Equals, ca.f)
+	}
+}
+
+func (s *testMyDecimalSuite) TestToHashKey(c *C) {
+	tests := []struct {
+		numbers []string
+	}{
+		{[]string{"1.1", "1.1000", "1.1000000", "1.10000000000", "01.1", "0001.1", "001.1000000"}},
+		{[]string{"-1.1", "-1.1000", "-1.1000000", "-1.10000000000", "-01.1", "-0001.1", "-001.1000000"}},
+		{[]string{".1", "0.1", "000000.1", ".10000", "0000.10000", "000000000000000000.1"}},
+		{[]string{"0", "0000", ".0", ".00000", "00000.00000", "-0", "-0000", "-.0", "-.00000", "-00000.00000"}},
+		{[]string{".123456789123456789", ".1234567891234567890", ".12345678912345678900", ".123456789123456789000", ".1234567891234567890000", "0.123456789123456789",
+			".1234567891234567890000000000", "0000000.123456789123456789000"}},
+		{[]string{"12345", "012345", "0012345", "0000012345", "0000000012345", "00000000000012345", "12345.", "12345.00", "12345.000000000", "000012345.0000"}},
+		{[]string{"123E5", "12300000", "00123E5", "000000123E5", "12300000.00000000"}},
+		{[]string{"123E-2", "1.23", "00000001.23", "1.2300000000000000", "000000001.23000000000000"}},
+	}
+	for _, ca := range tests {
+		keys := make([]string, 0, len(ca.numbers))
+		for _, num := range ca.numbers {
+			var dec MyDecimal
+			c.Check(dec.FromString([]byte(num)), IsNil)
+			key, err := dec.ToHashKey()
+			c.Check(err, IsNil)
+			keys = append(keys, string(key))
+		}
+
+		for i := 1; i < len(keys); i++ {
+			c.Check(keys[0], Equals, keys[i])
+		}
+	}
+
+	binTests := []struct {
+		hashNumbers []string
+		binNumbers  []string
+	}{
+		{[]string{"1.1", "1.1000", "1.1000000", "1.10000000000", "01.1", "0001.1", "001.1000000"},
+			[]string{"1.1", "0001.1", "01.1"}},
+		{[]string{"-1.1", "-1.1000", "-1.1000000", "-1.10000000000", "-01.1", "-0001.1", "-001.1000000"},
+			[]string{"-1.1", "-0001.1", "-01.1"}},
+		{[]string{".1", "0.1", "000000.1", ".10000", "0000.10000", "000000000000000000.1"},
+			[]string{".1", "0.1", "000000.1", "00.1"}},
+		{[]string{"0", "0000", ".0", ".00000", "00000.00000", "-0", "-0000", "-.0", "-.00000", "-00000.00000"},
+			[]string{"0", "0000", "00", "-0", "-00", "-000000"}},
+		{[]string{".123456789123456789", ".1234567891234567890", ".12345678912345678900", ".123456789123456789000", ".1234567891234567890000", "0.123456789123456789",
+			".1234567891234567890000000000", "0000000.123456789123456789000"},
+			[]string{".123456789123456789", "0.123456789123456789", "0000.123456789123456789", "0000000.123456789123456789"}},
+		{[]string{"12345", "012345", "0012345", "0000012345", "0000000012345", "00000000000012345", "12345.", "12345.00", "12345.000000000", "000012345.0000"},
+			[]string{"12345", "012345", "000012345", "000000000000012345"}},
+		{[]string{"123E5", "12300000", "00123E5", "000000123E5", "12300000.00000000"},
+			[]string{"12300000", "123E5", "00123E5", "0000000000123E5"}},
+		{[]string{"123E-2", "1.23", "00000001.23", "1.2300000000000000", "000000001.23000000000000"},
+			[]string{"123E-2", "1.23", "000001.23", "0000000000001.23"}},
+	}
+	for _, ca := range binTests {
+		keys := make([]string, 0, len(ca.hashNumbers)+len(ca.binNumbers))
+		for _, num := range ca.hashNumbers {
+			var dec MyDecimal
+			c.Check(dec.FromString([]byte(num)), IsNil)
+			key, err := dec.ToHashKey()
+			c.Check(err, IsNil)
+			keys = append(keys, string(key))
+		}
+		for _, num := range ca.binNumbers {
+			var dec MyDecimal
+			c.Check(dec.FromString([]byte(num)), IsNil)
+			prec, frac := dec.PrecisionAndFrac() // remove leading zeros but trailing zeros remain
+			key, err := dec.ToBin(prec, frac)
+			c.Check(err, IsNil)
+			keys = append(keys, string(key))
+		}
+
+		for i := 1; i < len(keys); i++ {
+			c.Check(keys[0], Equals, keys[i])
+		}
+	}
+}
+
+func (s *testMyDecimalSuite) TestRemoveTrailingZeros(c *C) {
+	tests := []string{
+		"0", "0.0", ".0", ".00000000", "0.0000", "0000", "0000.0", "0000.000",
+		"-0", "-0.0", "-.0", "-.00000000", "-0.0000", "-0000", "-0000.0", "-0000.000",
+		"123123123", "213123.", "21312.000", "21321.123", "213.1230000", "213123.000123000",
+		"-123123123", "-213123.", "-21312.000", "-21321.123", "-213.1230000", "-213123.000123000",
+		"123E5", "12300E-5", "0.00100E1", "0.001230E-3",
+		"123987654321.123456789000", "000000000123", "123456789.987654321", "999.999000",
+	}
+	for _, ca := range tests {
+		var dec MyDecimal
+		c.Check(dec.FromString([]byte(ca)), IsNil)
+
+		// calculate the number of digits after point but trailing zero
+		digitsFracExp := 0
+		str := string(dec.ToString())
+		point := strings.Index(str, ".")
+		if point != -1 {
+			pos := len(str) - 1
+			for pos > point {
+				if str[pos] != '0' {
+					break
+				}
+				pos--
+			}
+			digitsFracExp = pos - point
+		}
+
+		_, digitsFrac := dec.removeTrailingZeros()
+		c.Check(digitsFrac, Equals, digitsFracExp)
 	}
 }
 
@@ -776,5 +885,59 @@ func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
 	for _, tt := range tests {
 		dec := NewMaxOrMinDec(tt.neg, tt.prec, tt.frac)
 		c.Assert(dec.String(), Equals, tt.result)
+	}
+}
+
+func benchmarkMyDecimalToBinOrHashCases() []string {
+	return []string{
+		"1.000000000000", "3", "12.000000000", "120",
+		"120000", "100000000000.00000", "0.000000001200000000",
+		"98765.4321", "-123.456000000000000000",
+		"0", "0000000000", "0.00000000000",
+	}
+}
+
+func BenchmarkMyDecimalToBin(b *testing.B) {
+	cases := benchmarkMyDecimalToBinOrHashCases()
+	decs := make([]*MyDecimal, 0, len(cases))
+	for _, ca := range cases {
+		var dec MyDecimal
+		if err := dec.FromString([]byte(ca)); err != nil {
+			b.Fatal(err)
+		}
+		decs = append(decs, &dec)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, dec := range decs {
+			prec, frac := dec.PrecisionAndFrac()
+			_, err := dec.ToBin(prec, frac)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
+func BenchmarkMyDecimalToHashKey(b *testing.B) {
+	cases := benchmarkMyDecimalToBinOrHashCases()
+	decs := make([]*MyDecimal, 0, len(cases))
+	for _, ca := range cases {
+		var dec MyDecimal
+		if err := dec.FromString([]byte(ca)); err != nil {
+			b.Fatal(err)
+		}
+		decs = append(decs, &dec)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, dec := range decs {
+			_, err := dec.ToHashKey()
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
 	}
 }

@@ -148,7 +148,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (id int PRIMARY KEY, c1 TIMESTAMP(3) NOT NULL DEFAULT '0000-00-00 00:00:00', KEY idx1 (c1))")
+	tk.MustExec("create table t1 (id int PRIMARY KEY, c1 TIMESTAMP(3) NOT NULL DEFAULT '2019-01-14 10:43:20', KEY idx1 (c1))")
 	tk.MustExec("prepare sel1 from 'select id, c1 from t1 where c1 < now(3)'")
 
 	sql1 := "execute sel1"
@@ -262,6 +262,52 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 		}
 		tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 	}
+}
+
+// unit test for issue https://github.com/pingcap/tidb/issues/8518
+func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	core.SetPreparedPlanCache(true)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`create table t1 (
+		id int(11) unsigned not null primary key auto_increment,
+		partner_id varchar(35) not null,
+		t1_status_id int(10) unsigned
+	  );`)
+	tk.MustExec(`insert into t1 values ("1", "partner1", "10"), ("2", "partner2", "10"), ("3", "partner3", "10"), ("4", "partner4", "10");"`)
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec(`create table t3 (
+		id int(11) not null default '0',
+		preceding_id int(11) not null default '0',
+		primary key  (id,preceding_id)
+	  );`)
+	tk.MustExec(`prepare stmt from 'SELECT DISTINCT t1.partner_id
+	FROM t1
+		LEFT JOIN t3 ON t1.id = t3.id
+		LEFT JOIN t1 pp ON pp.id = t3.preceding_id
+	GROUP BY t1.id ;'`)
+	tk.MustQuery("execute stmt").Sort().Check(testkit.Rows("partner1", "partner2", "partner3", "partner4"))
 }
 
 func readGaugeInt(g prometheus.Gauge) int {

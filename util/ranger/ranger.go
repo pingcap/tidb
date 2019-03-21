@@ -416,14 +416,13 @@ func hasPrefix(lengths []int) bool {
 //    value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
 //    So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
 func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
-	hasCut := false
+	var hasCut bool
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
 		for i := 0; i < lowTail; i++ {
 			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
 		}
-		lowCut := false
-		lowCut = fixRangeDatum(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
+		lowCut := fixRangeDatum(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
 		if lowCut {
 			ran.LowExclude = false
 		}
@@ -431,8 +430,7 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 		for i := 0; i < highTail; i++ {
 			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
 		}
-		highCut := false
-		highCut = fixRangeDatum(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
+		highCut := fixRangeDatum(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
 		if highCut {
 			ran.HighExclude = false
 		}

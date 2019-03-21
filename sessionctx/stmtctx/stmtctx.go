@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -47,8 +48,10 @@ type StatementContext struct {
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
 	IsDDLJobInQueue        bool
 	InInsertStmt           bool
-	InUpdateOrDeleteStmt   bool
+	InUpdateStmt           bool
+	InDeleteStmt           bool
 	InSelectStmt           bool
+	InLoadDataStmt         bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	DupKeyAsWarning        bool
@@ -61,6 +64,7 @@ type StatementContext struct {
 	PadCharToFullLength    bool
 	BatchCheck             bool
 	InNullRejectCheck      bool
+	AllowInvalidDate       bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -112,6 +116,21 @@ type StatementContext struct {
 	NowTs            time.Time
 	SysTs            time.Time
 	StmtType         string
+	OriginalSQL      string
+	digestMemo       struct {
+		sync.Once
+		normalized string
+		digest     string
+	}
+}
+
+// SQLDigest gets normalized and digest for provided sql.
+// it will cache result after first calling.
+func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
+	sc.digestMemo.Do(func() {
+		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
+	})
+	return sc.digestMemo.normalized, sc.digestMemo.digest
 }
 
 // AddAffectedRows adds affected rows.
@@ -378,4 +397,22 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	details = sc.mu.execDetails
 	sc.mu.Unlock()
 	return details
+}
+
+// ShouldClipToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
+// This is the case for `insert`, `update`, `alter table` and `load data infile` statements, when not in strict SQL mode.
+// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
+func (sc *StatementContext) ShouldClipToZero() bool {
+	// TODO: Currently altering column of integer to unsigned integer is not supported.
+	// If it is supported one day, that case should be added here.
+	return sc.InInsertStmt || sc.InLoadDataStmt
+}
+
+// ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
+// so we can leave it for further processing like clipping values less than 0 to 0 for unsigned integer types.
+func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
+	if (sc.InInsertStmt && sc.TruncateAsWarning) || sc.InLoadDataStmt {
+		return true
+	}
+	return false
 }

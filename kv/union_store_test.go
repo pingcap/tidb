@@ -121,8 +121,15 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	_, err = s.us.Get([]byte("2"))
 	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue, Commentf("err %v", err))
 
-	err = s.us.CheckLazyConditionPairs()
-	c.Assert(err, NotNil)
+	condionPair1 := s.us.LookupConditionPair([]byte("1"))
+	c.Assert(condionPair1, IsNil)
+
+	condionPair2 := s.us.LookupConditionPair([]byte("2"))
+	c.Assert(condionPair2, NotNil)
+	c.Assert(condionPair2.ShouldNotExist(), IsTrue)
+
+	err2 := s.us.LookupConditionPair([]byte("2")).Err()
+	c.Assert(terror.ErrorEqual(err2, ErrNotExist), IsTrue, Commentf("err %v", err2))
 }
 
 func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {

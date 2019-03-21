@@ -8,7 +8,7 @@ require (
 	github.com/dnephin/govet v0.0.0-20171012192244-4a96d43e39d3
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf // indirect
 	github.com/gordonklaus/ineffassign v0.0.0-20180909121442-1003c8bd00dc
-	github.com/kisielk/errcheck v1.1.0
+	github.com/kisielk/errcheck v1.2.0
 	github.com/mgechev/revive v0.0.0-20181210140514-b4cc152955fb
 	github.com/nicksnyder/go-i18n v1.10.0 // indirect
 	github.com/pelletier/go-toml v1.2.0 // indirect

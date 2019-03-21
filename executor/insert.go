@@ -26,7 +26,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // InsertExec represents an insert executor.
@@ -135,13 +136,13 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *InsertExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("insert.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 
-	chk.Reset()
+	req.Reset()
 	if len(e.children) > 0 && e.children[0] != nil {
 		return e.insertRowsFromSelect(ctx, e.exec)
 	}
@@ -171,7 +172,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
 	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
-		log.Errorf("[insert on dup] handle is %d for the to-be-inserted row %s", handle, types.DatumsToStrNoErr(row.row))
+		logutil.Logger(context.Background()).Error("get old row failed when insert on dup", zap.Int64("handle", handle), zap.String("toBeInsertedRow", types.DatumsToStrNoErr(row.row)))
 		return errors.Trace(err)
 	}
 	// Do update row.

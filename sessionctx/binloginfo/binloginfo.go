@@ -14,7 +14,6 @@
 package binloginfo
 
 import (
-	"io/ioutil"
 	"regexp"
 	"strings"
 	"sync"
@@ -25,9 +24,11 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -35,8 +36,6 @@ import (
 
 func init() {
 	grpc.EnableTracing = false
-	// don't need output pumps client's log
-	pumpcli.Logger.Out = ioutil.Discard
 }
 
 // pumpsClient is the client to write binlog, it is opened on server start and never close,
@@ -94,6 +93,15 @@ func SetIgnoreError(on bool) {
 	} else {
 		atomic.StoreUint32(&ignoreError, 0)
 	}
+}
+
+// ShouldEnableBinlog returns true if Binlog.AutoMode is false and Binlog.Enable is true, or Binlog.AutoMode is true and tidb_log_bin's value is "1"
+func ShouldEnableBinlog() bool {
+	if config.GetGlobalConfig().Binlog.AutoMode {
+		return variable.SysVars[variable.TiDBLogBin].Value == "1"
+	}
+
+	return config.GetGlobalConfig().Binlog.Enable
 }
 
 // WriteBinlog writes a binlog to Pump.
@@ -173,8 +181,7 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 			NodeID: nodeID,
 			State:  node.Online,
 		},
-		IsAvaliable: true,
-		Client:      client,
+		Client: client,
 	}
 
 	pumpInfos := &pumpcli.PumpInfos{
@@ -189,8 +196,7 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 		ClusterID:          1,
 		Pumps:              pumpInfos,
 		Selector:           pumpcli.NewSelector(pumpcli.Range),
-		RetryTime:          1,
-		BinlogWriteTimeout: 15 * time.Second,
+		BinlogWriteTimeout: time.Second,
 	}
 	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
 

@@ -91,9 +91,8 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			if hash {
 				// If hash is true, we only consider the original value of this decimal and ignore it's precision.
 				dec := vals[i].GetMysqlDecimal()
-				precision, frac := dec.PrecisionAndFrac()
 				var bin []byte
-				bin, err = dec.ToBin(precision, frac)
+				bin, err = dec.ToHashKey()
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -238,9 +237,7 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 			if hash {
 				// If hash is true, we only consider the original value of this decimal and ignore it's precision.
 				dec := row.GetMyDecimal(i)
-				precision, frac := dec.PrecisionAndFrac()
-				var bin []byte
-				bin, err = dec.ToBin(precision, frac)
+				bin, err := dec.ToHashKey()
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

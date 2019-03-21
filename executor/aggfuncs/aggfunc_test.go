@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testSuite{})
@@ -48,10 +47,8 @@ func (s *testSuite) TearDownSuite(c *C) {
 
 func (s *testSuite) SetUpTest(c *C) {
 	s.ctx.GetSessionVars().PlanColumnID = 0
-	testleak.BeforeTest()
 }
 
 func (s *testSuite) TearDownTest(c *C) {
 	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
-	testleak.AfterTest(c)()
 }

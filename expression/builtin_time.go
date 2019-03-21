@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -31,11 +32,13 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const ( // GET_FORMAT first argument.
@@ -1285,7 +1288,16 @@ func (b *builtinWeekWithoutModeSig) evalInt(row chunk.Row) (int64, bool, error) 
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
 	}
 
-	week := date.Time.Week(0)
+	mode := 0
+	modeStr, ok := b.ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
+	if ok && modeStr != "" {
+		mode, err = strconv.Atoi(modeStr)
+		if err != nil {
+			return 0, true, handleInvalidTimeError(b.ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))
+		}
+	}
+
+	week := date.Time.Week(mode)
 	return int64(week), false, nil
 }
 
@@ -2657,7 +2669,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 
 	duration := time.Duration(dur)
 	goTime = goTime.Add(duration)
-	goTime = goTime.AddDate(int(year), int(month), int(day))
+	goTime = types.AddDate(year, month, day, goTime)
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
@@ -2683,7 +2695,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 
 	duration := time.Duration(dur)
 	goTime = goTime.Add(duration)
-	goTime = goTime.AddDate(int(year), int(month), int(day))
+	goTime = types.AddDate(year, month, day, goTime)
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
@@ -4263,6 +4275,10 @@ func (b *builtinAddStringAndStringSig) evalString(row chunk.Row) (result string,
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	arg1Type := b.args[1].GetType()
+	if mysql.HasBinaryFlag(arg1Type.Flag) {
+		return "", true, nil
+	}
 	arg1Str, isNull, err = b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -5060,7 +5076,7 @@ func (b *builtinSubStringAndStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinAddStringAndStringSig.
+// evalString evals a builtinSubStringAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubStringAndStringSig) evalString(row chunk.Row) (result string, isNull bool, err error) {
 	var (
@@ -5070,6 +5086,10 @@ func (b *builtinSubStringAndStringSig) evalString(row chunk.Row) (result string,
 	arg0, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
+	}
+	arg1Type := b.args[1].GetType()
+	if mysql.HasBinaryFlag(arg1Type.Flag) {
+		return "", true, nil
 	}
 	s, isNull, err = b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -5117,7 +5137,7 @@ func (b *builtinSubDurationAndDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDuration evals a builtinAddDurationAndDurationSig.
+// evalDuration evals a builtinSubDurationAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDurationAndDurationSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5145,7 +5165,7 @@ func (b *builtinSubDurationAndStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDuration evals a builtinAddDurationAndStringSig.
+// evalDuration evals a builtinSubDurationAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDurationAndStringSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5193,7 +5213,7 @@ func (b *builtinSubDateAndDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinAddDateAndDurationSig.
+// evalString evals a builtinSubDateAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndDurationSig) evalString(row chunk.Row) (string, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5218,7 +5238,7 @@ func (b *builtinSubDateAndStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinAddDateAndStringSig.
+// evalString evals a builtinSubDateAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndStringSig) evalString(row chunk.Row) (string, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5274,7 +5294,7 @@ func (b *builtinTimeFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	dur, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	// if err != nil, then dur is ZeroDuration, outputs 00:00:00 in this case which follows the behavior of mysql.
 	if err != nil {
-		log.Warnf("Expression.EvalDuration() in time_format() failed, due to %s", err.Error())
+		logutil.Logger(context.Background()).Warn("time_format.args[0].EvalDuration failed", zap.Error(err))
 	}
 	if isNull {
 		return "", isNull, err
@@ -5619,19 +5639,12 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 	tm := arg.Time
-	year, month, day := tm.Year(), tm.Month(), 30
-	if year == 0 && month == 0 && tm.Day() == 0 {
+	var day int
+	year, month := tm.Year(), tm.Month()
+	if month == 0 {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
 	}
-	if month == 1 || month == 3 || month == 5 ||
-		month == 7 || month == 8 || month == 10 || month == 12 {
-		day = 31
-	} else if month == 2 {
-		day = 28
-		if tm.IsLeapYear() {
-			day = 29
-		}
-	}
+	day = types.GetLastDay(year, month)
 	ret := types.Time{
 		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
 		Type: mysql.TypeDate,

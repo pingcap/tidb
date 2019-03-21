@@ -215,6 +215,23 @@ func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 	return nil, nil
 }
 
+// GetPrevRegionByKey returns the previous Region and its leader whose range contains the key.
+func (c *Cluster) GetPrevRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
+	c.RLock()
+	defer c.RUnlock()
+
+	currentRegion, _ := c.GetRegionByKey(key)
+	if len(currentRegion.StartKey) == 0 {
+		return nil, nil
+	}
+	for _, r := range c.regions {
+		if bytes.Equal(r.Meta.EndKey, currentRegion.StartKey) {
+			return proto.Clone(r.Meta).(*metapb.Region), proto.Clone(r.leaderPeer()).(*metapb.Peer)
+		}
+	}
+	return nil, nil
+}
+
 // GetRegionByID returns the Region and its leader whose ID is regionID.
 func (c *Cluster) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer) {
 	c.RLock()
@@ -319,7 +336,7 @@ func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int)
 	c.createNewRegions(regionPairs, start, end)
 }
 
-// getPairsGroupByRegions groups the key value pairs into splitted regions.
+// getEntriesGroupByRegions groups the key value pairs into splitted regions.
 func (c *Cluster) getEntriesGroupByRegions(mvccStore MVCCStore, start, end MvccKey, count int) [][]Pair {
 	startTS := uint64(math.MaxUint64)
 	limit := int(math.MaxInt32)

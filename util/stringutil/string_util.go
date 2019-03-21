@@ -236,6 +236,16 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 	return sIdx == len(str)
 }
 
+// IsExactMatch return true if no wildcard character
+func IsExactMatch(patTypes []byte) bool {
+	for _, pt := range patTypes {
+		if pt != patMatch {
+			return false
+		}
+	}
+	return true
+}
+
 // Copy deep copies a string.
 func Copy(src string) string {
 	return string(hack.Slice(src))

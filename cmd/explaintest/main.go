@@ -87,6 +87,7 @@ func newTester(name string) *tester {
 	t.name = name
 	t.enableQueryLog = true
 	t.ctx = mock.NewContext()
+	t.ctx.GetSessionVars().EnableWindowFunction = true
 
 	return t
 }
@@ -566,11 +567,6 @@ func loadAllTests() ([]string, error) {
 		if strings.HasSuffix(name, ".test") {
 			name = strings.TrimSuffix(name, ".test")
 
-			// if we use record and the result file exists, skip generating
-			if record && resultExists(name) {
-				continue
-			}
-
 			if create && !strings.HasSuffix(name, "_stats") {
 				continue
 			}
@@ -629,9 +625,7 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 func main() {
 	flag.Parse()
 
-	err := logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		panic("init logger fail, " + err.Error())
 	}

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testSchemaSuite{})
@@ -34,11 +33,9 @@ var _ = Suite(&testSchemaSuite{})
 type testSchemaSuite struct{}
 
 func (s *testSchemaSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 }
 
 func (s *testSchemaSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {

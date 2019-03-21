@@ -31,10 +31,11 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -60,8 +61,8 @@ type CheckIndexRangeExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	handleIdx := e.schema.Len() - 1
 	for {
 		err := e.result.Next(ctx, e.srcChunk)
@@ -76,12 +77,12 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 			handle := row.GetInt64(handleIdx)
 			for _, hr := range e.handleRanges {
 				if handle >= hr.Begin && handle < hr.End {
-					chk.AppendRow(row)
+					req.AppendRow(row)
 					break
 				}
 			}
 		}
-		if chk.NumRows() > 0 {
+		if req.NumRows() > 0 {
 			return nil
 		}
 	}
@@ -308,8 +309,9 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 		totalScanCnt += result.scanRowCount
 		if totalScanCnt-lastLogCnt >= 50000 {
 			lastLogCnt = totalScanCnt
-			log.Infof("[recover-index] recover table:%v, index:%v, totalAddedCnt:%v, totalScanCnt:%v, nextHandle: %v",
-				e.table.Meta().Name.O, e.index.Meta().Name.O, totalAddedCnt, totalScanCnt, result.nextHandle)
+			logutil.Logger(ctx).Info("recover index", zap.String("table", e.table.Meta().Name.O),
+				zap.String("index", e.index.Meta().Name.O), zap.Int64("totalAddedCnt", totalAddedCnt),
+				zap.Int64("totalScanCnt", totalScanCnt), zap.Int64("nextHandle", result.nextHandle))
 		}
 
 		// no more rows
@@ -376,7 +378,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 		distinctFlags[i] = distinct
 	}
 
-	values, err := kv.BatchGetValues(txn, e.batchKeys)
+	values, err := txn.BatchGet(e.batchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -393,8 +395,9 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 				}
 
 				if handle != rows[i].handle {
-					log.Warnf("[recover-index] The constraint of unique index:%v is broken, handle:%v is not equal handle:%v with idxKey:%v.",
-						e.index.Meta().Name.O, handle, rows[i].handle, key)
+					logutil.Logger(context.Background()).Warn("recover index: the constraint of unique index is broken, handle in index is not equal to handle in table",
+						zap.String("index", e.index.Meta().Name.O), zap.ByteString("indexKey", key),
+						zap.Int64("handleInTable", rows[i].handle), zap.Int64("handleInIndex", handle))
 				}
 			}
 			rows[i].skip = true
@@ -444,8 +447,8 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 }
 
 // Next implements the Executor Next interface.
-func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
@@ -455,8 +458,8 @@ func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	chk.AppendInt64(0, totalAddedCnt)
-	chk.AppendInt64(1, totalScanCnt)
+	req.AppendInt64(0, totalAddedCnt)
+	req.AppendInt64(1, totalScanCnt)
 	e.done = true
 	return nil
 }
@@ -500,7 +503,7 @@ func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte
 	for handle := range e.idxValues {
 		e.batchKeys = append(e.batchKeys, e.table.RecordKey(handle))
 	}
-	values, err := kv.BatchGetValues(txn, e.batchKeys)
+	values, err := txn.BatchGet(e.batchKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -515,13 +518,13 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				return errors.Trace(err)
 			}
 			for _, idxVals := range e.idxValues[handle] {
-				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, idxVals, handle); err != nil {
+				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, idxVals, handle, nil); err != nil {
 					return errors.Trace(err)
 				}
 				e.removeCnt++
 				if e.removeCnt%e.batchSize == 0 {
-					log.Infof("[cleaning up dangling index] table: %v, index: %v, count: %v.",
-						e.table.Meta().Name.String(), e.index.Meta().Name.String(), e.removeCnt)
+					logutil.Logger(context.Background()).Info("clean up dangling index", zap.String("table", e.table.Meta().Name.String()),
+						zap.String("index", e.index.Meta().Name.String()), zap.Uint64("count", e.removeCnt))
 				}
 			}
 		}
@@ -580,8 +583,8 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 }
 
 // Next implements the Executor Next interface.
-func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
@@ -614,7 +617,7 @@ func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 	e.done = true
-	chk.AppendUint64(0, e.removeCnt)
+	req.AppendUint64(0, e.removeCnt)
 	return nil
 }
 

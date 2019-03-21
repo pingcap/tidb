@@ -76,7 +76,7 @@ func BenchmarkMVMapGet(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		binary.BigEndian.PutUint64(buffer, uint64(i))
 		val = m.Get(buffer, val[:0])
-		if len(val) != 1 || bytes.Compare(val[0], buffer) != 0 {
+		if len(val) != 1 || !bytes.Equal(val[0], buffer) {
 			b.FailNow()
 		}
 	}

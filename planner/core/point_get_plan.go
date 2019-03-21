@@ -116,7 +116,9 @@ func (p *PointGetPlan) Children() []PhysicalPlan {
 func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-func (p *PointGetPlan) ResolveIndices() {}
+func (p *PointGetPlan) ResolveIndices() error {
+	return nil
+}
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
@@ -184,10 +186,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		return nil
 	}
 	handlePair := findPKHandle(tbl, pairs)
-	if handlePair.value.Kind() != types.KindNull {
-		if len(pairs) != 1 {
-			return nil
-		}
+	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
 		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
@@ -201,6 +200,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.HandleParam = handlePair.param
 		return p
 	}
+
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique {
 			continue
@@ -455,7 +455,10 @@ func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*
 			return nil
 		}
 		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
-		newAssign.Expr = expr.ResolveIndices(fastSelect.schema)
+		newAssign.Expr, err = expr.ResolveIndices(fastSelect.schema)
+		if err != nil {
+			return nil
+		}
 		orderedList = append(orderedList, newAssign)
 	}
 	return orderedList

@@ -50,8 +50,8 @@ func (k loadStatsVarKeyType) String() string {
 const LoadStatsVarKey loadStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
-func (e *LoadStatsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.GrowAndReset(e.maxChunkSize)
+func (e *LoadStatsExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.GrowAndReset(e.maxChunkSize)
 	if len(e.info.Path) == 0 {
 		return errors.New("Load Stats: file path is empty")
 	}

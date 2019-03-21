@@ -46,6 +46,9 @@ type tikvTxn struct {
 	setCnt     int64
 	vars       *kv.Variables
 	primaryKey []byte
+
+	// For data consistency check.
+	assertions []assertionPair
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -70,6 +73,16 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 		valid:     true,
 		vars:      kv.DefaultVars,
 	}, nil
+}
+
+type assertionPair struct {
+	key       kv.Key
+	assertion kv.AssertionType
+}
+
+// SetAssertion sets a assertion for the key operation.
+func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
+	txn.assertions = append(txn.assertions, assertionPair{key, assertion})
 }
 
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
@@ -107,6 +120,38 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	}
 
 	return ret, nil
+}
+
+func (txn *tikvTxn) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	if txn.IsReadOnly() {
+		return txn.snapshot.BatchGet(keys)
+	}
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]kv.Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := txn.GetMemBuffer().Get(key)
+		if kv.IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
+	}
+	storageValues, err := txn.snapshot.BatchGet(shrinkKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
@@ -172,14 +217,16 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
+	// gofail: var mockCommitError bool
+	// if mockCommitError && kv.IsMockCommitErrorEnable() {
+	//  kv.MockCommitErrorDisable()
+	//	return errors.New("mock commit error")
+	// }
+
 	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
 	start := time.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
-
-	if err := txn.us.CheckLazyConditionPairs(); err != nil {
-		return errors.Trace(err)
-	}
 
 	// connID is used for log.
 	var connID uint64
@@ -278,8 +325,4 @@ func (txn *tikvTxn) Size() int {
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return txn.us.GetMemBuffer()
-}
-
-func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
-	return txn.snapshot
 }

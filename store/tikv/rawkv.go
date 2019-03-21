@@ -89,7 +89,7 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 			Key: key,
 		},
 	}
-	resp, _, err := c.sendReq(key, req)
+	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -154,7 +154,7 @@ func (c *RawKVClient) Put(key, value []byte) error {
 			Value: value,
 		},
 	}
-	resp, _, err := c.sendReq(key, req)
+	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -199,7 +199,7 @@ func (c *RawKVClient) Delete(key []byte) error {
 			Key: key,
 		},
 	}
-	resp, _, err := c.sendReq(key, req)
+	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -290,7 +290,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 				Limit:    uint32(limit - len(keys)),
 			},
 		}
-		resp, loc, err := c.sendReq(startKey, req)
+		resp, loc, err := c.sendReq(startKey, req, false)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -310,11 +310,64 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 	return
 }
 
-func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, *KeyLocation, error) {
+// ReverseScan queries continuous kv pairs in range [endKey, startKey), up to limit pairs.
+// Direction is different from Scan, upper to lower.
+// If endKey is empty, it means unbounded.
+// If you want to include the startKey or exclude the endKey, append a '\0' to the key. For example, to scan
+// (endKey, startKey], you can write:
+// `ReverseScan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
+// It doesn't support Scanning from "", because locating the last Region is not yet implemented.
+func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
+	start := time.Now()
+	defer func() {
+		metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_reverse_scan").Observe(time.Since(start).Seconds())
+	}()
+
+	if limit > MaxRawKVScanLimit {
+		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
+	}
+
+	for len(keys) < limit {
+		req := &tikvrpc.Request{
+			Type: tikvrpc.CmdRawScan,
+			RawScan: &kvrpcpb.RawScanRequest{
+				StartKey: startKey,
+				EndKey:   endKey,
+				Limit:    uint32(limit - len(keys)),
+				Reverse:  true,
+			},
+		}
+		resp, loc, err := c.sendReq(startKey, req, true)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		cmdResp := resp.RawScan
+		if cmdResp == nil {
+			return nil, nil, errors.Trace(ErrBodyMissing)
+		}
+		for _, pair := range cmdResp.Kvs {
+			keys = append(keys, pair.Key)
+			values = append(values, pair.Value)
+		}
+		startKey = loc.StartKey
+		if len(startKey) == 0 {
+			break
+		}
+	}
+	return
+}
+
+func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*tikvrpc.Response, *KeyLocation, error) {
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
-		loc, err := c.regionCache.LocateKey(bo, key)
+		var loc *KeyLocation
+		var err error
+		if reverse {
+			loc, err = c.regionCache.LocateEndKey(bo, key)
+		} else {
+			loc, err = c.regionCache.LocateKey(bo, key)
+		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
