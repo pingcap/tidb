@@ -1119,9 +1119,9 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration,
 // TruncateOverflowMySQLTime truncates d when it overflows, and return ErrTruncatedWrongVal.
 func TruncateOverflowMySQLTime(d gotime.Duration) (gotime.Duration, error) {
 	if d > MaxTime {
-		return MaxTime, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		return MaxTime, ErrTruncatedWrongVal.GenWithStackByArgs("time", d)
 	} else if d < MinTime {
-		return MinTime, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
+		return MinTime, ErrTruncatedWrongVal.GenWithStackByArgs("time", d)
 	}
 
 	return d, nil
