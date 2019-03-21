@@ -353,9 +353,7 @@ func checkDefaultDb(stmtNode ast.ResultSetNode) bool {
 				}
 			}
 		}
-
 		return need
 	}
-
 	return false
 }

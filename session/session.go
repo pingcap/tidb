@@ -884,14 +884,12 @@ func (s *session) AddGlobalBind(originSQL string, bindSQL string, defaultDB stri
 		if err != nil {
 			return
 		}
-
 		if len(rows) > 0 {
 			status := rows[0].GetString(0)
 			if status == bindinfo.BindUsing {
 				err = errors.New("origin sql already has binding sql")
 				return
 			}
-
 			sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' and default_db='%s'", originSQL, defaultDB)
 			_, err = s.execute(ctx, sql)
 			if err != nil {
@@ -905,7 +903,6 @@ func (s *session) AddGlobalBind(originSQL string, bindSQL string, defaultDB stri
 	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
 		originSQL, bindSQL, defaultDB, bindinfo.BindUsing, ts, ts, charset, collation)
 	_, err = s.execute(ctx, sql)
-
 	return
 }
 
@@ -915,10 +912,8 @@ func getEscapeCharacter(str string) string {
 		if v == '\'' || v == '"' || v == '\\' {
 			buffer.WriteString("\\")
 		}
-
 		buffer.WriteString(string(v))
 	}
-
 	return buffer.String()
 }
 

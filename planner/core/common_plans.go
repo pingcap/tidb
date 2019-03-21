@@ -342,7 +342,6 @@ type CreateBindPlan struct {
 	BindSQL   string
 	DefaultDB string
 	IsGlobal  bool
-
 	BindStmt ast.StmtNode
 }
 

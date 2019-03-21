@@ -48,7 +48,6 @@ func (e *CreateBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	if bm == nil {
 		return errors.New("bind manager is nil")
 	}
-
 	var err error
 	if e.isGlobal {
 		err = bm.AddGlobalBind(e.originSQL, e.bindSQL, e.defaultDB, e.charset, e.collation)
