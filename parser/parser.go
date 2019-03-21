@@ -12926,6 +12926,13 @@ yynewstate:
 				WithGrant:  yyS[yypt-0].item.(bool),
 			}
 		}
+	case 1428:
+		{
+			parser.yyVAL.statement = &ast.GrantRoleStmt{
+				Roles: yyS[yypt-2].item.([]*auth.RoleIdentity),
+				Users: yyS[yypt-0].item.([]*auth.UserIdentity),
+			}
+		}
 	case 1429:
 		{
 			parser.yyVAL.item = false
