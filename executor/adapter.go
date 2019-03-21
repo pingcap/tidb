@@ -220,7 +220,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e = wrapCloseWatcher(e)
+	e = wrapCtxWatcher(e)
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -486,25 +486,26 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	}
 }
 
-// execCloseWatcher used to watch the context specified in Open and
+// execCtxWatcher used to watch the context specified in Open and
 // stop the wrapped executor when this context is cancelled.
-type execCloseWatcher struct {
+type execCtxWatcher struct {
 	Executor
-	// 0, 1, 2 represent not started, running, closed
+	// 0, 1, 2, 3 represent not started, failed in start, running, closed
 	status int32
 	exit   chan struct{}
 }
 
-func wrapCloseWatcher(exec Executor) Executor {
-	return &execCloseWatcher{exec, 0, make(chan struct{})}
+func wrapCtxWatcher(exec Executor) Executor {
+	return &execCtxWatcher{exec, 0, make(chan struct{})}
 }
 
-func (ecw *execCloseWatcher) Open(ctx context.Context) error {
-	if !atomic.CompareAndSwapInt32(&ecw.status, 0, 1) {
+func (ecw *execCtxWatcher) Open(ctx context.Context) error {
+	if !atomic.CompareAndSwapInt32(&ecw.status, 0, 2) {
 		return nil
 	}
 
 	if err := ecw.Executor.Open(ctx); err != nil {
+		atomic.StoreInt32(&ecw.status, 1)
 		return err
 	}
 	go ecw.watch(ctx)
@@ -512,19 +513,19 @@ func (ecw *execCloseWatcher) Open(ctx context.Context) error {
 	return nil
 }
 
-func (ecw *execCloseWatcher) Close() error {
-	if !atomic.CompareAndSwapInt32(&ecw.status, 1, 2) {
+func (ecw *execCtxWatcher) Close() error {
+	if !atomic.CompareAndSwapInt32(&ecw.status, 2, 3) {
 		return nil
 	}
 	close(ecw.exit)
 	return ecw.Executor.Close()
 }
 
-func (ecw *execCloseWatcher) watch(ctx context.Context) {
+func (ecw *execCtxWatcher) watch(ctx context.Context) {
 	select {
 	case <-ctx.Done():
 		if err := ecw.Close(); err != nil {
-			logutil.Logger(ctx).Error("cancel executor in execCloseWatcher err", zap.Error(err))
+			logutil.Logger(ctx).Error("cancel executor in execCtxWatcher err", zap.Error(err))
 		}
 		return
 	case <-ecw.exit:
