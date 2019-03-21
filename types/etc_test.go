@@ -274,7 +274,6 @@ func (s *testTypeEtcSuite) TestIsTemporalWithDate(c *C) {
 
 	res = IsTemporalWithDate('t')
 	c.Assert(res, Equals, false)
-
 }
 
 func (s *testTypeEtcSuite) TestIsTypePrefixable(c *C) {
