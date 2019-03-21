@@ -103,7 +103,7 @@ func (s *adapterTestSuite) TestCtxWatcher(c *C) {
 	ctx, cancel = context.WithCancel(context.Background())
 	we.Open(ctx)
 	c.Assert(e.openCnt, Equals, 1)
-	for i := 0; i < 10; i ++ {
+	for i := 0; i < 10; i++ {
 		we.Close()
 		cancel()
 	}
