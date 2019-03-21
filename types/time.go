@@ -2205,7 +2205,7 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 		}
 		var durationTokens bool
 		var dateTokens bool
-		if len(token) >= 2 && token[0] != '%' {
+		if len(token) >= 2 && token[0] == '%' {
 			switch token[1] {
 			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l':
 				durationTokens = true
