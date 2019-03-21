@@ -278,6 +278,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID]; ok {
 		stmt.Text = prepared.Stmt.Text()
+		ctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
 	}
 	return stmt, nil
 }

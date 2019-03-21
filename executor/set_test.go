@@ -18,8 +18,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -239,8 +239,8 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 
-	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable == "on")))
-	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable == "on")))
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())))
+	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())))
 
 	tk.MustExec("set global tidb_log_bin = on")
 	tk.MustQuery(`select @@global.tidb_log_bin;`).Check(testkit.Rows("1"))

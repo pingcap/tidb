@@ -876,6 +876,7 @@ func buildShowSlowSchema() *expression.Schema {
 	schema.Append(buildColumn("", "TABLE_IDS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumn("", "INDEX_IDS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumn("", "INTERNAL", mysql.TypeTiny, tinySize))
+	schema.Append(buildColumn("", "DIGEST", mysql.TypeVarchar, 64))
 	return schema
 }
 
