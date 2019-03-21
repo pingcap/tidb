@@ -1294,19 +1294,21 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 	if s.Cols == nil {
 		for i, v := range schemaCols {
 			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:   v.AsName,
-				ID:     int64(i),
-				Offset: i,
-				State:  model.StatePublic,
+				Name:    v.AsName,
+				ID:      int64(i),
+				Offset:  i,
+				State:   model.StatePublic,
+				Version: model.ColumnInfoVersion1,
 			})
 		}
 	} else {
 		for i, v := range s.Cols {
 			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:   v,
-				ID:     int64(i),
-				Offset: i,
-				State:  model.StatePublic,
+				Name:    v,
+				ID:      int64(i),
+				Offset:  i,
+				State:   model.StatePublic,
+				Version: model.ColumnInfoVersion1,
 			})
 		}
 	}
