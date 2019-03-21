@@ -2513,6 +2513,15 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 				return doNothing, err
 			}
 		}
+		if col.Charset == charset.CharsetBin {
+			continue
+		}
+		if len(col.Charset) == 0 {
+			continue
+		}
+		if err = modifiableCharsetAndCollation(toCharset, toCollate, col.Charset, col.Collate); err != nil {
+			return doNothing, err
+		}
 	}
 	return doNothing, nil
 }

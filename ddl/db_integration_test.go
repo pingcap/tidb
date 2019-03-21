@@ -592,7 +592,7 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 
 	// Test change column charset when change table charset.
 	tk.MustExec("drop table t;")
-	tk.MustExec("create table t(a varchar(10) character set ascii) charset utf8")
+	tk.MustExec("create table t(a varchar(10)) charset utf8")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
 	checkCharset := func() {
 		tbl := testGetTableByName(c, s.ctx, "test", "t")
@@ -605,30 +605,42 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 		}
 	}
 	checkCharset()
-	// Test when table charset is equal to target charset but column charset is not equal.
+
+	// Test when column charset can not convert to the target charset.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10) character set ascii) charset utf8mb4")
+	_, err = tk.Exec("alter table t convert to charset utf8mb4;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from ascii to utf8mb4")
+
+	// Test when table charset is equal to target charset but column charset is not equal.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a varchar(10) character set utf8) charset utf8mb4")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
 	checkCharset()
 
 	// Mock table info with charset is "". Old TiDB maybe create table with charset is "".
-	mockCtx := mock.NewContext()
-	mockCtx.Store = s.store
-	err = mockCtx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	txn, err := mockCtx.Txn(true)
-	c.Assert(err, IsNil)
-	mt := meta.NewMeta(txn)
 	db, ok := domain.GetDomain(s.ctx).InfoSchema().SchemaByName(model.NewCIStr("test"))
 	c.Assert(ok, IsTrue)
 	tbl := testGetTableByName(c, s.ctx, "test", "t")
 	tblInfo := tbl.Meta().Clone()
 	tblInfo.Charset = ""
 	tblInfo.Collate = ""
-	err = mt.UpdateTable(db.ID, tblInfo)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	updateTableInfo := func(tblInfo *model.TableInfo) {
+		mockCtx := mock.NewContext()
+		mockCtx.Store = s.store
+		err = mockCtx.NewTxn(context.Background())
+		c.Assert(err, IsNil)
+		txn, err := mockCtx.Txn(true)
+		c.Assert(err, IsNil)
+		mt := meta.NewMeta(txn)
+
+		err = mt.UpdateTable(db.ID, tblInfo)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}
+	updateTableInfo(tblInfo)
 
 	// check table charset is ""
 	tk.MustExec("alter table t add column b varchar(10);") //  load latest schema.
@@ -637,6 +649,21 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 	c.Assert(tbl.Meta().Charset, Equals, "")
 	c.Assert(tbl.Meta().Collate, Equals, "")
 	// Test when table charset is "", this for compatibility.
+	tk.MustExec("alter table t convert to charset utf8mb4;")
+	checkCharset()
+
+	// Test when column charset is "".
+	tbl = testGetTableByName(c, s.ctx, "test", "t")
+	tblInfo = tbl.Meta().Clone()
+	tblInfo.Columns[0].Charset = ""
+	tblInfo.Columns[0].Collate = ""
+	updateTableInfo(tblInfo)
+	// check table charset is ""
+	tk.MustExec("alter table t drop column b;") //  load latest schema.
+	tbl = testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl, NotNil)
+	c.Assert(tbl.Meta().Columns[0].Charset, Equals, "")
+	c.Assert(tbl.Meta().Columns[0].Collate, Equals, "")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
 	checkCharset()
 }
