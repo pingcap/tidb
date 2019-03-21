@@ -35,7 +35,8 @@ func TestT(t *testing.T) {
 
 func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
-	conf.Binlog.Enable = "auto"
+	conf.Binlog.Enable = true
+	conf.Binlog.AutoMode = true
 	conf.Binlog.IgnoreError = true
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.CheckMb4ValueInUtf8 = true
@@ -58,7 +59,8 @@ token-limit = -1
 	c.Assert(conf.Load(configFile), IsNil)
 
 	// Test that the original value will not be clear by load the config file that does not contain the option.
-	c.Assert(conf.Binlog.Enable, Equals, "auto")
+	c.Assert(conf.Binlog.Enable, Equals, true)
+	c.Assert(conf.Binlog.AutoMode, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
