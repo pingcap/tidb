@@ -101,7 +101,7 @@ var _ util.SessionManager = mockSessionManager{}
 
 func (m mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
 	return map[uint64]util.ProcessInfo{
-		1: util.ProcessInfo{
+		1: {
 			ID:      1,
 			User:    "root",
 			Host:    "127.0.0.1",
