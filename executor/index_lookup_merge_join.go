@@ -43,7 +43,7 @@ type IndexLookUpMergeJoin struct {
 	outerMergeCtx outerMergeCtx
 	innerMergeCtx innerMergeCtx
 
-	joiner joiner
+	joiner []joiner
 
 	task *lookUpMergeJoinTask
 
@@ -171,7 +171,7 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	go e.newOuterWorker(resultCh, innerCh).run(workerCtx, e.workerWg)
 	e.workerWg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
-		go e.newInnerMergeWorker(innerCh).run(workerCtx, e.workerWg)
+		go e.newInnerMergeWorker(innerCh, i).run(workerCtx, e.workerWg)
 	}
 }
 
@@ -190,7 +190,7 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 	return omw
 }
 
-func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinTask) *innerMergeWorker {
+func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinTask, workID int) *innerMergeWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
 	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges))
 	for _, ran := range e.indexRanges {
@@ -204,7 +204,7 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 		executorChk:   chunk.NewChunkWithCapacity(e.innerMergeCtx.rowTypes, e.maxChunkSize),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
-		joiner:        e.joiner,
+		joiner:        e.joiner[workID],
 		retFieldTypes: e.retFieldTypes,
 		maxChunkSize:  e.maxChunkSize,
 	}

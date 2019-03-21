@@ -1584,7 +1584,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			// or the outer join keys are NOT the prefix of the prop items,
 			// then we can't execute merge join.
 			if canKeepOuterOrder || needOuterSort {
-				return &IndexLookUpMergeJoin{
+				e := &IndexLookUpMergeJoin{
 					baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 					outerMergeCtx: outerMergeCtx{
 						rowTypes:      outerTypes,
@@ -1602,9 +1602,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 						compareFuncs:  compareFuncs,
 					},
 					workerWg:      new(sync.WaitGroup),
-					joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 					indexRanges:   v.Ranges,
 					keyOff2IdxOff: v.KeyOff2IdxOff,
+				}
+				for i := 0; i < b.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
+					e.joiner = append(e.joiner, newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes))
 				}
 			}
 		}
