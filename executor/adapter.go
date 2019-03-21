@@ -216,11 +216,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		}()
 	}
 
-	e, err := a.buildExecutor(sctx)
+	exec, err := a.buildExecutor(sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e = wrapCtxWatcher(e)
+	e := wrapCtxWatcher(exec)
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -247,7 +247,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
 		return a.handleNoDelayExecutor(ctx, sctx, e)
-	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
+	} else if proj, ok := e.Executor.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
@@ -269,7 +269,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e *execCtxWatcher) (sqlexec.RecordSet, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -277,7 +277,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
-	switch e.(type) {
+	switch e.Executor.(type) {
 	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadDataExec, *DDLExec:
 		snapshotTS := sctx.GetSessionVars().SnapshotTS
 		if snapshotTS != 0 {
@@ -495,7 +495,7 @@ type execCtxWatcher struct {
 	exit   chan struct{}
 }
 
-func wrapCtxWatcher(exec Executor) Executor {
+func wrapCtxWatcher(exec Executor) *execCtxWatcher {
 	return &execCtxWatcher{exec, 0, make(chan struct{})}
 }
 
