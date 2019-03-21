@@ -223,18 +223,27 @@ func ResolveCharsetCollation(tblCharset, dbCharset string) (string, string, erro
 	return charset, collate, nil
 }
 
+func typesNeedCharset(tp byte) bool {
+	switch tp {
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		mysql.TypeEnum, mysql.TypeSet:
+		return true
+	}
+	return false
+}
+
 func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCharset string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
-		switch tp.Tp {
-		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
+		if typesNeedCharset(tp.Tp) {
 			var err error
 			tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
 			if err != nil {
 				return errors.Trace(err)
 			}
-		default:
+		} else {
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
 		}
@@ -2441,7 +2450,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		}
 	}
 
-	doNothing, err := checkAlterTableCharset(tb.Meta(), toCharset, toCollate)
+	doNothing, err := checkAlterTableCharset(tb.Meta(), schema, toCharset, toCollate)
 	if err != nil {
 		return err
 	}
@@ -2465,7 +2474,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 // This function returns 2 variable:
 // doNothing: if doNothing is true, means no need to change any more, because the target charset is same with the charset of table.
 // err: if err is not nil, means it is not possible to change table charset to target charset.
-func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate string) (doNothing bool, err error) {
+func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCharset, toCollate string) (doNothing bool, err error) {
 	origCharset := tblInfo.Charset
 	origCollate := tblInfo.Collate
 	if origCharset == toCharset && origCollate == toCollate {
@@ -2481,16 +2490,17 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate strin
 			doNothing = false
 		}
 		if doNothing {
-			return doNothing, err
+			return doNothing, nil
 		}
 	}
 
 	if len(origCharset) == 0 {
 		// The table charset may be "", if the table is create in old TiDB version.
 		// This DDL will update the table charset to default charset.
-		// Use default charset or database charset?
-		// show create table is uses the default charset.
-		origCharset, origCollate = charset.GetDefaultCharsetAndCollate()
+		origCharset, origCollate, err = ResolveCharsetCollation("", dbInfo.Charset)
+		if err != nil {
+			return doNothing, err
+		}
 	}
 
 	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
@@ -2504,7 +2514,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, toCharset, toCollate strin
 			}
 		}
 	}
-	return doNothing, err
+	return doNothing, nil
 }
 
 // RenameIndex renames an index.

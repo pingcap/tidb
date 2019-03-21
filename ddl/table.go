@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -587,13 +586,18 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 
+	dbInfo, err := checkSchemaExistAndCancelNonExistJob(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	// double check.
-	_, err = checkAlterTableCharset(tblInfo, toCharset, toCollate)
+	_, err = checkAlterTableCharset(tblInfo, dbInfo, toCharset, toCollate)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -603,11 +607,10 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	tblInfo.Collate = toCollate
 	// update column charset.
 	for _, col := range tblInfo.Columns {
-		switch col.Tp {
-		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
+		if typesNeedCharset(col.Tp) {
 			col.Charset = toCharset
 			col.Collate = toCollate
-		default:
+		} else {
 			col.Charset = charset.CharsetBin
 			col.Collate = charset.CharsetBin
 		}
