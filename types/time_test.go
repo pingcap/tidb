@@ -1091,7 +1091,6 @@ func (s *testTimeSuite) TestInvalidZero(c *C) {
 	c.Assert(in.InvalidZero(), Equals, true)
 	in.Time = types.FromDate(2019, 04, 12, 12, 00, 00, 00)
 	c.Assert(in.InvalidZero(), Equals, false)
-
 }
 
 func (s *testTimeSuite) TestGetFsp(c *C) {
@@ -1186,7 +1185,6 @@ func (s *testTimeSuite) TestExtractDurationNum(c *C) {
 	res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
 	c.Assert(res, Equals, int64(0))
 	c.Assert(err, ErrorMatches, "invalid unit.*")
-
 }
 
 func (s *testTimeSuite) TestExtractTimeValue(c *C) {

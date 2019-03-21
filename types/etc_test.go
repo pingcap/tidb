@@ -285,7 +285,6 @@ func (s *testTypeEtcSuite) TestIsTypePrefixable(c *C) {
 
 	res = IsTypePrefixable(mysql.TypeBlob)
 	c.Assert(res, Equals, true)
-
 }
 
 func (s *testTypeEtcSuite) TestIsTypeFractionable(c *C) {
