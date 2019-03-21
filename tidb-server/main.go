@@ -146,9 +146,10 @@ func main() {
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
-	setupBinlogClient()
 	setupMetrics()
 	createStoreAndDomain()
+	// setupBinlogClient should run after bootstrap
+	setupBinlogClient()
 	createServer()
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()
@@ -187,7 +188,7 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
-	if !cfg.Binlog.Enable {
+	if !binloginfo.ShouldEnableBinlog() {
 		return
 	}
 
@@ -452,11 +453,12 @@ func setGlobalVars() {
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
-	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
+	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())
 
 	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
 	variable.SysVars[variable.Socket].Value = cfg.Socket
 	variable.SysVars[variable.DataDir].Value = cfg.Path
+	variable.SysVars[variable.TiDBSlowQueryFile].Value = cfg.Log.SlowQueryFile
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)

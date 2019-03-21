@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -26,8 +27,9 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -65,6 +67,12 @@ const (
 	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
 	AntiLeftOuterSemiJoin
 )
+
+// IsOuterJoin returns if this joiner is a outer joiner
+func (tp JoinType) IsOuterJoin() bool {
+	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
 
 func (tp JoinType) String() string {
 	switch tp {
@@ -323,16 +331,11 @@ type DataSource struct {
 
 	TableAsName *model.CIStr
 
-	LimitCount *int64
-
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used only in partition pruning.
 	allConds []expression.Expression
-
-	// relevantIndices means the indices match the push down conditions
-	relevantIndices []bool
 
 	statisticTable *statistics.Table
 
@@ -471,24 +474,26 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	} else {
 		path.tableFilters = ds.pushedDownConds
 	}
-	corColInAccessConds := false
 	if path.eqCondCount == len(path.accessConds) {
-		access, remained := path.splitCorColAccessCondFromFilters()
-		path.accessConds = append(path.accessConds, access...)
+		accesses, remained := path.splitCorColAccessCondFromFilters()
+		path.accessConds = append(path.accessConds, accesses...)
 		path.tableFilters = remained
-		if len(access) > 0 {
-			corColInAccessConds = true
+		if len(accesses) > 0 && ds.statisticTable.Pseudo {
+			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+		} else {
+			selectivity := path.countAfterAccess / float64(ds.statisticTable.Count)
+			for i := range accesses {
+				col := path.idxCols[path.eqCondCount+i]
+				ndv := ds.getColumnNDV(col.ID)
+				ndv *= selectivity
+				if ndv < 1 {
+					ndv = 1.0
+				}
+				path.countAfterAccess = path.countAfterAccess / ndv
+			}
 		}
 	}
 	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
-	if corColInAccessConds {
-		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
-		if ok && !ds.stats.HistColl.Pseudo {
-			path.countAfterAccess = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
-		} else {
-			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
-		}
-	}
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.countAfterAccess < ds.stats.RowCount {
@@ -497,7 +502,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	if path.indexFilters != nil {
 		selectivity, _, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
-			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+			logutil.Logger(context.Background()).Warn("calculate selectivity faild, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)

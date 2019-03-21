@@ -192,6 +192,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a join (select 2) b join (select 3) a;", false, core.ErrNonUniqTable},
+		{"select person.id from person inner join person on person.id = person.id;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b;", true, nil},
 		{"select * from (select * from ( select 1 ) a join (select 2) b) b join (select 3) a;", false, nil},
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},

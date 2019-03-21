@@ -585,7 +585,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 
 		startTime := time.Now()
-		if err = cc.dispatch(logutil.WithRecvTs(ctx, startTime.UnixNano()/int64(time.Millisecond)), data); err != nil {
+		if err = cc.dispatch(ctx, data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				return
@@ -1062,7 +1062,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	data := make([]byte, 4, 1024)
+	data := cc.alloc.AllocWithLen(4, 1024)
 	for _, column := range columns {
 		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
 		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
@@ -1120,7 +1120,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
-	data := make([]byte, 4, 1024)
+	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
 		return errors.Trace(err)
@@ -1142,7 +1142,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // binary specifies the way to dump data. It throws any error while dumping data.
 // serverStatus, a flag bit represents server information
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
-	data := make([]byte, 4, 1024)
+	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewRecordBatch()
 	gotColumnInfo := false
 	for {
@@ -1228,7 +1228,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	}
 	rs.StoreFetchedRows(fetchedRows)
 
-	data := make([]byte, 4, 1024)
+	data := cc.alloc.AllocWithLen(4, 1024)
 	var err error
 	for _, row := range curRows {
 		data = data[0:4]

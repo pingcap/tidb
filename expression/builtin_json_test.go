@@ -16,6 +16,7 @@ package expression
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -684,5 +685,84 @@ func (s *testEvaluatorSuite) TestJSONDepth(c *C) {
 		} else {
 			c.Assert(err, NotNil)
 		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
+	defer testleak.AfterTest(c)()
+	sampleJSON, err := json.ParseBinaryFromString(`{"b": 2}`)
+	c.Assert(err, IsNil)
+	fc := funcs[ast.JSONArrayAppend]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		err      *terror.Error
+	}{
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, `w`}, `[{"a": 1, "b": [2, 3], "c": 4}, "w"]`, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, nil}, `[{"a": 1, "b": [2, 3], "c": 4}, null]`, nil},
+		{[]interface{}{`{"a": 1}`, `$`, `{"b": 2}`}, `[{"a": 1}, "{\"b\": 2}"]`, nil},
+		{[]interface{}{`{"a": 1}`, `$`, sampleJSON}, `[{"a": 1}, {"b": 2}]`, nil},
+		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON}, `{"a": [1, {"b": 2}]}`, nil},
+
+		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON, `$.a[1]`, sampleJSON}, `{"a": [1, [{"b": 2}, {"b": 2}]]}`, nil},
+		{[]interface{}{nil, `$`, nil}, nil, nil},
+		{[]interface{}{nil, `$`, `a`}, nil, nil},
+		{[]interface{}{`null`, `$`, nil}, `[null, null]`, nil},
+		{[]interface{}{`[]`, `$`, nil}, `[null]`, nil},
+		{[]interface{}{`{}`, `$`, nil}, `[{}, null]`, nil},
+		// Bad arguments.
+		{[]interface{}{`asdf`, `$`, nil}, nil, json.ErrInvalidJSONText},
+		{[]interface{}{``, `$`, nil}, nil, json.ErrInvalidJSONText},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, ErrIncorrectParameterCount},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, ErrIncorrectParameterCount},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, json.ErrInvalidJSONPath},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, json.ErrInvalidJSONPathWildcard},
+		// Following tests come from MySQL doc.
+		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1]`, 1}, `["a", ["b", "c", 1], "d"]`, nil},
+		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[0]`, 2}, `[["a", 2], ["b", "c"], "d"]`, nil},
+		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1][0]`, 3}, `["a", [["b", 3], "c"], "d"]`, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b`, `x`}, `{"a": 1, "b": [2, 3, "x"], "c": 4}`, nil},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`}, `{"a": 1, "b": [2, 3], "c": [4, "y"]}`, nil},
+		// Following tests come from MySQL test.
+		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, nil},
+		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].a`, 3.14}, `[1, 2, 3, {"a": [4, 5, 6, 3.14]}, 7]`, nil},
+		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].b`, 8}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, nil},
+	}
+
+	for i, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		// No error should return in getFunction if t.err is nil.
+		if err != nil {
+			c.Assert(t.err, NotNil)
+			c.Assert(t.err.Equal(err), Equals, true)
+			continue
+		}
+
+		c.Assert(f, NotNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		comment := Commentf("case:%v \n input:%v \n output: %s \n expected: %v \n warnings: %v \n expected error %v", i, t.input, d.GetMysqlJSON(), t.expected, s.ctx.GetSessionVars().StmtCtx.GetWarnings(), t.err)
+
+		if t.err != nil {
+			c.Assert(t.err.Equal(err), Equals, true, comment)
+			continue
+		}
+
+		c.Assert(err, IsNil, comment)
+		c.Assert(int(s.ctx.GetSessionVars().StmtCtx.WarningCount()), Equals, 0, comment)
+
+		if t.expected == nil {
+			c.Assert(d.IsNull(), IsTrue, comment)
+			continue
+		}
+
+		j1, err := json.ParseBinaryFromString(t.expected.(string))
+
+		c.Assert(err, IsNil, comment)
+		c.Assert(json.CompareBinary(j1, d.GetMysqlJSON()), Equals, 0, comment)
 	}
 }

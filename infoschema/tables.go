@@ -67,6 +67,7 @@ const (
 	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
 	tableTiDBIndexes                        = "TIDB_INDEXES"
+	tableSlowLog                            = "SLOW_QUERY"
 )
 
 type columnInfo struct {
@@ -1469,6 +1470,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
+	tableSlowLog:                            slowQueryCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1560,6 +1562,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForCollationCharacterSetApplicability()
 	case tableProcesslist:
 		fullRows = dataForProcesslist(ctx)
+	case tableSlowLog:
+		fullRows, err = dataForSlowLog(ctx)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

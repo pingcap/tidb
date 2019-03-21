@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -669,4 +672,35 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 		}
 	}
 	return res
+}
+
+// GetUint64FromConstant gets a uint64 from constant expression.
+func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
+	con, ok := expr.(*Constant)
+	if !ok {
+		logutil.Logger(context.Background()).Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
+		return 0, false, false
+	}
+	dt := con.Value
+	if con.DeferredExpr != nil {
+		var err error
+		dt, err = con.DeferredExpr.Eval(chunk.Row{})
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("eval deferred expr failed", zap.Error(err))
+			return 0, false, false
+		}
+	}
+	switch dt.Kind() {
+	case types.KindNull:
+		return 0, true, true
+	case types.KindInt64:
+		val := dt.GetInt64()
+		if val < 0 {
+			return 0, false, false
+		}
+		return uint64(val), false, true
+	case types.KindUint64:
+		return dt.GetUint64(), false, true
+	}
+	return 0, false, false
 }

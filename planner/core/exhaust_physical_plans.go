@@ -143,6 +143,12 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		mergeJoin.initCompareFuncs()
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
+			// Adjust expected count for children nodes.
+			if prop.ExpectedCnt < p.stats.RowCount {
+				expCntScale := prop.ExpectedCnt / p.stats.RowCount
+				reqProps[0].ExpectedCnt = p.children[0].statsInfo().RowCount * expCntScale
+				reqProps[1].ExpectedCnt = p.children[1].statsInfo().RowCount * expCntScale
+			}
 			mergeJoin.childrenReqProps = reqProps
 			joins = append(joins, mergeJoin)
 		}
@@ -261,7 +267,11 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int) *PhysicalHashJoin {
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt}
+	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	if prop.ExpectedCnt < p.stats.RowCount {
+		expCntScale := prop.ExpectedCnt / p.stats.RowCount
+		chReqProps[1-innerIdx].ExpectedCnt = p.children[1-innerIdx].statsInfo().RowCount * expCntScale
+	}
 	hashJoin := PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -316,7 +326,11 @@ func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, innerJ
 		return nil
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
-	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: prop.ExpectedCnt, Items: prop.Items}
+	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, Items: prop.Items}
+	if prop.ExpectedCnt < p.stats.RowCount {
+		expCntScale := prop.ExpectedCnt / p.stats.RowCount
+		chReqProps[outerIdx].ExpectedCnt = p.children[outerIdx].statsInfo().RowCount * expCntScale
+	}
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
 	newKeyOff := make([]int, 0, len(keyOff2IdxOff))
@@ -548,14 +562,28 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
-	// We should guarantee that all the join's equal condition is used.
-	for _, eqCond := range eqConds {
+	// Guarantee res.AccessConds is not empty.
+	if len(res.AccessConds) == 0 {
+		return nil, nil, nil
+	}
+
+	// Find invalid fake condition and modify the joinKey's idxOff to -1.
+	var invalidFakeConds []expression.Expression
+	for i, eqCond := range eqConds {
 		if !expression.Contains(res.AccessConds, eqCond) {
-			return nil, nil, nil
+			keyOff2IdxOff[i] = -1
+			invalidFakeConds = append(invalidFakeConds, eqCond)
 		}
 	}
 
-	return res.Ranges, append(remained, res.RemainedConds...), keyOff2IdxOff
+	// Filter out invalidFakeConds from res.RemainedConds.
+	for _, cond := range res.RemainedConds {
+		if !expression.Contains(invalidFakeConds, cond) {
+			remained = append(remained, cond)
+		}
+	}
+
+	return res.Ranges, remained, keyOff2IdxOff
 }
 
 func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,

@@ -87,6 +87,40 @@ func inTxn(ctx sessionctx.Context) bool {
 	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
 }
 
+func (s *testSuite3) TestRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Make sure user test not in mysql.User.
+	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
+	result.Check(nil)
+
+	createRoleSQL := `CREATE ROLE 'test'@'localhost';`
+	tk.MustExec(createRoleSQL)
+	// Make sure user test in mysql.User.
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
+	result.Check(testkit.Rows(auth.EncodePassword("")))
+	// Insert relation into mysql.role_edges
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('localhost','test','%','root')")
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('localhost','test1','localhost','test1')")
+	// Insert relation into mysql.default_roles
+	tk.MustExec("insert into mysql.default_roles (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) values ('%','root','localhost','test')")
+	tk.MustExec("insert into mysql.default_roles (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) values ('localhost','test','%','test1')")
+
+	dropUserSQL := `DROP ROLE IF EXISTS 'test'@'localhost' ;`
+	_, err := tk.Exec(dropUserSQL)
+	c.Check(err, IsNil)
+
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
+	result.Check(nil)
+	result = tk.MustQuery(`SELECT * FROM mysql.role_edges WHERE TO_USER="test" and TO_HOST="localhost"`)
+	result.Check(nil)
+	result = tk.MustQuery(`SELECT * FROM mysql.role_edges WHERE FROM_USER="test" and FROM_HOST="localhost"`)
+	result.Check(nil)
+	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE USER="test" and HOST="localhost"`)
+	result.Check(nil)
+	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
+	result.Check(nil)
+}
+
 func (s *testSuite3) TestUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
