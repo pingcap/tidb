@@ -116,8 +116,8 @@ func (s *testIntegrationSuite) TestCreateTableWithPartition(c *C) {
 	assertErrorCode(c, tk, sql4, tmysql.ErrPartitionMaxvalue)
 
 	_, err = tk.Exec(`CREATE TABLE rc (
-    		a INT NOT NULL,
-    		b INT NOT NULL,
+		a INT NOT NULL,
+		b INT NOT NULL,
 		c INT NOT NULL
 	)
 	partition by range columns(a,b,c) (

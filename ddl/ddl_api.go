@@ -1382,7 +1382,7 @@ func checkRangeColumnsPartitionType(tbInfo *model.TableInfo, columns []model.CIS
 		// All integer types
 		// DATE and DATETIME
 		// CHAR, VARCHAR, BINARY, and VARBINARY
-		// https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-columns.html
+		// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-columns.html
 		switch colInfo.FieldType.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		case mysql.TypeDate, mysql.TypeDatetime:
