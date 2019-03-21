@@ -220,6 +220,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	e = wrapCloseWatcher(e)
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -482,5 +483,51 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 		return true, nil
 	default:
 		return false, nil
+	}
+}
+
+// execCloseWatcher used to watch the context specified in Open and
+// stop the wrapped executor when this context is cancelled.
+type execCloseWatcher struct {
+	Executor
+	// 0, 1, 2 represent not started, running, closed
+	status int32
+	exit   chan struct{}
+}
+
+func wrapCloseWatcher(exec Executor) Executor {
+	return &execCloseWatcher{exec, 0, make(chan struct{})}
+}
+
+func (ecw *execCloseWatcher) Open(ctx context.Context) error {
+	if !atomic.CompareAndSwapInt32(&ecw.status, 0, 1) {
+		return nil
+	}
+
+	if err := ecw.Executor.Open(ctx); err != nil {
+		return err
+	}
+	go ecw.watch(ctx)
+
+	return nil
+}
+
+func (ecw *execCloseWatcher) Close() error {
+	if !atomic.CompareAndSwapInt32(&ecw.status, 1, 2) {
+		return nil
+	}
+	close(ecw.exit)
+	return ecw.Executor.Close()
+}
+
+func (ecw *execCloseWatcher) watch(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		if err := ecw.Close(); err != nil {
+			logutil.Logger(ctx).Error("cancel executor in execCloseWatcher err", zap.Error(err))
+		}
+		return
+	case <-ecw.exit:
+		return
 	}
 }
