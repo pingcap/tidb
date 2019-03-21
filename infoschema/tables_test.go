@@ -20,10 +20,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -87,7 +89,28 @@ func (s *testSuite) TestInfoschemaFieldValue(c *C) {
 	}, nil, nil), IsTrue)
 
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
+
+	// Fix issue 9836
+	tk.Se.SetSessionManager(mockSessionManager{})
+	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
 }
+
+type mockSessionManager struct{}
+
+var _ util.SessionManager = mockSessionManager{}
+
+func (m mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
+	return map[uint64]util.ProcessInfo{
+		1: util.ProcessInfo{
+			ID:      1,
+			User:    "root",
+			Host:    "127.0.0.1",
+			Command: mysql.ComQuery,
+		},
+	}
+}
+
+func (m mockSessionManager) Kill(connectionID uint64, query bool) {}
 
 func (s *testSuite) TestDataForTableStatsField(c *C) {
 	testleak.BeforeTest()
