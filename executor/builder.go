@@ -1608,6 +1608,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 				for i := 0; i < b.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
 					e.joiner = append(e.joiner, newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes))
 				}
+				return e
 			}
 		}
 	}
