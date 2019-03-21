@@ -234,7 +234,6 @@ func (s *testTypeEtcSuite) TestIsBinaryStr(c *C) {
 	in.Tp = mysql.TypeBlob
 	res = IsBinaryStr(&in)
 	c.Assert(res, Equals, true)
-
 }
 
 func (s *testTypeEtcSuite) TestIsNonBinaryStr(c *C) {
