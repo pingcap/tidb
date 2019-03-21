@@ -151,11 +151,12 @@ var (
 )
 
 var (
-	GoDurationDay     = gotime.Hour * 24
-	GoDurationWeek    = GoDurationDay * 7
-	GoDurationMonth   = GoDurationDay * 30
-	GoDurationQuarter = GoDurationMonth * 3
-	GoDurationYear    = GoDurationMonth * 12
+	// GoDurationDay is the gotime.Duration which equals to a Day.
+	GoDurationDay = gotime.Hour * 24
+	// GoDurationWeek is the gotime.Duration which equals to a Week.
+	GoDurationWeek = GoDurationDay * 7
+	// GoDurationMonth is the gotime.Duration which equals to a Month.
+	GoDurationMonth = GoDurationDay * 30
 )
 
 // FromGoTime translates time.Time to mysql time internal representation.
@@ -1832,6 +1833,7 @@ func ExtractTimeValue(unit string, format string) (int64, int64, int64, float64,
 	}
 }
 
+// ExtractDurationValue extract the value from format to Duration.
 func ExtractDurationValue(unit string, format string) (Duration, error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
@@ -1901,6 +1903,7 @@ func ExtractDurationValue(unit string, format string) (Duration, error) {
 		if err != nil {
 			return ZeroDuration, err
 		}
+		// MONTH must exceed the limit of mysql's duration. So just return overflow error.
 		return ZeroDuration, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	default:
 		return ZeroDuration, errors.Errorf("invalid single timeunit - %s", unit)
@@ -1928,6 +1931,7 @@ func extractSingleDurationValue(unit string, format string) (Duration, error) {
 	case "WEEK":
 		return Duration{Duration: gotime.Duration(float64(iv * int64(GoDurationWeek))), Fsp: 0}, nil
 	case "MONTH", "QUARTER", "YEAR":
+		// Month must exceed the limit of mysql's duration. So just return overflow error.
 		return ZeroDuration, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	}
 

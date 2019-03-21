@@ -2747,13 +2747,16 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		}
 		internalFsp := 0
 		switch unit {
+		// If the unit has micro second, then the fsp must be the MaxFsp.
 		case "MICROSECOND", "SECOND_MICROSECOND", "MINUTE_MICROSECOND", "HOUR_MICROSECOND", "DAY_MICROSECOND":
 			internalFsp = types.MaxFsp
+		// If the unit is second, the fsp is related with the arg[1]'s.
 		case "SECOND":
 			internalFsp = types.MaxFsp
 			if intervalEvalTp != types.ETString {
 				internalFsp = mathutil.Min(args[1].GetType().Decimal, types.MaxFsp)
 			}
+			// Otherwise, the fsp should be 0.
 		}
 		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, argTps...)
 		arg0Dec, err := getExpressionFsp(ctx, args[0])
