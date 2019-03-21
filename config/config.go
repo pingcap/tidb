@@ -374,7 +374,7 @@ func (c *Config) Load(confFile string) error {
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
-	if len(undecoded) > 0 {
+	if len(undecoded) > 0 && err == nil {
 		undecodedItems := ""
 		for _, item := range undecoded {
 			undecodedItems += fmt.Sprintf("  %s \n", item.String())
