@@ -30,6 +30,7 @@ type ProcessInfo struct {
 	Info    string
 }
 
+// ToRow returns []interface{} for the row data of "show processlist" and "select * from infoschema.processlist".
 func (pi *ProcessInfo) ToRow(cmd2str map[byte]string, full bool) []interface{} {
 	var info string
 	if full {
