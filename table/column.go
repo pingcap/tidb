@@ -183,11 +183,11 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	}
 	str := casted.GetString()
 	utf8Charset := col.Charset == mysql.UTF8Charset
-	doCheck := true
-	if utf8Charset && config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 && col.Version == model.ColumnInfoVersion0 {
+	doUTF8Check := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUtf8
+	if doUTF8Check && config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 && col.Version == model.ColumnInfoVersion0 {
 		// Skip utf8 check for old version column. Because old TiDB don't have this check too.
 		// This is for compatibility. We may remove this in future.
-		doCheck = false
+		doUTF8Check = false
 	}
 	for i, w := 0, 0; i < len(str); i += w {
 		runeValue, width := utf8.DecodeRuneInString(str[i:])
@@ -198,7 +198,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 			}
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
-		} else if width > 3 && utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUtf8 && doCheck {
+		} else if width > 3 && doUTF8Check {
 			// Handle non-BMP characters.
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
