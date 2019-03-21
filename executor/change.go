@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/parser/ast"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -26,10 +27,7 @@ import (
 // ChangeExec represents a change executor.
 type ChangeExec struct {
 	baseExecutor
-
-	NodeType string
-	State    string
-	NodeID   string
+	*ast.ChangeStmt
 }
 
 // Next implements the Executor Next interface.
