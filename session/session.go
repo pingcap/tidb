@@ -1313,7 +1313,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 	bm := &bindinfo.BindManager{
 		GlobalAccessor: s,
 	}
-	bindinfo.BindBinderManager(s, bm)
+	bindinfo.BindBinder2Manager(s, bm)
 
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.

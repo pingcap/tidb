@@ -125,10 +125,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 }
 
 func (p *preprocessor) checkBindGrammar(createBindingStmt *ast.CreateBindingStmt) {
-	originSql := parser.Normalize(createBindingStmt.OriginSel.(*ast.SelectStmt).Text())
-	hintedSql := parser.Normalize(createBindingStmt.HintedSel.(*ast.SelectStmt).Text())
+	originSQL := parser.Normalize(createBindingStmt.OriginSel.(*ast.SelectStmt).Text())
+	hintedSQL := parser.Normalize(createBindingStmt.HintedSel.(*ast.SelectStmt).Text())
 
-	if originSql != hintedSql {
+	if originSQL != hintedSQL {
 		p.err = errors.New("hinted sql and origin sql don't match when hinted sql erase the hint info")
 	}
 }

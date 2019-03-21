@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+// CreateBindExec represents a create bind executor.
 type CreateBindExec struct {
 	baseExecutor
 

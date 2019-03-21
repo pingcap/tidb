@@ -19,8 +19,7 @@ import (
 
 var _ Manager = (*BindManager)(nil)
 
-// User implements bindinfo.Manager interface.
-// This is used to update or check Ast.
+// BindManager implements Manager inferface.
 type BindManager struct {
 	GlobalAccessor GlobalBindAccessor
 }
@@ -38,8 +37,8 @@ type Manager interface {
 
 const key keyType = 0
 
-// BindManager binds Manager to context.
-func BindBinderManager(ctx sessionctx.Context, pc Manager) {
+// BindBinder2Manager binds Manager to context.
+func BindBinder2Manager(ctx sessionctx.Context, pc Manager) {
 	ctx.SetValue(key, pc)
 }
 
@@ -51,10 +50,12 @@ func GetBindManager(ctx sessionctx.Context) Manager {
 	return nil
 }
 
-func (b *BindManager) AddGlobalBind(originSql, bindSql, defaultDb, charset, collation string) error {
-	return b.GlobalAccessor.AddGlobalBind(originSql, bindSql, defaultDb, charset, collation)
+//AddGlobalBind implements Manager's AddGlobalBind interface.
+func (b *BindManager) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation string) error {
+	return b.GlobalAccessor.AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation)
 }
 
+// GlobalBindAccessor is the interface for accessing global bind info.
 type GlobalBindAccessor interface {
-	AddGlobalBind(originSql string, bindSql string, defaultDb string, charset string, collation string) error
+	AddGlobalBind(originSQL string, bindSQL string, defaultDB string, charset string, collation string) error
 }
