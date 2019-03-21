@@ -2191,28 +2191,6 @@ var dateFormatParserTable = map[string]dateFormatParser{
 
 // GetFormatType checks the type(Duration, Date or Datetime) of a format string.
 func GetFormatType(format string) (isDuration, isDate bool) {
-	durationTokens := map[string]struct{}{
-		"%h": {},
-		"%H": {},
-		"%i": {},
-		"%I": {},
-		"%s": {},
-		"%S": {},
-		"%k": {},
-		"%l": {},
-	}
-	dateTokens := map[string]struct{}{
-		"%y": {},
-		"%Y": {},
-		"%m": {},
-		"%M": {},
-		"%c": {},
-		"%b": {},
-		"%D": {},
-		"%d": {},
-		"%e": {},
-	}
-
 	format = skipWhiteSpace(format)
 	var token string
 	var succ bool
@@ -2225,9 +2203,19 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 			isDuration, isDate = false, false
 			break
 		}
-		if _, ok := durationTokens[token]; ok {
+		var durationTokens bool
+		switch token {
+		case "%h", "%H", "%i", "%I", "%s", "%S", "%k", "%l":
+			durationTokens = true
+		}
+		var dateTokens bool
+		switch token {
+		case "%y", "%Y", "%m", "%M", "%c", "%b", "%D", "%d", "%e":
+			dateTokens = true
+		}
+		if durationTokens {
 			isDuration = true
-		} else if _, ok := dateTokens[token]; ok {
+		} else if dateTokens {
 			isDate = true
 		}
 		if isDuration && isDate {
