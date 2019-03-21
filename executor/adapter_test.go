@@ -15,11 +15,11 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pkg/errors"
 )
 
 var _ = Suite(&adapterTestSuite{})
