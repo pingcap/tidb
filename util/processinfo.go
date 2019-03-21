@@ -14,6 +14,7 @@
 package util
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -27,6 +28,29 @@ type ProcessInfo struct {
 	Time    time.Time
 	State   uint16
 	Info    string
+}
+
+func (pi *ProcessInfo) ToRow(cmd2str map[byte]string, full bool) []interface{} {
+	var info string
+	if full {
+		info = pi.Info
+	} else {
+		info = fmt.Sprintf("%.100v", pi.Info)
+	}
+	var t uint64
+	if len(pi.Info) != 0 {
+		t = uint64(time.Since(pi.Time) / time.Second)
+	}
+	return []interface{}{
+		pi.ID,
+		pi.User,
+		pi.Host,
+		pi.DB,
+		cmd2str[pi.Command],
+		t,
+		fmt.Sprintf("%d", pi.State),
+		info,
+	}
 }
 
 // SessionManager is an interface for session manage. Show processlist and

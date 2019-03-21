@@ -640,20 +640,8 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			continue
 		}
 
-		var t uint64
-		if len(pi.Info) != 0 {
-			t = uint64(time.Since(pi.Time) / time.Second)
-		}
-		record := types.MakeDatums(
-			pi.ID,
-			pi.User,
-			pi.Host,
-			pi.DB,
-			mysql.Command2Str[pi.Command],
-			t,
-			fmt.Sprintf("%d", pi.State),
-			pi.Info,
-		)
+		rows := pi.ToRow(mysql.Command2Str, true)
+		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
 	return records
