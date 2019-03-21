@@ -52,18 +52,19 @@ func (s *adapterTestSuite) TestCtxWatcher(c *C) {
 	// Open and Close multiple times
 	e := newEmptyExec()
 	we := wrapCtxWatcher(e)
-	ctx, _ := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	we.Open(ctx)
 	we.Open(ctx)
 	c.Assert(e.openCnt, Equals, 1)
 	we.Close()
 	we.Close()
 	c.Assert(e.closeCnt, Equals, 1)
+	cancel()
 
 	// Open and Cancel
 	e = newEmptyExec()
 	we = wrapCtxWatcher(e)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel = context.WithCancel(context.Background())
 	we.Open(ctx)
 	c.Assert(e.openCnt, Equals, 1)
 	cancel()
