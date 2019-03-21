@@ -342,7 +342,7 @@ type CreateBindPlan struct {
 	BindSQL   string
 	DefaultDB string
 	IsGlobal  bool
-	BindStmt ast.StmtNode
+	BindStmt  ast.StmtNode
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.

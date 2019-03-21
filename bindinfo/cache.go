@@ -30,7 +30,7 @@ import (
 
 const (
 	// BindUsing is the bind info's in use status.
-	BindUsing   = "using"
+	BindUsing = "using"
 	// BindDeleted is the bind info's deleted status.
 	BindDeleted = "deleted"
 )
