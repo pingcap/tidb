@@ -15,10 +15,10 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/parser/ast"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/chunk"
