@@ -595,3 +595,12 @@ func findColumnInIndexCols(c *expression.Column, cols []*ast.IndexColName) bool 
 	}
 	return false
 }
+
+func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
+	for _, colInfo := range tbInfo.Cols() {
+		if colInfo.Name.L == column {
+			return colInfo
+		}
+	}
+	return nil
+}
