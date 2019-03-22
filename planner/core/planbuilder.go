@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/parser"
 	"strings"
 
 	"github.com/cznic/mathutil"
@@ -301,8 +302,8 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 
 func (b *PlanBuilder) buildCreateBind(v *ast.CreateBindingStmt) (Plan, error) {
 	p := &CreateBindPlan{
-		OriginSQL: v.OriginSel.Text(),
-		BindSQL:   v.HintedSel.Text(),
+		OriginSQL: parser.Normalize(v.OriginSel.Text()),
+		BindSQL:   parser.Normalize(v.HintedSel.Text()),
 		IsGlobal:  v.GlobalScope,
 		BindStmt:  v.HintedSel,
 	}
