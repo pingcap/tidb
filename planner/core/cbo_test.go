@@ -887,3 +887,40 @@ func BenchmarkOptimize(b *testing.B) {
 		})
 	}
 }
+
+func (s *testAnalyzeSuite) TestIssue9562(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a bigint, b bigint, c bigint)")
+	tk.MustExec("create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))")
+
+	tk.MustQuery("explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c;").Check(testkit.Rows(
+		"IndexJoin_9 12475.01 root inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
+		"├─TableReader_12 9980.01 root data:Selection_11",
+		"│ └─Selection_11 9980.01 cop not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─IndexReader_8 0.00 root index:Selection_7",
+		"  └─Selection_7 0.00 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+		"    └─IndexScan_6 10.00 cop table:t2, index:a, b, c, range: decided by [test.t1.a test.t1.c], keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
+	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
+		"Projection_7 0.00 root t1.a, t1.b, t2.a, t2.b",
+		"└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, equal:[eq(t2.b, t1.b)]",
+		"  ├─TableReader_12 0.00 root data:Selection_11",
+		"  │ └─Selection_11 0.00 cop isnull(t2.b), not(isnull(t2.b))",
+		"  │   └─TableScan_10 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─TableReader_15 9990.00 root data:Selection_14",
+		"    └─Selection_14 9990.00 cop not(isnull(t1.b))",
+		"      └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+}

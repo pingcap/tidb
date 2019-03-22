@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -39,10 +40,11 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -570,13 +572,13 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
 			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
-				log.Error(errors.ErrorStack(err))
+				context.Background()
+				logutil.Logger(ddlLogCtx).Error("set default value failed", zap.Error(err))
 			}
 		} else {
 			if err := c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp)); err != nil {
-				log.Error(errors.ErrorStack(err))
+				logutil.Logger(ddlLogCtx).Error("set default value failed", zap.Error(err))
 			}
-
 		}
 	}
 }

@@ -14,6 +14,7 @@
 package util
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -23,10 +24,31 @@ type ProcessInfo struct {
 	User    string
 	Host    string
 	DB      string
-	Command string
+	Command byte
 	Time    time.Time
 	State   uint16
 	Info    string
+}
+
+// ToRow returns []interface{} for the row data of "show processlist" and "select * from infoschema.processlist".
+func (pi *ProcessInfo) ToRow(cmd2str map[byte]string, full bool) []interface{} {
+	var info string
+	if full {
+		info = pi.Info
+	} else {
+		info = fmt.Sprintf("%.100v", pi.Info)
+	}
+	t := uint64(time.Since(pi.Time) / time.Second)
+	return []interface{}{
+		pi.ID,
+		pi.User,
+		pi.Host,
+		pi.DB,
+		cmd2str[pi.Command],
+		t,
+		fmt.Sprintf("%d", pi.State),
+		info,
+	}
 }
 
 // SessionManager is an interface for session manage. Show processlist and
