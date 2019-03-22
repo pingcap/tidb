@@ -38,10 +38,7 @@ func (pi *ProcessInfo) ToRow(cmd2str map[byte]string, full bool) []interface{} {
 	} else {
 		info = fmt.Sprintf("%.100v", pi.Info)
 	}
-	var t uint64
-	if len(pi.Info) != 0 {
-		t = uint64(time.Since(pi.Time) / time.Second)
-	}
+	t := uint64(time.Since(pi.Time) / time.Second)
 	return []interface{}{
 		pi.ID,
 		pi.User,
