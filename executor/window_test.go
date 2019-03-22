@@ -142,4 +142,11 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 2 1", "2 2 2"))
 	result = tk.MustQuery("select a, lead(a, 1, 'lead') over(), lag(a, 1, 'lag') over() from t")
 	result.Check(testkit.Rows("1 1 lag", "1 2 1", "2 2 1", "2 lead 2"))
+
+	result = tk.MustQuery("select sum(a) over w, sum(b) over w from t window w as (order by a)")
+	result.Check(testkit.Rows("2 3", "2 3", "6 6", "6 6"))
+	result = tk.MustQuery("select row_number() over w, sum(b) over w from t window w as (order by a)")
+	result.Check(testkit.Rows("1 3", "2 3", "3 6", "4 6"))
+	result = tk.MustQuery("select row_number() over w, sum(b) over w from t window w as (rows between 1 preceding and 1 following)")
+	result.Check(testkit.Rows("1 3", "2 4", "3 5", "4 3"))
 }

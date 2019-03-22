@@ -22,7 +22,7 @@ import (
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type AggregateFuncExtractor struct {
 	inAggregateFuncExpr bool
-	// AggFuncs is the collected AggregateFuncExprs.
+	// WindowFuncs is the collected AggregateFuncExprs.
 	AggFuncs []*ast.AggregateFuncExpr
 }
 
@@ -43,6 +43,31 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	case *ast.AggregateFuncExpr:
 		a.inAggregateFuncExpr = false
 		a.AggFuncs = append(a.AggFuncs, v)
+	}
+	return n, true
+}
+
+// WindowFuncExtractor visits Expr tree.
+// It converts ColunmNameExpr to WindowFuncExpr and collects WindowFuncExpr.
+type WindowFuncExtractor struct {
+	// WindowFuncs is the collected WindowFuncExprs.
+	windowFuncs []*ast.WindowFuncExpr
+}
+
+// Enter implements Visitor interface.
+func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+	switch n.(type) {
+	case *ast.SelectStmt, *ast.UnionStmt:
+		return n, true
+	}
+	return n, false
+}
+
+// Leave implements Visitor interface.
+func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	switch v := n.(type) {
+	case *ast.WindowFuncExpr:
+		a.windowFuncs = append(a.windowFuncs, v)
 	}
 	return n, true
 }
