@@ -530,7 +530,7 @@ var tableProcesslistCols = []columnInfo{
 	{"COMMAND", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
 	{"TIME", mysql.TypeLong, 7, mysql.NotNullFlag, 0, nil},
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
-	{"Info", mysql.TypeString, 512, 0, nil, nil},
+	{"INFO", mysql.TypeString, 512, 0, nil, nil},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
