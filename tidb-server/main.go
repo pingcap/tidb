@@ -92,7 +92,7 @@ const (
 var (
 	version     = flagBoolean(nmVersion, false, "print version information and exit")
 	configPath  = flag.String(nmConfig, "", "config file path")
-	configCheck = flagBoolean(nmConfigCheck, false, "check config file validity")
+	configCheck = flagBoolean(nmConfigCheck, false, "check config file validity and exit")
 
 	// Base
 	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
