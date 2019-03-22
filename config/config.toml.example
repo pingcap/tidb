@@ -51,7 +51,7 @@ compatible-kill-query = false
 # check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
 check-mb4-value-in-utf8 = true
 
-# treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will tread old version table/column UTF8 charset as UTF8MB4.
+# treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 
 [log]
