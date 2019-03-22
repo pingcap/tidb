@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )
@@ -157,7 +158,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 			// If we don't cancel, but the error code is Canceled, it must be from grpc remote.
 			// This may happen when tikv is killed and exiting.
 			// Backoff and retry in this case.
-			log.Warn("receive a grpc cancel signal from remote:", errors.ErrorStack(err))
+			logutil.Logger(context.Background()).Warn("receive a grpc cancel signal from remote", zap.Error(err))
 		}
 	}
 
@@ -194,7 +195,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
-		log.Debugf("tikv reports `NotLeader`: %s, ctx: %v, retry later", notLeader, ctx)
+		logutil.Logger(context.Background()).Debug("tikv reports `NotLeader` retry later",
+			zap.String("notLeader", notLeader.String()),
+			zap.String("ctx", ctx.String()))
 		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId())
 
 		var boType backoffType
@@ -213,18 +216,24 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 
 	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
 		// store not match
-		log.Warnf("tikv reports `StoreNotMatch`: %s, ctx: %v, retry later", storeNotMatch, ctx)
+		logutil.Logger(context.Background()).Warn("tikv reports `StoreNotMatch` retry later",
+			zap.Stringer("storeNotMatch", storeNotMatch),
+			zap.Stringer("ctx", ctx))
 		s.regionCache.ClearStoreByID(ctx.GetStoreID())
 		return true, nil
 	}
 
 	if epochNotMatch := regionErr.GetEpochNotMatch(); epochNotMatch != nil {
-		log.Debugf("tikv reports `EpochNotMatch`, ctx: %v, retry later", ctx)
+		logutil.Logger(context.Background()).Debug("tikv reports `EpochNotMatch` retry later",
+			zap.Stringer("EpochNotMatch", epochNotMatch),
+			zap.Stringer("ctx", ctx))
 		err = s.regionCache.OnRegionEpochNotMatch(bo, ctx, epochNotMatch.CurrentRegions)
 		return false, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {
-		log.Warnf("tikv reports `ServerIsBusy`, reason: %s, ctx: %v, retry later", regionErr.GetServerIsBusy().GetReason(), ctx)
+		logutil.Logger(context.Background()).Warn("tikv reports `ServerIsBusy` retry later",
+			zap.String("reason", regionErr.GetServerIsBusy().GetReason()),
+			zap.Stringer("ctx", ctx))
 		err = bo.Backoff(boServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
 		if err != nil {
 			return false, errors.Trace(err)
@@ -232,16 +241,18 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		return true, nil
 	}
 	if regionErr.GetStaleCommand() != nil {
-		log.Debugf("tikv reports `StaleCommand`, ctx: %v", ctx)
+		logutil.Logger(context.Background()).Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
 		return true, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {
-		log.Warnf("tikv reports `RaftEntryTooLarge`, ctx: %v", ctx)
+		logutil.Logger(context.Background()).Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
 		return false, errors.New(regionErr.String())
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
-	log.Debugf("tikv reports region error: %s, ctx: %v", regionErr, ctx)
+	logutil.Logger(context.Background()).Debug("tikv reports region error",
+		zap.Stringer("regionErr", regionErr),
+		zap.Stringer("ctx", ctx))
 	s.regionCache.DropRegion(ctx.Region)
 	return false, nil
 }
