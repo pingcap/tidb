@@ -16,6 +16,8 @@ package util
 import (
 	"fmt"
 	"time"
+
+	"github.com/pingcap/parser/mysql"
 )
 
 // ProcessInfo is a struct used for show processlist statement.
@@ -31,7 +33,7 @@ type ProcessInfo struct {
 }
 
 // ToRow returns []interface{} for the row data of "show processlist" and "select * from infoschema.processlist".
-func (pi *ProcessInfo) ToRow(cmd2str map[byte]string, full bool) []interface{} {
+func (pi *ProcessInfo) ToRow(full bool) []interface{} {
 	var info string
 	if full {
 		info = pi.Info
@@ -44,7 +46,7 @@ func (pi *ProcessInfo) ToRow(cmd2str map[byte]string, full bool) []interface{} {
 		pi.User,
 		pi.Host,
 		pi.DB,
-		cmd2str[pi.Command],
+		mysql.Command2Str[pi.Command],
 		t,
 		fmt.Sprintf("%d", pi.State),
 		info,
