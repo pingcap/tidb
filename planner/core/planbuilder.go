@@ -217,8 +217,17 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
+	case *ast.ChangeStmt:
+		return b.buildChange(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
+}
+
+func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
+	exe := &Change{
+		ChangeStmt: v,
+	}
+	return exe, nil
 }
 
 func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
@@ -1032,7 +1041,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
-		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
+		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.RevokeStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.KillStmt:
@@ -1056,11 +1065,14 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	return p, nil
 }
 
-func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
+func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
 	// To use GRANT, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
+	if dbName == "" {
+		dbName = sctx.GetSessionVars().CurrentDB
+	}
 	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 
 	var allPrivs []mysql.PrivilegeType
