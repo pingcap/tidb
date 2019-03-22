@@ -1691,6 +1691,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: `grant select on ttt to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", "", nil},
+				{mysql.GrantPriv, "test", "ttt", "", nil},
+			},
+		},
+		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SuperPriv, "", "", ""},
