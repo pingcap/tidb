@@ -236,7 +236,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 		if !hasProcessPriv && pi.User != loginUser.Username {
 			continue
 		}
-		row := pi.ToRow(mysql.Command2Str, e.Full)
+		row := pi.ToRow(e.Full)
 		e.appendRow(row)
 	}
 	return nil
