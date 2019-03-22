@@ -2408,6 +2408,20 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", likeTests)
+
+	// for #9838
+	result = tk.MustQuery("select cast(1 as signed) + cast(9223372036854775807 as unsigned);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast(9223372036854775807 as unsigned) + cast(1 as signed);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	err = tk.QueryToErr("select cast(9223372036854775807 as signed) + cast(9223372036854775809 as unsigned);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(9223372036854775809 as unsigned) + cast(9223372036854775807 as signed);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(-9223372036854775807 as signed) + cast(9223372036854775806 as unsigned);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);")
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {

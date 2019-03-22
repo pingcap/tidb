@@ -585,7 +585,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 
 		startTime := time.Now()
-		if err = cc.dispatch(logutil.WithRecvTs(ctx, startTime.UnixNano()/int64(time.Millisecond)), data); err != nil {
+		if err = cc.dispatch(ctx, data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				return

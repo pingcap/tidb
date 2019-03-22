@@ -620,7 +620,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
-
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -636,6 +635,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
 			}
 		}
+	}
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
 	}
 	path := candidate.path
 	ts.Ranges = path.ranges
@@ -663,16 +665,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
-	} else {
-		expectedCnt := math.MaxFloat64
-		if prop.IsEmpty() {
-			expectedCnt = prop.ExpectedCnt
-		} else {
-			return invalidTask, nil
-		}
-		ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(expectedCnt))
 	}
+	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {

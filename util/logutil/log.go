@@ -284,8 +284,8 @@ func initFileLog(cfg *zaplog.FileLogConfig, logger *log.Logger) error {
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.StandardLogger()
 
-// SlowQueryZapLogger is used to log slow query, InitZapLogger will set it according to config file.
-var SlowQueryZapLogger *zap.Logger
+// SlowQueryZapLogger is used to log slow query, InitZapLogger will modify it according to config file.
+var SlowQueryZapLogger = zaplog.L()
 
 // InitLogger initializes PD's logger.
 func InitLogger(cfg *LogConfig) error {
@@ -383,15 +383,13 @@ func WithConnID(ctx context.Context, connID uint32) context.Context {
 	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
 }
 
-// WithRecvTs attaches current packet received timestamp to context.
-// it's common that each SQL has a packet receive timestamp in MySQL Protocol,
-// so we can use recvTs to gather log for some sql request on one connection.
-func WithRecvTs(ctx context.Context, recvTs int64) context.Context {
+// WithKeyValue attaches key/value to context.
+func WithKeyValue(ctx context.Context, key, value string) context.Context {
 	var logger *zap.Logger
 	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = zaplog.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Int64("recvTs", recvTs)))
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.String(key, value)))
 }

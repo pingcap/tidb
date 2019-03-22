@@ -53,7 +53,8 @@ func TestString(t *testing.T) {
 }
 
 func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIterations uint64) *tipb.ExecutorExecutionSummary {
-	return &tipb.ExecutorExecutionSummary{&TimeProcessedNs, &NumProducedRows, &NumIterations, nil}
+	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
+		NumIterations: &NumIterations, XXX_unrecognized: nil}
 }
 
 func TestCopRuntimeStats(t *testing.T) {
