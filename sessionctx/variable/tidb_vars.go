@@ -129,10 +129,10 @@ const (
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
-	// TiDBCheckMb4ValueInUtf8 is used to control whether to enable the check wrong utf8 value.
-	TiDBCheckMb4ValueInUtf8 = "tidb_check_mb4_value_in_utf8"
+	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
+	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 
-	// TiDBCheckMb4ValueInUtf8 is used to control whether to enable the check wrong utf8 value.
+	// TiDBTreadOldVersionUTF8AsUTF8MB4 is use to tread old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	TiDBTreadOldVersionUTF8AsUTF8MB4 = "tidb_treat_old_version_utf8_as_utf8mb4"
 )
 

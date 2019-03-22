@@ -1320,7 +1320,7 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 	}
 	updateTableInfo(tblInfo)
 	s.tk.MustExec("alter table t add column c varchar(10) character set utf8;") //  load latest schema.
-	c.Assert(config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4, IsTrue)
+	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsTrue)
 	s.tk.MustExec("insert into t set a= x'f09f8c80'")
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(10) DEFAULT NULL,\n" +
@@ -1329,7 +1329,7 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	s.tk.MustExec("set @@tidb_treat_old_version_utf8_as_utf8mb4=0")
-	c.Assert(config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4, IsFalse)
+	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsFalse)
 	assertErrorCode(c, s.tk, "insert into t set a= x'f09f8c80'", mysql.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
@@ -1348,7 +1348,7 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 
 	s.tk.MustExec("alter table t drop column c;") //  load latest schema.
 	s.tk.MustExec("set @@tidb_treat_old_version_utf8_as_utf8mb4=1")
-	c.Assert(config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4, IsTrue)
+	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsTrue)
 	s.tk.MustExec("insert into t set a= x'f09f8c80'")
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(10) DEFAULT NULL,\n" +
@@ -1356,7 +1356,7 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	s.tk.MustExec("set @@tidb_treat_old_version_utf8_as_utf8mb4=0")
-	c.Assert(config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4, IsFalse)
+	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsFalse)
 	assertErrorCode(c, s.tk, "insert into t set a= x'f09f8c80'", mysql.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(10) DEFAULT NULL,\n" +
@@ -1365,7 +1365,7 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 
 	// Test modify column charset.
 	s.tk.MustExec("set @@tidb_treat_old_version_utf8_as_utf8mb4=1")
-	c.Assert(config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4, IsTrue)
+	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsTrue)
 	s.tk.MustExec("alter table t modify column a varchar(10) character set utf8mb4") //  change column charset.
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
 	c.Assert(tbl.Meta().Columns[0].Charset, Equals, charset.CharsetUTF8MB4)
@@ -1394,7 +1394,7 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 	tblInfo.Columns[0].Charset = charset.CharsetUTF8
 	tblInfo.Columns[0].Collate = charset.CollationUTF8
 	updateTableInfo(tblInfo)
-	c.Assert(config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4, IsTrue)
+	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsTrue)
 	s.tk.MustExec("alter table t change column b b varchar(20)") // load latest column.
 	s.tk.MustExec("insert into t set a= x'f09f8c80'")
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1403,7 +1403,7 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	s.tk.MustExec("set @@tidb_treat_old_version_utf8_as_utf8mb4=0")
-	c.Assert(config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4, IsFalse)
+	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsFalse)
 	assertErrorCode(c, s.tk, "insert into t set a= x'f09f8c80'", mysql.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(20) DEFAULT NULL,\n" +
