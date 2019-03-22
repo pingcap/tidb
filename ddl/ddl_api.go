@@ -1466,15 +1466,6 @@ func parseAndEvalBoolExpr(ctx sessionctx.Context, expr string, tbInfo *model.Tab
 	return res > 0, nil
 }
 
-func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
-	for _, colInfo := range tbInfo.Cols() {
-		if colInfo.Name.L == column {
-			return colInfo
-		}
-	}
-	return nil
-}
-
 func checkCharsetAndCollation(cs string, co string) error {
 	if !charset.ValidCharsetAndCollation(cs, co) {
 		return ErrUnknownCharacterSet.GenWithStackByArgs(cs)
