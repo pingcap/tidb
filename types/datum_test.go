@@ -388,7 +388,7 @@ func testDatumToYear(c *C, in interface{}, res int) {
 	sc.IgnoreTruncate = true
 	y, err := datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
-	c.Assert(y, Equals, res64)
+	c.Assert(y.i, Equals, res64)
 }
 
 func (ts *testDatumSuite) TestToYear(c *C) {
