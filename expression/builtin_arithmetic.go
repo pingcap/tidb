@@ -217,7 +217,7 @@ func (s *builtinArithmeticPlusIntSig) evalInt(row chunk.Row) (val int64, isNull 
 		if a < 0 && uint64(-a) > uint64(b) {
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 		}
-		if a > 0 && uint64(b) > math.MaxInt64-uint64(a) {
+		if a > 0 && uint64(b) > math.MaxUint64-uint64(a) {
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case !isLHSUnsigned && !isRHSUnsigned:
