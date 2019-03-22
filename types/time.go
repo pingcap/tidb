@@ -2209,8 +2209,6 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 			switch token[1] {
 			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l':
 				durationTokens = true
-			}
-			switch token[1] {
 			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
 				dateTokens = true
 			}
