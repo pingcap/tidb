@@ -699,6 +699,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableWindowFunction = TiDBOptOn(val)
 	case TiDBCheckMb4ValueInUtf8:
 		config.GetGlobalConfig().CheckMb4ValueInUtf8 = TiDBOptOn(val)
+	case TiDBTreadOldVersionUTF8AsUTF8MB4:
+		config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
 	}

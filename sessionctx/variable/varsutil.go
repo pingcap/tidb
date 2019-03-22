@@ -124,6 +124,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return config.GetGlobalConfig().Plugin.Load, true, nil
 	case TiDBCheckMb4ValueInUtf8:
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8), true, nil
+	case TiDBTreadOldVersionUTF8AsUTF8MB4:
+		return BoolToIntStr(config.GetGlobalConfig().TreadOldVersionUTF8AsUTF8MB4), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -361,7 +363,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBCheckMb4ValueInUtf8:
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
+		TiDBCheckMb4ValueInUtf8, TiDBTreadOldVersionUTF8AsUTF8MB4:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}
