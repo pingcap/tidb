@@ -4595,3 +4595,33 @@ func (s *testDBSuite) TestModifyColumnCharset(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 }
+
+func (s *testDBSuite) TestCanceledJobTakeTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cjtt(a int)")
+
+	hook := &ddl.TestDDLCallback{}
+	once := sync.Once{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		once.Do(func() {
+			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				t := meta.NewMeta(txn)
+				return t.DropTable(job.SchemaID, job.TableID, true)
+			})
+			c.Assert(err, IsNil)
+		})
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	originalWT := ddl.WaitTimeWhenErrorOccured
+	ddl.WaitTimeWhenErrorOccured = 1 * time.Second
+	defer func() { ddl.WaitTimeWhenErrorOccured = originalWT }()
+	startTime := time.Now()
+	s.testErrorCode(c, "alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
+	sub := time.Since(startTime)
+	c.Assert(sub, Less, ddl.WaitTimeWhenErrorOccured)
+
+	hook = &ddl.TestDDLCallback{}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+}
