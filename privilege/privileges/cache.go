@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -104,12 +105,42 @@ type columnsPrivRecord struct {
 	patTypes []byte
 }
 
+// RoleGraphEdgesTable is used to cache relationship between and role.
+type roleGraphEdgesTable struct {
+	roleList map[string]bool
+}
+
+// Find method is used to find role from table
+func (g roleGraphEdgesTable) Find(user, host string) bool {
+	if host == "" {
+		host = "%"
+	}
+	key := user + "@" + host
+	if g.roleList == nil {
+		return false
+	}
+	_, ok := g.roleList[key]
+	return ok
+}
+
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
 	User        []UserRecord
 	DB          []dbRecord
 	TablesPriv  []tablesPrivRecord
 	ColumnsPriv []columnsPrivRecord
+	RoleGraph   map[string]roleGraphEdgesTable
+}
+
+// FindRole is used to detect whether there is edges between users and roles.
+func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdentity) bool {
+	rec := p.matchUser(user, host)
+	r := p.matchUser(role.Username, role.Hostname)
+	if rec != nil && r != nil {
+		key := rec.User + "@" + rec.Host
+		return p.RoleGraph[key].Find(role.Username, role.Hostname)
+	}
+	return false
 }
 
 // LoadAll loads the tables from database to memory.
@@ -142,6 +173,14 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 		}
 		log.Warn("mysql.columns_priv missing")
 	}
+
+	err = p.LoadRoleGraph(ctx)
+	if err != nil {
+		if !noSuchTable(err) {
+			return errors.Trace(err)
+		}
+		log.Warn("mysql.role_edges missing")
+	}
 	return nil
 }
 
@@ -153,6 +192,16 @@ func noSuchTable(err error) bool {
 		}
 	}
 	return false
+}
+
+// LoadRoleGraph loads the mysql.role_edges table from database.
+func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
+	p.RoleGraph = make(map[string]roleGraphEdgesTable)
+	err := p.loadTable(ctx, "select FROM_USER, FROM_HOST, TO_USER, TO_HOST from mysql.role_edges;", p.decodeRoleEdgesTable)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // LoadUserTable loads the mysql.user table from database.
@@ -378,6 +427,31 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row chunk.Row, fs []*ast.Resul
 		}
 	}
 	p.TablesPriv = append(p.TablesPriv, value)
+	return nil
+}
+
+func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*ast.ResultField) error {
+	var fromUser, fromHost, toHost, toUser string
+	for i, f := range fs {
+		switch {
+		case f.ColumnAsName.L == "from_host":
+			fromHost = row.GetString(i)
+		case f.ColumnAsName.L == "from_user":
+			fromUser = row.GetString(i)
+		case f.ColumnAsName.L == "to_host":
+			toHost = row.GetString(i)
+		case f.ColumnAsName.L == "to_user":
+			toUser = row.GetString(i)
+		}
+	}
+	fromKey := fromUser + "@" + fromHost
+	toKey := toUser + "@" + toHost
+	roleGraph, ok := p.RoleGraph[toKey]
+	if !ok {
+		roleGraph = roleGraphEdgesTable{roleList: make(map[string]bool)}
+		p.RoleGraph[toKey] = roleGraph
+	}
+	roleGraph.roleList[fromKey] = true
 	return nil
 }
 
