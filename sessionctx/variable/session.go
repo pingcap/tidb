@@ -191,6 +191,9 @@ type SessionVars struct {
 	// params for prepared statements
 	PreparedParams []types.Datum
 
+	// ActiveRoles stores active roles for current user
+	ActiveRoles []*auth.RoleIdentity
+
 	// retry information
 	RetryInfo *RetryInfo
 	// Should be reset on transaction finished.
@@ -350,6 +353,7 @@ func NewSessionVars() *SessionVars {
 		TxnCtx:                    &TransactionContext{},
 		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},
+		ActiveRoles:               make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:             true,
 		Status:                    mysql.ServerStatusAutocommit,
 		StmtCtx:                   new(stmtctx.StatementContext),
