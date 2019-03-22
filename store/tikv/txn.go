@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/execdetails"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -234,7 +235,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// latches disabled
 	if txn.store.txnLatches == nil {
 		err = committer.executeAndWriteFinishBinlog(ctx)
-		log.Debug("[kv]", connID, " txnLatches disabled, 2pc directly:", err)
+		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
 
@@ -259,14 +260,14 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		err = errors.Errorf("startTS %d is stale", txn.startTS)
+		err = errors.Errorf("txnStartTS %d is stale", txn.startTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 	err = committer.executeAndWriteFinishBinlog(ctx)
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
-	log.Debug("[kv]", connID, " txnLatches enabled while txn retryable:", err)
+	logutil.Logger(ctx).Debug("[kv] txnLatches enabled while txn retryable", zap.Error(err))
 	return errors.Trace(err)
 }
 
@@ -279,7 +280,7 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	log.Debugf("[kv] Rollback txn %d", txn.StartTS())
+	logutil.Logger(context.Background()).Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil

@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"sync"
 
@@ -27,7 +28,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/codec"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // MVCCLevelDB implements the MVCCStore interface.
@@ -372,7 +374,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
-		log.Error("scan new iterator fail:", errors.ErrorStack(err))
+		logutil.Logger(context.Background()).Error("scan new iterator fail", zap.Error(err))
 		return nil
 	}
 
@@ -396,7 +398,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 		skip := skipDecoder{currKey}
 		ok, err = skip.Decode(iter)
 		if err != nil {
-			log.Error("seek to next key error:", errors.ErrorStack(err))
+			logutil.Logger(context.Background()).Error("seek to next key error", zap.Error(err))
 			break
 		}
 		currKey = skip.currKey
@@ -451,7 +453,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 			helper.entry.values = append(helper.entry.values, value)
 		}
 		if err != nil {
-			log.Error("Unmarshal fail:", errors.Trace(err))
+			logutil.Logger(context.Background()).Error("unmarshal fail", zap.Error(err))
 			break
 		}
 		succ = iter.Prev()
