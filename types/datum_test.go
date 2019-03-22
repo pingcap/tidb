@@ -379,3 +379,53 @@ func BenchmarkCompareDatumByReflect(b *testing.B) {
 		reflect.DeepEqual(vals, vals1)
 	}
 }
+
+func testDatumToYear(c *C, in interface{}, res int) {
+	ft := NewFieldType(mysql.TypeYear)
+	datum := NewDatum(in)
+	res64 := int64(res)
+	sc := new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	y, err := datum.ConvertTo(sc, ft)
+	c.Assert(err, IsNil)
+	c.Assert(y, Equals, res64)
+}
+
+func (ts *testDatumSuite) TestToYear(c *C) {
+	testDatumToYear(c, 0, 0)
+	testDatumToYear(c, 15, 2015)
+	testDatumToYear(c, 60, 2060)
+	testDatumToYear(c, 70, 1970)
+	testDatumToYear(c, 90, 1990)
+	testDatumToYear(c, 1900, 0)
+	testDatumToYear(c, 1901, 1901)
+	testDatumToYear(c, 2000, 2000)
+	testDatumToYear(c, 2155, 2155)
+	testDatumToYear(c, 2255, 0)
+	testDatumToYear(c, "", 0)
+	testDatumToYear(c, "0", 2000)
+	testDatumToYear(c, "00", 2000)
+	testDatumToYear(c, "000", 2000)
+	testDatumToYear(c, "0000", 0)
+	testDatumToYear(c, "0001", 2001)
+	testDatumToYear(c, "000a", 0)
+	testDatumToYear(c, "00001", 2001)
+	testDatumToYear(c, "12", 2012)
+	testDatumToYear(c, "012", 2012)
+	testDatumToYear(c, "0012", 2012)
+	testDatumToYear(c, "00012", 2012)
+	testDatumToYear(c, "000012", 2012)
+	testDatumToYear(c, "0000012", 2012)
+	testDatumToYear(c, "123", 0)
+	testDatumToYear(c, "0123", 0)
+	testDatumToYear(c, "00123", 0)
+	testDatumToYear(c, "000123", 0)
+	testDatumToYear(c, "0000123", 0)
+	testDatumToYear(c, "a", 0)
+	testDatumToYear(c, "ab", 0)
+	testDatumToYear(c, "abc", 0)
+	testDatumToYear(c, "0abc", 0)
+	testDatumToYear(c, "00abc", 2000)
+	testDatumToYear(c, "000abc", 2000)
+	testDatumToYear(c, "abcd", 0)
+}
