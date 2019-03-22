@@ -610,12 +610,25 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 	case types.KindNull:
 		// See #4053, #3685
 		return model.NewCIStr("NULL"), nil
-	default:
-		// Keep as it is.
-		if innerExpr.Text() != "" {
-			return model.NewCIStr(innerExpr.Text()), nil
-		}
+	case types.KindBinaryLiteral:
+		// Don't rewrite BIT literal or HEX literals
 		return model.NewCIStr(field.Text()), nil
+	case types.KindInt64:
+		// See #9683
+		// TRUE or FALSE can be a int64
+		if mysql.HasIsBooleanFlag(valueExpr.Type.Flag) {
+			if i := valueExpr.GetValue().(int64); i == 0 {
+				return model.NewCIStr("FALSE"), nil
+			}
+			return model.NewCIStr("TRUE"), nil
+		}
+		fallthrough
+
+	default:
+		fieldName := field.Text()
+		fieldName = strings.TrimLeft(fieldName, "\t\n +(")
+		fieldName = strings.TrimRight(fieldName, "\t\n )")
+		return model.NewCIStr(fieldName), nil
 	}
 }
 
@@ -679,11 +692,13 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 			schema.Append(col)
 			continue
 		}
-		newExpr, np, err := b.rewriteWindowFunc(field.Expr, p, mapper, windowMapper, true)
+		newExpr, np, err := b.rewriteWithPreprocess(field.Expr, p, mapper, windowMapper, true, nil)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
 
+		// For window functions in the order by clause, we will append an field for it.
+		// We need rewrite the window mapper here so order by clause could find the added field.
 		if considerWindow && isWindowFuncField && field.Auxiliary {
 			if windowExpr, ok := field.Expr.(*ast.WindowFuncExpr); ok {
 				windowMapper[windowExpr] = i
@@ -928,7 +943,7 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	for _, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
-		it, np, err := b.rewriteWindowFunc(item.Expr, p, aggMapper, windowMapper, true)
+		it, np, err := b.rewriteWithPreprocess(item.Expr, p, aggMapper, windowMapper, true, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1940,7 +1955,6 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	hasWindowFuncField := b.detectSelectWindow(sel)
 	if hasWindowFuncField {
 		windowAggMap, err = b.resolveWindowFunction(sel, p)
-
 		if err != nil {
 			return nil, err
 		}
@@ -2111,7 +2125,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	}
 
 	tableInfo := tbl.Meta()
-	var authErr error = nil
+	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
 		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Hostname, b.ctx.GetSessionVars().User.Username, tableInfo.Name.L)
 	}
@@ -2985,7 +2999,6 @@ func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupeFuncs map[*ast.W
 			return nil, nil, err
 		}
 
-		preArgs := 0
 		window := LogicalWindow{
 			PartitionBy: partitionBy,
 			OrderBy:     orderBy,
@@ -2993,13 +3006,13 @@ func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupeFuncs map[*ast.W
 		}.Init(b.ctx)
 		schema := np.Schema().Clone()
 		descs := make([]*aggregation.WindowFuncDesc, 0, len(funcs))
+		preArgs := 0
 		for _, windowFunc := range funcs {
 			desc := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.F, args[preArgs:preArgs+len(windowFunc.Args)])
 			if desc == nil {
 				return nil, nil, ErrWrongArguments.GenWithStackByArgs(windowFunc.F)
 			}
 			preArgs += len(windowFunc.Args)
-			// TODO: Check if the function is aggregation function after we support more functions.
 			desc.WrapCastForAggArgs(b.ctx)
 			descs = append(descs, desc)
 			windowMap[windowFunc] = schema.Len()
@@ -3055,7 +3068,10 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, name string) (*as
 	return spec, false
 }
 
+// groupWindowFuncs groups the window functions according to the window specification name.
+// TODO: We can group the window function by the definition of window specification.
 func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, error) {
+	// updatedSpec is used to handle the specifications that have frame clause changed.
 	updatedSpec := make(map[string]*ast.WindowSpec)
 	groupedWindow := make(map[*ast.WindowSpec][]*ast.WindowFuncExpr)
 	for _, windowFunc := range windowFuncs {

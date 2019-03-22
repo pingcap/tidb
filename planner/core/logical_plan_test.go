@@ -1618,6 +1618,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: `grant select on ttt to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", "", nil},
+				{mysql.GrantPriv, "test", "ttt", "", nil},
+			},
+		},
+		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SuperPriv, "", "", "", nil},
@@ -2238,6 +2245,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "select row_number() over w, sum(c) over w from t window w as (rows between 1 preceding and 1 following)",
 			result: "TableReader(Table(t))->Window(row_number() over())->Window(sum(cast(test.t.c)) over(rows between 1 preceding and 1 following))->Projection",
+		},
+		{
+			sql:    "delete from t order by (sum(a) over())",
+			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
 		},
 	}
 

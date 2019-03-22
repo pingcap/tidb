@@ -86,11 +86,6 @@ func (b *PlanBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper ma
 	return expr, resultPlan, errors.Trace(err)
 }
 
-func (b *PlanBuilder) rewriteWindowFunc(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
-	expr, resultPlan, err := b.rewriteWithPreprocess(exprNode, p, aggMapper, windowMapper, asScalar, nil)
-	return expr, resultPlan, errors.Trace(err)
-}
-
 // rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
@@ -327,7 +322,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			index, ok = er.windowMap[v]
 		}
 		if !ok {
-			er.err = errors.NotFoundf("window func expr")
+			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
