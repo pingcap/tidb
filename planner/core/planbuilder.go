@@ -16,11 +16,11 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/parser"
 	"strings"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
