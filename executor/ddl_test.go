@@ -505,6 +505,7 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 	_, err = tk.Exec("insert into t1 values(3)")
 	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
+
 }
 
 func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
