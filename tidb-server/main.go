@@ -63,6 +63,7 @@ import (
 const (
 	nmVersion          = "V"
 	nmConfig           = "config"
+	nmConfigCheck      = "config-check"
 	nmStore            = "store"
 	nmStorePath        = "path"
 	nmHost             = "host"
@@ -89,8 +90,9 @@ const (
 )
 
 var (
-	version    = flagBoolean(nmVersion, false, "print version information and exit")
-	configPath = flag.String(nmConfig, "", "config file path")
+	version     = flagBoolean(nmVersion, false, "print version information and exit")
+	configPath  = flag.String(nmConfig, "", "config file path")
+	configCheck = flagBoolean(nmConfigCheck, false, "check config file validity")
 
 	// Base
 	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
@@ -142,6 +144,10 @@ func main() {
 	loadConfig()
 	overrideConfig()
 	validateConfig()
+	if *configCheck {
+		fmt.Println("config check successful")
+		os.Exit(0)
+	}
 	setGlobalVars()
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
