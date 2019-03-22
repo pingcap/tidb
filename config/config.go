@@ -16,6 +16,7 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io/ioutil"
 	"time"
 
@@ -365,10 +366,22 @@ func GetGlobalConfig() *Config {
 
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
-	_, err := toml.DecodeFile(confFile, c)
+	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit <= 0 {
 		c.TokenLimit = 1000
 	}
+
+	// If any items in confFile file are not mapped into the Config struct, issue
+	// an error and stop the server from starting.
+	undecoded := metaData.Undecoded()
+	if len(undecoded) > 0 && err == nil {
+		undecodedItems := ""
+		for _, item := range undecoded {
+			undecodedItems += fmt.Sprintf("  %s \n", item.String())
+		}
+		err = errors.Errorf("config file %s contained unknown configuration options:\n%s", confFile, undecodedItems)
+	}
+
 	return errors.Trace(err)
 }
 
