@@ -273,3 +273,6 @@ ignore-error = false
 
 # use socket file to write binlog, for compatible with kafka version tidb-binlog.
 binlog-socket = ""
+
+# the strategy for sending binlog to pump, value can be "range" or "hash" now.
+strategy = "range"
