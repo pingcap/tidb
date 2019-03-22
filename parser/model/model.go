@@ -67,6 +67,15 @@ const (
 	ColumnInfoVersion0 = uint64(0)
 	// ColumnInfoVersion1 means the column info version is 1.
 	ColumnInfoVersion1 = uint64(1)
+	// ColumnInfoVersion2 means the column info version is 2.
+	// This is for v2.1.7 to Compatible with older versions charset problem.
+	// Old version such as v2.0.8 treat utf8 as utf8mb4, because there is no UTF8 check in v2.0.8.
+	// After version V2.1.2 (PR#8738) , TiDB add UTF8 check, then the user upgrade from v2.0.8 insert some UTF8MB4 characters will got error.
+	// This is not compatibility for user. Then we try to fix this in PR #9820, and increase the version number.
+	ColumnInfoVersion2 = uint64(2)
+
+	// CurrLatestColumnInfoVersion means the latest column info in the current TiDB.
+	CurrLatestColumnInfoVersion = ColumnInfoVersion2
 )
 
 // ColumnInfo provides meta data describing of a table column.
@@ -156,12 +165,19 @@ const (
 	// when executing a change/modify column statement that does not specify a charset value for column.
 	// This behavior is not compatible with MySQL.
 	TableInfoVersion0 = uint16(0)
-	// ColumnInfoVersion1 means the table info version is 1.
+	// TableInfoVersion1 means the table info version is 1.
 	// When we execute a change/modify column statement that does not specify a charset value for column,
 	// we set the charset of this column to the charset of table. This behavior is compatible with MySQL.
 	TableInfoVersion1 = uint16(1)
+	// TableInfoVersion2 means the table info version is 2.
+	// This is for v2.1.7 to Compatible with older versions charset problem.
+	// Old version such as v2.0.8 treat utf8 as utf8mb4, because there is no UTF8 check in v2.0.8.
+	// After version V2.1.2 (PR#8738) , TiDB add UTF8 check, then the user upgrade from v2.0.8 insert some UTF8MB4 characters will got error.
+	// This is not compatibility for user. Then we try to fix this in PR #9820, and increase the version number.
+	TableInfoVersion2 = uint16(2)
+
 	// CurrLatestTableInfoVersion means the latest table info in the current TiDB.
-	CurrLatestTableInfoVersion = TableInfoVersion1
+	CurrLatestTableInfoVersion = TableInfoVersion2
 )
 
 // ExtraHandleName is the name of ExtraHandle Column.
