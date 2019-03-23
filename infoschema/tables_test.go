@@ -14,6 +14,8 @@
 package infoschema_test
 
 import (
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/infoschema"
@@ -190,4 +192,22 @@ func (s *testSuite) TestProfiling(c *C) {
 	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows())
 	tk.MustExec("set @@profiling=1")
 	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows("0 0  0 0 0 0 0 0 0 0 0 0 0 0   0"))
+}
+
+func (s *testSuite) TestTableIDAndIndexID(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	session.SetStatsLease(0)
+	do, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer do.Close()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("create table test.t (a int, b int, primary key(a), key k1(b))")
+	tblID, err := strconv.Atoi(tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'").Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(tblID, Greater, 0)
+	tk.MustQuery("select * from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("test t 0 PRIMARY 1 a <nil>  0", "test t 1 k1 1 b <nil>  1"))
 }
