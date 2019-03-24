@@ -640,7 +640,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			continue
 		}
 
-		rows := pi.ToRow(mysql.Command2Str, true)
+		rows := pi.ToRow(true)
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
