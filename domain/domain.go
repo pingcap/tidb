@@ -109,7 +109,6 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	ok, tblIDs, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
 	if err != nil {
 		// We can fall back to full load, don't need to return the error.
-
 		logutil.Logger(context.Background()).Error("failed to load schema diff", zap.Error(err))
 	}
 	if ok {
@@ -904,7 +903,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	if err != nil {
 		logutil.Logger(context.Background()).Debug("init stats info failed", zap.Error(err))
 	} else {
-		logutil.Logger(context.Background()).Info("init stats info time", zap.Duration("take_time", time.Since(t)))
+		logutil.Logger(context.Background()).Info("init stats info time", zap.Duration("take time", time.Since(t)))
 	}
 	defer func() {
 		do.SetStatsUpdating(false)
@@ -1008,7 +1007,7 @@ func recoverInDomain(funcName string, quit bool) {
 		return
 	}
 	buf := util.GetStack()
-	logutil.Logger(context.Background()).Error("recover in domain failed", zap.String("function_name", funcName),
+	logutil.Logger(context.Background()).Error("recover in domain failed", zap.String("funcName", funcName),
 		zap.Any("error", r), zap.String("buffer", string(buf)))
 	metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
 	if quit {

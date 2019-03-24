@@ -159,8 +159,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 			break
 		}
 		if failedCnt%logIntervalCnt == 0 {
-			logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-			logutil.Logger(logCtx).Warn("failed to new session to etcd", zap.Error(err))
+			logutil.Logger(context.Background()).Warn("failed to new session to etcd", zap.String("ownerInfo", logPrefix), zap.Error(err))
 		}
 
 		time.Sleep(newSessionRetryInterval)
@@ -233,7 +232,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 			leaseID := etcdSession.Lease()
 			etcdSession, err = NewSession(ctx, logPrefix, m.etcdCli, NewSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
-				logutil.Logger(logCtx).Info("break campaign loop, NewSession err", zap.Error(err))
+				logutil.Logger(logCtx).Info("break campaign loop, NewSession failed", zap.Error(err))
 				m.revokeSession(logPrefix, leaseID)
 				return
 			}
@@ -260,7 +259,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 			continue
 		}
 
-		ownerKey, err := GetOwnerInfo(ctx, elec, logPrefix, m.id)
+		ownerKey, err := GetOwnerInfo(ctx, logCtx, elec, m.id)
 		if err != nil {
 			continue
 		}
@@ -297,8 +296,7 @@ func (m *ownerManager) GetOwnerID(ctx context.Context) (string, error) {
 }
 
 // GetOwnerInfo gets the owner information.
-func GetOwnerInfo(ctx context.Context, elec *concurrency.Election, logPrefix, id string) (string, error) {
-	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
+func GetOwnerInfo(ctx, logCtx context.Context, elec *concurrency.Election, id string) (string, error) {
 	resp, err := elec.Leader(ctx)
 	if err != nil {
 		// If no leader elected currently, it returns ErrElectionNoLeader.

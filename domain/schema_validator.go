@@ -125,8 +125,8 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 
 	// Update the schema deltaItem information.
 	if currVer != oldVer {
-		logutil.Logger(context.Background()).Debug("update schema validator", zap.Int64("old ver", oldVer),
-			zap.Int64("current ver", currVer), zap.Int64s("changed IDs", changedTableIDs))
+		logutil.Logger(context.Background()).Debug("update schema validator", zap.Int64("oldVer", oldVer),
+			zap.Int64("currVer", currVer), zap.Int64s("changedTableIDs", changedTableIDs))
 		s.enqueue(currVer, changedTableIDs)
 	}
 }
@@ -147,13 +147,13 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 // NOTE, this function should be called under lock!
 func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
 	if len(s.deltaSchemaInfos) == 0 {
-		logutil.Logger(context.Background()).Info("schema change history is empty", zap.Int64("current version", currVer))
+		logutil.Logger(context.Background()).Info("schema change history is empty", zap.Int64("currVer", currVer))
 		return true
 	}
 	newerDeltas := s.findNewerDeltas(currVer)
 	if len(newerDeltas) == len(s.deltaSchemaInfos) {
-		logutil.Logger(context.Background()).Info("the schema version is much older than the latest version", zap.Int64("current version", currVer),
-			zap.Int64("lastest version", s.latestSchemaVer))
+		logutil.Logger(context.Background()).Info("the schema version is much older than the latest version", zap.Int64("currVer", currVer),
+			zap.Int64("latestSchemaVer", s.latestSchemaVer))
 		return true
 	}
 	for _, item := range newerDeltas {
@@ -189,8 +189,8 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	if schemaVer < s.latestSchemaVer {
 		// The DDL relatedTableIDs is empty.
 		if len(relatedTableIDs) == 0 {
-			logutil.Logger(context.Background()).Info("the related table ID is empty", zap.Int64("current version", schemaVer),
-				zap.Int64("latest version", s.latestSchemaVer))
+			logutil.Logger(context.Background()).Info("the related table ID is empty", zap.Int64("schemaVer", schemaVer),
+				zap.Int64("latestSchemaVer", s.latestSchemaVer))
 			return ResultFail
 		}
 
