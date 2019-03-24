@@ -1606,7 +1606,19 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 			err:       nil,
 		})
 		b.visitInfo = append(b.visitInfo, visitInfo{
-			privilege: mysql.AlterPriv,
+			privilege: mysql.DropPriv,
+			db:        v.OldTable.Schema.L,
+			table:     v.OldTable.Name.L,
+			err:       nil,
+		})
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.CreatePriv,
+			db:        v.NewTable.Schema.L,
+			table:     v.NewTable.Name.L,
+			err:       nil,
+		})
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.InsertPriv,
 			db:        v.NewTable.Schema.L,
 			table:     v.NewTable.Name.L,
 			err:       nil,

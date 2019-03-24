@@ -1648,6 +1648,15 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.CreatePriv, "test", "", "", nil},
 			},
 		},
+		{
+			sql: "rename table t_old to t_new",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t_old", "", nil},
+				{mysql.DropPriv, "test", "t_old", "", nil},
+				{mysql.CreatePriv, "test", "t_new", "", nil},
+				{mysql.InsertPriv, "test", "t_new", "", nil},
+			},
+		},
 	}
 
 	for _, tt := range tests {
