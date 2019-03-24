@@ -1755,39 +1755,80 @@ func extractDayMinute(format string) (int64, int64, int64, float64, error) {
 
 // extractDayHour extracts day and hour from a string and its format is `DD HH`.
 func extractDayHour(format string) (int64, int64, int64, float64, error) {
-	fields := strings.Split(format, " ")
-	if len(fields) != 2 {
-		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+	if len(format) == 0 {
+		return 0, 0, 0, 0, nil
+	}
+	neg := false
+	format0 := format
+	if format[0] == '-' {
+		neg = true
+		format = format[1:]
+	}
+	fields := nonNumericRegex.Split(format, -1)
+
+	if len(fields) > 3 || (len(fields) == 3 && fields[0] != "") {
+		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
+	}
+	field0 := "0"
+	field1 := "0"
+	if len(fields) == 1 {
+		field1 = fields[0]
+	} else {
+		field0 = fields[len(fields)-2]
+		field1 = fields[len(fields)-1]
+	}
+	if neg {
+		field0 = "-" + field0
+		field1 = "-" + field1
 	}
 
-	days, err := strconv.ParseInt(fields[0], 10, 64)
+	days, err := strconv.ParseInt(field0, 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
 	}
-
-	hours, err := strconv.ParseFloat(fields[1], 64)
+	hours, err := strconv.ParseFloat(field1, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
 	}
-
 	return 0, 0, days, hours * float64(gotime.Hour), nil
 }
 
 // extractYearMonth extracts year and month from a string and its format is `YYYY-MM`.
 func extractYearMonth(format string) (int64, int64, int64, float64, error) {
-	fields := strings.Split(format, "-")
-	if len(fields) != 2 {
-		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+	if len(format) == 0 {
+		return 0, 0, 0, 0, nil
+	}
+	neg := false
+	format0 := format
+	if format[0] == '-' {
+		neg = true
+		format = format[1:]
+	}
+	fields := nonNumericRegex.Split(format, -1)
+
+	if len(fields) > 3 || (len(fields) == 3 && fields[0] != "") {
+		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
 	}
 
-	years, err := strconv.ParseInt(fields[0], 10, 64)
-	if err != nil {
-		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+	field0 := "0"
+	field1 := "0"
+	if len(fields) == 1 {
+		field1 = fields[0]
+	} else {
+		field0 = fields[len(fields)-2]
+		field1 = fields[len(fields)-1]
 	}
-
-	months, err := strconv.ParseInt(fields[1], 10, 64)
+	if neg {
+		field0 = "-" + field0
+		field1 = "-" + field1
+	}
+	years, err := strconv.ParseInt(field0, 10, 64)
 	if err != nil {
-		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
+	}
+	months, err := strconv.ParseInt(field1, 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
 	}
 
 	return years, months, 0, 0, nil
@@ -2378,6 +2419,9 @@ var twoDigitRegex = regexp.MustCompile("^[1-9][0-9]?")
 
 // oneToSixDigitRegex: it was just for [0, 999999]
 var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{0,6}")
+
+// nonNumericRegex: it was for any non-numeric characters
+var nonNumericRegex = regexp.MustCompile("[^0-9]+")
 
 // parseTwoNumeric is used for pattens 0..31 0..24 0..60 and so on.
 // It returns the parsed int, and remain data after parse.

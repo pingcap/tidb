@@ -1209,7 +1209,15 @@ func (s *testTimeSuite) TestExtractTimeValue(c *C) {
 		{"12 14:00:00", "DAY_SECOND", 0, 0, 12, 5.04e+13},
 		{"12 14:00", "DAY_MINUTE", 0, 0, 12, 5.04e+13},
 		{"12 14", "DAY_HOUR", 0, 0, 12, 5.04e+13},
+		{"1:1", "DAY_HOUR", 0, 0, 1, 3.6e+12},
+		{"aa1bb1", "DAY_HOUR", 0, 0, 1, 3.6e+12},
+		{"-1:1", "DAY_HOUR", 0, 0, -1, -3.6e+12},
+		{"-aa1bb1", "DAY_HOUR", 0, 0, -1, -3.6e+12},
 		{"2019-12", "YEAR_MONTH", 2019, 12, 0, 0},
+		{"1 1", "YEAR_MONTH", 1, 1, 0, 0},
+		{"aa1bb1", "YEAR_MONTH", 1, 1, 0, 0},
+		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0},
+		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0},
 	}
 	for _, col := range tbl {
 		res1, res2, res3, res4, err := types.ExtractTimeValue(col.unit, col.format)
