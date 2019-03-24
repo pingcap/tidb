@@ -1536,6 +1536,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: "truncate table t",
 			ans: []visitInfo{
 				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
 		{

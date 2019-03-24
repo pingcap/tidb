@@ -1575,6 +1575,12 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 			table:     v.Table.Name.L,
 			err:       nil,
 		})
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.DropPriv,
+			db:        v.Table.Schema.L,
+			table:     v.Table.Name.L,
+			err:       nil,
+		})
 	case *ast.RenameTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.AlterPriv,
