@@ -1770,17 +1770,10 @@ func extractDayHour(format string) (int64, int64, int64, float64, error) {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
 	}
 	field0 := "0"
-	field1 := "0"
-	if len(fields) == 1 {
-		field1 = fields[0]
-	} else {
+	if len(fields) > 1 {
 		field0 = fields[len(fields)-2]
-		field1 = fields[len(fields)-1]
 	}
-	if neg {
-		field0 = "-" + field0
-		field1 = "-" + field1
-	}
+	field1 := fields[len(fields)-1]
 
 	days, err := strconv.ParseInt(field0, 10, 64)
 	if err != nil {
@@ -1789,6 +1782,10 @@ func extractDayHour(format string) (int64, int64, int64, float64, error) {
 	hours, err := strconv.ParseFloat(field1, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
+	}
+	if neg {
+		days *= -1
+		hours *= -1
 	}
 	return 0, 0, days, hours * float64(gotime.Hour), nil
 }
@@ -1811,17 +1808,10 @@ func extractYearMonth(format string) (int64, int64, int64, float64, error) {
 	}
 
 	field0 := "0"
-	field1 := "0"
-	if len(fields) == 1 {
-		field1 = fields[0]
-	} else {
+	if len(fields) > 1 {
 		field0 = fields[len(fields)-2]
-		field1 = fields[len(fields)-1]
 	}
-	if neg {
-		field0 = "-" + field0
-		field1 = "-" + field1
-	}
+	field1 := fields[len(fields)-1]
 	years, err := strconv.ParseInt(field0, 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
@@ -1829,6 +1819,10 @@ func extractYearMonth(format string) (int64, int64, int64, float64, error) {
 	months, err := strconv.ParseInt(field1, 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
+	}
+	if neg {
+		years *= -1
+		months *= -1
 	}
 
 	return years, months, 0, 0, nil
