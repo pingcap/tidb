@@ -231,29 +231,13 @@ func (e *ShowExec) fetchShowProcessList() error {
 
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
-		var info string
-		if e.Full {
-			info = pi.Info
-		} else {
-			info = fmt.Sprintf("%.100v", pi.Info)
-		}
-
 		// If you have the PROCESS privilege, you can see all threads.
 		// Otherwise, you can see only your own threads.
 		if !hasProcessPriv && pi.User != loginUser.Username {
 			continue
 		}
-
-		e.appendRow([]interface{}{
-			pi.ID,
-			pi.User,
-			pi.Host,
-			pi.DB,
-			mysql.Command2Str[pi.Command],
-			uint64(time.Since(pi.Time) / time.Second),
-			fmt.Sprintf("%d", pi.State),
-			info,
-		})
+		row := pi.ToRow(e.Full)
+		e.appendRow(row)
 	}
 	return nil
 }
