@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package parser
+package parser_test
 
 import (
 	"fmt"
@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	. "github.com/pingcap/parser/format"
@@ -43,7 +44,7 @@ type testParserSuite struct {
 }
 
 func (s *testParserSuite) TestSimple(c *C) {
-	parser := New()
+	parser := parser.New()
 
 	reservedKws := []string{
 		"add", "all", "alter", "analyze", "and", "as", "asc", "between", "bigint",
@@ -255,7 +256,7 @@ type testErrMsgCase struct {
 }
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
-	parser := New()
+	parser := parser.New()
 	parser.EnableWindowFunc(s.enableWindowFunc)
 	for _, t := range table {
 		_, _, err := parser.Parse(t.src, "", "")
@@ -274,7 +275,7 @@ func (s *testParserSuite) RunTest(c *C, table []testCase) {
 
 func (s *testParserSuite) RunRestoreTest(c *C, sourceSQLs, expectSQLs string) {
 	var sb strings.Builder
-	parser := New()
+	parser := parser.New()
 	parser.EnableWindowFunc(s.enableWindowFunc)
 	comment := Commentf("source %v", sourceSQLs)
 	stmts, _, err := parser.Parse(sourceSQLs, "", "")
@@ -301,7 +302,7 @@ func (s *testParserSuite) RunRestoreTest(c *C, sourceSQLs, expectSQLs string) {
 }
 
 func (s *testParserSuite) RunErrMsgTest(c *C, table []testErrMsgCase) {
-	parser := New()
+	parser := parser.New()
 	for _, t := range table {
 		_, _, err := parser.Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
@@ -781,7 +782,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 }
 
 func (s *testParserSuite) TestFlushTable(c *C) {
-	parser := New()
+	parser := parser.New()
 	stmt, _, err := parser.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
 	c.Assert(err, IsNil)
 	flushTable := stmt[0].(*ast.FlushStmt)
@@ -793,7 +794,7 @@ func (s *testParserSuite) TestFlushTable(c *C) {
 }
 
 func (s *testParserSuite) TestFlushPrivileges(c *C) {
-	parser := New()
+	parser := parser.New()
 	stmt, _, err := parser.Parse("flush privileges", "", "")
 	c.Assert(err, IsNil)
 	flushPrivilege := stmt[0].(*ast.FlushStmt)
@@ -1940,7 +1941,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 }
 
 func (s *testParserSuite) TestHintError(c *C) {
-	parser := New()
+	parser := parser.New()
 	stmt, warns, err := parser.Parse("select /*+ tidb_unknow(T1,t2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, IsNil)
 	c.Assert(len(warns), Equals, 1)
@@ -1964,7 +1965,7 @@ func (s *testParserSuite) TestHintError(c *C) {
 }
 
 func (s *testParserSuite) TestErrorMsg(c *C) {
-	parser := New()
+	parser := parser.New()
 	_, _, err := parser.Parse("select1 1", "", "")
 	c.Assert(err.Error(), Equals, "line 1 column 7 near \"select1 1\" ")
 	_, _, err = parser.Parse("select 1 from1 dual", "", "")
@@ -1978,7 +1979,7 @@ func (s *testParserSuite) TestErrorMsg(c *C) {
 }
 
 func (s *testParserSuite) TestOptimizerHints(c *C) {
-	parser := New()
+	parser := parser.New()
 	stmt, _, err := parser.Parse("select /*+ tidb_SMJ(T1,t2) tidb_smj(T3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, IsNil)
 	selectStmt := stmt[0].(*ast.SelectStmt)
@@ -2226,7 +2227,7 @@ func (s *testParserSuite) TestSubquery(c *C) {
 		{"SELECT 1 > (select 1)", "select 1"},
 		{"SELECT 1 > (select 1 union select 2)", "select 1 union select 2"},
 	}
-	parser := New()
+	parser := parser.New()
 	for _, t := range tests {
 		stmt, err := parser.ParseOneStmt(t.input, "", "")
 		c.Assert(err, IsNil)
@@ -2263,7 +2264,7 @@ func (s *testParserSuite) TestUnion(c *C) {
 }
 
 func (s *testParserSuite) TestUnionOrderBy(c *C) {
-	parser := New()
+	parser := parser.New()
 	parser.EnableWindowFunc(s.enableWindowFunc)
 
 	tests := []struct {
@@ -2363,7 +2364,7 @@ func (s *testParserSuite) TestPriority(c *C) {
 	}
 	s.RunTest(c, table)
 
-	parser := New()
+	parser := parser.New()
 	stmt, _, err := parser.Parse("select HIGH_PRIORITY * from t", "", "")
 	c.Assert(err, IsNil)
 	sel := stmt[0].(*ast.SelectStmt)
@@ -2377,7 +2378,7 @@ func (s *testParserSuite) TestSQLNoCache(c *C) {
 		{`select * from t`, true, "SELECT * FROM `t`"},
 	}
 
-	parser := New()
+	parser := parser.New()
 	for _, tt := range table {
 		stmt, _, err := parser.Parse(tt.src, "", "")
 		c.Assert(err, IsNil)
@@ -2404,7 +2405,7 @@ func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
 	sql := "insert t values (1)" + strings.Repeat(",(1)", 1000)
 	var oldStats, newStats runtime.MemStats
 	runtime.ReadMemStats(&oldStats)
-	_, err := New().ParseOneStmt(sql, "", "")
+	_, err := parser.New().ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
 	runtime.ReadMemStats(&newStats)
 	c.Assert(int(newStats.TotalAlloc-oldStats.TotalAlloc), Less, 1024*500)
@@ -2482,7 +2483,7 @@ func (s *testParserSuite) TestBinding(c *C) {
 	}
 	s.RunTest(c, table)
 
-	p := New()
+	p := parser.New()
 	sms, _, err := p.Parse("create global binding for select * from t using select * from t use index(a)", "", "")
 	c.Assert(err, IsNil)
 	v, ok := sms[0].(*ast.CreateBindingStmt)
@@ -2510,7 +2511,7 @@ func (s *testParserSuite) TestView(c *C) {
 	s.RunTest(c, table)
 
 	// Test case for the text of the select statement in create view statement.
-	p := New()
+	p := parser.New()
 	sms, _, err := p.Parse("create view v as select * from t", "", "")
 	c.Assert(err, IsNil)
 	v, ok := sms[0].(*ast.CreateViewStmt)
@@ -2545,7 +2546,7 @@ func (s *testParserSuite) TestView(c *C) {
 func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	// Test case for timestampdiff unit.
 	// TimeUnit should be unified to upper case.
-	parser := New()
+	parser := parser.New()
 	stmt, _, err := parser.Parse("SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01'), TIMESTAMPDIFF(month,'2003-02-01','2003-05-01');", "", "")
 	c.Assert(err, IsNil)
 	ss := stmt[0].(*ast.SelectStmt)
@@ -2595,7 +2596,7 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 }
 
 func (s *testParserSuite) TestSQLModeANSIQuotes(c *C) {
-	parser := New()
+	parser := parser.New()
 	parser.SetSQLMode(mysql.ModeANSIQuotes)
 	tests := []string{
 		`CREATE TABLE "table" ("id" int)`,
@@ -2608,7 +2609,7 @@ func (s *testParserSuite) TestSQLModeANSIQuotes(c *C) {
 }
 
 func (s *testParserSuite) TestDDLStatements(c *C) {
-	parser := New()
+	parser := parser.New()
 	// Tests that whatever the charset it is define, we always assign utf8 charset and utf8_bin collate.
 	createTableStr := `CREATE TABLE t (
 		a varchar(64) binary,
@@ -2670,7 +2671,7 @@ func (s *testParserSuite) TestGeneratedColumn(c *C) {
 		{"create table t (c int, d int as (   c + 1   ) virtual)", true, "c + 1"},
 		{"create table t (c int, d int as (1 + 1) stored)", true, "1 + 1"},
 	}
-	parser := New()
+	parser := parser.New()
 	for _, tt := range tests {
 		stmtNodes, _, err := parser.Parse(tt.input, "", "")
 		if tt.ok {
@@ -2709,7 +2710,7 @@ func (s *testParserSuite) TestSetTransaction(c *C) {
 			true, "REPEATABLE-READ",
 		},
 	}
-	parser := New()
+	parser := parser.New()
 	for _, t := range tests {
 		stmt1, err := parser.ParseOneStmt(t.input, "", "")
 		c.Assert(err, IsNil)
@@ -2725,7 +2726,7 @@ func (s *testParserSuite) TestSetTransaction(c *C) {
 func (s *testParserSuite) TestSideEffect(c *C) {
 	// This test cover a bug that parse an error SQL doesn't leave the parser in a
 	// clean state, cause the following SQL parse fail.
-	parser := New()
+	parser := parser.New()
 	_, err := parser.ParseOneStmt("create table t /*!50100 'abc', 'abc' */;", "", "")
 	c.Assert(err, NotNil)
 
@@ -2775,7 +2776,7 @@ ENGINE=INNODB PARTITION BY LINEAR HASH (a) PARTITIONS 1;`, true, "CREATE TABLE `
 	s.RunTest(c, table)
 
 	// Check comment content.
-	parser := New()
+	parser := parser.New()
 	stmt, err := parser.ParseOneStmt("create table t (id int) partition by range (id) (partition p0 values less than (10) comment 'check')", "", "")
 	c.Assert(err, IsNil)
 	createTable := stmt.(*ast.CreateTableStmt)
@@ -2787,7 +2788,7 @@ func (s *testParserSuite) TestTablePartitionNameList(c *C) {
 		{`select * from t partition (p0,p1)`, true, ""},
 	}
 
-	parser := New()
+	parser := parser.New()
 	for _, tt := range table {
 		stmt, _, err := parser.Parse(tt.src, "", "")
 		c.Assert(err, IsNil)
@@ -2808,7 +2809,7 @@ func (s *testParserSuite) TestNotExistsSubquery(c *C) {
 		{`select * from t1 where not exists (select * from t2 where t1.a = t2.a)`, true, ""},
 	}
 
-	parser := New()
+	parser := parser.New()
 	for _, tt := range table {
 		stmt, _, err := parser.Parse(tt.src, "", "")
 		c.Assert(err, IsNil)
@@ -2823,7 +2824,7 @@ func (s *testParserSuite) TestNotExistsSubquery(c *C) {
 func (s *testParserSuite) TestWindowFunctionIdentifier(c *C) {
 	var table []testCase
 	s.enableWindowFunc = true
-	for key := range windowFuncTokenMap {
+	for key := range parser.WindowFuncTokenMapForTest {
 		table = append(table, testCase{fmt.Sprintf("select 1 %s", key), false, fmt.Sprintf("SELECT 1 AS `%s`", key)})
 	}
 	s.RunTest(c, table)
@@ -2941,7 +2942,7 @@ func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bo
 // For issue #51
 // See https://github.com/pingcap/parser/pull/51 for details
 func (s *testParserSuite) TestVisitFrameBound(c *C) {
-	parser := New()
+	parser := parser.New()
 	parser.EnableWindowFunc(true)
 	table := []struct {
 		s          string
@@ -2964,7 +2965,7 @@ func (s *testParserSuite) TestVisitFrameBound(c *C) {
 }
 
 func (s *testParserSuite) TestFieldText(c *C) {
-	parser := New()
+	parser := parser.New()
 	stmts, _, err := parser.Parse("select a from t", "", "")
 	c.Assert(err, IsNil)
 	tmp := stmts[0].(*ast.SelectStmt)
@@ -2986,7 +2987,7 @@ func (s *testParserSuite) TestFieldText(c *C) {
 
 // See https://github.com/pingcap/parser/issue/94
 func (s *testParserSuite) TestQuotedSystemVariables(c *C) {
-	parser := New()
+	parser := parser.New()
 
 	st, err := parser.ParseOneStmt(
 		"select @@Sql_Mode, @@`SQL_MODE`, @@session.`sql_mode`, @@global.`s ql``mode`, @@session.'sql\\nmode', @@local.\"sql\\\"mode\";",
@@ -3047,7 +3048,7 @@ func (s *testParserSuite) TestQuotedSystemVariables(c *C) {
 
 // See https://github.com/pingcap/parser/issue/95
 func (s *testParserSuite) TestQuotedVariableColumnName(c *C) {
-	parser := New()
+	parser := parser.New()
 
 	st, err := parser.ParseOneStmt(
 		"select @abc, @`abc`, @'aBc', @\"AbC\", @6, @`6`, @'6', @\"6\", @@sql_mode, @@`sql_mode`, @;",
