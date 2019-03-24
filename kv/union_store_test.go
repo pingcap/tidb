@@ -33,11 +33,13 @@ func (s *testUnionStoreSuite) SetUpTest(c *C) {
 
 func (s *testUnionStoreSuite) TestGetSet(c *C) {
 	defer testleak.AfterTest(c)()
-	s.store.Set([]byte("1"), []byte("1"))
+	err := s.store.Set([]byte("1"), []byte("1"))
+	c.Assert(err, IsNil)
 	v, err := s.us.Get([]byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("1"))
-	s.us.Set([]byte("1"), []byte("2"))
+	err = s.us.Set([]byte("1"), []byte("2"))
+	c.Assert(err, IsNil)
 	v, err = s.us.Get([]byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("2"))
@@ -45,13 +47,15 @@ func (s *testUnionStoreSuite) TestGetSet(c *C) {
 
 func (s *testUnionStoreSuite) TestDelete(c *C) {
 	defer testleak.AfterTest(c)()
-	s.store.Set([]byte("1"), []byte("1"))
-	err := s.us.Delete([]byte("1"))
+	err := s.store.Set([]byte("1"), []byte("1"))
+	c.Assert(err, IsNil)
+	err = s.us.Delete([]byte("1"))
 	c.Assert(err, IsNil)
 	_, err = s.us.Get([]byte("1"))
 	c.Assert(IsErrNotFound(err), IsTrue)
 
-	s.us.Set([]byte("1"), []byte("2"))
+	err = s.us.Set([]byte("1"), []byte("2"))
+	c.Assert(err, IsNil)
 	v, err := s.us.Get([]byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("2"))
@@ -59,9 +63,12 @@ func (s *testUnionStoreSuite) TestDelete(c *C) {
 
 func (s *testUnionStoreSuite) TestSeek(c *C) {
 	defer testleak.AfterTest(c)()
-	s.store.Set([]byte("1"), []byte("1"))
-	s.store.Set([]byte("2"), []byte("2"))
-	s.store.Set([]byte("3"), []byte("3"))
+	err := s.store.Set([]byte("1"), []byte("1"))
+	c.Assert(err, IsNil)
+	err = s.store.Set([]byte("2"), []byte("2"))
+	c.Assert(err, IsNil)
+	err = s.store.Set([]byte("3"), []byte("3"))
+	c.Assert(err, IsNil)
 
 	iter, err := s.us.Iter(nil, nil)
 	c.Assert(err, IsNil)
@@ -71,12 +78,14 @@ func (s *testUnionStoreSuite) TestSeek(c *C) {
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("3")}, [][]byte{[]byte("2"), []byte("3")})
 
-	s.us.Set([]byte("4"), []byte("4"))
+	err = s.us.Set([]byte("4"), []byte("4"))
+	c.Assert(err, IsNil)
 	iter, err = s.us.Iter([]byte("2"), nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("3"), []byte("4")}, [][]byte{[]byte("2"), []byte("3"), []byte("4")})
 
-	s.us.Delete([]byte("3"))
+	err = s.us.Delete([]byte("3"))
+	c.Assert(err, IsNil)
 	iter, err = s.us.Iter([]byte("2"), nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("4")}, [][]byte{[]byte("2"), []byte("4")})
@@ -84,9 +93,12 @@ func (s *testUnionStoreSuite) TestSeek(c *C) {
 
 func (s *testUnionStoreSuite) TestIterReverse(c *C) {
 	defer testleak.AfterTest(c)()
-	s.store.Set([]byte("1"), []byte("1"))
-	s.store.Set([]byte("2"), []byte("2"))
-	s.store.Set([]byte("3"), []byte("3"))
+	err := s.store.Set([]byte("1"), []byte("1"))
+	c.Assert(err, IsNil)
+	err = s.store.Set([]byte("2"), []byte("2"))
+	c.Assert(err, IsNil)
+	err = s.store.Set([]byte("3"), []byte("3"))
+	c.Assert(err, IsNil)
 
 	iter, err := s.us.IterReverse(nil)
 	c.Assert(err, IsNil)
@@ -96,12 +108,14 @@ func (s *testUnionStoreSuite) TestIterReverse(c *C) {
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("1")}, [][]byte{[]byte("2"), []byte("1")})
 
-	s.us.Set([]byte("0"), []byte("0"))
+	err = s.us.Set([]byte("0"), []byte("0"))
+	c.Assert(err, IsNil)
 	iter, err = s.us.IterReverse([]byte("3"))
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("1"), []byte("0")}, [][]byte{[]byte("2"), []byte("1"), []byte("0")})
 
-	s.us.Delete([]byte("1"))
+	err = s.us.Delete([]byte("1"))
+	c.Assert(err, IsNil)
 	iter, err = s.us.IterReverse([]byte("3"))
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("0")}, [][]byte{[]byte("2"), []byte("0")})
@@ -109,8 +123,10 @@ func (s *testUnionStoreSuite) TestIterReverse(c *C) {
 
 func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	defer testleak.AfterTest(c)()
-	s.store.Set([]byte("1"), []byte("1"))
-	s.store.Set([]byte("2"), []byte("2"))
+	err := s.store.Set([]byte("1"), []byte("1"))
+	c.Assert(err, IsNil)
+	err = s.store.Set([]byte("2"), []byte("2"))
+	c.Assert(err, IsNil)
 
 	v, err := s.us.Get([]byte("1"))
 	c.Assert(err, IsNil)
