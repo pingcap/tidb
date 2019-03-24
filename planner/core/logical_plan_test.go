@@ -1640,6 +1640,14 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.AllPrivMask, "test", "ttt", "", nil},
 			},
 		},
+		{
+			sql: "alter table t add column a int(4)",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t", "", nil},
+				{mysql.InsertPriv, "test", "t", "", nil},
+				{mysql.CreatePriv, "test", "", "", nil},
+			},
+		},
 	}
 
 	for _, tt := range tests {
