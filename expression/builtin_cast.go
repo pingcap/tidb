@@ -121,7 +121,6 @@ type castAsYearFunctionClass struct {
 	tp *types.FieldType
 }
 
-//TODO: Set correct PbCode for function signature after `cast as year` related pb code are supported
 func (c *castAsYearFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -1752,28 +1751,43 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+// BuildCastAsYearFunction builds a CAST AS YEAR ScalarFunction from the Expression.
+func BuildCastAsYearFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	fc := &castAsYearFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	f, err := fc.getFunction(ctx, []Expression{expr})
+	terror.Log(err)
+	res = &ScalarFunction{
+		FuncName: model.NewCIStr(ast.Cast),
+		RetType:  tp,
+		Function: f,
+	}
+	// We do not fold CAST if the eval type of this scalar function is ETJson
+	// since we may reset the flag of the field type of CastAsJson later which
+	// would affect the evaluation of it.
+	if tp.EvalType() != types.ETJson {
+		res = FoldConstant(res)
+	}
+	return res
+}
+
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	var fc functionClass
-	if tp.Tp == mysql.TypeYear {
-		fc = &castAsYearFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	} else {
-		switch tp.EvalType() {
-		case types.ETInt:
-			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		case types.ETDecimal:
-			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		case types.ETReal:
-			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		case types.ETDatetime, types.ETTimestamp:
-			fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		case types.ETDuration:
-			fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		case types.ETJson:
-			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		case types.ETString:
-			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		}
+	switch tp.EvalType() {
+	case types.ETInt:
+		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETDecimal:
+		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETReal:
+		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETDatetime, types.ETTimestamp:
+		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETDuration:
+		fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETJson:
+		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETString:
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	terror.Log(err)

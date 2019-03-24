@@ -2289,7 +2289,11 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 				}
 				// Because the expression might return different type from
 				// the generated column, we should wrap a CAST on the result.
-				expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
+				if colExpr.GetType().Tp == mysql.TypeYear {
+					expr = expression.BuildCastAsYearFunction(b.ctx, expr, colExpr.GetType())
+				} else {
+					expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
+				}
 				exprIsGen = true
 			}
 		}
