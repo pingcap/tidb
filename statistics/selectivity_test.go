@@ -169,7 +169,7 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(ctx, stmts[0], is, false)
+		err = plannercore.Preprocess(ctx, stmts[0], is)
 		c.Assert(err, IsNil, comment)
 		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
@@ -341,7 +341,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	stmts, err := session.Parse(ctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = plannercore.Preprocess(ctx, stmts[0], is, false)
+	err = plannercore.Preprocess(ctx, stmts[0], is)
 	c.Assert(err, IsNil, comment)
 	p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))

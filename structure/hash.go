@@ -272,7 +272,8 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 	v, err := t.reader.Get(metaKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
-	} else if err != nil {
+	}
+	if err != nil {
 		return hashMeta{}, errors.Trace(err)
 	}
 
@@ -294,7 +295,8 @@ func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 		v = nil
-	} else if err != nil {
+	}
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 

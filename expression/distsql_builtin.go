@@ -420,6 +420,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinJSONUnquoteSig{base}
 	case tipb.ScalarFuncSig_JsonArraySig:
 		f = &builtinJSONArraySig{base}
+	case tipb.ScalarFuncSig_JsonArrayAppendSig:
+		f = &builtinJSONArrayAppendSig{base}
 	case tipb.ScalarFuncSig_JsonObjectSig:
 		f = &builtinJSONObjectSig{base}
 	case tipb.ScalarFuncSig_JsonExtractSig:
@@ -540,18 +542,8 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	return newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
 }
 
-func fieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
-	return &types.FieldType{
-		Tp:      byte(ft.GetTp()),
-		Flag:    uint(ft.GetFlag()),
-		Flen:    int(ft.GetFlen()),
-		Decimal: int(ft.GetDecimal()),
-		Collate: mysql.Collations[uint8(ft.GetCollate())],
-	}
-}
-
 func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constant, error) {
-	ft := fieldTypeFromPB(ftPB)
+	ft := pbTypeToFieldType(ftPB)
 	_, v, err := codec.DecodeUint(data)
 	if err != nil {
 		return nil, err

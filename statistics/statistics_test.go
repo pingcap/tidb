@@ -43,7 +43,7 @@ var _ = Suite(&testStatisticsSuite{})
 
 type testStatisticsSuite struct {
 	count   int
-	samples []types.Datum
+	samples []*SampleItem
 	rc      sqlexec.RecordSet
 	pk      sqlexec.RecordSet
 }
@@ -109,23 +109,26 @@ func (r *recordSet) Close() error {
 
 func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.count = 100000
-	samples := make([]types.Datum, 10000)
+	samples := make([]*SampleItem, 10000)
+	for i := 0; i < len(samples); i++ {
+		samples[i] = &SampleItem{}
+	}
 	start := 1000
-	samples[0].SetInt64(0)
+	samples[0].Value.SetInt64(0)
 	for i := 1; i < start; i++ {
-		samples[i].SetInt64(2)
+		samples[i].Value.SetInt64(2)
 	}
 	for i := start; i < len(samples); i++ {
-		samples[i].SetInt64(int64(i))
+		samples[i].Value.SetInt64(int64(i))
 	}
 	for i := start; i < len(samples); i += 3 {
-		samples[i].SetInt64(samples[i].GetInt64() + 1)
+		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 1)
 	}
 	for i := start; i < len(samples); i += 5 {
-		samples[i].SetInt64(samples[i].GetInt64() + 2)
+		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 2)
 	}
 	sc := new(stmtctx.StatementContext)
-	err := types.SortDatums(sc, samples)
+	err := SortSampleItems(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
 
@@ -324,10 +327,11 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 
 	datum := types.Datum{}
 	datum.SetMysqlJSON(json.BinaryJSON{TypeCode: json.TypeCodeLiteral})
+	item := &SampleItem{Value: datum}
 	collector = &SampleCollector{
 		Count:     1,
 		NullCount: 0,
-		Samples:   []types.Datum{datum},
+		Samples:   []*SampleItem{item},
 		FMSketch:  sketch,
 	}
 	col, err = BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeJSON))

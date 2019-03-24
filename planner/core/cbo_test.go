@@ -377,7 +377,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -427,7 +427,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -483,7 +483,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}{
 		{
 			sql:  "analyze table t3",
-			best: "Analyze{Index(a),Table(b)}",
+			best: "Analyze{Index(a),Table(a, b)}",
 		},
 		// Test analyze full table.
 		{
@@ -543,7 +543,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -620,7 +620,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		stmt := stmts[0]
 
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, true)
+		err = core.Preprocess(ctx, stmt, is, core.InPrepare)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -708,10 +708,10 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"  ├─TableReader_12 10.00 root data:TableScan_11",
 			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─MaxOneRow_13 1.00 root ",
-			"    └─Projection_14 0.00 root concat(cast(t1.a), \",\", cast(t1.b))",
-			"      └─IndexLookUp_21 0.00 root ",
+			"    └─Projection_14 0.10 root concat(cast(t1.a), \",\", cast(t1.b))",
+			"      └─IndexLookUp_21 0.10 root ",
 			"        ├─IndexScan_18 1.00 cop table:t1, index:c, range: decided by [eq(t1.c, test.t.c)], keep order:false",
-			"        └─Selection_20 0.00 cop eq(t1.a, test.t.a)",
+			"        └─Selection_20 0.10 cop eq(t1.a, test.t.a)",
 			"          └─TableScan_19 1.00 cop table:t, keep order:false",
 		))
 }
@@ -874,7 +874,7 @@ func BenchmarkOptimize(b *testing.B) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 
 		b.Run(tt.sql, func(b *testing.B) {
@@ -886,4 +886,41 @@ func BenchmarkOptimize(b *testing.B) {
 			b.ReportAllocs()
 		})
 	}
+}
+
+func (s *testAnalyzeSuite) TestIssue9562(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a bigint, b bigint, c bigint)")
+	tk.MustExec("create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))")
+
+	tk.MustQuery("explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c;").Check(testkit.Rows(
+		"IndexJoin_9 12475.01 root inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
+		"├─TableReader_12 9980.01 root data:Selection_11",
+		"│ └─Selection_11 9980.01 cop not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─IndexReader_8 0.00 root index:Selection_7",
+		"  └─Selection_7 0.00 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+		"    └─IndexScan_6 10.00 cop table:t2, index:a, b, c, range: decided by [test.t1.a test.t1.c], keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
+	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
+		"Projection_7 0.00 root t1.a, t1.b, t2.a, t2.b",
+		"└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, equal:[eq(t2.b, t1.b)]",
+		"  ├─TableReader_12 0.00 root data:Selection_11",
+		"  │ └─Selection_11 0.00 cop isnull(t2.b), not(isnull(t2.b))",
+		"  │   └─TableScan_10 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─TableReader_15 9990.00 root data:Selection_14",
+		"    └─Selection_14 9990.00 cop not(isnull(t1.b))",
+		"      └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
 }

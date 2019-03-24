@@ -113,6 +113,14 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	u = record.User
 	h = record.Host
 
+	// Login a locked account is not allowed.
+	locked := record.AccountLocked
+	if locked {
+		log.Errorf("Try to login a locked account: user: %v, host: %v", user, host)
+		success = false
+		return
+	}
+
 	pwd := record.Password
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
@@ -177,4 +185,20 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	}
 
 	return
+}
+
+// ActiveRoles implements privilege.Manager ActiveRoles interface.
+func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
+	mysqlPrivilege := p.Handle.Get()
+	u := p.user
+	h := p.host
+	for _, r := range roleList {
+		ok := mysqlPrivilege.FindRole(u, h, r)
+		if !ok {
+			log.Errorf("Role: %+v doesn't grant for user", r)
+			return false, r.String()
+		}
+	}
+	ctx.GetSessionVars().ActiveRoles = roleList
+	return true, ""
 }

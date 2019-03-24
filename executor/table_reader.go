@@ -36,12 +36,11 @@ var _ Executor = &TableReaderExecutor{}
 type TableReaderExecutor struct {
 	baseExecutor
 
-	table           table.Table
-	physicalTableID int64
-	keepOrder       bool
-	desc            bool
-	ranges          []*ranger.Range
-	dagPB           *tipb.DAGRequest
+	table     table.Table
+	keepOrder bool
+	desc      bool
+	ranges    []*ranger.Range
+	dagPB     *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
@@ -139,7 +138,7 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, e.feedback).
+	kvReq, err := builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).

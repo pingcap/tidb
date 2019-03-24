@@ -73,6 +73,7 @@ const (
 	codeWindowRangeFrameNumericType     = mysql.ErrWindowRangeFrameNumericType
 	codeWindowRangeBoundNotConstant     = mysql.ErrWindowRangeBoundNotConstant
 	codeWindowRowsIntervalUse           = mysql.ErrWindowRowsIntervalUse
+	codeWindowFunctionIgnoresFrame      = mysql.ErrWindowFunctionIgnoresFrame
 )
 
 // error definitions.
@@ -132,6 +133,7 @@ var (
 	ErrWindowRangeFrameNumericType     = terror.ClassOptimizer.New(codeWindowRangeFrameNumericType, mysql.MySQLErrName[mysql.ErrWindowRangeFrameNumericType])
 	ErrWindowRangeBoundNotConstant     = terror.ClassOptimizer.New(codeWindowRangeBoundNotConstant, mysql.MySQLErrName[mysql.ErrWindowRangeBoundNotConstant])
 	ErrWindowRowsIntervalUse           = terror.ClassOptimizer.New(codeWindowRowsIntervalUse, mysql.MySQLErrName[mysql.ErrWindowRowsIntervalUse])
+	ErrWindowFunctionIgnoresFrame      = terror.ClassOptimizer.New(codeWindowFunctionIgnoresFrame, mysql.MySQLErrName[mysql.ErrWindowFunctionIgnoresFrame])
 )
 
 func init() {
@@ -181,6 +183,7 @@ func init() {
 		codeWindowRangeFrameNumericType:     mysql.ErrWindowRangeFrameNumericType,
 		codeWindowRangeBoundNotConstant:     mysql.ErrWindowRangeBoundNotConstant,
 		codeWindowRowsIntervalUse:           mysql.ErrWindowRowsIntervalUse,
+		codeWindowFunctionIgnoresFrame:      mysql.ErrWindowFunctionIgnoresFrame,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }

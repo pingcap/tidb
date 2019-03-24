@@ -115,7 +115,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test TopN push down in table single read.
 		{
 			sql:  "select c from t order by t.a + t.b limit 1",
-			best: "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([col_3],0,1)->Projection",
+			best: "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([col_3],0,1)->Projection->Projection",
 		},
 		// Test Limit push down in table single read.
 		{
@@ -659,7 +659,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		core.Preprocess(se, stmt, s.is, false)
+		core.Preprocess(se, stmt, s.is)
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
@@ -1219,7 +1219,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// If max/min contains scalar function, we can still do transformation.
 		{
 			sql:  "select max(a+1) from t;",
-			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([col_1 true],0,1)->Projection->StreamAgg",
+			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([col_1 true],0,1)->Projection->Projection->StreamAgg",
 		},
 		// Do nothing to max+min.
 		{
@@ -1339,7 +1339,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		// Index Join + Union Scan + Union All is not supported now.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
-			best: "LeftHashJoin{UnionAll{TableReader(Table(t))->TableReader(Table(t))}->UnionScan([])->UnionAll{TableReader(Table(t))->TableReader(Table(t))}->UnionScan([])}(t1.a,t2.a)",
+			best: "LeftHashJoin{UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}->UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}}(t1.a,t2.a)",
 			is:   pis,
 		},
 	}
@@ -1355,7 +1355,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		c.Assert(se.StmtCommit(), IsNil)
 		p, err := planner.Optimize(se, stmt, tt.is)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
 }
@@ -1413,4 +1413,24 @@ func (s *testPlanSuite) TestIndexLookupCartesianJoin(c *C) {
 	lastWarn := warnings[len(warnings)-1]
 	err = core.ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
 	c.Assert(terror.ErrorEqual(err, lastWarn.Err), IsTrue)
+}
+
+func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	sql := "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;"
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	p, err := planner.Optimize(se, stmt, s.is)
+	c.Assert(err, IsNil)
+	c.Assert(core.ToString(p), Equals, "Apply{TableReader(Table(t))->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(t3.d,t2.g)}->StreamAgg")
 }

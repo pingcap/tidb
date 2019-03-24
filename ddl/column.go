@@ -30,8 +30,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // adjustColumnInfoInAddColumn is used to set the correct position of column info when adding column.
@@ -177,7 +178,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		log.Infof("[ddl] add column, run DDL job %s, column info %#v, offset %d", job, columnInfo, offset)
+		logutil.Logger(ddlLogCtx).Info("[ddl] run add column job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offset))
 		// Set offset arg to job.
 		if offset != 0 {
 			job.Args = []interface{}{columnInfo, pos, offset}
@@ -380,15 +381,10 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	// }
 	// }
 
-	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) && !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
 		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-		if !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
-			return ver, nil
-		}
+		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
+		return ver, errors.Trace(err)
 	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
@@ -598,4 +594,13 @@ func findColumnInIndexCols(c *expression.Column, cols []*ast.IndexColName) bool 
 		}
 	}
 	return false
+}
+
+func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
+	for _, colInfo := range tbInfo.Cols() {
+		if colInfo.Name.L == column {
+			return colInfo
+		}
+	}
+	return nil
 }

@@ -17,16 +17,19 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/admin"
@@ -457,4 +460,44 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+}
+
+func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	gofail.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	_, err := tk.Exec("create table t (a int)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+}
+
+func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cjtt(a int)")
+
+	hook := &ddl.TestDDLCallback{}
+	once := sync.Once{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		once.Do(func() {
+			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				t := meta.NewMeta(txn)
+				return t.DropTableOrView(job.SchemaID, job.TableID, true)
+			})
+			c.Assert(err, IsNil)
+		})
+	}
+	origHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+
+	originalWT := ddl.WaitTimeWhenErrorOccured
+	ddl.WaitTimeWhenErrorOccured = 1 * time.Second
+	defer func() { ddl.WaitTimeWhenErrorOccured = originalWT }()
+	startTime := time.Now()
+	assertErrorCode(c, tk, "alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
+	sub := time.Since(startTime)
+	c.Assert(sub, Less, ddl.WaitTimeWhenErrorOccured)
 }

@@ -40,9 +40,10 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
+	"go.uber.org/zap"
 )
 
 // tableCommon is shared by both Table and partition.
@@ -109,7 +110,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		// Print some information when the column's offset isn't equal to i.
 		if colInfo.Offset != i {
-			log.Errorf("[tables] table %#v schema is wrong, no.%d col %#v, cols len %v", tblInfo, i, tblInfo.Columns[i], colsLen)
+			logutil.Logger(context.Background()).Error("wrong table schema", zap.Any("table", tblInfo), zap.Any("column", colInfo), zap.Int("index", i), zap.Int("offset", colInfo.Offset), zap.Int("columnNumber", colsLen))
 		}
 
 		col := table.ToColumn(colInfo)
@@ -353,6 +354,10 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 }
 
 func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum) error {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
 	for _, idx := range t.DeletableIndices() {
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
@@ -362,7 +367,7 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, rm, h, oldVs, idx); err != nil {
+			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, rm, h, oldVs, idx, txn); err != nil {
 				return errors.Trace(err)
 			}
 			break
@@ -503,6 +508,8 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
+	txn.SetAssertion(key, kv.None)
+
 	if !sessVars.LightningMode {
 		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
 			return 0, errors.Trace(err)
@@ -758,7 +765,10 @@ func (t *tableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = txn.Delete([]byte(t.RecordKey(h)))
+
+	key := t.RecordKey(h)
+	txn.SetAssertion(key, kv.Exist)
+	err = txn.Delete([]byte(key))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -771,18 +781,17 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
-			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, txn.StartTS(), h, rec)
+			logutil.Logger(context.Background()).Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h), zap.Any("record", rec), zap.Error(err))
 			return errors.Trace(err)
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h, txn); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
-				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), txn.StartTS(), h)
+				logutil.Logger(context.Background()).Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h))
 				continue
 			}
 			return errors.Trace(err)
@@ -791,9 +800,9 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	return nil
 }
 
-// removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	if err := idx.Delete(sc, rm, vals, h); err != nil {
+// removeRowIndex implements table.Table RemoveRowIndex interface.能
+func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
+	if err := idx.Delete(sc, rm, vals, h, txn); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -836,7 +845,7 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		return nil
 	}
 
-	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
+	logutil.Logger(context.Background()).Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
 
 	colMap := make(map[int64]*types.FieldType)
 	for _, col := range cols {
@@ -1027,7 +1036,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
 	return false
 }
 
-// canSkipUpdateBinlog checks whether the column can be skiped or not.
+// canSkipUpdateBinlog checks whether the column can be skipped or not.
 func (t *tableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
 	if col.IsGenerated() && !col.GeneratedStored {
 		return true
@@ -1189,7 +1198,7 @@ func (ctx *ctxForPartitionExpr) StmtGetMutation(int64) *binlog.TableMutation {
 }
 
 // StmtAddDirtyTableOP adds the dirty table operation for current statement.
-func (ctx *ctxForPartitionExpr) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+func (ctx *ctxForPartitionExpr) StmtAddDirtyTableOP(op int, physicalID int64, handle int64, row []types.Datum) {
 	panic("not support")
 }
 

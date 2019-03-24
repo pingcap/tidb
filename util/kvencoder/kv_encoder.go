@@ -30,7 +30,8 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var _ KvEncoder = &kvEncoder{}
@@ -224,13 +225,15 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 		return
 	}
 
+	dbName = strings.Replace(dbName, "`", "``", -1)
+
 	se.SetConnectionID(atomic.AddUint64(&mockConnID, 1))
-	_, err = se.Execute(context.Background(), fmt.Sprintf("create database if not exists %s", dbName))
+	_, err = se.Execute(context.Background(), fmt.Sprintf("create database if not exists `%s`", dbName))
 	if err != nil {
 		err = errors.Trace(err)
 		return
 	}
-	_, err = se.Execute(context.Background(), fmt.Sprintf("use %s", dbName))
+	_, err = se.Execute(context.Background(), fmt.Sprintf("use `%s`", dbName))
 	if err != nil {
 		err = errors.Trace(err)
 		return
@@ -257,7 +260,7 @@ func initGlobal() error {
 
 	if storeGlobal != nil {
 		if err1 := storeGlobal.Close(); err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			logutil.Logger(context.Background()).Error("storeGlobal close error", zap.Error(err1))
 		}
 	}
 	if domGlobal != nil {

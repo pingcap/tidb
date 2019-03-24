@@ -375,7 +375,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "query_cache_size", "1048576"},
 	{ScopeGlobal, "innodb_stats_transient_sample_pages", "8"},
 	{ScopeGlobal, "innodb_stats_on_metadata", "OFF"},
-	{ScopeNone, "server_uuid", "d530594e-1c86-11e5-878b-6b36ce6799ca"},
+	{ScopeNone, "server_uuid", "00000000-0000-0000-0000-000000000000"},
 	{ScopeNone, "open_files_limit", "5000"},
 	{ScopeGlobal | ScopeSession, "ndb_force_send", ""},
 	{ScopeNone, "skip_show_database", "OFF"},
@@ -675,14 +675,17 @@ var defaultSysVars = []*SysVar{
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
+	{ScopeSession, TiDBDDLSlowOprThreshold, strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBConfig, ""},
 	{ScopeGlobal, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
+	{ScopeGlobal, TiDBDDLErrorCountLimit, strconv.Itoa(DefTiDBDDLErrorCountLimit)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
 	{ScopeSession, TiDBCheckMb4ValueInUtf8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8)},
+	{ScopeSession, TiDBSlowQueryFile, ""},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

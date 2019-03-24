@@ -1035,6 +1035,27 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	return cmpType
 }
 
+// GetCmpFunction get the compare function according to two arguments.
+func GetCmpFunction(lhs, rhs Expression) CompareFunc {
+	switch GetAccurateCmpType(lhs, rhs) {
+	case types.ETInt:
+		return CompareInt
+	case types.ETReal:
+		return CompareReal
+	case types.ETDecimal:
+		return CompareDecimal
+	case types.ETString:
+		return CompareString
+	case types.ETDuration:
+		return CompareDuration
+	case types.ETDatetime, types.ETTimestamp:
+		return CompareTime
+	case types.ETJson:
+		return CompareJSON
+	}
+	return nil
+}
+
 // isTemporalColumn checks if a expression is a temporal column,
 // temporal column indicates time column or duration column.
 func isTemporalColumn(expr Expression) bool {

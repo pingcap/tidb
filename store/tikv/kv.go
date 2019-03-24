@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
-	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -34,7 +34,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -51,8 +52,9 @@ type Driver struct {
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   addrs,
-		DialTimeout: 5 * time.Second,
+		Endpoints:        addrs,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
 			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
@@ -242,7 +244,7 @@ func (s *tikvStore) runSafePointChecker() {
 				d = gcSafePointUpdateInterval
 			} else {
 				metrics.TiKVLoadSafepointCounter.WithLabelValues("fail").Inc()
-				log.Errorf("fail to load safepoint from pd: %v", err)
+				logutil.Logger(context.Background()).Error("fail to load safepoint from pd", zap.Error(err))
 				d = gcSafePointQuickRepeatInterval
 			}
 		case <-s.Closed():
@@ -384,7 +386,7 @@ func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	}
 	if strings.ToLower(u.Scheme) != "tikv" {
 		err = errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
-		log.Error(err)
+		logutil.Logger(context.Background()).Error("parsePath error", zap.Error(err))
 		return
 	}
 	switch strings.ToLower(u.Query().Get("disableGC")) {

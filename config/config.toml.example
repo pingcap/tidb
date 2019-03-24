@@ -48,6 +48,9 @@ lower-case-table-names = 2
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
 
+# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
+check-mb4-value-in-utf8 = true
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -59,7 +62,7 @@ format = "text"
 disable-timestamp = false
 
 # Stores slow query log into separated files.
-slow-query-file = ""
+slow-query-file = "tidb-slow.log"
 
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
@@ -271,5 +274,5 @@ ignore-error = false
 # use socket file to write binlog, for compatible with kafka version tidb-binlog.
 binlog-socket = ""
 
-# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
-check-mb4-value-in-utf8 = true
+# the strategy for sending binlog to pump, value can be "range" or "hash" now.
+strategy = "range"
