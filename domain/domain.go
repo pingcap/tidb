@@ -115,7 +115,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		logutil.Logger(context.Background()).Info("diff load InfoSchema from version failed",
 			zap.Int64("usedSchemaVersion", usedSchemaVersion),
 			zap.Int64("latestSchemaVersion", latestSchemaVersion),
-			zap.Duration("time", time.Since(startTime)),
+			zap.Duration("start time", time.Since(startTime)),
 			zap.Int64s("tblIDs", tblIDs))
 		return latestSchemaVersion, tblIDs, fullLoad, nil
 	}
@@ -342,7 +342,7 @@ func (do *Domain) Reload() error {
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
 	// some query maybe responded by ErrInfoSchemaExpired error.
 	if sub > (lease/2) && lease > 0 {
-		logutil.Logger(context.Background()).Warn("loading schema takes a long take time", zap.Duration("time", sub))
+		logutil.Logger(context.Background()).Warn("loading schema takes a long time", zap.Duration("take time", sub))
 	}
 
 	return nil

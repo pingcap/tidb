@@ -213,7 +213,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		cancel()
 		if r := recover(); r != nil {
 			buf := util.GetStack()
-			logutil.Logger(context.Background()).Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.String("buf", string(buf)))
+			logutil.Logger(context.Background()).Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.String("buffer", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
 		}
 	}()
