@@ -610,12 +610,25 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 	case types.KindNull:
 		// See #4053, #3685
 		return model.NewCIStr("NULL"), nil
-	default:
-		// Keep as it is.
-		if innerExpr.Text() != "" {
-			return model.NewCIStr(innerExpr.Text()), nil
-		}
+	case types.KindBinaryLiteral:
+		// Don't rewrite BIT literal or HEX literals
 		return model.NewCIStr(field.Text()), nil
+	case types.KindInt64:
+		// See #9683
+		// TRUE or FALSE can be a int64
+		if mysql.HasIsBooleanFlag(valueExpr.Type.Flag) {
+			if i := valueExpr.GetValue().(int64); i == 0 {
+				return model.NewCIStr("FALSE"), nil
+			}
+			return model.NewCIStr("TRUE"), nil
+		}
+		fallthrough
+
+	default:
+		fieldName := field.Text()
+		fieldName = strings.TrimLeft(fieldName, "\t\n +(")
+		fieldName = strings.TrimRight(fieldName, "\t\n )")
+		return model.NewCIStr(fieldName), nil
 	}
 }
 
@@ -2071,7 +2084,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	}
 
 	tableInfo := tbl.Meta()
-	var authErr error = nil
+	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
 		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Hostname, b.ctx.GetSessionVars().User.Username, tableInfo.Name.L)
 	}
