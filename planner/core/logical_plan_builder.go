@@ -2289,6 +2289,8 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 				}
 				// Because the expression might return different type from
 				// the generated column, we should wrap a CAST on the result.
+				// For generated column, year type value should be treated specially. See:
+				// https://github.com/pingcap/tidb/issues/9213 for details
 				if colExpr.GetType().Tp == mysql.TypeYear {
 					expr = expression.BuildCastAsYearFunction(b.ctx, expr, colExpr.GetType())
 				} else {
