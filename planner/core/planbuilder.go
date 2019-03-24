@@ -1494,23 +1494,50 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
-		b.visitInfo = append(b.visitInfo, visitInfo{
-			privilege: mysql.AlterPriv,
-			db:        v.Table.Schema.L,
-			table:     v.Table.Name.L,
-			err:       nil,
-		})
-		b.visitInfo = append(b.visitInfo, visitInfo{
-			privilege: mysql.InsertPriv,
-			db:        v.Table.Schema.L,
-			table:     v.Table.Name.L,
-			err:       nil,
-		})
-		b.visitInfo = append(b.visitInfo, visitInfo{
-			privilege: mysql.CreatePriv,
-			db:        v.Table.Schema.L,
-			err:       nil,
-		})
+		if len(v.Specs) == 1 && v.Specs[0].Tp == ast.AlterTableRenameTable {
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.AlterPriv,
+				db:        v.Table.Schema.L,
+				table:     v.Table.Name.L,
+				err:       nil,
+			})
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.DropPriv,
+				db:        v.Table.Schema.L,
+				table:     v.Table.Name.L,
+				err:       nil,
+			})
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.CreatePriv,
+				db:        v.Specs[0].NewTable.Schema.L,
+				table:     v.Specs[0].NewTable.Name.L,
+				err:       nil,
+			})
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.InsertPriv,
+				db:        v.Specs[0].NewTable.Schema.L,
+				table:     v.Specs[0].NewTable.Name.L,
+				err:       nil,
+			})
+		} else {
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.AlterPriv,
+				db:        v.Table.Schema.L,
+				table:     v.Table.Name.L,
+				err:       nil,
+			})
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.InsertPriv,
+				db:        v.Table.Schema.L,
+				table:     v.Table.Name.L,
+				err:       nil,
+			})
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.CreatePriv,
+				db:        v.Table.Schema.L,
+				err:       nil,
+			})
+		}
 	case *ast.CreateDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.CreatePriv,
