@@ -734,7 +734,9 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 		duration = 10 * time.Minute
 	}
 
+	do.wg.Add(1)
 	go func() {
+		defer do.wg.Done()
 		defer recoverInDomain("loadPrivilegeInLoop", false)
 		var count int
 		for {
@@ -791,7 +793,9 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 	}
 
 	duration := 3 * time.Second
+	do.wg.Add(1)
 	go func() {
+		defer do.wg.Done()
 		defer recoverInDomain("loadBindInfoLoop", false)
 		for {
 			select {
