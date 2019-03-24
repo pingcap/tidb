@@ -266,9 +266,8 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(2015, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(2015))
-	v, err = Convert(1800, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(0))
+	_, err = Convert(1800, ft)
+	c.Assert(err, NotNil)
 	dt, err := ParseDate(nil, "2015-11-11")
 	c.Assert(err, IsNil)
 	v, err = Convert(dt, ft)
@@ -619,9 +618,12 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeDouble, "1e+1", "10")
 
 	// year
-	signedAccept(c, mysql.TypeYear, 123, "0")
-	signedAccept(c, mysql.TypeYear, 3000, "0")
+	signedDeny(c, mysql.TypeYear, 123, "<nil>")
+	signedDeny(c, mysql.TypeYear, 3000, "<nil>")
 	signedAccept(c, mysql.TypeYear, "2000", "2000")
+	signedAccept(c, mysql.TypeYear, "abc", "0")
+	signedAccept(c, mysql.TypeYear, "00abc", "2000")
+	signedAccept(c, mysql.TypeYear, "0019", "2019")
 
 	// time from string
 	signedAccept(c, mysql.TypeDate, "2012-08-23", "2012-08-23")

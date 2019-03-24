@@ -1200,7 +1200,7 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	}
 	y, err = AdjustYear(y, adjust)
 	if err != nil {
-		y = 0
+		return invalidConv(d, target.Tp)
 	}
 	ret.SetInt64(y)
 	return ret, nil
