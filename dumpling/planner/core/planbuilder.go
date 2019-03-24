@@ -1582,7 +1582,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		}
 	case *ast.TruncateTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
-			privilege: mysql.DeletePriv,
+			privilege: mysql.DropPriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
 			err:       nil,
