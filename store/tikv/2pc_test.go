@@ -429,3 +429,31 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 	}
 	c.Assert(totalTime, Less, time.Millisecond*200)
 }
+
+func (s *testCommitterSuite) TestBatchContains(c *C) {
+	batch := batchKeys{
+		false, RegionVerID{}, [][]byte{[]byte("a"), []byte("b")},
+	}
+
+	c.Assert(batchContains(batch, []byte("a")), Equals, true)
+	c.Assert(batchContains(batch, []byte("b")), Equals, true)
+	c.Assert(batchContains(batch, []byte("c")), Equals, false)
+}
+
+func (s *testCommitterSuite) TestSplitBatches(c *C) {
+	batches := []batchKeys{
+		batchKeys{false, RegionVerID{}, [][]byte{[]byte("a")}},
+		batchKeys{false, RegionVerID{}, [][]byte{[]byte("b")}},
+		batchKeys{false, RegionVerID{}, [][]byte{[]byte("c")}},
+		batchKeys{false, RegionVerID{}, [][]byte{[]byte("d")}},
+	}
+
+	primary, others := splitBatches(batches, []byte("b"))
+	c.Assert(primary.primary, Equals, true)
+	c.Assert(primary.keys[0], BytesEquals, []byte("b"))
+
+	c.Assert(len(others), Equals, 3)
+	c.Assert(others[0].keys[0], BytesEquals, []byte("a"))
+	c.Assert(others[1].keys[0], BytesEquals, []byte("c"))
+	c.Assert(others[2].keys[0], BytesEquals, []byte("d"))
+}
