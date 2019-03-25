@@ -91,7 +91,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 		return errors.Trace(ErrCannotSetNilValue)
 	}
 	if len(k)+len(v) > m.entrySizeLimit {
-		return ErrEntryTooLarge.GenWithStack("entry too large, size: %d", len(k)+len(v))
+		return ErrEntryTooLarge.GenWithStack("entry too large, the max entry size is %d, the size of date to be inserted is %d", m.entrySizeLimit, len(k)+len(v))
 	}
 
 	err := m.db.Put(k, v)
