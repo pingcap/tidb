@@ -254,13 +254,14 @@ type TiKVClient struct {
 // Binlog is the config for binlog.
 type Binlog struct {
 	Enable       bool   `toml:"enable" json:"enable"`
-	AutoMode     bool   `toml:"auto-mode" json:"auto-mode"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
 	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
 	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	// The strategy for sending binlog to pump, value can be "range" or "hash" now.
+	Strategy string `toml:"strategy" json:"strategy"`
 }
 
 // Plugin is the config for plugin
@@ -349,6 +350,7 @@ var defaultConf = Config{
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
+		Strategy:     "range",
 	},
 }
 
