@@ -148,7 +148,7 @@ func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 		},
 	}
 	kvResp, err := t.store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
-	logutil.Logger(context.Background()).Info("get MVCC",
+	logutil.Logger(context.Background()).Info("get MVCC by encoded key",
 		zap.String("encodeKey", string(encodedKey)),
 		zap.Reflect("region", keyLocation.Region),
 		zap.String("startKey", string(keyLocation.StartKey)),
@@ -172,7 +172,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	for {
 		curRegion, err := t.regionCache.LocateKey(bo, startKey)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("get MVCC", zap.Uint64("txnStartTS", startTS), zap.Binary("startKey", startKey), zap.Error(err))
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS), zap.Binary("startKey", startKey), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 
@@ -184,7 +184,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
-		logutil.Logger(context.Background()).Info("get MVCC",
+		logutil.Logger(context.Background()).Info("get MVCC by startTS",
 			zap.Uint64("txnStartTS", startTS),
 			zap.String("startKey", string(startKey)),
 			zap.Reflect("region", curRegion.Region),
@@ -193,7 +193,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 			zap.Reflect("kvResp", kvResp))
 
 		if err != nil {
-			logutil.Logger(context.Background()).Error("get MVCC failed",
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
 				zap.String("startKey", string(startKey)),
 				zap.Reflect("region", curRegion.Region),
@@ -205,7 +205,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 		data := kvResp.MvccGetByStartTS
 		if err := data.GetRegionError(); err != nil {
-			logutil.Logger(context.Background()).Warn("get MVCC failed",
+			logutil.Logger(context.Background()).Warn("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
 				zap.String("startKey", string(startKey)),
 				zap.Reflect("region", curRegion.Region),
@@ -217,7 +217,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 
 		if len(data.GetError()) > 0 {
-			logutil.Logger(context.Background()).Error("get MVCC failed",
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
 				zap.String("startKey", string(startKey)),
 				zap.Reflect("region", curRegion.Region),
