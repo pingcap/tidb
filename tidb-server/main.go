@@ -146,10 +146,9 @@ func main() {
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
+	setupBinlogClient()
 	setupMetrics()
 	createStoreAndDomain()
-	// setupBinlogClient should run after bootstrap
-	setupBinlogClient()
 	createServer()
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()
@@ -188,7 +187,7 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
-	if !binloginfo.ShouldEnableBinlog() {
+	if !cfg.Binlog.Enable {
 		return
 	}
 
@@ -208,7 +207,7 @@ func setupBinlogClient() {
 	}
 
 	if len(cfg.Binlog.BinlogSocket) == 0 {
-		client, err = pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
+		client, err = pumpcli.NewPumpsClient(cfg.Path, cfg.Binlog.Strategy, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	} else {
 		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	}
@@ -453,7 +452,7 @@ func setGlobalVars() {
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
-	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())
+	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
 
 	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
 	variable.SysVars[variable.Socket].Value = cfg.Socket

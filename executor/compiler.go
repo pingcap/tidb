@@ -265,6 +265,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "AnalyzeTable"
 	case *ast.BeginStmt:
 		return "Begin"
+	case *ast.ChangeStmt:
+		return "Change"
 	case *ast.CommitStmt:
 		return "Commit"
 	case *ast.CreateDatabaseStmt:
