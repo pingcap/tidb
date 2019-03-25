@@ -55,7 +55,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 		err = txn.Delete(primaryKey)
 	}
 	c.Assert(err, IsNil)
-	tpc, err := newTwoPhaseCommitter(txn, 0)
+	tpc, err := newTwoPhaseCommitter(txn, 0, false)
 	c.Assert(err, IsNil)
 	tpc.keys = [][]byte{primaryKey, key}
 
@@ -198,7 +198,7 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
-	committer, err := newTwoPhaseCommitter(txn, 0)
+	committer, err := newTwoPhaseCommitter(txn, 0, false)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)

@@ -39,9 +39,10 @@ import (
 type twoPhaseCommitAction int
 
 const (
-	actionPrewrite twoPhaseCommitAction = 1
-	actionCommit   twoPhaseCommitAction = 2
-	actionCleanup  twoPhaseCommitAction = 3
+	actionPrewrite                    twoPhaseCommitAction = 1
+	actionCommit                      twoPhaseCommitAction = 2
+	actionCleanup                     twoPhaseCommitAction = 3
+	calculateCommitTsTxnDurationLimit                      = time.Second * 10
 )
 
 func (ca twoPhaseCommitAction) String() string {
@@ -84,8 +85,9 @@ type twoPhaseCommitter struct {
 	// maxTxnTimeUse represents max time a Txn may use (in ms) from its startTS to commitTS.
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
-	maxTxnTimeUse uint64
-	detail        *execdetails.CommitDetails
+	maxTxnTimeUse         uint64
+	detail                *execdetails.CommitDetails
+	useCalculatedCommitTs bool
 }
 
 type mutationEx struct {
@@ -94,7 +96,7 @@ type mutationEx struct {
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
-func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
+func newTwoPhaseCommitter(txn *tikvTxn, connID uint64, allowCalculatedCommitTs bool) (*twoPhaseCommitter, error) {
 	var (
 		keys    [][]byte
 		size    int
@@ -200,18 +202,25 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: len(keys)}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
+
+	useCalculatedCommitTs := allowCalculatedCommitTs
+	if time.Since(txn.startTime) > calculateCommitTsTxnDurationLimit {
+		useCalculatedCommitTs = false
+	}
+
 	return &twoPhaseCommitter{
-		store:         txn.store,
-		txn:           txn,
-		startTS:       txn.StartTS(),
-		keys:          keys,
-		mutations:     mutations,
-		lockTTL:       txnLockTTL(txn.startTime, size),
-		priority:      getTxnPriority(txn),
-		syncLog:       getTxnSyncLog(txn),
-		connID:        connID,
-		maxTxnTimeUse: maxTxnTimeUse,
-		detail:        commitDetail,
+		store:                 txn.store,
+		txn:                   txn,
+		startTS:               txn.StartTS(),
+		keys:                  keys,
+		mutations:             mutations,
+		lockTTL:               txnLockTTL(txn.startTime, size),
+		priority:              getTxnPriority(txn),
+		syncLog:               getTxnSyncLog(txn),
+		connID:                connID,
+		maxTxnTimeUse:         maxTxnTimeUse,
+		detail:                commitDetail,
+		useCalculatedCommitTs: useCalculatedCommitTs,
 	}, nil
 }
 
@@ -383,7 +392,7 @@ func (c *twoPhaseCommitter) keySize(key []byte) int {
 }
 
 func (c *twoPhaseCommitter) updateMaxReadTs(ts uint64) {
-	if !config.GetGlobalConfig().TiKVClient.UseCalculatedCommitTs {
+	if !c.useCalculatedCommitTs {
 		return
 	}
 	if ts == math.MaxUint64 {
@@ -698,7 +707,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 
 	start = time.Now()
 	// Here `mu` doesn't need to be locked
-	if config.GetGlobalConfig().TiKVClient.UseCalculatedCommitTs && !c.mu.isMaxReadTsInvalid {
+	if c.useCalculatedCommitTs &&
+		!c.mu.isMaxReadTsInvalid &&
+		time.Since(c.txn.startTime) <= calculateCommitTsTxnDurationLimit {
 		c.commitTS = c.mu.maxReadTs + 1
 		if c.startTS > c.mu.maxReadTs {
 			c.commitTS = c.startTS + 1

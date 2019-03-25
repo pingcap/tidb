@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"sync"
 	"time"
 
@@ -231,7 +232,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if val != nil {
 		connID = val.(uint64)
 	}
-	committer, err := newTwoPhaseCommitter(txn, connID)
+	committer, err := newTwoPhaseCommitter(txn, connID, config.GetGlobalConfig().TiKVClient.UseCalculatedCommitTs)
 	if err != nil || committer == nil {
 		return errors.Trace(err)
 	}
