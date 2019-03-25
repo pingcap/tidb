@@ -16,7 +16,6 @@ package executor
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/plugin"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
