@@ -172,7 +172,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
-	ConvertOldVersionUTF8AsUTF8MB4IfNeed(tblInfo)
+	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 
 	if alloc == nil {
 		schemaID := dbInfo.ID
@@ -197,7 +197,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	return nil
 }
 
-func ConvertOldVersionUTF8AsUTF8MB4IfNeed(tbInfo *model.TableInfo) {
+// ConvertOldVersionUTF8ToUTF8MB4IfNeed convert old version UTF8 to UTF8MB4 if config.TreatOldVersionUTF8AsUTF8MB4 is enable.
+func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
 	if !config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 || tbInfo.Version >= model.CurrLatestTableInfoVersion {
 		return
 	}

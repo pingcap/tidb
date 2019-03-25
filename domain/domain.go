@@ -181,7 +181,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 		}
 		if config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
 			for _, tbInfo := range tables {
-				infoschema.ConvertOldVersionUTF8AsUTF8MB4IfNeed(tbInfo)
+				infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo)
 			}
 		}
 		di.Tables = make([]*model.TableInfo, 0, len(tables))
