@@ -162,7 +162,6 @@ func (s *Server) handleForwardedConnection(uconn net.Conn, addr string) {
 		go func() {
 			if _, err := io.Copy(uconn, tconn); err != nil {
 				logutil.Logger(context.Background()).Warn("copy server to socket failed", zap.Error(err))
-
 			}
 		}()
 		if _, err := io.Copy(tconn, uconn); err != nil {
