@@ -950,7 +950,7 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
 	case *ast.GrantStmt:
-		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
+		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.SetPwdStmt, *ast.RevokeStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
 	case *ast.KillStmt:
@@ -970,11 +970,14 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	return p
 }
 
-func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
+func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
 	// To use GRANT, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
+	if dbName == "" {
+		dbName = sctx.GetSessionVars().CurrentDB
+	}
 	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "")
 
 	var allPrivs []mysql.PrivilegeType
