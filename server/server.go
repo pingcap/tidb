@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -127,7 +126,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	if s.cfg.Performance.TCPKeepAlive {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
-				log.Error("failed to set tcp keep alive option:", err)
+				logutil.Logger(context.Background()).Error("failed to set tcp keep alive option", zap.Error(err))
 			}
 		}
 	}
@@ -147,11 +146,11 @@ func (s *Server) forwardUnixSocketToTCP() {
 			return // server shutdown has started
 		}
 		if uconn, err := s.socket.Accept(); err == nil {
-			log.Infof("server socket forwarding from [%s] to [%s]", s.cfg.Socket, addr)
+			logutil.Logger(context.Background()).Info("server socket forwarding", zap.String("from", s.cfg.Socket), zap.String("to", addr))
 			go s.handleForwardedConnection(uconn, addr)
 		} else {
 			if s.listener != nil {
-				log.Errorf("server failed to forward from [%s] to [%s], err: %s", s.cfg.Socket, addr, err)
+				logutil.Logger(context.Background()).Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
 			}
 		}
 	}
@@ -162,14 +161,15 @@ func (s *Server) handleForwardedConnection(uconn net.Conn, addr string) {
 	if tconn, err := net.Dial("tcp", addr); err == nil {
 		go func() {
 			if _, err := io.Copy(uconn, tconn); err != nil {
-				log.Warningf("copy server to socket failed: %s", err)
+				logutil.Logger(context.Background()).Warn("copy server to socket failed", zap.Error(err))
+
 			}
 		}()
 		if _, err := io.Copy(tconn, uconn); err != nil {
-			log.Warningf("socket forward copy failed: %s", err)
+			logutil.Logger(context.Background()).Warn("socket forward copy failed", zap.Error(err))
 		}
 	} else {
-		log.Warningf("socket forward failed: could not connect to [%s], err: %s", addr, err)
+		logutil.Logger(context.Background()).Warn("socket forward failed: could not connect", zap.String("addr", addr), zap.Error(err))
 	}
 }
 
@@ -195,17 +195,17 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.cfg.Host != "" && s.cfg.Port != 0 {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
-			log.Infof("Server is running MySQL Protocol at [%s]", addr)
+			logutil.Logger(context.Background()).Info("server is running MySQL protocol", zap.String("addr", addr))
 			if cfg.Socket != "" {
 				if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {
-					log.Infof("Server redirecting [%s] to [%s]", s.cfg.Socket, addr)
+					logutil.Logger(context.Background()).Info("server redirecting", zap.String("from", s.cfg.Socket), zap.String("to", addr))
 					go s.forwardUnixSocketToTCP()
 				}
 			}
 		}
 	} else if cfg.Socket != "" {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
-			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
+			logutil.Logger(context.Background()).Info("server is running MySQL protocol", zap.String("socket", cfg.Socket))
 		}
 	} else {
 		err = errors.New("Server not configured to listen on either -socket or -host and -port")
@@ -215,10 +215,10 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		pplistener, errProxy := proxyprotocol.NewListener(s.listener, cfg.ProxyProtocol.Networks,
 			int(cfg.ProxyProtocol.HeaderTimeout))
 		if errProxy != nil {
-			log.Error("ProxyProtocol Networks parameter invalid")
+			logutil.Logger(context.Background()).Error("ProxyProtocol networks parameter invalid")
 			return nil, errors.Trace(errProxy)
 		}
-		log.Infof("Server is running MySQL Protocol (through PROXY Protocol) at [%s]", s.cfg.Host)
+		logutil.Logger(context.Background()).Info("server is running MySQL protocol (through PROXY protocol)", zap.String("host", s.cfg.Host))
 		s.listener = pplistener
 	}
 
@@ -234,13 +234,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 func (s *Server) loadTLSCertificates() {
 	defer func() {
 		if s.tlsConfig != nil {
-			log.Infof("Secure connection is enabled (client verification enabled = %v)", len(variable.SysVars["ssl_ca"].Value) > 0)
+			logutil.Logger(context.Background()).Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
 			variable.SysVars["have_openssl"].Value = "YES"
 			variable.SysVars["have_ssl"].Value = "YES"
 			variable.SysVars["ssl_cert"].Value = s.cfg.Security.SSLCert
 			variable.SysVars["ssl_key"].Value = s.cfg.Security.SSLKey
 		} else {
-			log.Warn("Secure connection is NOT ENABLED")
+			logutil.Logger(context.Background()).Warn("secure connection is not enabled")
 		}
 	}()
 
@@ -251,7 +251,7 @@ func (s *Server) loadTLSCertificates() {
 
 	tlsCert, err := tls.LoadX509KeyPair(s.cfg.Security.SSLCert, s.cfg.Security.SSLKey)
 	if err != nil {
-		log.Warn(errors.ErrorStack(err))
+		logutil.Logger(context.Background()).Warn("load x509 failed", zap.Error(err))
 		s.tlsConfig = nil
 		return
 	}
@@ -262,7 +262,7 @@ func (s *Server) loadTLSCertificates() {
 	if len(s.cfg.Security.SSLCA) > 0 {
 		caCert, err := ioutil.ReadFile(s.cfg.Security.SSLCA)
 		if err != nil {
-			log.Warn(errors.ErrorStack(err))
+			logutil.Logger(context.Background()).Warn("read file failed", zap.Error(err))
 		} else {
 			certPool = x509.NewCertPool()
 			if certPool.AppendCertsFromPEM(caCert) {
@@ -298,11 +298,11 @@ func (s *Server) Run() error {
 
 			// If we got PROXY protocol error, we should continue accept.
 			if proxyprotocol.IsProxyProtocolError(err) {
-				log.Errorf("PROXY protocol error: %s", err.Error())
+				logutil.Logger(context.Background()).Error("PROXY protocol failed", zap.Error(err))
 				continue
 			}
 
-			log.Errorf("accept error %s", err.Error())
+			logutil.Logger(context.Background()).Error("accept failed", zap.Error(err))
 			return errors.Trace(err)
 		}
 		if s.shouldStopListener() {
@@ -316,14 +316,14 @@ func (s *Server) Run() error {
 			if authPlugin.OnConnectionEvent != nil {
 				host, err := getPeerHost(conn)
 				if err != nil {
-					log.Error(err)
+					logutil.Logger(context.Background()).Error("get peer host failed", zap.Error(err))
 					terror.Log(conn.Close())
 					continue
 				}
 
 				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host})
 				if err != nil {
-					log.Info(err)
+					logutil.Logger(context.Background()).Info("do connection event failed", zap.Error(err))
 					terror.Log(conn.Close())
 					continue
 				}
@@ -337,7 +337,7 @@ func (s *Server) Run() error {
 	s.listener = nil
 	for {
 		metrics.ServerEventCounter.WithLabelValues(metrics.EventHang).Inc()
-		log.Errorf("listener stopped, waiting for manual kill.")
+		logutil.Logger(context.Background()).Error("listener stopped, waiting for manual kill.")
 		time.Sleep(time.Minute)
 	}
 }
@@ -427,7 +427,7 @@ func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
 func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
-	log.Infof("[server] Kill connectionID %d, query %t]", connectionID, query)
+	logutil.Logger(context.Background()).Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
 	conn, ok := s.clients[uint32(connectionID)]
@@ -457,7 +457,7 @@ func killConn(conn *clientConn, query bool) {
 func (s *Server) KillAllConnections() {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
-	log.Info("[server] kill all connections.")
+	logutil.Logger(context.Background()).Info("[server] kill all connections.")
 
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
@@ -491,7 +491,7 @@ func (s *Server) TryGracefulDown() {
 
 // GracefulDown waits all clients to close.
 func (s *Server) GracefulDown(ctx context.Context, done chan struct{}) {
-	log.Info("[server] graceful shutdown.")
+	logutil.Logger(ctx).Info("[server] graceful shutdown.")
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventGracefulDown).Inc()
 
 	count := s.ConnectionCount()
@@ -504,7 +504,7 @@ func (s *Server) GracefulDown(ctx context.Context, done chan struct{}) {
 		}
 		// Print information for every 30s.
 		if i%30 == 0 {
-			log.Infof("graceful shutdown...connection count %d\n", count)
+			logutil.Logger(ctx).Info("graceful shutdown...", zap.Int("conn count", count))
 		}
 		ticker := time.After(time.Second)
 		select {
@@ -530,7 +530,7 @@ func (s *Server) kickIdleConnection() {
 	for _, cc := range conns {
 		err := cc.Close()
 		if err != nil {
-			log.Errorf("close connection error: %s", err)
+			logutil.Logger(context.Background()).Error("close connection", zap.Error(err))
 		}
 	}
 }

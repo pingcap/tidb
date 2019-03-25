@@ -51,8 +51,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	logutil "github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -100,7 +101,7 @@ func writeData(w http.ResponseWriter, data interface{}) {
 		writeError(w, err)
 		return
 	}
-	log.Info(string(js))
+	logutil.Logger(context.Background()).Info(string(js))
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
@@ -147,7 +148,13 @@ func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 		},
 	}
 	kvResp, err := t.store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
-	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
+	logutil.Logger(context.Background()).Info("get MVCC",
+		zap.String("encodeKey", string(encodedKey)),
+		zap.Reflect("region", keyLocation.Region),
+		zap.String("startKey", string(keyLocation.StartKey)),
+		zap.String("endKey", string(keyLocation.EndKey)),
+		zap.Reflect("kvResp", kvResp),
+		zap.Error(err))
 
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -165,7 +172,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	for {
 		curRegion, err := t.regionCache.LocateKey(bo, startKey)
 		if err != nil {
-			log.Error(startTS, startKey, err)
+			logutil.Logger(context.Background()).Error("get MVCC", zap.Uint64("txnStartTS", startTS), zap.Binary("startKey", startKey), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 
@@ -177,19 +184,47 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
-		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
+		logutil.Logger(context.Background()).Info("get MVCC",
+			zap.Uint64("txnStartTS", startTS),
+			zap.String("startKey", string(startKey)),
+			zap.Reflect("region", curRegion.Region),
+			zap.String("curRegion startKey", string(curRegion.StartKey)),
+			zap.String("curRegion endKey", string(curRegion.EndKey)),
+			zap.Reflect("kvResp", kvResp))
+
 		if err != nil {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			logutil.Logger(context.Background()).Error("get MVCC failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.String("startKey", string(startKey)),
+				zap.Reflect("region", curRegion.Region),
+				zap.String("curRegion startKey", string(curRegion.StartKey)),
+				zap.String("curRegion endKey", string(curRegion.EndKey)),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		data := kvResp.MvccGetByStartTS
 		if err := data.GetRegionError(); err != nil {
-			log.Warn(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			logutil.Logger(context.Background()).Warn("get MVCC failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.String("startKey", string(startKey)),
+				zap.Reflect("region", curRegion.Region),
+				zap.String("curRegion startKey", string(curRegion.StartKey)),
+				zap.String("curRegion endKey", string(curRegion.EndKey)),
+				zap.Reflect("kvResp", kvResp),
+				zap.Stringer("error", err))
 			continue
 		}
 
 		if len(data.GetError()) > 0 {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), data.GetError())
+			logutil.Logger(context.Background()).Error("get MVCC failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.String("startKey", string(startKey)),
+				zap.Reflect("region", curRegion.Region),
+				zap.String("curRegion startKey", string(curRegion.StartKey)),
+				zap.String("curRegion endKey", string(curRegion.EndKey)),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", data.GetError()))
 			return nil, errors.New(data.GetError())
 		}
 
@@ -379,7 +414,7 @@ func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, er
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			log.Error(err)
+			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
 		}
 	}()
 	var regionResp storeHotRegionInfos
@@ -406,7 +441,7 @@ func (t *tikvHandlerTool) fetchRegionTableIndex(metrics map[uint64]regionMetric)
 	for regionID, regionMetric := range metrics {
 		region, err := t.regionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
 		if err != nil {
-			log.Error(err)
+			logutil.Logger(context.Background()).Error("locate region failed", zap.Error(err))
 			continue
 		}
 
