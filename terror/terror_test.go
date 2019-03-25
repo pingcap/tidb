@@ -110,7 +110,7 @@ func (s *testTErrorSuite) TestTraceAndLocation(c *C) {
 	err := example()
 	stack := errors.ErrorStack(err)
 	lines := strings.Split(stack, "\n")
-	c.Assert(len(lines), Equals, 21)
+	c.Assert(len(lines), Equals, 23)
 	var containTerr bool
 	for _, v := range lines {
 		if strings.Contains(v, "terror_test.go") {
