@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/printer"
+	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -622,7 +623,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	resp, err := http.PostForm("http://127.0.0.1:10090/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(log.GetLevel(), Equals, zap.ErrorLevel)
+	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
@@ -633,7 +634,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
-	c.Assert(log.GetLevel(), Equals, zap.InfoLevel)
+	c.Assert(log.GetLevel(), Equals, log.InfoLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.InfoLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "info")
 
@@ -689,7 +690,7 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
-	log.Fatal("Failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
+	zaplog.Fatal("Failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
 }
 
 func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
