@@ -45,7 +45,7 @@ const (
 	// KeyOnly retrieve only keys, it can be used in scan now.
 	KeyOnly
 	// PrimaryKey sets the primary key of current transaction explicitly,
-	// the first key will be choosen by default if this option is unset
+	// the first key will be chosen by default if this option is unset
 	PrimaryKey
 )
 
