@@ -207,7 +207,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		p = np
 		proj.Exprs = append(proj.Exprs, expr)
 		schema.Append(&expression.Column{
-			FromID:   p.id,
+			FromID:   p.ID(),
 			Position: schema.Len() + 1,
 			RetType:  expr.GetType(),
 		})
