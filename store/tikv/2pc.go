@@ -160,7 +160,8 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		primaryKey = keys[0]
 	} else if _, ok := mutations[string(txn.primaryKey)]; !ok {
 		primaryKey = keys[0]
-		log.Warnf("primary key is set but not used, primaryKey:%s", txn.primaryKey)
+		logutil.Logger(context.Background()).Warn("primary key is set but not used, primaryKey",
+			zap.String("primarykey", string(txn.primaryKey)))
 	} else {
 		primaryKey = txn.primaryKey
 	}
