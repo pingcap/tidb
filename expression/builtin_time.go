@@ -2441,12 +2441,34 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 
 	args[0] = WrapWithCastAsString(ctx, args[0])
-	str1, _, err := args[1].EvalString(ctx, chunk.Row{})
-	if err != nil {
-		return nil, err
+	datetimeUnits := map[string]struct{}{
+		"DAY":        {},
+		"WEEK":       {},
+		"MONTH":      {},
+		"QUARTER":    {},
+		"YEAR":       {},
+		"YEAR_MONTH": {},
+	}
+	mustBeDatetime := false
+	args[0] = WrapWithCastAsString(ctx, args[0])
+	if _, isCon := args[0].(*Constant); isCon {
+		unit, _, err1 := args[0].EvalString(ctx, chunk.Row{})
+		if err1 != nil {
+			return nil, err1
+		}
+		_, mustBeDatetime = datetimeUnits[unit]
 	}
 
-	if isDuration(str1) {
+	isDur := false
+	if !mustBeDatetime {
+		str1, _, err := args[1].EvalString(ctx, chunk.Row{})
+		if err != nil {
+			return nil, err
+		}
+		isDur = isDuration(str1)
+	}
+
+	if isDur {
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETDuration)
 		sig = &builtinExtractDurationSig{bf}
 	} else {
