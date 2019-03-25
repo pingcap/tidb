@@ -205,7 +205,7 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 	}
 
 	switch {
-	case n < math.MaxInt64:
+	case n <= math.MaxInt64:
 		lval.item = int64(n)
 	default:
 		lval.item = n
