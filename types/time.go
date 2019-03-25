@@ -150,13 +150,11 @@ var (
 	}
 )
 
-var (
+const (
 	// GoDurationDay is the gotime.Duration which equals to a Day.
 	GoDurationDay = gotime.Hour * 24
 	// GoDurationWeek is the gotime.Duration which equals to a Week.
 	GoDurationWeek = GoDurationDay * 7
-	// GoDurationMonth is the gotime.Duration which equals to a Month.
-	GoDurationMonth = GoDurationDay * 30
 )
 
 // FromGoTime translates time.Time to mysql time internal representation.
@@ -1917,7 +1915,7 @@ func extractSingleDurationValue(unit string, format string) (Duration, error) {
 	}
 	iv := int64(math.Round(fv))
 
-	switch strings.ToUpper(unit) {
+	switch unit {
 	case "MICROSECOND":
 		return Duration{Duration: gotime.Duration(fv * float64(gotime.Microsecond)), Fsp: MaxFsp}, nil
 	case "SECOND":
