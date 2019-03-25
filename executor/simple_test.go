@@ -129,10 +129,6 @@ func (s *testSuite3) TestRole(c *C) {
 	result = tk.MustQuery(`SELECT TO_USER FROM mysql.role_edges WHERE FROM_USER="r_1" and FROM_HOST="localhost"`)
 	result.Check(testkit.Rows("r_2"))
 
-	grantRoleSQL = `GRANT 'r_1'@'localhost' TO 'r_3'@'localhost';`
-	_, err = tk.Exec(grantRoleSQL)
-	c.Check(err, NotNil)
-
 	grantRoleSQL = `GRANT 'r_1'@'localhost' TO 'r_3'@'localhost', 'r_4'@'localhost';`
 	_, err = tk.Exec(grantRoleSQL)
 	c.Check(err, NotNil)
