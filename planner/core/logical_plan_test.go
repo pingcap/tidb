@@ -1666,6 +1666,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.InsertPriv, "test", "t_new", "", nil},
 			},
 		},
+		{
+			sql: "alter table t drop partition p0;",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil},
+			},
+		},
 	}
 
 	for _, tt := range tests {

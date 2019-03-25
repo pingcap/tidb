@@ -1519,6 +1519,13 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 				table:     v.Specs[0].NewTable.Name.L,
 				err:       nil,
 			})
+		} else if len(v.Specs) == 1 && v.Specs[0].Tp == ast.AlterTableDropPartition {
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.DropPriv,
+				db:        v.Table.Schema.L,
+				table:     v.Table.Name.L,
+				err:       nil,
+			})
 		} else {
 			b.visitInfo = append(b.visitInfo, visitInfo{
 				privilege: mysql.InsertPriv,
