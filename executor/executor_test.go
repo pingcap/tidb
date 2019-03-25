@@ -3435,3 +3435,16 @@ func (s *testSuite) TestRowID(c *C) {
 	tk.MustExec(`insert into t values('a')`)
 	tk.MustQuery("select *, _tidb_rowid from t use index(`primary`) where _tidb_rowid=1").Check(testkit.Rows("a 1"))
 }
+
+func (s *testSuite) TestDoSubquery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int)`)
+	_, err := tk.Exec(`do 1 in (select * from t)`)
+	c.Assert(err, IsNil, Commentf("err %v", err))
+	tk.MustExec(`insert into t values(1)`)
+	r, err := tk.Exec(`do 1 in (select * from t)`)
+	c.Assert(err, IsNil, Commentf("err %v", err))
+	c.Assert(r, IsNil, Commentf("result of Do not empty"))
+}
