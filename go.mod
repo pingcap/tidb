@@ -44,7 +44,7 @@ require (
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
-	github.com/pingcap/errors v0.11.0
+	github.com/pingcap/errors v0.11.1
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20190226063853-f6c0b7ffff11
