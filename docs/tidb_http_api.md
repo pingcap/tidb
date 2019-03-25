@@ -377,4 +377,17 @@ timezone.*
     curl http://{TiDBIP}:10080/ddl/history?limit={number}
     ```
 
-    **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
+    **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.` 
+
+1. Download TiDB debug info
+
+    ```shell
+    curl http://{TiDBIP}:10080/debug/zip
+    ```
+    zip file will include:
+    
+    - Go heap pprof(after GC)
+    - Go cpu pprof(10s)
+    - Go mutex pprof
+    - Full goroutine
+    - TiDB config and version
