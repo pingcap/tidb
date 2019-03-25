@@ -18,6 +18,7 @@
 package table
 
 import (
+	"context"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -34,8 +35,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // Column provides meta data describing a table column.
@@ -139,7 +141,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 		if err != nil {
 			if sc.DupKeyAsWarning {
 				sc.AppendWarning(err)
-				log.Warnf("cast values failed:%v", err)
+				logutil.Logger(context.Background()).Warn("CastValues failed", zap.Error(err))
 			} else {
 				return errors.Trace(err)
 			}
@@ -152,7 +154,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	err := ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-	log.Errorf("con:%d %v", ctx.GetSessionVars().ConnectionID, err)
+	logutil.Logger(context.Background()).Error("incorrect UTF-8 value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	// Truncate to valid utf8 string.
 	truncateVal := types.NewStringDatum(str[:i])
 	err = sc.HandleTruncate(err)

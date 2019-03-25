@@ -1515,6 +1515,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%r');")
+	result.Check(testkit.Rows("12:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('25:00:00', '%r');")
+	result.Check(testkit.Rows("01:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%l %p');")
+	result.Check(testkit.Rows("12 AM"))
 
 	// for date_format
 	result = tk.MustQuery(`SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');`)
@@ -2408,6 +2414,20 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", likeTests)
+
+	// for #9838
+	result = tk.MustQuery("select cast(1 as signed) + cast(9223372036854775807 as unsigned);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast(9223372036854775807 as unsigned) + cast(1 as signed);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	err = tk.QueryToErr("select cast(9223372036854775807 as signed) + cast(9223372036854775809 as unsigned);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(9223372036854775809 as unsigned) + cast(9223372036854775807 as signed);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(-9223372036854775807 as signed) + cast(9223372036854775806 as unsigned);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);")
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {

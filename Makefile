@@ -61,7 +61,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy check-static
+check: fmt errcheck lint tidy check-static vet
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -100,7 +100,7 @@ lint:tools/bin/revive
 
 vet:
 	@echo "vet"
-	$(GO) vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
+	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
 tidy:
 	@echo "go mod tidy"
