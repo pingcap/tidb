@@ -18,7 +18,9 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
@@ -170,6 +172,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
+	ConvertOldVersionUTF8AsUTF8MB4IfNeed(tblInfo)
+
 	if alloc == nil {
 		schemaID := dbInfo.ID
 		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
@@ -191,6 +195,22 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
 	}
 	return nil
+}
+
+func ConvertOldVersionUTF8AsUTF8MB4IfNeed(tbInfo *model.TableInfo) {
+	if !config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 || tbInfo.Version >= model.CurrLatestTableInfoVersion {
+		return
+	}
+	if tbInfo.Charset == charset.CharsetUTF8 {
+		tbInfo.Charset = charset.CharsetUTF8MB4
+		tbInfo.Collate = charset.CollationUTF8MB4
+	}
+	for _, col := range tbInfo.Columns {
+		if col.Version < model.CurrLatestColumnInfoVersion && col.Charset == charset.CharsetUTF8 {
+			col.Charset = charset.CharsetUTF8MB4
+			col.Collate = charset.CollationUTF8MB4
+		}
+	}
 }
 
 func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64) {

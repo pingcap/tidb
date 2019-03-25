@@ -1319,7 +1319,7 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		c.Assert(err, IsNil)
 	}
 	updateTableInfo(tblInfo)
-	s.tk.MustExec("alter table t add column c varchar(10) character set utf8;") //  load latest schema.
+	s.tk.MustExec("alter table t add column c varchar(10) character set utf8;") // load latest schema.
 	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsTrue)
 	s.tk.MustExec("insert into t set a= x'f09f8c80'")
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1330,11 +1330,11 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 
 	s.tk.MustExec("set @@tidb_treat_old_version_utf8_as_utf8mb4=0")
 	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsFalse)
+	s.tk.MustExec("alter table t drop column c;") //  reload schema.
 	assertErrorCode(c, s.tk, "insert into t set a= x'f09f8c80'", mysql.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
-		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,\n" +
-		"  `c` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Mock old version table info with table and column charset is utf8.
@@ -1346,17 +1346,19 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
 	updateTableInfo(tblInfo)
 
-	s.tk.MustExec("alter table t drop column c;") //  load latest schema.
 	s.tk.MustExec("set @@tidb_treat_old_version_utf8_as_utf8mb4=1")
 	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsTrue)
+	s.tk.MustExec("alter table t add column c varchar(10);") //  load latest schema.
 	s.tk.MustExec("insert into t set a= x'f09f8c80'")
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(10) DEFAULT NULL,\n" +
-		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
+		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,\n" +
+		"  `c` varchar(10) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	s.tk.MustExec("set @@tidb_treat_old_version_utf8_as_utf8mb4=0")
 	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsFalse)
+	s.tk.MustExec("alter table t drop column c;") //  reload schema.
 	assertErrorCode(c, s.tk, "insert into t set a= x'f09f8c80'", mysql.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(10) DEFAULT NULL,\n" +
@@ -1376,9 +1378,8 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		"  `a` varchar(10) DEFAULT NULL,\n" +
 		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
 	// Test for change column should not modify the column version.
-	s.tk.MustExec("alter table t change column a a varchar(20)") //  change column .
+	s.tk.MustExec("alter table t change column a a varchar(20)") //  change column.
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
 	c.Assert(tbl.Meta().Columns[0].Charset, Equals, charset.CharsetUTF8MB4)
 	c.Assert(tbl.Meta().Columns[0].Collate, Equals, charset.CollationUTF8MB4)
@@ -1395,7 +1396,7 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 	tblInfo.Columns[0].Collate = charset.CollationUTF8
 	updateTableInfo(tblInfo)
 	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsTrue)
-	s.tk.MustExec("alter table t change column b b varchar(20)") // load latest column.
+	s.tk.MustExec("alter table t change column b b varchar(20) character set ascii") // reload schema.
 	s.tk.MustExec("insert into t set a= x'f09f8c80'")
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(20) DEFAULT NULL,\n" +
@@ -1404,9 +1405,10 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 
 	s.tk.MustExec("set @@tidb_treat_old_version_utf8_as_utf8mb4=0")
 	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsFalse)
+	s.tk.MustExec("alter table t change column b b varchar(30) character set ascii") // reload schema.
 	assertErrorCode(c, s.tk, "insert into t set a= x'f09f8c80'", mysql.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(20) DEFAULT NULL,\n" +
-		"  `b` varchar(20) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
+		"  `b` varchar(30) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 }

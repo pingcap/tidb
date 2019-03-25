@@ -179,6 +179,11 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 			done <- err
 			return
 		}
+		if config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
+			for _, tbInfo := range tables {
+				infoschema.ConvertOldVersionUTF8AsUTF8MB4IfNeed(tbInfo)
+			}
+		}
 		di.Tables = make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
 			if tbl.State != model.StatePublic {
