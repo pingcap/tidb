@@ -23,6 +23,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -35,12 +36,14 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -127,6 +130,7 @@ func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
+	a.stmt.logAudit()
 	return errors.Trace(err)
 }
 
@@ -286,13 +290,14 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		txnTS := uint64(0)
 		// Don't active pending txn here.
 		if txn, err1 := sctx.Txn(false); err1 != nil {
-			log.Error(err1)
+			logutil.Logger(ctx).Error("get current transaction failed", zap.Error(err))
 		} else {
 			if txn.Valid() {
 				txnTS = txn.StartTS()
 			}
 		}
 		a.LogSlowQuery(txnTS, err == nil)
+		a.logAudit()
 	}()
 
 	err = e.Next(ctx, chunk.NewRecordBatch(e.newFirstChunk()))
@@ -313,7 +318,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			return nil, errors.Trace(err)
 		}
 		if isPointGet {
-			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			logutil.Logger(context.Background()).Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else if ctx.GetSessionVars().SnapshotTS != 0 {
 			if _, ok := a.Plan.(*plannercore.CheckTable); ok {
@@ -360,23 +365,41 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 // QueryReplacer replaces new line and tab for grep result including query string.
 var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
 
+func (a *ExecStmt) logAudit() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.InRestrictedSQL {
+		return
+	}
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		audit := plugin.DeclareAuditManifest(p.Manifest)
+		if audit.OnGeneralEvent != nil {
+			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
+			audit.OnGeneralEvent(context.Background(), sessVars, plugin.Log, cmd)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Error("log audit log failure", zap.Error(err))
+	}
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
+	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
-	if level < log.WarnLevel {
+	if level > zapcore.WarnLevel {
 		return
 	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	if costTime < threshold && level < log.DebugLevel {
+	if costTime < threshold && level > zapcore.DebugLevel {
 		return
 	}
 	sql := a.Text
 	if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(len(sql)) > maxQueryLen {
 		sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, len(a.Text))
 	}
-	sessVars := a.Ctx.GetSessionVars()
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
 
 	var tableIDs, indexIDs string
@@ -388,9 +411,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
-		logutil.SlowQueryLogger.Debugf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, sql))
+		_, digest := sessVars.StmtCtx.SQLDigest()
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
 	} else {
-		logutil.SlowQueryLogger.Warnf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, sql))
+		_, digest := sessVars.StmtCtx.SQLDigest()
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -400,6 +425,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
+			Digest:   digest,
 			Start:    a.StartTime,
 			Duration: costTime,
 			Detail:   sessVars.StmtCtx.GetExecDetails(),

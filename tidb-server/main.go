@@ -100,7 +100,7 @@ var (
 	port             = flag.String(nmPort, "4000", "tidb server port")
 	cors             = flag.String(nmCors, "", "tidb server allow cors origin")
 	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
-	enableBinlog     = flag.String(nmEnableBinlog, "auto", "enable generate binlog")
+	enableBinlog     = flagBoolean(nmEnableBinlog, false, "enable generate binlog")
 	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
@@ -146,10 +146,9 @@ func main() {
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
+	setupBinlogClient()
 	setupMetrics()
 	createStoreAndDomain()
-	// setupBinlogClient should run after bootstrap
-	setupBinlogClient()
 	createServer()
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()
@@ -188,7 +187,7 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
-	if !binloginfo.ShouldEnableBinlog() {
+	if !cfg.Binlog.Enable {
 		return
 	}
 
@@ -208,7 +207,7 @@ func setupBinlogClient() {
 	}
 
 	if len(cfg.Binlog.BinlogSocket) == 0 {
-		client, err = pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
+		client, err = pumpcli.NewPumpsClient(cfg.Path, cfg.Binlog.Strategy, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	} else {
 		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	}
@@ -453,7 +452,7 @@ func setGlobalVars() {
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
-	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())
+	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
 
 	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
 	variable.SysVars[variable.Socket].Value = cfg.Socket

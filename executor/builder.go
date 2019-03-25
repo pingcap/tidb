@@ -66,10 +66,19 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *execu
 	}
 }
 
+// MockPhysicalPlan is used to return a specified executor in when build.
+// It is mainly used for testing.
+type MockPhysicalPlan interface {
+	plannercore.PhysicalPlan
+	GetExecutor() Executor
+}
+
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	switch v := p.(type) {
 	case nil:
 		return nil
+	case *plannercore.Change:
+		return b.buildChange(v)
 	case *plannercore.CheckTable:
 		return b.buildCheckTable(v)
 	case *plannercore.CheckIndex:
@@ -171,6 +180,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
 	default:
+		if mp, ok := p.(MockPhysicalPlan); ok {
+			return mp.GetExecutor()
+		}
+
 		b.err = ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
 	}
@@ -193,6 +206,12 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		return nil
 	}
 	return e
+}
+
+func (b *executorBuilder) buildChange(v *plannercore.Change) Executor {
+	return &ChangeExec{
+		ChangeStmt: v.ChangeStmt,
+	}
 }
 
 func (b *executorBuilder) buildShowNextRowID(v *plannercore.ShowNextRowID) Executor {
@@ -834,6 +853,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			leftExec.retTypes(),
 			rightExec.retTypes(),
 		),
+		isOuterJoin: v.JoinType.IsOuterJoin(),
 	}
 
 	leftKeys := v.LeftKeys
@@ -901,6 +921,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
+		isOuterJoin:  v.JoinType.IsOuterJoin(),
 		innerIdx:     v.InnerChildIdx,
 	}
 
@@ -1540,6 +1561,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,

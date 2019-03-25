@@ -581,7 +581,7 @@ Sort_13	2.00	root	a:asc
     └─HashAgg_26	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
       └─Projection_27	1.00	root	1
         └─TableDual_28	1.00	root	rows:1
-explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a)
+explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a);
 id	count	task	operator info
 HashAgg_15	2.00	root	group by:a, funcs:firstrow(join_agg_0)
 └─Union_16	2.00	root	
@@ -591,3 +591,11 @@ HashAgg_15	2.00	root	group by:a, funcs:firstrow(join_agg_0)
   └─StreamAgg_26	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
     └─Projection_31	1.00	root	1
       └─TableDual_32	1.00	root	rows:1
+create table t (i int key, j int, unique key (i, j));
+begin;
+insert into t values (1, 1);
+explain update t set j = -j where i = 1 and j = 1;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:t, index:i j
+rollback;
+drop table if exists t;

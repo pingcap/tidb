@@ -15,6 +15,7 @@ package types
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -27,12 +28,13 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // Portable analogs of some common call errors.
 var (
 	ErrInvalidTimeFormat      = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
+	ErrInvalidWeekModeFormat  = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid week mode format: '%v'")
 	ErrInvalidYearFormat      = errors.New("invalid year format")
 	ErrInvalidYear            = errors.New("invalid year")
 	ErrZeroDate               = errors.New("datetime zero in date")
@@ -262,7 +264,7 @@ func (t Time) ToNumber() *MyDecimal {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		log.Error("Fatal: never happen because we've control the format!")
+		logutil.Logger(context.Background()).Error("[fatal] never happen because we've control the format!")
 	}
 
 	if t.Fsp > 0 {
@@ -1919,14 +1921,14 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		fmt.Fprintf(buf, "%d", t.Time.Hour())
 	case 'h', 'I':
 		t := t.Time.Hour()
-		if t == 0 || t == 12 {
+		if t%12 == 0 {
 			fmt.Fprintf(buf, "%02d", 12)
 		} else {
 			fmt.Fprintf(buf, "%02d", t%12)
 		}
 	case 'l':
 		t := t.Time.Hour()
-		if t == 0 || t == 12 {
+		if t%12 == 0 {
 			fmt.Fprintf(buf, "%d", 12)
 		} else {
 			fmt.Fprintf(buf, "%d", t%12)
@@ -1942,6 +1944,7 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		}
 	case 'r':
 		h := t.Time.Hour()
+		h %= 24
 		switch {
 		case h == 0:
 			fmt.Fprintf(buf, "%02d:%02d:%02d AM", 12, t.Time.Minute(), t.Time.Second())
@@ -2046,6 +2049,9 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 		_ = yearOfDay
 	}
 	if valueAMorPm, ok := ctx["%p"]; ok {
+		if _, ok := ctx["%H"]; ok {
+			return ErrInvalidTimeFormat.GenWithStackByArgs(t)
+		}
 		if t.hour == 0 {
 			return ErrInvalidTimeFormat.GenWithStackByArgs(t)
 		}
@@ -2156,8 +2162,8 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%e": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%f": microSeconds,          // Microseconds (000000..999999)
 	"%h": hour24TwoDigits,       // Hour (01..12)
-	"%H": hour24TwoDigits,       // Hour (01..12)
-	"%I": hour24TwoDigits,       // Hour (01..12)
+	"%H": hour24Numeric,         // Hour (00..23)
+	"%I": hour12Numeric,         // Hour (01..12)
 	"%i": minutesNumeric,        // Minutes, numeric (00..59)
 	"%j": dayOfYearThreeDigits,  // Day of year (001..366)
 	"%k": hour24Numeric,         // Hour (0..23)
@@ -2187,28 +2193,6 @@ var dateFormatParserTable = map[string]dateFormatParser{
 
 // GetFormatType checks the type(Duration, Date or Datetime) of a format string.
 func GetFormatType(format string) (isDuration, isDate bool) {
-	durationTokens := map[string]struct{}{
-		"%h": {},
-		"%H": {},
-		"%i": {},
-		"%I": {},
-		"%s": {},
-		"%S": {},
-		"%k": {},
-		"%l": {},
-	}
-	dateTokens := map[string]struct{}{
-		"%y": {},
-		"%Y": {},
-		"%m": {},
-		"%M": {},
-		"%c": {},
-		"%b": {},
-		"%D": {},
-		"%d": {},
-		"%e": {},
-	}
-
 	format = skipWhiteSpace(format)
 	var token string
 	var succ bool
@@ -2221,9 +2205,19 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 			isDuration, isDate = false, false
 			break
 		}
-		if _, ok := durationTokens[token]; ok {
+		var durationTokens bool
+		var dateTokens bool
+		if len(token) >= 2 && token[0] == '%' {
+			switch token[1] {
+			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l':
+				durationTokens = true
+			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
+				dateTokens = true
+			}
+		}
+		if durationTokens {
 			isDuration = true
-		} else if _, ok := dateTokens[token]; ok {
+		} else if dateTokens {
 			isDate = true
 		}
 		if isDuration && isDate {
@@ -2266,21 +2260,27 @@ func hour24TwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bo
 }
 
 func secondsNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 2)
+	result := oneOrTwoDigitRegex.FindString(input)
+	length := len(result)
+
+	v, succ := parseDigits(input, length)
 	if !succ || v >= 60 {
 		return input, false
 	}
 	t.second = uint8(v)
-	return input[2:], true
+	return input[length:], true
 }
 
 func minutesNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 2)
+	result := oneOrTwoDigitRegex.FindString(input)
+	length := len(result)
+
+	v, succ := parseDigits(input, length)
 	if !succ || v >= 60 {
 		return input, false
 	}
 	t.minute = uint8(v)
-	return input[2:], true
+	return input[length:], true
 }
 
 const time12HourLen = len("hh:mm:ssAM")
@@ -2377,6 +2377,9 @@ var oneOrTwoDigitRegex = regexp.MustCompile("^[0-9]{1,2}")
 // twoDigitRegex: it was just for two digit number string. Ex: "01" or "12"
 var twoDigitRegex = regexp.MustCompile("^[1-9][0-9]?")
 
+// oneToSixDigitRegex: it was just for [0, 999999]
+var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{0,6}")
+
 // parseTwoNumeric is used for pattens 0..31 0..24 0..60 and so on.
 // It returns the parsed int, and remain data after parse.
 func parseTwoNumeric(input string) (int, string) {
@@ -2419,6 +2422,7 @@ func hour24Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 		return input, false
 	}
 	t.hour = v
+	ctx["%H"] = v
 	return input[length:], true
 }
 
@@ -2436,15 +2440,23 @@ func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 }
 
 func microSeconds(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	if len(input) < 6 {
+	result := oneToSixDigitRegex.FindString(input)
+	length := len(result)
+	if length == 0 {
+		t.microsecond = 0
+		return input, true
+	}
+
+	v, ok := parseDigits(input, length)
+
+	if !ok {
 		return input, false
 	}
-	v, err := strconv.ParseUint(input[:6], 10, 64)
-	if err != nil {
-		return input, false
+	for v > 0 && v*10 < 1000000 {
+		v *= 10
 	}
 	t.microsecond = uint32(v)
-	return input[6:], true
+	return input[length:], true
 }
 
 func yearNumericFourDigits(t *MysqlTime, input string, ctx map[string]int) (string, bool) {

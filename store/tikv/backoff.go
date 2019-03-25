@@ -22,11 +22,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -64,7 +67,9 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
 		case DecorrJitter:
 			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
 		}
-		log.Debugf("backoff base %d, sleep %d", base, sleep)
+		logutil.Logger(context.Background()).Debug("backoff",
+			zap.Int("base", base),
+			zap.Int("sleep", sleep))
 		select {
 		case <-time.After(time.Duration(sleep) * time.Millisecond):
 		case <-ctx.Done():
@@ -209,7 +214,7 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	if strings.Contains(err.Error(), mismatchClusterID) {
-		log.Fatalf("critical error %v", err)
+		logutil.Logger(context.Background()).Fatal("critical error", zap.Error(err))
 	}
 	select {
 	case <-b.ctx.Done():
@@ -231,22 +236,27 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.totalSleep += f(b.ctx)
 	b.types = append(b.types, typ)
 
-	var startTs interface{} = ""
+	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
 		startTs = ts
 	}
-	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms), type: %s, txn_start_ts: %v", err, b.totalSleep, b.maxSleep, typ.String(), startTs)
+	logutil.Logger(context.Background()).Debug("retry later",
+		zap.Error(err),
+		zap.Int("totalSleep", b.totalSleep),
+		zap.Int("maxSleep", b.maxSleep),
+		zap.Stringer("type", typ),
+		zap.Reflect("txnStartTS", startTs))
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
 		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
-			if log.GetLevel() == log.DebugLevel || i >= len(b.errors)-3 {
+			if log.GetLevel() == zapcore.DebugLevel || i >= len(b.errors)-3 {
 				errMsg += "\n" + err.Error()
 			}
 		}
-		log.Warn(errMsg)
+		logutil.Logger(context.Background()).Warn(errMsg)
 		// Use the first backoff type to generate a MySQL error.
 		return b.types[0].TError()
 	}

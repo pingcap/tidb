@@ -48,6 +48,9 @@ lower-case-table-names = 2
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
 
+# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
+check-mb4-value-in-utf8 = true
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -258,9 +261,8 @@ enabled = true
 capacity = 2048000
 
 [binlog]
-# Enable to write binlog. Values can be "on", "off" or "auto".
-# If value is "auto", will enable binlog according to the system variables 'tidb_log_bin'.
-enable = "auto"
+# enable to write binlog.
+enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
 write-timeout = "15s"
@@ -272,5 +274,5 @@ ignore-error = false
 # use socket file to write binlog, for compatible with kafka version tidb-binlog.
 binlog-socket = ""
 
-# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
-check-mb4-value-in-utf8 = true
+# the strategy for sending binlog to pump, value can be "range" or "hash" now.
+strategy = "range"
