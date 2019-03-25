@@ -75,7 +75,7 @@ type Statement interface {
 	IsPrepared() bool
 
 	// IsReadOnly returns if the statement is read only. For example: SelectStmt without lock.
-	IsReadOnly(vars *variable.SessionVars) (bool, error)
+	IsReadOnly(vars *variable.SessionVars) bool
 
 	// RebuildPlan rebuilds the plan of the statement.
 	RebuildPlan() (schemaVersion int64, err error)
