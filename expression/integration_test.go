@@ -4052,3 +4052,11 @@ func (s *testIntegrationSuite) TestIssue9325(c *C) {
 	result = tk.MustQuery("select * from t where a < timestamp'2019-02-16 14:21:00'")
 	result.Check(testkit.Rows("2019-02-16 14:19:59", "2019-02-16 14:20:01"))
 }
+
+func (s *testIntegrationSuite) TestIssue9710(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	for i := 0; i < 40; i++ {
+		tk.MustQuery("select unix_timestamp()-unix_timestamp(now())").Check(testkit.Rows("0"))
+		time.Sleep(time.Second / 20)
+	}
+}
