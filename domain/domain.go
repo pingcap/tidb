@@ -179,6 +179,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 			done <- err
 			return
 		}
+		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
 		if config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
 			for _, tbInfo := range tables {
 				infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo)
