@@ -302,7 +302,7 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 
 	// begin a transaction to insert role graph edges.
 	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	for _, user := range s.Users {
@@ -311,17 +311,17 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 				failedUsers = append(failedUsers, user.String())
 				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
-					return errors.Trace(err)
+					return err
 				}
 				return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
 			}
 		}
 	}
 	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
-	return errors.Trace(err)
+	return err
 }
 
 func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
