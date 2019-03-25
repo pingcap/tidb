@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
@@ -180,6 +181,9 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 		return errors.Trace(err)
 	}
 
+	sessVars := e.ctx.GetSessionVars()
+	batchDML := config.GetGlobalConfig().EnableBatchDML
+	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || batchDML
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	for i, list := range e.Lists {
 		e.rowCount++
@@ -188,6 +192,15 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 			return errors.Trace(err)
 		}
 		rows = append(rows, row)
+		if batchInsert {
+			if err := exec(rows); err != nil {
+				return errors.Trace(err)
+			}
+			if err := batchDMLIfNeeded(e.ctx, int(e.rowCount)); err != nil {
+				return errors.Trace(err)
+			}
+			rows = rows[:0]
+		}
 	}
 	return errors.Trace(exec(rows))
 }
@@ -289,8 +302,8 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
-	batchSize := sessVars.DMLBatchSize
+	batchDML := config.GetGlobalConfig().EnableBatchDML
+	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || batchDML
 
 	for {
 		err := selectExec.Next(ctx, chk)
@@ -309,18 +322,14 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 				return errors.Trace(err)
 			}
 			rows = append(rows, row)
-			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
+			if batchInsert {
 				if err := exec(rows); err != nil {
 					return errors.Trace(err)
 				}
-				if err := e.ctx.StmtCommit(); err != nil {
+				if err := batchDMLIfNeeded(e.ctx, int(e.rowCount)); err != nil {
 					return errors.Trace(err)
 				}
 				rows = rows[:0]
-				if err := e.ctx.NewTxn(); err != nil {
-					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
-				}
 				if !sessVars.LightningMode {
 					txn, err := e.ctx.Txn(true)
 					if err != nil {

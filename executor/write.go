@@ -190,3 +190,17 @@ func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int
 	}
 	panic("Couldn't get column information when do update/delete")
 }
+
+func batchDMLIfNeeded(ctx sessionctx.Context, count int) error {
+	if count%ctx.GetSessionVars().DMLBatchSize == 0 && count != 0 {
+		if err := ctx.StmtCommit(); err != nil {
+			return ErrBatchDMLFail.GenWithStackByArgs(err)
+		}
+		ctx.GetSessionVars().TxnCtx.IsBatched = true
+		if err := ctx.NewTxn(); err != nil {
+			return ErrBatchDMLFail.GenWithStackByArgs(err)
+		}
+		ctx.GetSessionVars().TxnCtx.IsBatched = true
+	}
+	return nil
+}

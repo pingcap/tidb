@@ -96,7 +96,7 @@ type TransactionContext struct {
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
-	Histroy       interface{}
+	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
@@ -105,6 +105,8 @@ type TransactionContext struct {
 	// For metrics.
 	CreateTime     time.Time
 	StatementCount int
+
+	IsBatched bool
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -129,7 +131,7 @@ func (tc *TransactionContext) Cleanup() {
 	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
 	tc.DirtyDB = nil
 	tc.Binlog = nil
-	tc.Histroy = nil
+	tc.History = nil
 	tc.TableDeltaMap = nil
 }
 

@@ -103,7 +103,7 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txnCtx.Histroy != nil {
+	if txnCtx.History != nil {
 		err := e.ctx.NewTxn()
 		if err != nil {
 			return errors.Trace(err)
