@@ -55,8 +55,8 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 	if e.cursor >= len(e.rows) {
 		return nil, nil
 	}
-	if config.GetGlobalConfig().EnableBatchDML {
-		if err = batchDMLIfNeeded(e.ctx, e.cursor); err != nil {
+	if config.GetGlobalConfig().EnableBatchDML && e.cursor%e.ctx.GetSessionVars().DMLBatchSize == 0 && e.cursor != 0 {
+		if err = batchDMLCommit(e.ctx); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}

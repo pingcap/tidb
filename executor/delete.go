@@ -92,9 +92,9 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		break
 	}
 
+	sessVars := e.ctx.GetSessionVars()
 	// If tidb_batch_delete or enable-batch-dml is ON and not in a transaction, we could use BatchDelete mode.
-	batchDML := config.GetGlobalConfig().EnableBatchDML
-	batchDelete := (e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()) || batchDML
+	batchDelete := (sessVars.BatchDelete && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 	fields := e.children[0].retTypes()
 	chk := e.children[0].newFirstChunk()
 	for {
@@ -109,8 +109,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
-			if batchDelete {
-				if err := batchDMLIfNeeded(e.ctx, rowCount); err != nil {
+			if batchDelete && rowCount%sessVars.DMLBatchSize == 0 && rowCount != 0 {
+				if err := batchDMLCommit(e.ctx); err != nil {
 					return errors.Trace(err)
 				}
 			}

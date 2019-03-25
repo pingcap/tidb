@@ -182,8 +182,7 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 	}
 
 	sessVars := e.ctx.GetSessionVars()
-	batchDML := config.GetGlobalConfig().EnableBatchDML
-	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || batchDML
+	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	for i, list := range e.Lists {
 		e.rowCount++
@@ -192,11 +191,11 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 			return errors.Trace(err)
 		}
 		rows = append(rows, row)
-		if batchInsert {
+		if batchInsert && int(e.rowCount)%sessVars.DMLBatchSize == 0 {
 			if err := exec(rows); err != nil {
 				return errors.Trace(err)
 			}
-			if err := batchDMLIfNeeded(e.ctx, int(e.rowCount)); err != nil {
+			if err := batchDMLCommit(e.ctx); err != nil {
 				return errors.Trace(err)
 			}
 			rows = rows[:0]
@@ -302,8 +301,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
-	batchDML := config.GetGlobalConfig().EnableBatchDML
-	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || batchDML
+	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 
 	for {
 		err := selectExec.Next(ctx, chk)
@@ -322,11 +320,11 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 				return errors.Trace(err)
 			}
 			rows = append(rows, row)
-			if batchInsert {
+			if batchInsert && int(e.rowCount)%sessVars.DMLBatchSize == 0 {
 				if err := exec(rows); err != nil {
 					return errors.Trace(err)
 				}
-				if err := batchDMLIfNeeded(e.ctx, int(e.rowCount)); err != nil {
+				if err := batchDMLCommit(e.ctx); err != nil {
 					return errors.Trace(err)
 				}
 				rows = rows[:0]
