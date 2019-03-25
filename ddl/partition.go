@@ -393,6 +393,13 @@ func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	return nil
 }
 
+func checkNoRangePartitions(partitionNum int) error {
+	if partitionNum == 0 {
+		return errors.Trace(ErrPartitionsMustBeDefined)
+	}
+	return nil
+}
+
 func getPartitionIDs(table *model.TableInfo) []int64 {
 	if table.GetPartitionInfo() == nil {
 		return []int64{}
