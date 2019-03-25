@@ -1301,6 +1301,6 @@ func (s *testPlanSuite) TestDoSubquery(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
-		c.Assert(core.ToString(p), Equals, tt.best, comment)
+		c.Assert(plan.ToString(p), Equals, tt.best, comment)
 	}
 }
