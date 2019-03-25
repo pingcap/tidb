@@ -241,6 +241,24 @@ func (s *testParserSuite) TestSimple(c *C) {
 	src = `insert into tb(v) (select v from tb);`
 	_, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
+
+	// for issue #9823
+	src = "SELECT 9223372036854775807;"
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	sel, ok := st.(*ast.SelectStmt)
+	c.Assert(ok, IsTrue)
+	expr := sel.Fields.Fields[0]
+	vExpr := expr.Expr.(*driver.ValueExpr)
+	c.Assert(vExpr.Kind(), Equals, types.KindInt64)
+	src = "SELECT 9223372036854775808;"
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	sel, ok = st.(*ast.SelectStmt)
+	c.Assert(ok, IsTrue)
+	expr = sel.Fields.Fields[0]
+	vExpr = expr.Expr.(*driver.ValueExpr)
+	c.Assert(vExpr.Kind(), Equals, types.KindUint64)
 }
 
 type testCase struct {
