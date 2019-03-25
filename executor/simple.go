@@ -284,26 +284,28 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 	for _, role := range s.Roles {
 		exists, err := userExists(e.ctx, role.Username, role.Hostname)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !exists {
 			return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", role.String())
 		}
 	}
-
 	for _, user := range s.Users {
 		exists, err := userExists(e.ctx, user.Username, user.Hostname)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !exists {
-			failedUsers = append(failedUsers, user.String())
-			continue
+			return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
 		}
-		// begin a transaction to insert role graph edges.
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
-			return errors.Trace(err)
-		}
+	}
+
+	// begin a transaction to insert role graph edges.
+	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, user := range s.Users {
 		for _, role := range s.Roles {
 			sql := fmt.Sprintf(`INSERT IGNORE INTO %s.%s (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ('%s','%s','%s','%s')`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
@@ -311,15 +313,12 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
 					return errors.Trace(err)
 				}
-				break
+				return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
 			}
 		}
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
-			failedUsers = append(failedUsers, user.String())
-		}
 	}
-	if len(failedUsers) > 0 {
-		return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", strings.Join(failedUsers, ","))
+	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
+		return errors.Trace(err)
 	}
 	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
 	return errors.Trace(err)

@@ -133,7 +133,7 @@ func (s *testSuite3) TestRole(c *C) {
 	_, err = tk.Exec(grantRoleSQL)
 	c.Check(err, NotNil)
 	result = tk.MustQuery(`SELECT FROM_USER FROM mysql.role_edges WHERE TO_USER="r_3" and TO_HOST="localhost"`)
-	result.Check(testkit.Rows("r_1"))
+	result.Check(nil)
 
 	dropRoleSQL := `DROP ROLE IF EXISTS 'r_1'@'localhost' ;`
 	tk.MustExec(dropRoleSQL)
