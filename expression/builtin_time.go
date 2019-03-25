@@ -2464,7 +2464,7 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		switch args[1].GetType().Tp {
 		case mysql.TypeDuration:
 			isDur = true
-		case mysql.TypeString:
+		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
 			str1, _, err := args[1].EvalString(ctx, chunk.Row{})
 			if err != nil {
 				return nil, err
