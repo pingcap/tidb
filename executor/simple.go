@@ -310,6 +310,7 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 			sql := fmt.Sprintf(`INSERT IGNORE INTO %s.%s (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ('%s','%s','%s','%s')`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 				failedUsers = append(failedUsers, user.String())
+				logutil.Logger(context.Background()).Error(fmt.Sprintf("Error occur when executing %s", sql))
 				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
 					return err
 				}
