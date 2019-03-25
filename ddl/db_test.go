@@ -304,7 +304,11 @@ func (s *testDBSuite) TestRenameIndex(c *C) {
 }
 
 func (s *testDBSuite) testGetTableByName(c *C, db, table string) table.Table {
-	ctx := s.s.(sessionctx.Context)
+	return testGetTableByName(c, s.s, db, table)
+}
+
+func testGetTableByName(c *C, se sessionctx.Context, db, table string) table.Table {
+	ctx := se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()

@@ -270,8 +270,8 @@ var defaultConf = Config{
 	CheckMb4ValueInUTF8:          true,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  true,
-		Capacity: 2048000,
+		Enabled:  false,
+		Capacity: 10240000,
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{

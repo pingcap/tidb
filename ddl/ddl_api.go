@@ -992,7 +992,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 	if err = checkDuplicateColumn(colDefs); err != nil {
 		return errors.Trace(err)
-
 	}
 	if err = checkGeneratedColumn(colDefs); err != nil {
 		return errors.Trace(err)
