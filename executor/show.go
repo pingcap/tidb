@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/plugin"
 	"sort"
 	"strconv"
 	"strings"
@@ -807,6 +808,12 @@ func (e *ShowExec) fetchShowProcedureStatus() error {
 }
 
 func (e *ShowExec) fetchShowPlugins() error {
+	tiPlugins := plugin.GetAll()
+	for _, ps := range tiPlugins {
+		for _, p := range ps {
+			e.appendRow([]interface{}{p.Name, p.State.String(), p.Kind.String(), p.Path, p.License, strconv.Itoa(int(p.Version))})
+		}
+	}
 	return nil
 }
 
