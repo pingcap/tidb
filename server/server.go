@@ -38,11 +38,13 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	// For pprof
-	_ "net/http/pprof"
+	"os"
+	"os/user"
 	"sync"
 	"sync/atomic"
 	"time"
+	// For pprof
+	_ "net/http/pprof"
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
@@ -55,13 +57,31 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sys/linux"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
 var (
 	baseConnID uint32
+	serverPID  int
+	osUser     string
+	osVersion  string
 )
+
+func init() {
+	serverPID = os.Getpid()
+	currentUser, err := user.Current()
+	if err != nil {
+		osUser = ""
+	} else {
+		osUser = currentUser.Name
+	}
+	osVersion, err = linux.OSVersion()
+	if err != nil {
+		osVersion = ""
+	}
+}
 
 var (
 	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
@@ -311,26 +331,31 @@ func (s *Server) Run() error {
 			break
 		}
 
-		for _, p := range plugin.GetByKind(plugin.Audit) {
+		clientConn := s.newConn(conn)
+
+		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if authPlugin.OnConnectionEvent != nil {
-				host, err := getPeerHost(conn)
-				if err != nil {
-					log.Error(err)
-					terror.Log(conn.Close())
-					continue
-				}
-
-				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host})
+				host, err := clientConn.PeerHost("")
 				if err != nil {
 					log.Info(err)
-					terror.Log(conn.Close())
-					continue
+					terror.Log(clientConn.Close())
+					return errors.Trace(err)
+				}
+				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host}, plugin.PreAuth, nil)
+				if err != nil {
+					log.Info(err)
+					terror.Log(clientConn.Close())
+					return errors.Trace(err)
 				}
 			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 
-		go s.onConn(conn)
+		go s.onConn(clientConn)
 	}
 	err := s.listener.Close()
 	terror.Log(errors.Trace(err))
@@ -340,15 +365,6 @@ func (s *Server) Run() error {
 		log.Errorf("listener stopped, waiting for manual kill.")
 		time.Sleep(time.Minute)
 	}
-}
-
-func getPeerHost(conn net.Conn) (string, error) {
-	addr := conn.RemoteAddr().String()
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return host, nil
 }
 
 func (s *Server) shouldStopListener() bool {
@@ -384,18 +400,19 @@ func (s *Server) Close() {
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
-func (s *Server) onConn(c net.Conn) {
-	conn := s.newConn(c)
+func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
-		err = c.Close()
+		err = conn.Close()
 		terror.Log(errors.Trace(err))
 		return
 	}
-	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", c.RemoteAddr().String()))
+
+	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+
 	defer func() {
 		logutil.Logger(ctx).Info("close connection")
 	}()
@@ -405,7 +422,64 @@ func (s *Server) onConn(c net.Conn) {
 	s.rwlock.Unlock()
 	metrics.ConnGauge.Set(float64(connections))
 
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			connInfo := conn.connectInfo()
+			return authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars().User, plugin.Connected, connInfo)
+		}
+		return nil
+	})
+	if err != nil {
+		return
+	}
+
+	connectedTime := time.Now()
 	conn.Run(ctx)
+
+	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			connInfo := conn.connectInfo()
+			connInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
+			err := authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars().User, plugin.Disconnect, connInfo)
+			if err != nil {
+				log.Warnf("call Plugin %s OnConnectionEvent(Disconnect) failure, err: %v", authPlugin.Name, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return
+	}
+}
+
+func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
+	connType := "Socket"
+	if cc.server.isUnixSocket() {
+		connType = "UnixSocket"
+	} else if cc.tlsConn != nil {
+		connType = "SSL/TLS"
+	}
+	connInfo := &variable.ConnectionInfo{
+		ConnectionID:      cc.connectionID,
+		ConnectionType:    connType,
+		Host:              cc.peerHost,
+		ClientIP:          cc.peerHost,
+		ClientPort:        cc.peerPort,
+		ServerID:          1,
+		ServerPort:        int(cc.server.cfg.Port),
+		Duration:          0,
+		User:              cc.user,
+		ServerOSLoginUser: osUser,
+		OSVersion:         osVersion,
+		ClientVersion:     "",
+		ServerVersion:     mysql.TiDBReleaseVersion,
+		SSLVersion:        "v1.2.0", // for current go version
+		PID:               serverPID,
+		DB:                cc.dbname,
+	}
+	return connInfo
 }
 
 // ShowProcessList implements the SessionManager interface.
