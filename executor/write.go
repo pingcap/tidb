@@ -1080,7 +1080,7 @@ func batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types
 // checkBatchLimit check the batchSize limitation.
 func (e *InsertExec) checkBatchLimit() error {
 	sessVars := e.ctx.GetSessionVars()
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && len(e.OnDuplicate) == 0 && !e.IgnoreErr
 	batchSize := sessVars.DMLBatchSize
 	if batchInsert && e.rowCount >= batchSize {
 		if err := e.ctx.StmtCommit(); err != nil {
