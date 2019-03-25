@@ -1753,7 +1753,8 @@ func extractDayMinute(format string) (int64, int64, int64, float64, error) {
 	return 0, 0, days, value, nil
 }
 
-// extractDayHour extracts day and hour from a string and its format is `DD HH`.
+// extractDayHour extracts day and hour from a string and its suggested format is `DD HH`.
+// MySQL permits any punctuation delimiter in the expr format. it may start with a - for negative intervals
 func extractDayHour(format string) (int64, int64, int64, float64, error) {
 	if len(format) == 0 {
 		return 0, 0, 0, 0, nil
@@ -1764,9 +1765,11 @@ func extractDayHour(format string) (int64, int64, int64, float64, error) {
 		neg = true
 		format = format[1:]
 	}
-	fields := nonNumericRegex.Split(format, -1)
+	fields := numericRegex.FindAllString(format, -1)
 
-	if len(fields) > 3 || (len(fields) == 3 && fields[0] != "") {
+	if len(fields) == 0 {
+		return 0, 0, 0, 0, nil
+	} else if len(fields) > 2 {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
 	}
 	field0 := "0"
@@ -1790,7 +1793,8 @@ func extractDayHour(format string) (int64, int64, int64, float64, error) {
 	return 0, 0, days, hours * float64(gotime.Hour), nil
 }
 
-// extractYearMonth extracts year and month from a string and its format is `YYYY-MM`.
+// extractYearMonth extracts year and month from a string and its suggested format is `YYYY-MM`.
+// MySQL permits any punctuation delimiter in the expr format. it may start with a - for negative intervals
 func extractYearMonth(format string) (int64, int64, int64, float64, error) {
 	if len(format) == 0 {
 		return 0, 0, 0, 0, nil
@@ -1801,9 +1805,11 @@ func extractYearMonth(format string) (int64, int64, int64, float64, error) {
 		neg = true
 		format = format[1:]
 	}
-	fields := nonNumericRegex.Split(format, -1)
+	fields := numericRegex.FindAllString(format, -1)
 
-	if len(fields) > 3 || (len(fields) == 3 && fields[0] != "") {
+	if len(fields) == 0 {
+		return 0, 0, 0, 0, nil
+	} else if len(fields) > 2 {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format0)
 	}
 
@@ -2414,8 +2420,8 @@ var twoDigitRegex = regexp.MustCompile("^[1-9][0-9]?")
 // oneToSixDigitRegex: it was just for [0, 999999]
 var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{0,6}")
 
-// nonNumericRegex: it was for any non-numeric characters
-var nonNumericRegex = regexp.MustCompile("[^0-9]+")
+// numericRegex: it was for any numeric characters
+var numericRegex = regexp.MustCompile("[0-9]+")
 
 // parseTwoNumeric is used for pattens 0..31 0..24 0..60 and so on.
 // It returns the parsed int, and remain data after parse.
