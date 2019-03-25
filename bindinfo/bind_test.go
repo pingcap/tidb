@@ -145,9 +145,9 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	tk.MustExec("create table t1(i int, s varchar(20))")
 	tk.MustExec("create index index_t on t(i,s)")
 
-	_, err := tk.Exec("create global binding for select * from t using select * from t use index for join(index_t)")
+	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	_, err = tk.Exec("create global binding for select * from t using select * from t use index for join(index_t)")
+	_, err = tk.Exec("create global binding for select * from t where i>99 using select * from t use index(index_t) where i>99")
 	c.Assert(err, NotNil)
 
 	bindHandle := bindinfo.NewHandle()
@@ -156,12 +156,12 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(bindHandle.Get()), Equals, 1)
 
-	hash := parser.DigestHash("select * from t")
+	hash := parser.DigestHash("select * from t where i>100")
 	bindData := bindHandle.Get()[hash]
 	c.Check(bindData, NotNil)
 	c.Check(len(bindData), Equals, 1)
-	c.Check(bindData[0].OriginalSQL, Equals, "select * from t")
-	c.Check(bindData[0].BindSQL, Equals, "select * from t use index for join(index_t)")
+	c.Check(bindData[0].OriginalSQL, Equals, "select * from t where i > ?")
+	c.Check(bindData[0].BindSQL, Equals, "select * from t use index(index_t) where i>100")
 	c.Check(bindData[0].Db, Equals, "test")
 	c.Check(bindData[0].Status, Equals, "using")
 	c.Check(bindData[0].Charset, NotNil)

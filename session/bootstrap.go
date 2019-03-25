@@ -224,6 +224,7 @@ const (
 		update_time timestamp NOT NULL,
 		charset text NOT NULL,
 		collation text NOT NULL,
+		UNIQUE INDEX primary_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 

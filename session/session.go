@@ -871,7 +871,6 @@ func (s *session) AddGlobalBind(originSQL string, bindSQL string, defaultDB stri
 		}
 	}()
 
-	originSQL = getEscapeCharacter(originSQL)
 	sql := fmt.Sprintf("SELECT status FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
 		originSQL, defaultDB)
 	recordSet, err := s.execute(ctx, sql)

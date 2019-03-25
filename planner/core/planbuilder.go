@@ -303,7 +303,7 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 func (b *PlanBuilder) buildCreateBind(v *ast.CreateBindingStmt) (Plan, error) {
 	p := &CreateBindPlan{
 		OriginSQL: parser.Normalize(v.OriginSel.Text()),
-		BindSQL:   parser.Normalize(v.HintedSel.Text()),
+		BindSQL:   v.HintedSel.Text(),
 		IsGlobal:  v.GlobalScope,
 		BindStmt:  v.HintedSel,
 	}
