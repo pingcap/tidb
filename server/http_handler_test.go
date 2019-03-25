@@ -675,20 +675,6 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
-
-	// Test enable treat-old-version-utf8-as-utf8mb4.
-	form.Set("treat-old-version-utf8-as-utf8mb4", "0")
-	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, Equals, false)
-
-	// Test Disable treat-old-version-utf8-as-utf8mb4.
-	form.Set("treat-old-version-utf8-as-utf8mb4", "1")
-	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, Equals, true)
 }
 
 func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {

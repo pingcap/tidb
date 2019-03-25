@@ -249,17 +249,4 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
-
-	err = SetSessionSystemVar(v, TiDBTreadOldVersionUTF8AsUTF8MB4, types.NewStringDatum("0"))
-	c.Assert(err, IsNil)
-	val, err = GetSessionSystemVar(v, TiDBTreadOldVersionUTF8AsUTF8MB4)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "0")
-	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsFalse)
-	err = SetSessionSystemVar(v, TiDBTreadOldVersionUTF8AsUTF8MB4, types.NewStringDatum("1"))
-	c.Assert(err, IsNil)
-	val, err = GetSessionSystemVar(v, TiDBTreadOldVersionUTF8AsUTF8MB4)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "1")
-	c.Assert(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4, IsTrue)
 }

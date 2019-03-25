@@ -686,7 +686,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
 	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
-	{ScopeSession, TiDBTreadOldVersionUTF8AsUTF8MB4, BoolToIntStr(config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4)},
 	{ScopeSession, TiDBSlowQueryFile, ""},
 }
 

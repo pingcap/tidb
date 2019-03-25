@@ -743,17 +743,6 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
-		if treatOldVersionUTF8AsUTF8MB4 := req.Form.Get("treat-old-version-utf8-as-utf8mb4"); treatOldVersionUTF8AsUTF8MB4 != "" {
-			switch treatOldVersionUTF8AsUTF8MB4 {
-			case "0":
-				config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
-			case "1":
-				config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
-			default:
-				writeError(w, errors.New("illegal argument"))
-				return
-			}
-		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
