@@ -442,10 +442,10 @@ func (s *testCommitterSuite) TestBatchContains(c *C) {
 
 func (s *testCommitterSuite) TestSplitBatches(c *C) {
 	batches := []batchKeys{
-		batchKeys{false, RegionVerID{}, [][]byte{[]byte("a")}},
-		batchKeys{false, RegionVerID{}, [][]byte{[]byte("b")}},
-		batchKeys{false, RegionVerID{}, [][]byte{[]byte("c")}},
-		batchKeys{false, RegionVerID{}, [][]byte{[]byte("d")}},
+		{false, RegionVerID{}, [][]byte{[]byte("a")}},
+		{false, RegionVerID{}, [][]byte{[]byte("b")}},
+		{false, RegionVerID{}, [][]byte{[]byte("c")}},
+		{false, RegionVerID{}, [][]byte{[]byte("d")}},
 	}
 
 	primary, others := splitBatches(batches, []byte("b"))
