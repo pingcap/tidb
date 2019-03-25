@@ -319,7 +319,7 @@ func (s *testCommitterSuite) TestIllegalTso(c *C) {
 	txn.startTS = uint64(math.MaxUint64)
 	err := txn.Commit(context.Background())
 	c.Assert(err, NotNil)
-	errMsgMustContain(c, err, "invalid startTS")
+	errMsgMustContain(c, err, "invalid txnStartTS")
 }
 
 func errMsgMustContain(c *C, err error, msg string) {
