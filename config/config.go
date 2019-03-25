@@ -74,7 +74,10 @@ type Config struct {
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
-	CheckMb4ValueInUtf8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
+	// Currently not support dynamic modify, because this need to reload all old version schema.
+	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
 }
 
 // Log is the log section of config.
@@ -251,13 +254,14 @@ type TiKVClient struct {
 // Binlog is the config for binlog.
 type Binlog struct {
 	Enable       bool   `toml:"enable" json:"enable"`
-	AutoMode     bool   `toml:"auto-mode" json:"auto-mode"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
 	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
 	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	// The strategy for sending binlog to pump, value can be "range" or "hash" now.
+	Strategy string `toml:"strategy" json:"strategy"`
 }
 
 // Plugin is the config for plugin
@@ -267,20 +271,21 @@ type Plugin struct {
 }
 
 var defaultConf = Config{
-	Host:                "0.0.0.0",
-	AdvertiseAddress:    "",
-	Port:                4000,
-	Cors:                "",
-	Store:               "mocktikv",
-	Path:                "/tmp/tidb",
-	RunDDL:              true,
-	SplitTable:          true,
-	Lease:               "45s",
-	TokenLimit:          1000,
-	OOMAction:           "log",
-	MemQuotaQuery:       32 << 30,
-	EnableStreaming:     false,
-	CheckMb4ValueInUtf8: true,
+	Host:                         "0.0.0.0",
+	AdvertiseAddress:             "",
+	Port:                         4000,
+	Cors:                         "",
+	Store:                        "mocktikv",
+	Path:                         "/tmp/tidb",
+	RunDDL:                       true,
+	SplitTable:                   true,
+	Lease:                        "45s",
+	TokenLimit:                   1000,
+	OOMAction:                    "log",
+	MemQuotaQuery:                32 << 30,
+	EnableStreaming:              false,
+	CheckMb4ValueInUTF8:          true,
+	TreatOldVersionUTF8AsUTF8MB4: true,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,
@@ -345,6 +350,7 @@ var defaultConf = Config{
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
+		Strategy:     "range",
 	},
 }
 

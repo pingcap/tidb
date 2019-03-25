@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"go.uber.org/zap"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -27,12 +28,12 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	log "github.com/sirupsen/logrus"
 	"time"
 )
 
@@ -105,17 +106,17 @@ func (t *tester) Run() error {
 	var s string
 	defer func() {
 		if t.tx != nil {
-			log.Errorf("transaction is not committed correctly, rollback")
+			log.Error("transaction is not committed correctly, rollback")
 			err = t.rollback()
 			if err != nil {
-				log.Errorf("transaction is rollback err %v", err)
+				log.Error("transaction is failed rollback", zap.Error(err))
 			}
 		}
 
 		if t.resultFD != nil {
 			err = t.resultFD.Close()
 			if err != nil {
-				log.Errorf("result fd close error %v", err)
+				log.Error("result fd close failed", zap.Error(err))
 			}
 		}
 	}()
@@ -246,7 +247,7 @@ func (t *tester) executeDefault(qText string) (err error) {
 	if t.tx, err = mdb.Begin(); err != nil {
 		err2 := t.rollback()
 		if err2 != nil {
-			log.Errorf("transaction is rollback err %v", err)
+			log.Error("transaction is failed to rollback", zap.Error(err))
 		}
 		return err
 	}
@@ -254,7 +255,7 @@ func (t *tester) executeDefault(qText string) (err error) {
 	if err = filterWarning(t.executeStmt(qText)); err != nil {
 		err2 := t.rollback()
 		if err2 != nil {
-			log.Errorf("transaction is rollback err %v", err)
+			log.Error("transaction is failed rollback", zap.Error(err))
 		}
 		return err
 	}
@@ -262,7 +263,7 @@ func (t *tester) executeDefault(qText string) (err error) {
 	if err = t.commit(); err != nil {
 		err2 := t.rollback()
 		if err2 != nil {
-			log.Errorf("transaction is rollback err %v", err)
+			log.Error("transaction is failed rollback", zap.Error(err))
 		}
 		return err
 	}
@@ -296,7 +297,7 @@ func (t *tester) execute(query query) error {
 			if err != nil {
 				err2 := t.rollback()
 				if err2 != nil {
-					log.Errorf("transaction is rollback err %v", err)
+					log.Error("transaction is failed rollback", zap.Error(err))
 				}
 				break
 			}
@@ -305,7 +306,7 @@ func (t *tester) execute(query query) error {
 			if err != nil {
 				err2 := t.rollback()
 				if err2 != nil {
-					log.Errorf("transaction is rollback err %v", err)
+					log.Error("transaction is failed rollback", zap.Error(err))
 				}
 				break
 			}
@@ -383,11 +384,11 @@ func (t *tester) create(tableName string, qText string) error {
 	cmd := exec.Command("sh", "-c", path)
 	stdoutIn, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Errorf("open stdout pipe failure %v", err)
+		log.Error("open stdout pipe failed", zap.Error(err))
 	}
 	stderrIn, err := cmd.StderrPipe()
 	if err != nil {
-		log.Errorf("open stderr pipe failure %v", err)
+		log.Error("open stderr pipe failed", zap.Error(err))
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -407,7 +408,7 @@ func (t *tester) create(tableName string, qText string) error {
 	}()
 
 	if err = cmd.Wait(); err != nil {
-		log.Fatalf("importer failed with: %s", err)
+		log.Fatal("importer failed", zap.Error(err))
 		return err
 	}
 
@@ -599,7 +600,7 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 	for i := 0; i < retryCnt; i++ {
 		mdb, err = sql.Open(driverName, dataSourceName)
 		if err != nil {
-			log.Warnf("open db failed, retry count %d err %v", i, err)
+			log.Warn("open DB failed", zap.Int("retry count", i), zap.Error(err))
 			time.Sleep(sleepTime)
 			continue
 		}
@@ -607,15 +608,15 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 		if err == nil {
 			break
 		}
-		log.Warnf("ping db failed, retry count %d err %v", i, err)
+		log.Warn("ping DB failed", zap.Int("retry count", i), zap.Error(err))
 		err = mdb.Close()
 		if err != nil {
-			log.Errorf("close db err %v", err)
+			log.Error("close DB failed", zap.Error(err))
 		}
 		time.Sleep(sleepTime)
 	}
 	if err != nil {
-		log.Errorf("open db failed %v, take time %v", err, time.Since(startTime))
+		log.Error("open Db failed", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 
@@ -625,7 +626,7 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 func main() {
 	flag.Parse()
 
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		panic("init logger fail, " + err.Error())
 	}
@@ -635,34 +636,34 @@ func main() {
 		"root@tcp(localhost:4001)/"+dbName+"?strict=true&allowAllFiles=true",
 	)
 	if err != nil {
-		log.Fatalf("Open db err %v", err)
+		log.Fatal("open DB failed", zap.Error(err))
 	}
 
 	defer func() {
-		log.Warn("close db")
+		log.Warn("close DB")
 		err = mdb.Close()
 		if err != nil {
-			log.Errorf("close db err %v", err)
+			log.Error("close DB failed", zap.Error(err))
 		}
 	}()
 
-	log.Warn("Create new db", mdb)
+	log.Warn("create new DB", zap.Reflect("DB", mdb))
 
 	if _, err = mdb.Exec("DROP DATABASE IF EXISTS test"); err != nil {
-		log.Fatalf("Executing drop db test err[%v]", err)
+		log.Fatal("executing drop DB test failed", zap.Error(err))
 	}
 	if _, err = mdb.Exec("CREATE DATABASE test"); err != nil {
-		log.Fatalf("Executing create db test err[%v]", err)
+		log.Fatal("executing create DB test failed", zap.Error(err))
 	}
 	if _, err = mdb.Exec("USE test"); err != nil {
-		log.Fatalf("Executing Use test err[%v]", err)
+		log.Fatal("executing use test failed", zap.Error(err))
 	}
 	if _, err = mdb.Exec("set @@tidb_hash_join_concurrency=1"); err != nil {
-		log.Fatalf("set @@tidb_hash_join_concurrency=1 err[%v]", err)
+		log.Fatal("set @@tidb_hash_join_concurrency=1 failed", zap.Error(err))
 	}
 
 	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
-		log.Fatalf("set sql_mode='STRICT_TRANS_TABLES' err[%v]", err)
+		log.Fatal("set sql_mode='STRICT_TRANS_TABLES' failed", zap.Error(err))
 	}
 
 	tests := flag.Args()
@@ -670,16 +671,16 @@ func main() {
 	// we will run all tests if no tests assigned
 	if len(tests) == 0 {
 		if tests, err = loadAllTests(); err != nil {
-			log.Fatalf("load all tests err %v", err)
+			log.Fatal("load all tests failed", zap.Error(err))
 		}
 	}
 
 	if record {
-		log.Printf("recording tests: %v", tests)
+		log.Info("recording tests", zap.Strings("tests", tests))
 	} else if create {
-		log.Printf("creating data for tests: %v", tests)
+		log.Info("creating data", zap.Strings("tests", tests))
 	} else {
-		log.Printf("running tests: %v", tests)
+		log.Info("running tests", zap.Strings("tests", tests))
 	}
 
 	for _, t := range tests {
@@ -688,9 +689,9 @@ func main() {
 		}
 		tr := newTester(t)
 		if err = tr.Run(); err != nil {
-			log.Fatalf("run test [%s] err: %v", t, err)
+			log.Fatal("run test", zap.String("test", t), zap.Error(err))
 		}
-		log.Infof("run test [%s] ok", t)
+		log.Info("run test ok", zap.String("test", t))
 	}
 
 	println("\nGreat, All tests passed")
