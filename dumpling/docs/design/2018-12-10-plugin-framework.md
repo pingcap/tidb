@@ -140,7 +140,7 @@ validate = "Validate"
 onInit = "OnInit"
 onShutdown = "OnShutdown"
 export = [
-    {extPoint="NotifyEvent", impl="NotifyEvent"}
+    {extPoint="OnGeneralEvent", impl="OnGeneralEvent"}
 ]
 ```
 
