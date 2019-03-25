@@ -236,7 +236,7 @@ var (
 )
 
 func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
-	tr, err := types.RoundFrac(t, fsp)
+	tr, err := types.TruncateFrac(t, fsp)
 	if err != nil {
 		return types.Time{}, err
 	}
