@@ -2461,11 +2461,16 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 
 	isDur := false
 	if !mustBeDatetime {
-		str1, _, err := args[1].EvalString(ctx, chunk.Row{})
-		if err != nil {
-			return nil, err
+		switch args[1].GetType().Tp {
+		case mysql.TypeDuration:
+			isDur = true
+		case mysql.TypeString:
+			str1, _, err := args[1].EvalString(ctx, chunk.Row{})
+			if err != nil {
+				return nil, err
+			}
+			isDur = isDuration(str1)
 		}
-		isDur = isDuration(str1)
 	}
 
 	if isDur {
