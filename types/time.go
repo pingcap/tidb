@@ -1521,12 +1521,14 @@ func ExtractDurationNum(d *Duration, unit string) (int64, error) {
 		return int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
 	case "MINUTE_SECOND":
 		return int64(d.Minute()*100 + d.Second()), nil
-	case "HOUR_MICROSECOND":
+	case "HOUR_MICROSECOND", "DAY_MICROSECOND":
 		return int64(d.Hour())*10000000000 + int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
-	case "HOUR_SECOND":
+	case "HOUR_SECOND", "DAY_SECOND":
 		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
-	case "HOUR_MINUTE":
+	case "HOUR_MINUTE", "DAY_MINUTE":
 		return int64(d.Hour())*100 + int64(d.Minute()), nil
+	case "DAY_HOUR":
+		return int64(d.Hour()), nil
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}

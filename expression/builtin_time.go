@@ -2440,35 +2440,20 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 
-	datetimeUnits := map[string]struct{}{
-		"DAY":             {},
-		"WEEK":            {},
-		"MONTH":           {},
-		"QUARTER":         {},
-		"YEAR":            {},
-		"DAY_MICROSECOND": {},
-		"DAY_SECOND":      {},
-		"DAY_MINUTE":      {},
-		"DAY_HOUR":        {},
-		"YEAR_MONTH":      {},
-	}
-	isDatetimeUnit := true
 	args[0] = WrapWithCastAsString(ctx, args[0])
-	if _, isCon := args[0].(*Constant); isCon {
-		unit, _, err1 := args[0].EvalString(ctx, chunk.Row{})
-		if err1 != nil {
-			return nil, err1
-		}
-		_, isDatetimeUnit = datetimeUnits[unit]
+	str1, _, err := args[1].EvalString(ctx, chunk.Row{})
+	if err != nil {
+		return nil, err
 	}
-	var bf baseBuiltinFunc
-	if isDatetimeUnit {
-		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETDatetime)
-		sig = &builtinExtractDatetimeSig{bf}
-	} else {
-		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETDuration)
+
+	if isDuration(str1) {
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETDuration)
 		sig = &builtinExtractDurationSig{bf}
+	} else {
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETDatetime)
+		sig = &builtinExtractDatetimeSig{bf}
 	}
+
 	return sig, nil
 }
 
