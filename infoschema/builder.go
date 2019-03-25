@@ -199,7 +199,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 
 // ConvertOldVersionUTF8ToUTF8MB4IfNeed convert old version UTF8 to UTF8MB4 if config.TreatOldVersionUTF8AsUTF8MB4 is enable.
 func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
-	if !config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 || tbInfo.Version >= model.CurrLatestTableInfoVersion {
+	if !config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 || tbInfo.Version >= model.TableInfoVersion2 {
 		return
 	}
 	if tbInfo.Charset == charset.CharsetUTF8 {
@@ -207,7 +207,7 @@ func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
 		tbInfo.Collate = charset.CollationUTF8MB4
 	}
 	for _, col := range tbInfo.Columns {
-		if col.Version < model.CurrLatestColumnInfoVersion && col.Charset == charset.CharsetUTF8 {
+		if col.Version < model.ColumnInfoVersion2 && col.Charset == charset.CharsetUTF8 {
 			col.Charset = charset.CharsetUTF8MB4
 			col.Collate = charset.CollationUTF8MB4
 		}

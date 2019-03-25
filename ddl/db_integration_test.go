@@ -1406,4 +1406,17 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		"  `a` varchar(20) DEFAULT NULL,\n" +
 		"  `b` varchar(30) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
+
+	// Test for alter table convert charset
+	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
+	s.tk.MustExec("alter table t change column b b varchar(40) character set ascii") // reload schema.
+	s.tk.MustExec("alter table t convert to charset utf8mb4;")
+
+	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	s.tk.MustExec("alter table t change column b b varchar(50) character set ascii") // reload schema.
+	// TODO: fix  this after PR 9790.
+	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` varchar(20) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
+		"  `b` varchar(50) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }

@@ -2445,7 +2445,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		}
 	}
 
-	if origCharset == toCharset && origCollate == toCollate {
+	if origCharset == toCharset && origCollate == toCollate && tb.Meta().Version >= model.TableInfoVersion2 {
 		// nothing to do.
 		return nil
 	}
