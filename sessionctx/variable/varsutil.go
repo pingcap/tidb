@@ -106,8 +106,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
 	case TiDBQueryLogMaxLen:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
-	case TiDBCheckMb4ValueInUtf8:
-		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8), true, nil
+	case TiDBCheckMb4ValueInUTF8:
+		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -322,7 +322,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqUnFolding, TiDBEnableTablePartition,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBCheckMb4ValueInUtf8:
+		TiDBBatchDelete, TiDBCheckMb4ValueInUTF8:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}

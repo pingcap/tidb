@@ -180,6 +180,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	}
 	str := casted.GetString()
 	utf8Charset := col.Charset == mysql.UTF8Charset
+	doMB4CharCheck := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUTF8
 	for i, w := 0, 0; i < len(str); i += w {
 		runeValue, width := utf8.DecodeRuneInString(str[i:])
 		if runeValue == utf8.RuneError {
@@ -189,7 +190,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 			}
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
-		} else if width > 3 && utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUtf8 {
+		} else if width > 3 && doMB4CharCheck {
 			// Handle non-BMP characters.
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break

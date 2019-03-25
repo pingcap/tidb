@@ -82,4 +82,4 @@ require (
 	gopkg.in/yaml.v2 v2.2.1 // indirect
 )
 
-replace github.com/pingcap/parser => github.com/lysu/parser v0.0.0-20190325074808-d880cf39390b
+replace github.com/pingcap/parser => github.com/crazycs520/parser v0.0.0-20190325101044-851e66e9b3be
