@@ -81,7 +81,7 @@ func randDate(col *column) string {
 
 	minTime, err := time.Parse(dateFormat, min)
 	if err != nil {
-		log.Warn("randDate", zap.Error(err))
+		log.Warn("parse min date failed", zap.Error(err))
 	}
 	if len(max) == 0 {
 		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour)
@@ -90,7 +90,7 @@ func randDate(col *column) string {
 
 	maxTime, err := time.Parse(dateFormat, max)
 	if err != nil {
-		log.Warn("randDate", zap.Error(err))
+		log.Warn("parse max date failed", zap.Error(err))
 	}
 	days := int(maxTime.Sub(minTime).Hours() / 24)
 	t := minTime.Add(time.Duration(randInt(0, days)) * 24 * time.Hour)
@@ -111,11 +111,11 @@ func randTime(col *column) string {
 
 	minTime, err := time.Parse(timeFormat, min)
 	if err != nil {
-		log.Warn("randTime", zap.Error(err))
+		log.Warn("parse min time failed", zap.Error(err))
 	}
 	maxTime, err := time.Parse(timeFormat, max)
 	if err != nil {
-		log.Warn("randTime", zap.Error(err))
+		log.Warn("parse max time failed", zap.Error(err))
 	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
@@ -139,7 +139,7 @@ func randTimestamp(col *column) string {
 
 	minTime, err := time.Parse(dateTimeFormat, min)
 	if err != nil {
-		log.Warn("randTimestamp", zap.Error(err))
+		log.Warn("parse min timestamp failed", zap.Error(err))
 	}
 	if len(max) == 0 {
 		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour)
@@ -148,7 +148,7 @@ func randTimestamp(col *column) string {
 
 	maxTime, err := time.Parse(dateTimeFormat, max)
 	if err != nil {
-		log.Warn("randTimestamp", zap.Error(err))
+		log.Warn("parse max timestamp failed", zap.Error(err))
 	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
@@ -166,11 +166,11 @@ func randYear(col *column) string {
 
 	minTime, err := time.Parse(yearFormat, min)
 	if err != nil {
-		log.Warn("randYear", zap.Error(err))
+		log.Warn("parse min year failed", zap.Error(err))
 	}
 	maxTime, err := time.Parse(yearFormat, max)
 	if err != nil {
-		log.Warn("randYear", zap.Error(err))
+		log.Warn("parse max year failed", zap.Error(err))
 	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
