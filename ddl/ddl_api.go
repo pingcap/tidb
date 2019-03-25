@@ -337,10 +337,6 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 				return defaultVal, errors.Trace(err)
 			}
 			defaultVal = t.String()
-			// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
-			//              This will fix bug in version 0.
-			// TODO: remove this version field after there is no old version 0.
-			col.Version = model.ColumnInfoVersion1
 		}
 	}
 	return defaultVal, nil
@@ -362,6 +358,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		Offset:    offset,
 		Name:      colDef.Name.Name,
 		FieldType: *colDef.Tp,
+		// TODO: remove this version field after there is no old version.
+		Version: model.CurrLatestColumnInfoVersion,
 	})
 
 	if !isExplicitTimeStamp() {
@@ -700,6 +698,13 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var exists bool
 	var autoIncrementColumn string
 	for i, colDef := range colDefs {
+		for _, option := range colDef.Options {
+			if option.Tp == ast.ColumnOptionGenerated {
+				if err := checkIllegalFn4GeneratedColumn(colDef.Name.Name.L, option.Expr); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
 		if checkIsAutoIncrementColumn(colDef) {
 			exists, autoIncrementColumn = true, colDef.Name.Name.L
 		}
@@ -1295,19 +1300,21 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 	if s.Cols == nil {
 		for i, v := range schemaCols {
 			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:   v.AsName,
-				ID:     int64(i),
-				Offset: i,
-				State:  model.StatePublic,
+				Name:    v.AsName,
+				ID:      int64(i),
+				Offset:  i,
+				State:   model.StatePublic,
+				Version: model.CurrLatestColumnInfoVersion,
 			})
 		}
 	} else {
 		for i, v := range s.Cols {
 			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:   v,
-				ID:     int64(i),
-				Offset: i,
-				State:  model.StatePublic,
+				Name:    v,
+				ID:      int64(i),
+				Offset:  i,
+				State:   model.StatePublic,
+				Version: model.CurrLatestColumnInfoVersion,
 			})
 		}
 	}
@@ -1840,6 +1847,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// generated columns occurring later in table.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
+			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
+				return errors.Trace(err)
+			}
 			referableColNames := make(map[string]struct{}, len(t.Cols()))
 			for _, col := range t.Cols() {
 				referableColNames[col.Name.L] = struct{}{}
@@ -2188,8 +2198,8 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
-// setDefaultAndComment is only used in getModifiableColumnJob.
-func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// processColumnOptions is only used in getModifiableColumnJob.
+func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	if len(options) == 0 {
 		return nil
 	}
@@ -2232,6 +2242,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			col.GeneratedExprString = buf.String()
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
+			col.GeneratedExpr = opt.Expr
 			for _, colName := range findColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
@@ -2281,7 +2292,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
-	// which will be done by `setDefaultAndComment` later.
+	// which will be done by `processColumnOptions` later.
 	if specNewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
@@ -2305,6 +2316,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *specNewColumn.Tp,
 		Name:               newColName,
+		Version:            col.Version,
 	})
 
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
@@ -2322,7 +2334,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = setDefaultAndComment(ctx, newCol, specNewColumn.Options); err != nil {
+	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -2540,8 +2552,9 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 			return errors.Trace(err)
 		}
 	}
-
-	if origCharset == toCharset && origCollate == toCollate {
+	// Old version schema charset maybe modified when load schema if TreatOldVersionUTF8AsUTF8MB4 was enable.
+	// So even if the origCharset equal toCharset, we still need to do the ddl for old version schema.
+	if origCharset == toCharset && origCollate == toCollate && tb.Meta().Version >= model.TableInfoVersion2 {
 		// nothing to do.
 		return nil
 	}
