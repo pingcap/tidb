@@ -62,9 +62,18 @@ func PluginManifest() *plugin.Manifest {
 				},
 				{{end}}
 			},
-			Validate:   {{.validate}},
-			OnInit:     {{.onInit}},
-			OnShutdown: {{.onShutdown}},
+			{{if .validate }}
+				Validate:   {{.validate}},
+			{{end}}
+			{{if .onInit }}
+				OnInit:     {{.onInit}},
+			{{end}}
+			{{if .onShutdown }}
+				OnShutdown: {{.onShutdown}},
+			{{end}}
+			{{if .onFlush }}
+				OnFlush:    {{.onFlush}},
+			{{end}}
 		},
 		{{range .export}}
 		{{.extPoint}}: {{.impl}},
