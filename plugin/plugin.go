@@ -175,7 +175,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 		_, dup := tiPlugins.versions[pName]
 		if dup {
 			if cfg.SkipWhenFail {
-				log.Warnf("duplicate load %s and ignored", pName)
+				logutil.Logger(ctx).Warn("duplicate load %s and ignored", zap.String("pluginName", pName))
 				continue
 			}
 			err = errDuplicatePlugin.GenWithStackByArgs(pluginID)
@@ -186,7 +186,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 		plugin, err = loadOne(cfg.PluginDir, ID(pluginID))
 		if err != nil {
 			if cfg.SkipWhenFail {
-				log.Warnf("load plugin %v failure and ignored, err: %v", pluginID, err)
+				logutil.Logger(ctx).Warn("load plugin failure and ignored", zap.String("pluginID", pluginID), zap.Error(err))
 				continue
 			}
 			return
@@ -199,7 +199,8 @@ func Load(ctx context.Context, cfg Config) (err error) {
 		for i := range tiPlugins.plugins[kind] {
 			if err = tiPlugins.plugins[kind][i].validate(ctx, tiPlugins, initMode); err != nil {
 				if cfg.SkipWhenFail {
-					log.Warnf("validate plugin %s fail and disable plugin, err: %v", tiPlugins.plugins[kind][i].Name, err)
+					logutil.Logger(ctx).Warn("validate plugin fail and disable plugin",
+						zap.String("plugin", tiPlugins.plugins[kind][i].Name), zap.Error(err))
 					tiPlugins.plugins[kind][i].State = Disable
 					err = nil
 					continue
@@ -233,7 +234,8 @@ func Init(ctx context.Context, cfg Config) (err error) {
 			p := tiPlugins.plugins[kind][i]
 			if err = p.OnInit(ctx, p.Manifest); err != nil {
 				if cfg.SkipWhenFail {
-					log.Warnf("call Plugin %s OnInit failure, err: %v", p.Name, err)
+					logutil.Logger(ctx).Warn("call Plugin OnInit failure, err: %v",
+						zap.String("plugin", p.Name), zap.Error(err))
 					tiPlugins.plugins[kind][i].State = Disable
 					err = nil
 					continue
@@ -331,7 +333,8 @@ func Shutdown(ctx context.Context) {
 					p.flushWatcher.cancel()
 				}
 				if err := p.OnShutdown(ctx, p.Manifest); err != nil {
-					log.Errorf("call OnShutdown for %s failure, err: %v", p.Name, err)
+					logutil.Logger(ctx).Error("call OnShutdown for failure",
+						zap.String("plugin", p.Name), zap.Error(err))
 				}
 			}
 		}
