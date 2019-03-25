@@ -311,7 +311,7 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
 					return errors.Trace(err)
 				}
-				continue
+				break
 			}
 		}
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
