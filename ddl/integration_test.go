@@ -15,6 +15,8 @@ package ddl_test
 
 import (
 	"fmt"
+
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 
 	"github.com/juju/errors"
@@ -63,6 +65,36 @@ func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
+}
+
+func (s *testIntegrationSuite) TestResolveCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists resolve_charset")
+	tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("resolve_charset"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
+	tk.MustExec("INSERT INTO resolve_charset VALUES('鰈')")
+
+	tk.MustExec("create database resolve_charset charset binary")
+	tk.MustExec("use resolve_charset")
+	tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
+
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
+	c.Assert(tbl.Meta().Charset, Equals, "latin1")
+
+	tk.MustExec(`CREATE TABLE resolve_charset1 (a varchar(255) DEFAULT NULL)`)
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "binary")
+	c.Assert(tbl.Meta().Charset, Equals, "binary")
 }
 
 // for issue #6879
