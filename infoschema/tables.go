@@ -530,7 +530,7 @@ var tableProcesslistCols = []columnInfo{
 	{"COMMAND", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
 	{"TIME", mysql.TypeLong, 7, mysql.NotNullFlag, 0, nil},
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
-	{"Info", mysql.TypeString, 512, 0, nil, nil},
+	{"INFO", mysql.TypeString, 512, 0, nil, nil},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -640,20 +640,8 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			continue
 		}
 
-		var t uint64
-		if len(pi.Info) != 0 {
-			t = uint64(time.Since(pi.Time) / time.Second)
-		}
-		record := types.MakeDatums(
-			pi.ID,
-			pi.User,
-			pi.Host,
-			pi.DB,
-			pi.Command,
-			t,
-			fmt.Sprintf("%d", pi.State),
-			pi.Info,
-		)
+		rows := pi.ToRow(true)
+		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
 	return records
@@ -1251,7 +1239,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 				i+1,           // SEQ_IN_INDEX
 				key.Name.O,    // COLUMN_NAME
 				"A",           // COLLATION
-				0,             // CARDINALITY
+				nil,           // CARDINALITY
 				nil,           // SUB_PART
 				nil,           // PACKED
 				nullable,      // NULLABLE

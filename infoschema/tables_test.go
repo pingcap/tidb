@@ -15,8 +15,12 @@ package infoschema_test
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -27,8 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"os"
-	"strconv"
 )
 
 var _ = Suite(&testTableSuite{})
@@ -103,6 +105,17 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	}, nil, nil), IsTrue)
 
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
+
+	// Fix issue 9836
+	sm := &mockSessionManager{make(map[uint64]util.ProcessInfo, 1)}
+	sm.processInfoMap[1] = util.ProcessInfo{
+		ID:      1,
+		User:    "root",
+		Host:    "127.0.0.1",
+		Command: mysql.ComQuery,
+	}
+	tk.Se.SetSessionManager(sm)
+	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
 }
 
 func (s *testTableSuite) TestDataForTableStatsField(c *C) {
@@ -172,28 +185,34 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		testkit.Rows("utf8mb4_bin utf8mb4"))
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
 	tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
+	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
+	tk.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';").Check(
+		testkit.Rows("def mysql tbl def mysql stats_meta table_id 1 <nil> <nil> <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
+		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
+	tk.MustQuery("select * from information_schema.USER_PRIVILEGES where PRIVILEGE_TYPE='Select';").Check(testkit.Rows("'root'@'%' def Select YES"))
 
-	//sm := &mockSessionManager{make(map[uint64]util.ProcessInfo, 2)}
-	//sm.processInfoMap[1] = util.ProcessInfo{
-	//	ID:      1,
-	//	User:    "user-1",
-	//	Host:    "localhost",
-	//	DB:      "information_schema",
-	//	Command: byte(1),
-	//	State:   1,
-	//	Info:    "do something"}
-	//sm.processInfoMap[2] = util.ProcessInfo{
-	//	ID:      2,
-	//	User:    "user-2",
-	//	Host:    "localhost",
-	//	DB:      "test",
-	//	Command: byte(2),
-	//	State:   2,
-	//	Info:    "do something"}
-	//tk.Se.SetSessionManager(sm)
-	//tk.MustQuery("select * from information_schema.PROCESSLIST;").Check(
-	//	testkit.Rows("1 user-1 localhost information_schema 1 9223372036 1 do something",
-	//		"2 user-2 localhost test 2 9223372036 2 do something"))
+	sm := &mockSessionManager{make(map[uint64]util.ProcessInfo, 2)}
+	sm.processInfoMap[1] = util.ProcessInfo{
+		ID:      1,
+		User:    "user-1",
+		Host:    "localhost",
+		DB:      "information_schema",
+		Command: byte(1),
+		State:   1,
+		Info:    "do something"}
+	sm.processInfoMap[2] = util.ProcessInfo{
+		ID:      2,
+		User:    "user-2",
+		Host:    "localhost",
+		DB:      "test",
+		Command: byte(2),
+		State:   2,
+		Info:    "do something"}
+	tk.Se.SetSessionManager(sm)
+	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
+		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something",
+			"2 user-2 localhost test Init DB 9223372036 2 do something"))
 }
 
 func (s *testTableSuite) TestSchemataCharacterSet(c *C) {

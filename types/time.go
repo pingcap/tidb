@@ -15,6 +15,7 @@ package types
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -27,7 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // Portable analogs of some common call errors.
@@ -263,7 +264,7 @@ func (t Time) ToNumber() *MyDecimal {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		log.Error("Fatal: never happen because we've control the format!")
+		logutil.Logger(context.Background()).Error("[fatal] never happen because we've control the format!")
 	}
 
 	if t.Fsp > 0 {
@@ -1920,14 +1921,14 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		fmt.Fprintf(buf, "%d", t.Time.Hour())
 	case 'h', 'I':
 		t := t.Time.Hour()
-		if t == 0 || t == 12 {
+		if t%12 == 0 {
 			fmt.Fprintf(buf, "%02d", 12)
 		} else {
 			fmt.Fprintf(buf, "%02d", t%12)
 		}
 	case 'l':
 		t := t.Time.Hour()
-		if t == 0 || t == 12 {
+		if t%12 == 0 {
 			fmt.Fprintf(buf, "%d", 12)
 		} else {
 			fmt.Fprintf(buf, "%d", t%12)
@@ -1943,6 +1944,7 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		}
 	case 'r':
 		h := t.Time.Hour()
+		h %= 24
 		switch {
 		case h == 0:
 			fmt.Fprintf(buf, "%02d:%02d:%02d AM", 12, t.Time.Minute(), t.Time.Second())
@@ -2191,28 +2193,6 @@ var dateFormatParserTable = map[string]dateFormatParser{
 
 // GetFormatType checks the type(Duration, Date or Datetime) of a format string.
 func GetFormatType(format string) (isDuration, isDate bool) {
-	durationTokens := map[string]struct{}{
-		"%h": {},
-		"%H": {},
-		"%i": {},
-		"%I": {},
-		"%s": {},
-		"%S": {},
-		"%k": {},
-		"%l": {},
-	}
-	dateTokens := map[string]struct{}{
-		"%y": {},
-		"%Y": {},
-		"%m": {},
-		"%M": {},
-		"%c": {},
-		"%b": {},
-		"%D": {},
-		"%d": {},
-		"%e": {},
-	}
-
 	format = skipWhiteSpace(format)
 	var token string
 	var succ bool
@@ -2225,9 +2205,19 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 			isDuration, isDate = false, false
 			break
 		}
-		if _, ok := durationTokens[token]; ok {
+		var durationTokens bool
+		var dateTokens bool
+		if len(token) >= 2 && token[0] == '%' {
+			switch token[1] {
+			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l':
+				durationTokens = true
+			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
+				dateTokens = true
+			}
+		}
+		if durationTokens {
 			isDuration = true
-		} else if _, ok := dateTokens[token]; ok {
+		} else if dateTokens {
 			isDate = true
 		}
 		if isDuration && isDate {
