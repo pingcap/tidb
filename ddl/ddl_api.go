@@ -1584,9 +1584,9 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (charset, collate string) {
-	charsets := make([]string, len(options))
-	collates := make([]string, len(options))
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (charset, collate string, err error) {
+	charsets := make([]string, 0, len(options))
+	collates := make([]string, 0, len(options))
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
@@ -1599,11 +1599,21 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		}
 	}
 
-	if len(charsets) != 0 {
-		charset = charsets[len(charsets)-1]
+	if len(charsets) > 1 {
+		return "", "", ErrConflictingDeclarations.GenWithStackByArgs(charsets[0], charsets[1])
 	}
-
+	if len(charsets) == 1 {
+		if charsets[0] == "" {
+			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs("")
+		}
+		charset = charsets[0]
+	}
 	if len(collates) != 0 {
+		for i := range collates {
+			if collates[i] == "" {
+				return "", "", ErrUnknownCollation.GenWithStackByArgs("")
+			}
+		}
 		collate = collates[len(collates)-1]
 	}
 	return
@@ -1730,7 +1740,11 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					if handledCharsetOrCollate {
 						continue
 					}
-					toCharset, toCollate := getCharsetAndCollateInTableOption(i, spec.Options)
+					var toCharset, toCollate string
+					toCharset, toCollate, err = getCharsetAndCollateInTableOption(i, spec.Options)
+					if err != nil {
+						return err
+					}
 					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate)
 					handledCharsetOrCollate = true
 				}
@@ -2097,7 +2111,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 // modifiableCharsetAndCollation returns error when the charset or collation is not modifiable.
 func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate string) error {
 	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
-		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset, toCollate)
+		return ErrUnknownCharacterSet.GenWithStack("Unknown character set: '%s', collation: '%s'", toCharset, toCollate)
 	}
 	if toCharset == charset.CharsetUTF8MB4 && origCharset == charset.CharsetUTF8 {
 		// TiDB only allow utf8 to be changed to utf8mb4.
@@ -2546,6 +2560,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
+
 	if toCharset == "" {
 		// charset does not change.
 		toCharset = tb.Meta().Charset

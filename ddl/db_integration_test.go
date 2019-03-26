@@ -570,6 +570,7 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 	if rs != nil {
 		rs.Close()
 	}
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Unknown charset gbk")
 	rs, err = tk.Exec("alter table t charset utf8")
 	if rs != nil {
@@ -590,6 +591,22 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 
 	rs, err = tk.Exec("alter table t charset utf8mb4 collate utf8mb4_bin")
 	c.Assert(err, NotNil)
+
+	rs, err = tk.Exec("alter table t charset ''")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1115]Unknown character set: ''")
+
+	rs, err = tk.Exec("alter table t collate ''")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1273]Unknown collation: ''")
+
+	rs, err = tk.Exec("alter table t charset utf8mb4 collate '' collate utf8mb4_bin;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1273]Unknown collation: ''")
+
+	rs, err = tk.Exec("alter table t charset latin1 charset utf8 charset utf8mb4 collate utf8_bin;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1302]Conflicting declarations: 'CHARACTER SET latin1' and 'CHARACTER SET utf8'")
 
 	// Test change column charset when changing table charset.
 	tk.MustExec("drop table t;")
