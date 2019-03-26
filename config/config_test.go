@@ -35,8 +35,9 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
+	conf.Binlog.Strategy = "hash"
 	conf.TiKVClient.CommitTimeout = "10s"
-	conf.CheckMb4ValueInUtf8 = true
+	conf.CheckMb4ValueInUTF8 = true
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = path.Join(path.Dir(localFile), configFile)
@@ -55,6 +56,7 @@ max-batch-size=128
 
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
+	c.Assert(conf.Binlog.Strategy, Equals, "hash")
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))

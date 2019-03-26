@@ -62,8 +62,27 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 		col.ID = allocateColumnID(tblInfo)
 		cols[i] = col
 	}
-
 	tblInfo.Columns = cols
+	tblInfo.Charset = "utf8"
+	tblInfo.Collate = "utf8_bin"
+	return tblInfo
+}
+
+// testTableInfo creates a test table with num int columns and with no index.
+func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.TableInfo {
+	tblInfo := testTableInfo(c, d, name, num)
+	pid, err := d.genGlobalID()
+	c.Assert(err, IsNil)
+	tblInfo.Partition = &model.PartitionInfo{
+		Type:   model.PartitionTypeRange,
+		Expr:   tblInfo.Columns[0].Name.L,
+		Enable: true,
+		Definitions: []model.PartitionDefinition{{
+			ID:       pid,
+			Name:     model.NewCIStr("p0"),
+			LessThan: []string{"maxvalue"},
+		}},
+	}
 
 	return tblInfo
 }

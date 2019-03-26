@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +27,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -86,6 +88,11 @@ func (c *RPCContext) GetStoreID() uint64 {
 		return c.Peer.StoreId
 	}
 	return 0
+}
+
+func (c *RPCContext) String() string {
+	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s",
+		c.Region.GetID(), c.Meta, c.Peer, c.Addr)
 }
 
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
@@ -281,12 +288,16 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 
 	r := c.getCachedRegion(regionID)
 	if r == nil {
-		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderStoreID)
+		logutil.Logger(context.Background()).Debug("regionCache: cannot find region when updating leader",
+			zap.Uint64("regionID", regionID.GetID()),
+			zap.Uint64("leaderStoreID", leaderStoreID))
 		return
 	}
 
 	if !r.SwitchPeer(leaderStoreID) {
-		log.Debugf("regionCache: cannot find peer when updating leader %d,%d", regionID, leaderStoreID)
+		logutil.Logger(context.Background()).Debug("regionCache: cannot find peer when updating leader",
+			zap.Uint64("regionID", regionID.GetID()),
+			zap.Uint64("leaderStoreID", leaderStoreID))
 		c.dropRegionFromCache(r.VerID())
 	}
 }
@@ -530,8 +541,10 @@ func (c *RegionCache) DropStoreOnSendRequestFail(ctx *RPCContext, err error) {
 		delete(c.storeMu.stores, failedStoreID)
 	}
 	c.storeMu.Unlock()
-	log.Infof("drop regions that on the store %d(%s) due to send request fail, err: %v",
-		failedStoreID, failedStoreAddr, err)
+	logutil.Logger(context.Background()).Info("drop regions that on the store due to send request fail",
+		zap.Uint64("store", failedStoreID),
+		zap.String("store addr", failedStoreAddr),
+		zap.Error(err))
 }
 
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
@@ -547,7 +560,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 			(meta.GetRegionEpoch().GetConfVer() < ctx.Region.confVer ||
 				meta.GetRegionEpoch().GetVersion() < ctx.Region.ver) {
 			err := errors.Errorf("region epoch is ahead of tikv. rpc ctx: %+v, currentRegions: %+v", ctx, currentRegions)
-			log.Info(err.Error())
+			logutil.Logger(context.Background()).Info("region epoch is ahead of tikv", zap.Error(err))
 			return bo.Backoff(BoRegionMiss, err)
 		}
 	}
