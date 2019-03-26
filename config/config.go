@@ -73,8 +73,11 @@ type Config struct {
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	CheckMb4ValueInUtf8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	Plugin              Plugin            `toml:"plugin" json:"plugin"`
+	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
+	// Currently not support dynamic modify, because this need to reload all old version schema.
+	TreatOldVersionUTF8AsUTF8MB4 bool   `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	Plugin                       Plugin `toml:"plugin" json:"plugin"`
 }
 
 // Log is the log section of config.
@@ -259,19 +262,20 @@ type Binlog struct {
 }
 
 var defaultConf = Config{
-	Host:                "0.0.0.0",
-	AdvertiseAddress:    "",
-	Port:                4000,
-	Store:               "mocktikv",
-	Path:                "/tmp/tidb",
-	RunDDL:              true,
-	SplitTable:          true,
-	Lease:               "45s",
-	TokenLimit:          1000,
-	OOMAction:           "log",
-	MemQuotaQuery:       32 << 30,
-	EnableStreaming:     false,
-	CheckMb4ValueInUtf8: true,
+	Host:                         "0.0.0.0",
+	AdvertiseAddress:             "",
+	Port:                         4000,
+	Store:                        "mocktikv",
+	Path:                         "/tmp/tidb",
+	RunDDL:                       true,
+	SplitTable:                   true,
+	Lease:                        "45s",
+	TokenLimit:                   1000,
+	OOMAction:                    "log",
+	MemQuotaQuery:                32 << 30,
+	EnableStreaming:              false,
+	CheckMb4ValueInUTF8:          true,
+	TreatOldVersionUTF8AsUTF8MB4: true,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 10240000,
