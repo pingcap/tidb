@@ -149,9 +149,9 @@ func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins, mode validate
 	return nil
 }
 
-// Init initializes the plugin and load plugin by config param.
-// This method isn't thread-safe and must be called before any other plugin operation.
-func Init(ctx context.Context, cfg Config) (err error) {
+// Load load plugin by config param.
+// This method need be called before domain init to inject global variable info during bootstrap.
+func Load(ctx context.Context, cfg Config) (err error) {
 	tiPlugins := &plugins{
 		plugins:      make(map[Kind][]Plugin),
 		versions:     make(map[string]uint16),
@@ -175,6 +175,7 @@ func Init(ctx context.Context, cfg Config) (err error) {
 		_, dup := tiPlugins.versions[pName]
 		if dup {
 			if cfg.SkipWhenFail {
+				logutil.Logger(ctx).Warn("duplicate load %s and ignored", zap.String("pluginName", pName))
 				continue
 			}
 			err = errDuplicatePlugin.GenWithStackByArgs(pluginID)
@@ -185,6 +186,7 @@ func Init(ctx context.Context, cfg Config) (err error) {
 		plugin, err = loadOne(cfg.PluginDir, ID(pluginID))
 		if err != nil {
 			if cfg.SkipWhenFail {
+				logutil.Logger(ctx).Warn("load plugin failure and ignored", zap.String("pluginID", pluginID), zap.Error(err))
 				continue
 			}
 			return
@@ -197,15 +199,8 @@ func Init(ctx context.Context, cfg Config) (err error) {
 		for i := range tiPlugins.plugins[kind] {
 			if err = tiPlugins.plugins[kind][i].validate(ctx, tiPlugins, initMode); err != nil {
 				if cfg.SkipWhenFail {
-					tiPlugins.plugins[kind][i].State = Disable
-					err = nil
-					continue
-				}
-				return
-			}
-			p := tiPlugins.plugins[kind][i]
-			if err = p.OnInit(ctx, p.Manifest); err != nil {
-				if cfg.SkipWhenFail {
+					logutil.Logger(ctx).Warn("validate plugin fail and disable plugin",
+						zap.String("plugin", tiPlugins.plugins[kind][i].Name), zap.Error(err))
 					tiPlugins.plugins[kind][i].State = Disable
 					err = nil
 					continue
@@ -220,7 +215,6 @@ func Init(ctx context.Context, cfg Config) (err error) {
 					}
 				}
 			}
-			tiPlugins.plugins[kind][i].State = Ready
 		}
 	}
 	pluginGlobal = copyOnWriteContext{tiPlugins: unsafe.Pointer(tiPlugins)}
@@ -228,30 +222,43 @@ func Init(ctx context.Context, cfg Config) (err error) {
 	return
 }
 
-// InitWatchLoops starts etcd watch loops for plugin that need watch.
-func InitWatchLoops(etcdClient *clientv3.Client) {
-	if etcdClient == nil {
-		return
-	}
+// Init initializes the loaded plugin by config param.
+// This method must be called after `Load` but before any other plugin method call, so it call got TiDB domain info.
+func Init(ctx context.Context, cfg Config) (err error) {
 	tiPlugins := pluginGlobal.plugins()
+	if tiPlugins == nil {
+		return nil
+	}
 	for kind := range tiPlugins.plugins {
 		for i := range tiPlugins.plugins[kind] {
-			if tiPlugins.plugins[kind][i].OnFlush == nil {
-				continue
+			p := tiPlugins.plugins[kind][i]
+			if err = p.OnInit(ctx, p.Manifest); err != nil {
+				if cfg.SkipWhenFail {
+					logutil.Logger(ctx).Warn("call Plugin OnInit failure, err: %v",
+						zap.String("plugin", p.Name), zap.Error(err))
+					tiPlugins.plugins[kind][i].State = Disable
+					err = nil
+					continue
+				}
+				return
 			}
-			const pluginWatchPrefix = "/tidb/plugins/"
-			ctx, cancel := context.WithCancel(context.Background())
-			watcher := &flushWatcher{
-				ctx:      ctx,
-				cancel:   cancel,
-				path:     pluginWatchPrefix + tiPlugins.plugins[kind][i].Name,
-				etcd:     etcdClient,
-				manifest: tiPlugins.plugins[kind][i].Manifest,
+			if p.OnFlush != nil && cfg.EtcdClient != nil {
+				const pluginWatchPrefix = "/tidb/plugins/"
+				ctx, cancel := context.WithCancel(context.Background())
+				watcher := &flushWatcher{
+					ctx:      ctx,
+					cancel:   cancel,
+					path:     pluginWatchPrefix + tiPlugins.plugins[kind][i].Name,
+					etcd:     cfg.EtcdClient,
+					manifest: tiPlugins.plugins[kind][i].Manifest,
+				}
+				tiPlugins.plugins[kind][i].flushWatcher = watcher
+				go util.WithRecovery(watcher.watchLoop, nil)
 			}
-			tiPlugins.plugins[kind][i].flushWatcher = watcher
-			go util.WithRecovery(watcher.watchLoop, nil)
+			tiPlugins.plugins[kind][i].State = Ready
 		}
 	}
+	return
 }
 
 type flushWatcher struct {
@@ -326,6 +333,8 @@ func Shutdown(ctx context.Context) {
 					p.flushWatcher.cancel()
 				}
 				if err := p.OnShutdown(ctx, p.Manifest); err != nil {
+					logutil.Logger(ctx).Error("call OnShutdown for failure",
+						zap.String("plugin", p.Name), zap.Error(err))
 				}
 			}
 		}
@@ -349,13 +358,23 @@ func Get(kind Kind, name string) *Plugin {
 	return nil
 }
 
-// GetByKind finds and returns plugin by kind parameters.
-func GetByKind(kind Kind) []Plugin {
+// ForeachPlugin loops all ready plugins.
+func ForeachPlugin(kind Kind, fn func(plugin *Plugin) error) error {
 	plugins := pluginGlobal.plugins()
 	if plugins == nil {
 		return nil
 	}
-	return plugins.plugins[kind]
+	for i := range plugins.plugins[kind] {
+		p := &plugins.plugins[kind][i]
+		if p.State != Ready {
+			continue
+		}
+		err := fn(p)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetAll finds and returns all plugins.
@@ -370,8 +389,8 @@ func GetAll() map[Kind][]Plugin {
 // NotifyFlush notify plugins to do flush logic.
 func NotifyFlush(dom *domain.Domain, pluginName string) error {
 	p := getByName(pluginName)
-	if p == nil || p.Manifest.flushWatcher == nil {
-		return errors.Errorf("plugin %s doesn't exists or unsupported flush", pluginName)
+	if p == nil || p.Manifest.flushWatcher == nil || p.State != Ready {
+		return errors.Errorf("plugin %s doesn't exists or unsupported flush or doesn't start with PD", pluginName)
 	}
 	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, "")
 	if err != nil {
