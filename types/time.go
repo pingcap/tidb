@@ -1664,10 +1664,10 @@ func extractTimeValue(format string, index, cnt int) (int64, int64, int64, float
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(originalFmt)
 	}
-	microseconds = hours*float64(gotime.Hour) + minutes*float64(gotime.Minute) +
+	durations := hours*float64(gotime.Hour) + minutes*float64(gotime.Minute) +
 		seconds*float64(gotime.Second) + microseconds*float64(gotime.Microsecond)
 
-	return years, months, days, microseconds, nil
+	return years, months, days, durations, nil
 }
 
 // ExtractTimeValue extracts time value from time unit and format.
