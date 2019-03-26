@@ -2084,7 +2084,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	}
 
 	tableInfo := tbl.Meta()
-	var authErr error = nil
+	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
 		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Hostname, b.ctx.GetSessionVars().User.Username, tableInfo.Name.L)
 	}
