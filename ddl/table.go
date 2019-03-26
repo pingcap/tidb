@@ -520,7 +520,7 @@ func checkGlobalAutoID(s *sessionPool, tbl table.Table, shardRowIDBits uint64) e
 		return errors.Trace(err)
 	}
 	if tables.OverflowShardBits(autoIncID, shardRowIDBits) {
-		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID will overflow", shardRowIDBits)
+		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID overflow", shardRowIDBits)
 	}
 	return nil
 }
