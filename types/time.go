@@ -79,28 +79,47 @@ const (
 )
 
 const (
+	// YearIndex is index of 'YEARS-MONTHS DAYS HOURS:MINUTES:SECONDS.MICROSECONDS' expr Format
 	YearIndex = 0 + iota
+	// MonthIndex is index of 'YEARS-MONTHS DAYS HOURS:MINUTES:SECONDS.MICROSECONDS' expr Format
 	MonthIndex
+	// DayIndex is index of 'YEARS-MONTHS DAYS HOURS:MINUTES:SECONDS.MICROSECONDS' expr Format
 	DayIndex
+	// HourIndex is index of 'YEARS-MONTHS DAYS HOURS:MINUTES:SECONDS.MICROSECONDS' expr Format
 	HourIndex
+	// MinuteIndex is index of 'YEARS-MONTHS DAYS HOURS:MINUTES:SECONDS.MICROSECONDS' expr Format
 	MinuteIndex
+	// SecondIndex is index of 'YEARS-MONTHS DAYS HOURS:MINUTES:SECONDS.MICROSECONDS' expr Format
 	SecondIndex
+	// MicrosecondIndex is index of 'YEARS-MONTHS DAYS HOURS:MINUTES:SECONDS.MICROSECONDS' expr Format
 	MicrosecondIndex
 )
 
 const (
-	YearMonthCount         = 2
-	DayHourCount           = 2
-	DayMinuteCount         = 3
-	DaySecondCount         = 4
-	DayMicrosecondCount    = 5
-	HourMinuteCount        = 2
-	HourSecondCount        = 3
-	HourMicrosecondCount   = 4
-	MinuteSecondCount      = 2
-	MinuteMicrosecondCount = 3
-	SecondMicrosecondCount = 2
-	TimeValueCount         = 7
+	// YearMonthMaxCnt is max parameters count 'YEARS-MONTHS' expr Format allowed
+	YearMonthMaxCnt = 2
+	// DayHourMaxCnt is max parameters count 'DAYS HOURS' expr Format allowed
+	DayHourMaxCnt = 2
+	// DayMinuteMaxCnt is max parameters count 'DAYS HOURS:MINUTES' expr Format allowed
+	DayMinuteMaxCnt = 3
+	// DaySecondMaxCnt is max parameters count 'DAYS HOURS:MINUTES:SECONDS' expr Format allowed
+	DaySecondMaxCnt = 4
+	// DayMicrosecondMaxCnt is max parameters count 'DAYS HOURS:MINUTES:SECONDS.MICROSECONDS' expr Format allowed
+	DayMicrosecondMaxCnt = 5
+	// HourMinuteMaxCnt is max parameters count 'HOURS:MINUTES' expr Format allowed
+	HourMinuteMaxCnt = 2
+	// HourSecondMaxCnt is max parameters count 'HOURS:MINUTES:SECONDS' expr Format allowed
+	HourSecondMaxCnt = 3
+	// HourMicrosecondMaxCnt is max parameters count 'HOURS:MINUTES:SECONDS.MICROSECONDS' expr Format allowed
+	HourMicrosecondMaxCnt = 4
+	// MinuteSecondMaxCnt is max parameters count 'MINUTES:SECONDS' expr Format allowed
+	MinuteSecondMaxCnt = 2
+	// MinuteMicrosecondMaxCnt is max parameters count 'MINUTES:SECONDS.MICROSECONDS' expr Format allowed
+	MinuteMicrosecondMaxCnt = 3
+	// SecondMicrosecondMaxCnt is max parameters count 'SECONDS.MICROSECONDS' expr Format allowed
+	SecondMicrosecondMaxCnt = 2
+	// TimeValueCnt is parameters count 'YEARS-MONTHS DAYS HOURS:MINUTES:SECONDS.MICROSECONDS' expr Format
+	TimeValueCnt = 7
 )
 
 // Zero values for different types.
@@ -1591,7 +1610,7 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, fl
 // extractTimeValue extracts years, months, days, microseconds from a string
 // MySQL permits any punctuation delimiter in the expr format.
 // See https://dev.mysql.com/doc/refman/8.0/en/expressions.html#temporal-intervals
-func extractTimeValue(format string, index, count int) (int64, int64, int64, float64, error) {
+func extractTimeValue(format string, index, cnt int) (int64, int64, int64, float64, error) {
 
 	neg := false
 	originalFmt := format
@@ -1599,12 +1618,12 @@ func extractTimeValue(format string, index, count int) (int64, int64, int64, flo
 		neg = true
 		format = format[1:]
 	}
-	fields := make([]string, TimeValueCount)
+	fields := make([]string, TimeValueCnt)
 	for i := range fields {
 		fields[i] = "0"
 	}
 	matches := numericRegex.FindAllString(format, -1)
-	if len(matches) > count {
+	if len(matches) > cnt {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(originalFmt)
 	}
 	for i := range matches {
@@ -1657,27 +1676,27 @@ func ExtractTimeValue(unit string, format string) (int64, int64, int64, float64,
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
 		return extractSingleTimeValue(unit, format)
 	case "SECOND_MICROSECOND":
-		return extractTimeValue(format, MicrosecondIndex, SecondMicrosecondCount)
+		return extractTimeValue(format, MicrosecondIndex, SecondMicrosecondMaxCnt)
 	case "MINUTE_MICROSECOND":
-		return extractTimeValue(format, MicrosecondIndex, MinuteMicrosecondCount)
+		return extractTimeValue(format, MicrosecondIndex, MinuteMicrosecondMaxCnt)
 	case "MINUTE_SECOND":
-		return extractTimeValue(format, SecondIndex, MinuteSecondCount)
+		return extractTimeValue(format, SecondIndex, MinuteSecondMaxCnt)
 	case "HOUR_MICROSECOND":
-		return extractTimeValue(format, MicrosecondIndex, HourMicrosecondCount)
+		return extractTimeValue(format, MicrosecondIndex, HourMicrosecondMaxCnt)
 	case "HOUR_SECOND":
-		return extractTimeValue(format, SecondIndex, HourSecondCount)
+		return extractTimeValue(format, SecondIndex, HourSecondMaxCnt)
 	case "HOUR_MINUTE":
-		return extractTimeValue(format, MinuteIndex, HourMinuteCount)
+		return extractTimeValue(format, MinuteIndex, HourMinuteMaxCnt)
 	case "DAY_MICROSECOND":
-		return extractTimeValue(format, MicrosecondIndex, DayMicrosecondCount)
+		return extractTimeValue(format, MicrosecondIndex, DayMicrosecondMaxCnt)
 	case "DAY_SECOND":
-		return extractTimeValue(format, SecondIndex, DaySecondCount)
+		return extractTimeValue(format, SecondIndex, DaySecondMaxCnt)
 	case "DAY_MINUTE":
-		return extractTimeValue(format, MinuteIndex, DayMinuteCount)
+		return extractTimeValue(format, MinuteIndex, DayMinuteMaxCnt)
 	case "DAY_HOUR":
-		return extractTimeValue(format, HourIndex, DayHourCount)
+		return extractTimeValue(format, HourIndex, DayHourMaxCnt)
 	case "YEAR_MONTH":
-		return extractTimeValue(format, MonthIndex, YearMonthCount)
+		return extractTimeValue(format, MonthIndex, YearMonthMaxCnt)
 	default:
 		return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
 	}
