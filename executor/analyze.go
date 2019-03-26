@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"strconv"
 
@@ -27,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -108,12 +111,16 @@ type taskType int
 const (
 	colTask taskType = iota
 	idxTask
+	colFastTask
+	idxFastTask
 )
 
 type analyzeTask struct {
-	taskType taskType
-	idxExec  *AnalyzeIndexExec
-	colExec  *AnalyzeColumnsExec
+	taskType    taskType
+	idxExec     *AnalyzeIndexExec
+	colExec     *AnalyzeColumnsExec
+	idxFastExec *AnalyzeIndexFastExec
+	colFastExec *AnalyzeColumnsFastExec
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
@@ -137,6 +144,10 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			resultCh <- analyzeColumnsPushdown(task.colExec)
 		case idxTask:
 			resultCh <- analyzeIndexPushdown(task.idxExec)
+		case colFastTask:
+			resultCh <- analyzeColumnsFastExec(task.colFastExec)
+		case idxFastTask:
+			resultCh <- analyzeIndexFastExec(task.idxFastExec)
 		}
 	}
 }
@@ -380,4 +391,85 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		cms = append(cms, collectors[i].CMSketch)
 	}
 	return hists, cms, nil
+}
+
+func analyzeIndexFastExec(idxFastExec *AnalyzeIndexFastExec) statistics.AnalyzeResult {
+	hist, cms, err := idxFastExec.buildStats()
+	if err != nil {
+		return statistics.AnalyzeResult{Err: err}
+	}
+	result := statistics.AnalyzeResult{
+		Hist:    []*statistics.Histogram{hist},
+		Cms:     []*statistics.CMSketch{cms},
+		IsIndex: 1,
+	}
+	if hist.Len() > 0 {
+		result.Count = hist.Buckets[hist.Len()-1].Count
+	}
+	return result
+}
+
+// AnalyzeIndexFastExec represents Fast Analyze Index executor.
+type AnalyzeIndexFastExec struct {
+	ctx             sessionctx.Context
+	PhysicalTableID int64
+	idxInfo         *model.IndexInfo
+	concurrency     int
+	result          distsql.SelectResult
+	maxNumBuckets   uint64
+	table           table.Table
+}
+
+func (e *AnalyzeIndexFastExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
+	// txn, err := e.ctx.Txn(true)
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+
+	// txn.
+	store := e.ctx.GetStore()
+	client := e.ctx.GetClient()
+	fmt.Println(store.(*tikv.Store).GetRegionCache())
+
+	return nil, nil, nil
+}
+
+func analyzeColumnsFastExec(colFastExec *AnalyzeColumnsFastExec) statistics.AnalyzeResult {
+	hist, cms, err := colFastExec.buildStats()
+	if err != nil {
+		return statistics.AnalyzeResult{Err: err}
+	}
+	result := statistics.AnalyzeResult{
+		Hist:    []*statistics.Histogram{hist},
+		Cms:     []*statistics.CMSketch{cms},
+		IsIndex: 1,
+	}
+	if hist.Len() > 0 {
+		result.Count = hist.Buckets[hist.Len()-1].Count
+	}
+	return result
+}
+
+// AnalyzeColumnsFastExec represents Fast Analyze Columns executor.
+type AnalyzeColumnsFastExec struct {
+	ctx             sessionctx.Context
+	PhysicalTableID int64
+	colsInfo        []*model.ColumnInfo
+	concurrency     int
+	result          distsql.SelectResult
+	maxNumBuckets   uint64
+	table           table.Table
+}
+
+func (e *AnalyzeColumnsFastExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
+	// txn, err := e.ctx.Txn(true)
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+
+	// txn.
+	// kvStore := e.ctx.GetStore()
+	// kvClient := e.ctx.GetClient()
+
+	return nil, nil, nil
 }

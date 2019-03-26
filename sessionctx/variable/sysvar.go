@@ -687,6 +687,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
 	{ScopeSession, TiDBCheckMb4ValueInUtf8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8)},
 	{ScopeSession, TiDBSlowQueryFile, ""},
+	{ScopeSession, TiDBEnableFastAnalyze, BoolToIntStr(DefTiDBUseFastAnalyze)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

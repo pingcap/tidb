@@ -239,6 +239,9 @@ const (
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	TiDBSlowQueryFile = "tidb_slow_query_file"
+
+	// TiDBEnableFastAnalyze indicates to use fast analyze.
+	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
 )
 
 // Default TiDB system variable values.
@@ -291,6 +294,7 @@ const (
 	DefTiDBUseRadixJoin              = false
 	DefEnableWindowFunction          = false
 	DefTiDBDDLSlowOprThreshold       = 300
+	DefTiDBUseFastAnalyze            = false
 )
 
 // Process global variables.

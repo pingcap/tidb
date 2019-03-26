@@ -1422,20 +1422,44 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
 	for _, task := range v.ColTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType: colTask,
-			colExec:  b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets),
-		})
+		if v.EnableFastAnalyze {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: colFastTask,
+				colFastExec: &AnalyzeColumnsFastExec{
+					ctx:             b.ctx,
+					PhysicalTableID: task.PhysicalTableID,
+					colsInfo:        task.ColsInfo,
+					maxNumBuckets:   v.MaxNumBuckets,
+				},
+			})
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: colTask,
+				colExec:  b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets),
+			})
+		}
 		if b.err != nil {
 			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType: idxTask,
-			idxExec:  b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets),
-		})
+		if v.EnableFastAnalyze {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: idxFastTask,
+				idxFastExec: &AnalyzeIndexFastExec{
+					ctx:             b.ctx,
+					PhysicalTableID: task.PhysicalTableID,
+					idxInfo:         task.IndexInfo,
+					maxNumBuckets:   v.MaxNumBuckets,
+				},
+			})
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: idxTask,
+				idxExec:  b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets),
+			})
+		}
 		if b.err != nil {
 			b.err = errors.Trace(b.err)
 			return nil
