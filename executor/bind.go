@@ -31,7 +31,6 @@ type CreateBindExec struct {
 	defaultDB string
 	charset   string
 	collation string
-	done      bool
 	isGlobal  bool
 	bindAst   ast.StmtNode
 }
@@ -39,11 +38,6 @@ type CreateBindExec struct {
 // Next implements the Executor Next interface.
 func (e *CreateBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	req.Reset()
-	if e.done {
-		return nil
-	}
-	e.done = true
-
 	bm := bindinfo.GetBindManager(e.ctx)
 	if bm == nil {
 		return errors.New("bind manager is nil")
@@ -52,5 +46,5 @@ func (e *CreateBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	if e.isGlobal {
 		err = bm.AddGlobalBind(e.originSQL, e.bindSQL, e.defaultDB, e.charset, e.collation)
 	}
-	return errors.Trace(err)
+	return err
 }
