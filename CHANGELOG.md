@@ -1,6 +1,54 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [3.0.0-beta1] - 2019-03-26
+
+### SQL Optimizer
+* Support calculating the Cartesian product by using `Sort Merge Join` [#9032](https://github.com/pingcap/tidb/pull/9037)
+* Support Skyline Pruning, with some rules to prevent the execution plan from relying too heavily on statistics [#9337](https://github.com/pingcap/tidb/pull/9337)
+* Support Window Functions 
+    - `NTILE` [#9682](https://github.com/pingcap/tidb/pull/9682)
+    - `LEAD` and `LAG` [#9672](https://github.com/pingcap/tidb/pull/9672)
+    - `PERCENT_RANK` [#9671](https://github.com/pingcap/tidb/pull/9671)
+    - `NTH_VALUE` [#9596](https://github.com/pingcap/tidb/pull/9596)
+    - `CUME_DIST` [#9619](https://github.com/pingcap/tidb/pull/9619)
+    - `FIRST_VALUE` and `LAST_VALUE` [#9560](https://github.com/pingcap/tidb/pull/9560)
+    - `RANK` and `DENSE_RANK` [#9500](https://github.com/pingcap/tidb/pull/9500)
+    - `RANGE FRAMED` [#9450](https://github.com/pingcap/tidb/pull/9450)
+    - `ROW FRAMED` [#9358](https://github.com/pingcap/tidb/pull/9358)
+    - `ROW NUMBER` [#9098](https://github.com/pingcap/tidb/pull/9098)
+* Add a type of statistic that indicates the order correlation between columns and the handle column [#9315](https://github.com/pingcap/tidb/pull/9315) 
+### SQL Execution Engine
+* Add built-in functions:
+    - `JSON_QUOTE` [#7832](https://github.com/pingcap/tidb/pull/7832)
+    - `JSON_ARRAY_APPEND` [#9609](https://github.com/pingcap/tidb/pull/9609)
+    - `JSON_MERGE_PRESERVE` [#8931](https://github.com/pingcap/tidb/pull/8931)
+    - `BENCHMARK` [#9252](https://github.com/pingcap/tidb/pull/9252)
+    - `COALESCE` [#9087](https://github.com/pingcap/tidb/pull/9087)
+    - `NAME_CONST` [#9261](https://github.com/pingcap/tidb/pull/9261)
+* Optimize the Chunk size based on the query context, to reduce the execution time of SQL statements and resources consumption of the cluster [#6489](https://github.com/pingcap/tidb/issues/6489)
+### Privilege management
+* Support `SET ROLE` and `CURRENT_ROLE` [#9581](https://github.com/pingcap/tidb/pull/9581)
+* Support `DROP ROLE` [#9616](https://github.com/pingcap/tidb/pull/9616)
+* Support `CREATE ROLE` [#9461](https://github.com/pingcap/tidb/pull/9461)
+### Server
+* Add the `/debug/zip` HTTP interface to get information of the current TiDB instance [#9651](https://github.com/pingcap/tidb/pull/9651)
+* Support the `show pump status` and `show drainer status` SQL statements to check the Pump or Drainer status [9456](https://github.com/pingcap/tidb/pull/9456)
+* Support modifying the Pump or Drainer status by using SQL statements [#9789](https://github.com/pingcap/tidb/pull/9789)
+* Support adding HASH fingerprints to SQL text for easy tracking of slow SQL statements [#9662](https://github.com/pingcap/tidb/pull/9662)
+* Add the `log_bin` system variable (“0” by default) to control the enabling state of binlog; only support checking the state currently [#9343](https://github.com/pingcap/tidb/pull/9343)
+* Support managing the sending binlog strategy by using the configuration file [#9864](https://github.com/pingcap/tidb/pull/9864)
+* Support querying the slow log by using the `INFORMATION_SCHEMA.SLOW_QUERY` memory table [#9290](https://github.com/pingcap/tidb/pull/9290)
+* Change the MySQL version displayed in TiDB from 5.7.10 to 5.7.25 [#9553](https://github.com/pingcap/tidb/pull/9553) 
+* Unify the log format for easy collection and analysis by tools
+* Add the `high_error_rate_feedback_total` monitoring item to record the difference between the actual data volume and the estimated data volume based on statistics [#9209](https://github.com/pingcap/tidb/pull/9209)
+* Add the QPS monitoring item in the database dimension, which can be enabled by using a configuration item [#9151](https://github.com/pingcap/tidb/pull/9151)
+### DDL
+* Add the `ddl_error_count_limit` global variable (“512” by default) to limit the number of DDL task retries (If this number exceeds the limit, the DDL task is canceled) [#9295](https://github.com/pingcap/tidb/pull/9295)
+* Support ALTER ALGORITHM `INPLACE`/`INSTANT` [#8811](https://github.com/pingcap/tidb/pull/8811)
+* Support the `SHOW CREATE VIEW` statement [#9309](https://github.com/pingcap/tidb/pull/9309)
+* Support the `SHOW CREATE USER` statement [#9240](https://github.com/pingcap/tidb/pull/9240)
+
 ## [2.1.3] 2019-01-25
 
 ### SQL Optimizer/Executor
