@@ -1186,7 +1186,9 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		adjust = len(s) < 4
+		if len(s) != 4 && len(s) > 0 && s[0:1] == "0" {
+			adjust = true
+		}
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Time.Year())
 	case KindMysqlDuration:
