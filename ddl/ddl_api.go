@@ -1301,6 +1301,9 @@ func checkPartitionByHash(pi *model.PartitionInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return errors.Trace(err)
 	}
+	if err := checkNoHashPartitions(pi.Num); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -1314,6 +1317,10 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 	}
 
 	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1337,6 +1344,10 @@ func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo
 	// if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
 	// 	return errors.Trace(err)
 	// }
+
+	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
+		return errors.Trace(err)
+	}
 
 	return checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions)))
 }

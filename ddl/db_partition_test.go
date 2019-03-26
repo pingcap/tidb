@@ -233,6 +233,10 @@ func (s *testIntegrationSuite) TestCreateTableWithPartition(c *C) {
 		  partition by range columns (a, b)
 		  (partition p0 values less than (10, 10.0))`)
 	c.Assert(ddl.ErrUnsupportedPartitionByRangeColumns.Equal(err), IsTrue)
+
+	assertErrorCode(c, tk, `create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
+	assertErrorCode(c, tk, `create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
+	assertErrorCode(c, tk, `create table t33 (a int, b int) partition by hash(a) partitions 0;`, tmysql.ErrNoParts)
 }
 
 func (s *testIntegrationSuite) TestCreateTableWithHashPartition(c *C) {

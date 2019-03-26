@@ -1257,6 +1257,9 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		Success bool
 		Expect  time.Time
 	}{
+		{"10/28/2011 9:46:29 pm", "%m/%d/%Y %l:%i:%s %p", true, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local)},
+		{"10/28/2011 9:46:29 Pm", "%m/%d/%Y %l:%i:%s %p", true, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local)},
+		{"2011/10/28 9:46:29 am", "%Y/%m/%d %l:%i:%s %p", true, time.Date(2011, 10, 28, 9, 46, 29, 0, time.Local)},
 		{"20161122165022", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
 		{"2016 11 22 16 50 22", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
 		{"16-50-22 2016 11 22", `%H-%i-%s%Y%m%d`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
