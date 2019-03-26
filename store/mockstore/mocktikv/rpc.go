@@ -236,6 +236,21 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 	if !h.checkKeyInRegion(req.GetStartKey()) {
 		panic("KvScan: startKey not in region")
 	}
+
+	if req.Reverse {
+		// when do reverse scan, check the start key instead of end key.
+		fmt.Println("DBG doing reverse scan", string(req.GetStartKey()), string(req.GetEndKey()))
+		startKey := h.startKey
+		if len(req.StartKey) > 0 && (len(startKey) == 0 || bytes.Compare(req.StartKey, startKey) > 0) {
+			startKey = req.StartKey
+		}
+		pairs := h.mvccStore.ReverseScan(startKey, req.GetEndKey(), int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+		fmt.Println("DBG after reverse scan", len(pairs))
+		return &kvrpcpb.ScanResponse{
+			Pairs: convertToPbPairs(pairs),
+		}
+	}
+
 	endKey := h.endKey
 	if len(req.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(req.EndKey, endKey) < 0) {
 		endKey = req.EndKey
