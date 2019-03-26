@@ -40,6 +40,8 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 		return nil, err
 	}
 
+	ctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
+
 	// Check privilege. Maybe it's better to move this to the Preprocess, but
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.

@@ -16,6 +16,7 @@ package execdetails
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,60 +54,75 @@ type CommitDetails struct {
 	TxnRetry          int
 }
 
+const (
+	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
+	ProcessTimeStr = "Process_time"
+	// WaitTimeStr means the time of all coprocessor wait.
+	WaitTimeStr = "Wait_time"
+	// BackoffTimeStr means the time of all back-off.
+	BackoffTimeStr = "Backoff_time"
+	// RequestCountStr means the request count.
+	RequestCountStr = "Request_count"
+	// TotalKeysStr means the total scan keys.
+	TotalKeysStr = "Total_keys"
+	// ProcessKeysStr means the total processed keys.
+	ProcessKeysStr = "Process_keys"
+)
+
 // String implements the fmt.Stringer interface.
 func (d ExecDetails) String() string {
 	parts := make([]string, 0, 6)
 	if d.ProcessTime > 0 {
-		parts = append(parts, fmt.Sprintf("process_time:%vs", d.ProcessTime.Seconds()))
+		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
 	}
 	if d.WaitTime > 0 {
-		parts = append(parts, fmt.Sprintf("wait_time:%vs", d.WaitTime.Seconds()))
+		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64))
 	}
 	if d.BackoffTime > 0 {
-		parts = append(parts, fmt.Sprintf("backoff_time:%vs", d.BackoffTime.Seconds()))
+		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
 	}
 	if d.RequestCount > 0 {
-		parts = append(parts, fmt.Sprintf("request_count:%d", d.RequestCount))
+		parts = append(parts, RequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
 	}
 	if d.TotalKeys > 0 {
-		parts = append(parts, fmt.Sprintf("total_keys:%d", d.TotalKeys))
+		parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(d.TotalKeys, 10))
 	}
 	if d.ProcessedKeys > 0 {
-		parts = append(parts, fmt.Sprintf("processed_keys:%d", d.ProcessedKeys))
+		parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(d.ProcessedKeys, 10))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
 		if commitDetails.PrewriteTime > 0 {
-			parts = append(parts, fmt.Sprintf("prewrite_time:%vs", commitDetails.PrewriteTime.Seconds()))
+			parts = append(parts, fmt.Sprintf("Prewrite_time: %v", commitDetails.PrewriteTime.Seconds()))
 		}
 		if commitDetails.CommitTime > 0 {
-			parts = append(parts, fmt.Sprintf("commit_time:%vs", commitDetails.CommitTime.Seconds()))
+			parts = append(parts, fmt.Sprintf("Commit_time: %v", commitDetails.CommitTime.Seconds()))
 		}
 		if commitDetails.GetCommitTsTime > 0 {
-			parts = append(parts, fmt.Sprintf("get_commit_ts_time:%vs", commitDetails.GetCommitTsTime.Seconds()))
+			parts = append(parts, fmt.Sprintf("Get_commit_ts_time: %v", commitDetails.GetCommitTsTime.Seconds()))
 		}
 		if commitDetails.TotalBackoffTime > 0 {
-			parts = append(parts, fmt.Sprintf("total_backoff_time:%vs", commitDetails.TotalBackoffTime.Seconds()))
+			parts = append(parts, fmt.Sprintf("Total_backoff_time: %v", commitDetails.TotalBackoffTime.Seconds()))
 		}
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		if resolveLockTime > 0 {
-			parts = append(parts, fmt.Sprintf("resolve_lock_time:%vs", time.Duration(resolveLockTime).Seconds()))
+			parts = append(parts, fmt.Sprintf("Resolve_lock_time: %v", time.Duration(resolveLockTime).Seconds()))
 		}
 		if commitDetails.LocalLatchTime > 0 {
-			parts = append(parts, fmt.Sprintf("local_latch_wait_time:%vs", commitDetails.LocalLatchTime.Seconds()))
+			parts = append(parts, fmt.Sprintf("Local_latch_wait_time: %v", commitDetails.LocalLatchTime.Seconds()))
 		}
 		if commitDetails.WriteKeys > 0 {
-			parts = append(parts, fmt.Sprintf("write_keys:%d", commitDetails.WriteKeys))
+			parts = append(parts, fmt.Sprintf("Write_keys: %d", commitDetails.WriteKeys))
 		}
 		if commitDetails.WriteSize > 0 {
-			parts = append(parts, fmt.Sprintf("write_size:%d", commitDetails.WriteSize))
+			parts = append(parts, fmt.Sprintf("Write_size: %d", commitDetails.WriteSize))
 		}
 		prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum)
 		if prewriteRegionNum > 0 {
-			parts = append(parts, fmt.Sprintf("prewrite_region:%d", prewriteRegionNum))
+			parts = append(parts, fmt.Sprintf("Prewrite_region: %d", prewriteRegionNum))
 		}
 		if commitDetails.TxnRetry > 0 {
-			parts = append(parts, fmt.Sprintf("txn_retry:%d", commitDetails.TxnRetry))
+			parts = append(parts, fmt.Sprintf("Txn_retry: %d", commitDetails.TxnRetry))
 		}
 	}
 	return strings.Join(parts, " ")

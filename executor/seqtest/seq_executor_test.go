@@ -546,7 +546,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
-			"  `y` year NOT NULL,\n"+
+			"  `y` year(4) NOT NULL,\n"+
 			"  `x` int(11) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`y`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -585,7 +585,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c6|enum('s','m','l','xl')|YES||xl|",
 		"c7|set('a','b','c','d')|YES||a,c,c|",
 		"c8|datetime|YES||CURRENT_TIMESTAMP|on update CURRENT_TIMESTAMP",
-		"c9|year|YES||2014|",
+		"c9|year(4)|YES||2014|",
 	))
 }
 

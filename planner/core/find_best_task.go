@@ -423,7 +423,9 @@ func isCoveringIndex(columns []*expression.Column, indexColumns []*model.IndexCo
 		isIndexColumn := false
 		for _, indexCol := range indexColumns {
 			isFullLen := indexCol.Length == types.UnspecifiedLength || indexCol.Length == col.RetType.Flen
-			if col.ColName.L == indexCol.Name.L && isFullLen {
+			// We use col.OrigColName instead of col.ColName.
+			// Related issue: https://github.com/pingcap/tidb/issues/9636.
+			if col.OrigColName.L == indexCol.Name.L && isFullLen {
 				isIndexColumn = true
 				break
 			}
@@ -618,7 +620,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
-
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -634,6 +635,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
 			}
 		}
+	}
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
 	}
 	path := candidate.path
 	ts.Ranges = path.ranges
@@ -661,16 +665,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
-	} else {
-		expectedCnt := math.MaxFloat64
-		if prop.IsEmpty() {
-			expectedCnt = prop.ExpectedCnt
-		} else {
-			return invalidTask, nil
-		}
-		ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(expectedCnt))
 	}
+	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
