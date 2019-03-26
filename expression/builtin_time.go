@@ -28,7 +28,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -3517,19 +3516,10 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 		argType := args[0].GetType()
 		argEvaltp := argType.EvalType()
 		if argEvaltp == types.ETString {
-			// Treat types.ETString as unspecified decimal.
-			retDecimal = types.UnspecifiedLength
-			var tmpStr string
-			var err error
-			o := true
-			if cnst, ok := args[0].(*Constant); ok {
-				tmpStr, _, err = cnst.EvalString(ctx, chunk.Row{})
-			} else if sf, ok := args[0].(*ScalarFunction); ok && sf.FuncName.L == ast.GetVar {
-				tmpStr, _, err = sf.EvalString(ctx, chunk.Row{})
+			if _, ok := args[0].(*Column); ok {
+				retDecimal = types.UnspecifiedLength
 			} else {
-				o = false
-			}
-			if o {
+				tmpStr, _, err := args[0].EvalString(ctx, chunk.Row{})
 				if err != nil {
 					return nil, err
 				}
