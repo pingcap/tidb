@@ -1420,3 +1420,13 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		"  `b` varchar(50) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
+
+func (s *testIntegrationSuite) TestDefaultValueIsString(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	defer s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (a int default b'1');")
+	tbl := testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "1")
+}
