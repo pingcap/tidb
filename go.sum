@@ -184,6 +184,8 @@ github.com/wuudjac/parser v0.0.0-20190321030616-c34f45eea2e2 h1:dAelCTUkdnsus23q
 github.com/wuudjac/parser v0.0.0-20190321030616-c34f45eea2e2/go.mod h1:BsZDONL9oT/FzTE1WoBQnISjg+nQmolk3wBDCh5tpqM=
 github.com/wuudjac/parser v0.0.0-20190321113231-cb40355e314d h1:HJf+lV4uXiaVDDYFSzzZyzd4fIOysWMiwFUPG90HiKc=
 github.com/wuudjac/parser v0.0.0-20190321113231-cb40355e314d/go.mod h1:BsZDONL9oT/FzTE1WoBQnISjg+nQmolk3wBDCh5tpqM=
+github.com/wuudjac/parser v0.0.0-20190325051854-c978a4e37782 h1:ie6HelHqpmpFnB2jzpGJ9z48FM2G7Qb5+e389ze+3vQ=
+github.com/wuudjac/parser v0.0.0-20190325051854-c978a4e37782/go.mod h1:BsZDONL9oT/FzTE1WoBQnISjg+nQmolk3wBDCh5tpqM=
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 h1:MPPkRncZLN9Kh4MEFmbnK4h3BD7AUmskWv2+EeZJCCs=
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
 go.uber.org/atomic v1.3.2 h1:2Oa65PReHzfn29GpvgsYwloV9AVFHPDk8tYxt2c2tr4=
