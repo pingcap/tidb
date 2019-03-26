@@ -1135,6 +1135,7 @@ func (s *testSuite) TestUnion(c *C) {
 	_, err = tk.Exec("(select a,b from t1 limit 2) union all (select a,b from t2 order by a limit 1) order by t1.b")
 	c.Assert(err.Error(), Equals, "[planner:1250]Table 't1' from one of the SELECTs cannot be used in global ORDER clause")
 
+	// #issue 9900
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b decimal(6, 3))")
 	tk.MustExec("insert into t values(1, 1.000)")
