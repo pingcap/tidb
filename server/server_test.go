@@ -678,14 +678,18 @@ func runTestLoadData(c *C, server *Server) {
 
 func runTestConcurrentUpdate(c *C) {
 	// TODO: Should be runTestsOnNewDB. See #4205.
-	runTests(c, nil, func(dbt *DBTest) {
+	runTestsOnNewDB(c, nil, "Concurrent", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test2")
 		dbt.mustExec("create table test2 (a int, b int)")
 		dbt.mustExec("insert test2 values (1, 1)")
 		txn1, err := dbt.db.Begin()
 		c.Assert(err, IsNil)
+		_, err = txn1.Exec("use Concurrent")
+		c.Assert(err, IsNil)
 
 		txn2, err := dbt.db.Begin()
+		c.Assert(err, IsNil)
+		_, err = txn2.Exec("use Concurrent")
 		c.Assert(err, IsNil)
 
 		_, err = txn2.Exec("update test2 set a = a + 1 where b = 1")
