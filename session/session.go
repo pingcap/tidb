@@ -1304,7 +1304,7 @@ func loadSystemTZ(se *session) (string, error) {
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Plugin.Load) > 0 {
-		err := plugin.Init(context.Background(), plugin.Config{
+		err := plugin.Load(context.Background(), plugin.Config{
 			Plugins:        strings.Split(cfg.Plugin.Load, ","),
 			PluginDir:      cfg.Plugin.Dir,
 			GlobalSysVar:   &variable.SysVars,
@@ -1344,6 +1344,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	if len(cfg.Plugin.Load) > 0 {
+		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1359,17 +1366,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	err = dom.LoadBindInfoLoop(se2, se2.parser)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	// get global system variable tidb_log_bin from mysql.GLOBAL_VARIABLES
-	tidbLogBin, err := se1.GetGlobalSysVar(variable.TiDBLogBin)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	variable.SysVars[variable.TiDBLogBin].Value = tidbLogBin
-
-	if len(cfg.Plugin.Load) > 0 {
-		plugin.InitWatchLoops(dom.GetEtcdClient())
 	}
 
 	if raw, ok := store.(domain.EtcdBackend); ok {

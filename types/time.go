@@ -15,6 +15,7 @@ package types
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -27,7 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // Portable analogs of some common call errors.
@@ -263,7 +264,7 @@ func (t Time) ToNumber() *MyDecimal {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		log.Error("Fatal: never happen because we've control the format!")
+		logutil.Logger(context.Background()).Error("[fatal] never happen because we've control the format!")
 	}
 
 	if t.Fsp > 0 {
@@ -1920,14 +1921,14 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		fmt.Fprintf(buf, "%d", t.Time.Hour())
 	case 'h', 'I':
 		t := t.Time.Hour()
-		if t == 0 || t == 12 {
+		if t%12 == 0 {
 			fmt.Fprintf(buf, "%02d", 12)
 		} else {
 			fmt.Fprintf(buf, "%02d", t%12)
 		}
 	case 'l':
 		t := t.Time.Hour()
-		if t == 0 || t == 12 {
+		if t%12 == 0 {
 			fmt.Fprintf(buf, "%d", 12)
 		} else {
 			fmt.Fprintf(buf, "%d", t%12)
@@ -1943,6 +1944,7 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		}
 	case 'r':
 		h := t.Time.Hour()
+		h %= 24
 		switch {
 		case h == 0:
 			fmt.Fprintf(buf, "%02d:%02d:%02d AM", 12, t.Time.Minute(), t.Time.Second())
