@@ -14,14 +14,16 @@
 package kv
 
 import (
+	"context"
 	"math"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // ContextKey is the type of context's key
@@ -37,7 +39,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
-			log.Errorf("[kv] RunInNewTxn error - %v", err)
+			logutil.Logger(context.Background()).Error("RunInNewTxn", zap.Error(err))
 			return errors.Trace(err)
 		}
 
@@ -51,7 +53,10 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			err1 := txn.Rollback()
 			terror.Log(errors.Trace(err1))
 			if retryable && IsRetryableError(err) {
-				log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
+				logutil.Logger(context.Background()).Warn("RunInNewTxn",
+					zap.Uint64("retry txn", txn.StartTS()),
+					zap.Uint64("original txn", originalTxnTS),
+					zap.Error(err))
 				continue
 			}
 			return errors.Trace(err)
@@ -62,7 +67,10 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			break
 		}
 		if retryable && IsRetryableError(err) {
-			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
+			logutil.Logger(context.Background()).Warn("RunInNewTxn",
+				zap.Uint64("retry txn", txn.StartTS()),
+				zap.Uint64("original txn", originalTxnTS),
+				zap.Error(err))
 			BackOff(i)
 			continue
 		}
@@ -90,36 +98,20 @@ func BackOff(attempts uint) int {
 	return int(sleep)
 }
 
-// BatchGetValues gets values in batch.
-// The values from buffer in transaction and the values from the storage node are merged together.
-func BatchGetValues(txn Transaction, keys []Key) (map[string][]byte, error) {
-	if txn.IsReadOnly() {
-		return txn.GetSnapshot().BatchGet(keys)
-	}
-	bufferValues := make([][]byte, len(keys))
-	shrinkKeys := make([]Key, 0, len(keys))
-	for i, key := range keys {
-		val, err := txn.GetMemBuffer().Get(key)
-		if IsErrNotFound(err) {
-			shrinkKeys = append(shrinkKeys, key)
-			continue
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(val) != 0 {
-			bufferValues[i] = val
-		}
-	}
-	storageValues, err := txn.GetSnapshot().BatchGet(shrinkKeys)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for i, key := range keys {
-		if bufferValues[i] == nil {
-			continue
-		}
-		storageValues[string(key)] = bufferValues[i]
-	}
-	return storageValues, nil
+// mockCommitErrorEnable uses to enable `mockCommitError` and only mock error once.
+var mockCommitErrorEnable = int64(0)
+
+// MockCommitErrorEnable exports for gofail testing.
+func MockCommitErrorEnable() {
+	atomic.StoreInt64(&mockCommitErrorEnable, 1)
+}
+
+// MockCommitErrorDisable exports for gofail testing.
+func MockCommitErrorDisable() {
+	atomic.StoreInt64(&mockCommitErrorEnable, 0)
+}
+
+// IsMockCommitErrorEnable exports for gofail testing.
+func IsMockCommitErrorEnable() bool {
+	return atomic.LoadInt64(&mockCommitErrorEnable) == 1
 }

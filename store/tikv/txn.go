@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -22,8 +23,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -44,6 +46,9 @@ type tikvTxn struct {
 	dirty     bool
 	setCnt    int64
 	vars      *kv.Variables
+
+	// For data consistency check.
+	assertions []assertionPair
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -70,6 +75,20 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	}, nil
 }
 
+type assertionPair struct {
+	key       kv.Key
+	assertion kv.AssertionType
+}
+
+func (a assertionPair) String() string {
+	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
+}
+
+// SetAssertion sets a assertion for the key operation.
+func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
+	txn.assertions = append(txn.assertions, assertionPair{key, assertion})
+}
+
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
@@ -92,6 +111,9 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
 	ret, err := txn.us.Get(k)
+	if kv.IsErrNotFound(err) {
+		return nil, err
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -102,6 +124,38 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	}
 
 	return ret, nil
+}
+
+func (txn *tikvTxn) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	if txn.IsReadOnly() {
+		return txn.snapshot.BatchGet(keys)
+	}
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]kv.Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := txn.GetMemBuffer().Get(key)
+		if kv.IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
+	}
+	storageValues, err := txn.snapshot.BatchGet(shrinkKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
@@ -165,14 +219,16 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
+	// gofail: var mockCommitError bool
+	// if mockCommitError && kv.IsMockCommitErrorEnable() {
+	//  kv.MockCommitErrorDisable()
+	//	return errors.New("mock commit error")
+	// }
+
 	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
 	start := time.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
-
-	if err := txn.us.CheckLazyConditionPairs(); err != nil {
-		return errors.Trace(err)
-	}
 
 	// connID is used for log.
 	var connID uint64
@@ -184,26 +240,42 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if err != nil || committer == nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		ctxValue := ctx.Value(execdetails.CommitDetailCtxKey)
+		if ctxValue != nil {
+			commitDetail := ctxValue.(**execdetails.CommitDetails)
+			if *commitDetail != nil {
+				(*commitDetail).TxnRetry += 1
+			} else {
+				*commitDetail = committer.detail
+			}
+		}
+	}()
 	// latches disabled
 	if txn.store.txnLatches == nil {
 		err = committer.executeAndWriteFinishBinlog(ctx)
-		log.Debug("[kv]", connID, " txnLatches disabled, 2pc directly:", err)
+		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	// latches enabled
 	// for transactions which need to acquire latches
+	start = time.Now()
 	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
+	committer.detail.LocalLatchTime = time.Since(start)
+	if committer.detail.LocalLatchTime > 0 {
+		metrics.TiKVLocalLatchWaitTimeHistogram.Observe(committer.detail.LocalLatchTime.Seconds())
+	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		err = errors.Errorf("startTS %d is stale", txn.startTS)
+		err = errors.Errorf("txnStartTS %d is stale", txn.startTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 	err = committer.executeAndWriteFinishBinlog(ctx)
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
-	log.Debug("[kv]", connID, " txnLatches enabled while txn retryable:", err)
+	logutil.Logger(ctx).Debug("[kv] txnLatches enabled while txn retryable", zap.Error(err))
 	return errors.Trace(err)
 }
 
@@ -216,7 +288,7 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	log.Debugf("[kv] Rollback txn %d", txn.StartTS())
+	logutil.Logger(context.Background()).Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil
@@ -255,8 +327,4 @@ func (txn *tikvTxn) Size() int {
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return txn.us.GetMemBuffer()
-}
-
-func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
-	return txn.snapshot
 }

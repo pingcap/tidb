@@ -15,6 +15,7 @@
 package mock
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
@@ -88,8 +88,8 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn(bool) kv.Transaction {
-	return &c.txn
+func (c *Context) Txn(bool) (kv.Transaction, error) {
+	return &c.txn, nil
 }
 
 // GetClient implements sessionctx.Context GetClient interface.
@@ -125,7 +125,7 @@ func (c *Context) PreparedPlanCache() *kvcache.SimpleLRUCache {
 }
 
 // NewTxn implements the sessionctx.Context interface.
-func (c *Context) NewTxn() error {
+func (c *Context) NewTxn(context.Context) error {
 	if c.Store == nil {
 		return errors.New("store is not set")
 	}
@@ -146,7 +146,7 @@ func (c *Context) NewTxn() error {
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
-	return errors.Trace(c.NewTxn())
+	return errors.Trace(c.NewTxn(ctx))
 }
 
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
@@ -198,7 +198,8 @@ func (c *Context) GoCtx() context.Context {
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // StmtCommit implements the sessionctx.Context interface.
-func (c *Context) StmtCommit() {
+func (c *Context) StmtCommit() error {
+	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.
@@ -223,7 +224,8 @@ func NewContext() *Context {
 		ctx:         ctx,
 		cancel:      cancel,
 	}
-	sctx.sessionVars.MaxChunkSize = 2
+	sctx.sessionVars.InitChunkSize = 2
+	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	return sctx

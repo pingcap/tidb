@@ -14,9 +14,10 @@
 package tracing
 
 import (
+	"context"
+
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
-	"golang.org/x/net/context"
 )
 
 // TiDBTrace is set as Baggage on traces which are used for tidb tracing.

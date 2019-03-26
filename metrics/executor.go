@@ -36,4 +36,13 @@ var (
 			Name:      "statement_total",
 			Help:      "Counter of StmtNode.",
 		}, []string{LblType})
+
+	// DbStmtNodeCounter records the number of statement with the same type and db.
+	DbStmtNodeCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "statement_db_total",
+			Help:      "Counter of StmtNode by Database.",
+		}, []string{LblDb, LblType})
 )

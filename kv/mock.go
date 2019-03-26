@@ -14,9 +14,10 @@
 package kv
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"golang.org/x/net/context"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
@@ -45,12 +46,10 @@ func (t *mockTxn) LockKeys(keys ...Key) error {
 
 func (t *mockTxn) SetOption(opt Option, val interface{}) {
 	t.opts[opt] = val
-	return
 }
 
 func (t *mockTxn) DelOption(opt Option) {
 	delete(t.opts, opt)
-	return
 }
 
 func (t *mockTxn) GetOption(opt Option) interface{} {
@@ -65,6 +64,10 @@ func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
 func (t *mockTxn) Get(k Key) ([]byte, error) {
+	return nil, nil
+}
+
+func (t *mockTxn) BatchGet(keys []Key) (map[string][]byte, error) {
 	return nil, nil
 }
 
@@ -99,12 +102,6 @@ func (t *mockTxn) GetMemBuffer() MemBuffer {
 	return nil
 }
 
-func (t *mockTxn) GetSnapshot() Snapshot {
-	return &mockSnapshot{
-		store: NewMemDbBuffer(DefaultTxnMembufCap),
-	}
-}
-
 func (t *mockTxn) SetCap(cap int) {
 
 }
@@ -116,6 +113,8 @@ func (t *mockTxn) Reset() {
 func (t *mockTxn) SetVars(vars *Variables) {
 
 }
+
+func (t *mockTxn) SetAssertion(key Key, assertion AssertionType) {}
 
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {

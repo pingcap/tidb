@@ -14,6 +14,7 @@
 package structure_test
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -21,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestTxStructure(t *testing.T) {

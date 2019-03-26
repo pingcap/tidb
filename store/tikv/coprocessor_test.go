@@ -14,11 +14,11 @@
 package tikv
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"golang.org/x/net/context"
 )
 
 type testCoprocessorSuite struct {
@@ -289,13 +289,6 @@ func (s *testCoprocessorSuite) TestCopRangeSplit(c *C) {
 		splitCase{"p", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
 		splitCase{"t", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t")},
 	)
-}
-
-func coprocessorKeyRange(start, end string) *coprocessor.KeyRange {
-	return &coprocessor.KeyRange{
-		Start: []byte(start),
-		End:   []byte(end),
-	}
 }
 
 type splitCase struct {

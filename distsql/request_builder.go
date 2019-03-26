@@ -173,7 +173,6 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 	if fb == nil || fb.Hist() == nil {
 		return tableRangesToKVRangesWithoutSplit(tid, ranges)
 	}
-	ranges = fb.Hist().SplitRange(ranges)
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
@@ -260,7 +259,7 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 		feedbackRanges = append(feedbackRanges, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
 	}
-	feedbackRanges = fb.Hist().SplitRange(feedbackRanges)
+	feedbackRanges = fb.Hist().SplitRange(sc, feedbackRanges, true)
 	krs := make([]kv.KeyRange, 0, len(feedbackRanges))
 	for _, ran := range feedbackRanges {
 		low, high := ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()

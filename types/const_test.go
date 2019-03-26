@@ -14,6 +14,7 @@
 package types_test
 
 import (
+	"context"
 	"flag"
 	"testing"
 
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {

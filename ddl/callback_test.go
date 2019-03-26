@@ -14,12 +14,14 @@
 package ddl
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"go.uber.org/zap"
 )
 
 type TestInterceptor struct {
@@ -47,7 +49,7 @@ type TestDDLCallback struct {
 }
 
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
-	log.Infof("on job run before, job %v", job)
+	log.Info("on job run before", zap.String("job", job.String()))
 	if tc.OnJobRunBeforeExported != nil {
 		tc.OnJobRunBeforeExported(job)
 		return
@@ -61,7 +63,7 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 }
 
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
-	log.Infof("on job updated, job %v", job)
+	log.Info("on job updated", zap.String("job", job.String()))
 	if tc.OnJobUpdatedExported != nil {
 		tc.OnJobUpdatedExported(job)
 		return

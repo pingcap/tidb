@@ -20,10 +20,10 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testEvalSuite{})
@@ -53,44 +53,60 @@ func (s *testEvalSuite) TestEval(c *C) {
 	}{
 		// Datums.
 		{
-			datumExpr(types.NewFloat32Datum(1.1)),
+			datumExpr(c, types.NewFloat32Datum(1.1)),
 			types.NewFloat32Datum(1.1),
 		},
 		{
-			datumExpr(types.NewFloat64Datum(1.1)),
+			datumExpr(c, types.NewFloat64Datum(1.1)),
 			types.NewFloat64Datum(1.1),
 		},
 		{
-			datumExpr(types.NewIntDatum(1)),
+			datumExpr(c, types.NewIntDatum(1)),
 			types.NewIntDatum(1),
 		},
 		{
-			datumExpr(types.NewUintDatum(1)),
+			datumExpr(c, types.NewUintDatum(1)),
 			types.NewUintDatum(1),
 		},
 		{
-			datumExpr(types.NewBytesDatum([]byte("abc"))),
+			datumExpr(c, types.NewBytesDatum([]byte("abc"))),
 			types.NewBytesDatum([]byte("abc")),
 		},
 		{
-			datumExpr(types.NewStringDatum("abc")),
+			datumExpr(c, types.NewStringDatum("abc")),
 			types.NewStringDatum("abc"),
 		},
 		{
-			datumExpr(types.Datum{}),
+			datumExpr(c, types.Datum{}),
 			types.Datum{},
 		},
 		{
-			datumExpr(types.NewDurationDatum(types.Duration{Duration: time.Hour})),
+			datumExpr(c, types.NewDurationDatum(types.Duration{Duration: time.Hour})),
 			types.NewDurationDatum(types.Duration{Duration: time.Hour}),
 		},
 		{
-			datumExpr(types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
+			datumExpr(c, types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
 			types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1)),
 		},
+		// Columns.
 		{
 			columnExpr(0),
 			types.NewIntDatum(100),
+		},
+		// Scalar Functions.
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_JsonDepthSig,
+				toPBFieldType(newIntFieldType()),
+				jsonDatumExpr(c, `true`),
+			),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_JsonDepthSig,
+				toPBFieldType(newIntFieldType()),
+				jsonDatumExpr(c, `[10, {"a": 20}]`),
+			),
+			types.NewIntDatum(3),
 		},
 	}
 	sc := new(stmtctx.StatementContext)
@@ -113,7 +129,7 @@ func buildExpr(tp tipb.ExprType, children ...interface{}) *tipb.Expr {
 	for i, child := range children {
 		switch x := child.(type) {
 		case types.Datum:
-			expr.Children[i] = datumExpr(x)
+			expr.Children[i] = datumExpr(nil, x)
 		case *tipb.Expr:
 			expr.Children[i] = x
 		}
@@ -121,7 +137,7 @@ func buildExpr(tp tipb.ExprType, children ...interface{}) *tipb.Expr {
 	return expr
 }
 
-func datumExpr(d types.Datum) *tipb.Expr {
+func datumExpr(c *C, d types.Datum) *tipb.Expr {
 	expr := new(tipb.Expr)
 	switch d.Kind() {
 	case types.KindInt64:
@@ -149,13 +165,25 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		expr.Tp = tipb.ExprType_MysqlDecimal
 		var err error
 		expr.Val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
-		if err != nil {
-			log.Warnf("err happened when EncodeDecimal in datumExpr:%s", err.Error())
-		}
+		c.Assert(err, IsNil)
+	case types.KindMysqlJSON:
+		expr.Tp = tipb.ExprType_MysqlJson
+		var err error
+		expr.Val = make([]byte, 0, 1024)
+		expr.Val, err = codec.EncodeValue(nil, expr.Val, d)
+		c.Assert(err, IsNil)
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
 	return expr
+}
+
+func jsonDatumExpr(c *C, s string) *tipb.Expr {
+	var d types.Datum
+	j, err := json.ParseBinaryFromString(s)
+	c.Assert(err, IsNil)
+	d.SetMysqlJSON(j)
+	return datumExpr(c, d)
 }
 
 func columnExpr(columnID int64) *tipb.Expr {
@@ -163,4 +191,34 @@ func columnExpr(columnID int64) *tipb.Expr {
 	expr.Tp = tipb.ExprType_ColumnRef
 	expr.Val = codec.EncodeInt(nil, columnID)
 	return expr
+}
+
+// toPBFieldType converts *types.FieldType to *tipb.FieldType.
+func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
+	return &tipb.FieldType{
+		Tp:      int32(ft.Tp),
+		Flag:    uint32(ft.Flag),
+		Flen:    int32(ft.Flen),
+		Decimal: int32(ft.Decimal),
+		Charset: ft.Charset,
+		Collate: collationToProto(ft.Collate),
+	}
+}
+
+func newIntFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeLonglong,
+		Flen:    mysql.MaxIntWidth,
+		Decimal: 0,
+		Flag:    mysql.BinaryFlag,
+	}
+}
+
+func scalarFunctionExpr(sigCode tipb.ScalarFuncSig, retType *tipb.FieldType, args ...*tipb.Expr) *tipb.Expr {
+	return &tipb.Expr{
+		Tp:        tipb.ExprType_ScalarFunc,
+		Sig:       sigCode,
+		Children:  args,
+		FieldType: retType,
+	}
 }

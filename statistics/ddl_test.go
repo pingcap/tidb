@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
+func (s *testStatsSuite) TestDDLAfterLoad(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -55,7 +55,7 @@ func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
 	c.Assert(int(count), Equals, 333)
 }
 
-func (s *testStatsCacheSuite) TestDDLTable(c *C) {
+func (s *testStatsSuite) TestDDLTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -95,7 +95,7 @@ func (s *testStatsCacheSuite) TestDDLTable(c *C) {
 	c.Assert(statsTbl.Pseudo, IsFalse)
 }
 
-func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
+func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	do := s.do
@@ -117,7 +117,6 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	sc := new(stmtctx.StatementContext)
 	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NullCount, Equals, int64(2))
 	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NDV, Equals, int64(0))
 
@@ -131,7 +130,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	sc = new(stmtctx.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	count, err := statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(0), tableInfo.Columns[3].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(2))
@@ -161,7 +160,6 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	sc = new(stmtctx.StatementContext)
 	c.Check(statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.Count), Equals, 3.0)
 
 	testKit.MustExec("create index i on t(c2, c1)")
@@ -172,7 +170,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	rs.Check(testkit.Rows("2"))
 }
 
-func (s *testStatsCacheSuite) TestDDLPartition(c *C) {
+func (s *testStatsSuite) TestDDLPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")

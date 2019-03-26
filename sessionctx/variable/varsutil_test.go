@@ -97,13 +97,29 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	v := NewSessionVars()
 	v.GlobalVarsAccessor = NewMockGlobalAccessor()
 
-	SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
+	err := SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
 	val, err := GetSessionSystemVar(v, "autocommit")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 	c.Assert(SetSessionSystemVar(v, "autocommit", types.Datum{}), NotNil)
 
-	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
+	// 0 converts to OFF
+	err = SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF")
+
+	// 1/ON is not supported (generates a warning and sets to OFF)
+	err = SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF")
+
+	err = SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, "sql_mode")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "STRICT_TRANS_TABLES")
@@ -111,8 +127,10 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(""))
 	c.Assert(v.StrictSQLMode, IsFalse)
 
-	SetSessionSystemVar(v, "character_set_connection", types.NewStringDatum("utf8"))
-	SetSessionSystemVar(v, "collation_connection", types.NewStringDatum("utf8_general_ci"))
+	err = SetSessionSystemVar(v, "character_set_connection", types.NewStringDatum("utf8"))
+	c.Assert(err, IsNil)
+	err = SetSessionSystemVar(v, "collation_connection", types.NewStringDatum("utf8_general_ci"))
+	c.Assert(err, IsNil)
 	charset, collation := v.GetCharsetInfo()
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_general_ci")
@@ -173,9 +191,12 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
 	c.Assert(v.BatchInsert, IsTrue)
 
-	c.Assert(v.MaxChunkSize, Equals, 32)
-	SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
-	c.Assert(v.MaxChunkSize, Equals, 2)
+	c.Assert(v.InitChunkSize, Equals, 32)
+	c.Assert(v.MaxChunkSize, Equals, 1024)
+	err = SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
+	c.Assert(err, NotNil)
+	err = SetSessionSystemVar(v, TiDBInitChunkSize, types.NewStringDatum("1024"))
+	c.Assert(err, NotNil)
 
 	// Test case for TiDBConfig session variable.
 	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))
@@ -201,10 +222,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
 
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
-
 	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
 	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
@@ -225,4 +242,17 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "on")
 	c.Assert(v.EnableTablePartition, Equals, "on")
+
+	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, true)
+	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 }

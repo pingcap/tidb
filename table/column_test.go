@@ -303,7 +303,7 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 				},
 			},
 			false,
-			types.NewStringDatum("abc"),
+			types.NewMysqlEnumDatum(types.Enum{Name: "abc", Value: 1}),
 			nil,
 		},
 		{

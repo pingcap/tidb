@@ -158,8 +158,7 @@ func (l *List) PreAlloc4Row(row Row) (ptr RowPtr) {
 		chkIdx++
 	}
 	chk := l.chunks[chkIdx]
-	rowIdx := chk.NumRows()
-	chk.PreAlloc(row)
+	rowIdx := chk.PreAlloc(row)
 	l.length++
 	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
 }

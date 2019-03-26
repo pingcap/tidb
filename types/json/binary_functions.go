@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 	"unicode/utf8"
 	"unsafe"
 
@@ -54,11 +55,18 @@ func (bj BinaryJSON) Type() string {
 	}
 }
 
+// Quote is for JSON_QUOTE
+func (bj BinaryJSON) Quote() string {
+	str := hack.String(bj.GetString())
+	return strconv.Quote(string(str))
+}
+
 // Unquote is for JSON_UNQUOTE.
 func (bj BinaryJSON) Unquote() (string, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
-		s, err := unquoteString(hack.String(bj.GetString()))
+		tmp := string(hack.String(bj.GetString()))
+		s, err := unquoteString(tmp)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
@@ -217,7 +225,7 @@ func (bj BinaryJSON) objectSearchKey(key []byte) (BinaryJSON, bool) {
 	idx := sort.Search(elemCount, func(i int) bool {
 		return bytes.Compare(bj.objectGetKey(i), key) >= 0
 	})
-	if idx < elemCount && bytes.Compare(bj.objectGetKey(idx), key) == 0 {
+	if idx < elemCount && bytes.Equal(bj.objectGetKey(idx), key) {
 		return bj.objectGetVal(idx), true
 	}
 	return BinaryJSON{}, false
@@ -729,5 +737,44 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 		return false
 	default:
 		return CompareBinary(obj, target) == 0
+	}
+}
+
+// GetElemDepth for JSON_DEPTH
+// Returns the maximum depth of a JSON document
+// rules referenced by MySQL JSON_DEPTH function
+// [https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-depth]
+// 1) An empty array, empty object, or scalar value has depth 1.
+// 2) A nonempty array containing only elements of depth 1 or nonempty object containing only member values of depth 1 has depth 2.
+// 3) Otherwise, a JSON document has depth greater than 2.
+// e.g. depth of '{}', '[]', 'true': 1
+// e.g. depth of '[10, 20]', '[[], {}]': 2
+// e.g. depth of '[10, {"a": 20}]': 3
+func (bj BinaryJSON) GetElemDepth() int {
+	switch bj.TypeCode {
+	case TypeCodeObject:
+		len := bj.GetElemCount()
+		maxDepth := 0
+		for i := 0; i < len; i++ {
+			obj := bj.objectGetVal(i)
+			depth := obj.GetElemDepth()
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		}
+		return maxDepth + 1
+	case TypeCodeArray:
+		len := bj.GetElemCount()
+		maxDepth := 0
+		for i := 0; i < len; i++ {
+			obj := bj.arrayGetElem(i)
+			depth := obj.GetElemDepth()
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		}
+		return maxDepth + 1
+	default:
+		return 1
 	}
 }

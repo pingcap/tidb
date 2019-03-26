@@ -537,11 +537,11 @@ PARTITION BY RANGE (to_days(b))
 SELECT a,b FROM t1 WHERE b >= '2008-12-01' AND b < '2009-12-00';
 DROP TABLE t1;
 
-# RANGE(expr) partitioning 
+# RANGE(expr) partitioning
 create table t3 (
   a int
 )
-partition by range (a*1) ( 
+partition by range (a*1) (
   partition p0 values less than (10),
   partition p1 values less than (20)
 );
@@ -699,7 +699,7 @@ drop table t2;
 CREATE TABLE `t2` (
   `a` int(11) default NULL,
   `b` int(11) default NULL
-) 
+)
 PARTITION BY RANGE (a) (
 PARTITION p0 VALUES LESS THAN (200),
 PARTITION p1 VALUES LESS THAN (400),
@@ -743,7 +743,7 @@ CREATE TABLE `t2` (
   `a` int(11) default NULL,
   `b` int(11) default NULL,
   index (b)
-) 
+)
 PARTITION BY RANGE (a) (
 PARTITION p0 VALUES LESS THAN (200),
 PARTITION p1 VALUES LESS THAN (400),
@@ -845,7 +845,7 @@ create table t2 (a int)
   partition p1 values less than (128),
   partition p2 values less than (255)
 );
-  
+
 insert into t1 values (0x20), (0x20), (0x41), (0x41), (0xFE), (0xFE);
 insert into t2 values (0x20), (0x20), (0x41), (0x41), (0xFE), (0xFE);
 explain select * from t1 where a=0;
@@ -862,7 +862,7 @@ explain select * from t1 where a <= 64 AND a >= 63;
 explain select * from t2 where a <= 64 AND a >= 63;
 drop table t1;
 drop table t2;
-  
+
 create table t1(a bigint unsigned not null) partition by range(a+0) (
   partition p1 values less than (10),
   partition p2 values less than (20),
@@ -873,10 +873,10 @@ create table t1(a bigint unsigned not null) partition by range(a+0) (
 insert into t1 values (9),(19),(0xFFFF0000FFFF000-1), (0xFFFF0000FFFFFFF-1);
 insert into t1 values (9),(19),(0xFFFF0000FFFF000-1), (0xFFFF0000FFFFFFF-1);
 
-explain select * from t1 where 
+explain select * from t1 where
   a >= 2305561538531885056-10 and a <= 2305561538531885056-8;
 
-explain select * from t1 where 
+explain select * from t1 where
   a > 0xFFFFFFFFFFFFFFEC and a < 0xFFFFFFFFFFFFFFEE;
 
 explain select * from t1 where a>=0 and a <= 0xFFFFFFFFFFFFFFFF;
@@ -895,7 +895,7 @@ drop table t1;
 
 #
 # BUG#27927 Partition pruning not optimal with TO_DAYS function
-# 
+#
 
 CREATE TABLE t1 ( recdate  DATETIME NOT NULL )
 PARTITION BY RANGE( TO_DAYS(recdate) ) (
@@ -924,9 +924,9 @@ INSERT INTO t1 VALUES ('2006-03-01 12:00:00');
 explain select * from t1 where recdate < '2006-01-01 00:00:00';
 drop table t1;
 
--- echo # 
+-- echo #
 -- echo # BUG#33730 Full table scan instead selected partitions for query more than 10 partitions
--- echo # 
+-- echo #
 create table t0 (a int);
 insert into t0 values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9);
 create table t1 (a int)
@@ -942,3 +942,7 @@ explain select * from t1 where a between 10 and 13;
 explain select * from t1 where a between 10 and 10+33;
 
 drop table t0, t1;
+
+drop table if exists t;
+create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue));
+explain select * from t where a between timestamp'2019-02-16 14:19:00' and timestamp'2019-02-16 14:21:00';

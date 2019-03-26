@@ -35,6 +35,9 @@ const (
 	LabelGCWorker = "gcworker"
 	LabelAnalyze  = "analyze"
 
+	LabelBatchRecvLoop = "batch-recv-loop"
+	LabelBatchSendLoop = "batch-send-loop"
+
 	opSucc   = "ok"
 	opFailed = "err"
 )
@@ -56,6 +59,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BatchAddIdxHistogram)
 	prometheus.MustRegister(CampaignOwnerCounter)
 	prometheus.MustRegister(ConnGauge)
+	prometheus.MustRegister(PreparedStmtGauge)
 	prometheus.MustRegister(CriticalErrorCounter)
 	prometheus.MustRegister(DDLCounter)
 	prometheus.MustRegister(DDLWorkerHistogram)
@@ -70,6 +74,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GetTokenDurationHistogram)
 	prometheus.MustRegister(HandShakeErrorCounter)
 	prometheus.MustRegister(HandleJobHistogram)
+	prometheus.MustRegister(SignificantFeedbackCounter)
 	prometheus.MustRegister(JobsGauge)
 	prometheus.MustRegister(KeepAliveCounter)
 	prometheus.MustRegister(LoadPrivilegeCounter)
@@ -94,6 +99,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatementPerTransaction)
 	prometheus.MustRegister(StatsInaccuracyRate)
 	prometheus.MustRegister(StmtNodeCounter)
+	prometheus.MustRegister(DbStmtNodeCounter)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TiKVBackoffCounter)
 	prometheus.MustRegister(TiKVBackoffHistogram)
@@ -113,6 +119,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVTxnRegionsNumHistogram)
 	prometheus.MustRegister(TiKVTxnWriteKVCountHistogram)
 	prometheus.MustRegister(TiKVTxnWriteSizeHistogram)
+	prometheus.MustRegister(TiKVLocalLatchWaitTimeHistogram)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionCounter)
 	prometheus.MustRegister(TransactionDuration)
@@ -129,4 +136,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
+	prometheus.MustRegister(CPUUsagePercentageGauge)
+	prometheus.MustRegister(TiKVPendingBatchRequests)
+	prometheus.MustRegister(TiKVBatchWaitDuration)
 }

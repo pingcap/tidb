@@ -14,7 +14,10 @@
 package util
 
 import (
+	"fmt"
 	"time"
+
+	"github.com/pingcap/parser/mysql"
 )
 
 // ProcessInfo is a struct used for show processlist statement.
@@ -23,11 +26,31 @@ type ProcessInfo struct {
 	User    string
 	Host    string
 	DB      string
-	Command string
+	Command byte
 	Time    time.Time
 	State   uint16
 	Info    string
-	Mem     int64
+}
+
+// ToRow returns []interface{} for the row data of "show processlist" and "select * from infoschema.processlist".
+func (pi *ProcessInfo) ToRow(full bool) []interface{} {
+	var info string
+	if full {
+		info = pi.Info
+	} else {
+		info = fmt.Sprintf("%.100v", pi.Info)
+	}
+	t := uint64(time.Since(pi.Time) / time.Second)
+	return []interface{}{
+		pi.ID,
+		pi.User,
+		pi.Host,
+		pi.DB,
+		mysql.Command2Str[pi.Command],
+		t,
+		fmt.Sprintf("%d", pi.State),
+		info,
+	}
 }
 
 // SessionManager is an interface for session manage. Show processlist and

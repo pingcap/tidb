@@ -18,10 +18,11 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 )
@@ -33,7 +34,7 @@ type Builder struct {
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
-// Return the detal updated table IDs that are produced from SchemaDiff and an error.
+// Return the detail updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
 	if diff.Type == model.ActionCreateSchema {
@@ -52,10 +53,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	var oldTableID, newTableID int64
 	tblIDs := make([]int64, 0, 2)
 	switch diff.Type {
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionRestoreTable:
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, newTableID)
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionDropView:
 		oldTableID = diff.TableID
 		tblIDs = append(tblIDs, oldTableID)
 	case model.ActionTruncateTable:
@@ -90,7 +91,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		}
 	}
 	if tableIDIsValid(newTableID) {
-		// All types except DropTable.
+		// All types except DropTableOrView.
 		err := b.applyCreateTable(m, dbInfo, newTableID, alloc)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -171,9 +172,11 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
+	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
+
 	if alloc == nil {
 		schemaID := dbInfo.ID
-		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID))
+		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
@@ -192,6 +195,23 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
 	}
 	return nil
+}
+
+// ConvertOldVersionUTF8ToUTF8MB4IfNeed convert old version UTF8 to UTF8MB4 if config.TreatOldVersionUTF8AsUTF8MB4 is enable.
+func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
+	if !config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 || tbInfo.Version >= model.TableInfoVersion2 {
+		return
+	}
+	if tbInfo.Charset == charset.CharsetUTF8 {
+		tbInfo.Charset = charset.CharsetUTF8MB4
+		tbInfo.Collate = charset.CollationUTF8MB4
+	}
+	for _, col := range tbInfo.Columns {
+		if col.Version < model.ColumnInfoVersion2 && col.Charset == charset.CharsetUTF8 {
+			col.Charset = charset.CharsetUTF8MB4
+			col.Collate = charset.CollationUTF8MB4
+		}
+	}
 }
 
 func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64) {
@@ -255,12 +275,20 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di)
+		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	b.createSchemaTablesForPerfSchemaDB()
+
+	// Initialize virtual tables.
+	for _, driver := range drivers {
+		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	// TODO: Update INFORMATION_SCHEMA schema to use virtual table.
 	b.createSchemaTablesForInfoSchemaDB()
 	for _, v := range info.sortedTablesBuckets {
 		sort.Sort(v)
@@ -268,7 +296,9 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 	return b, nil
 }
 
-func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
+type tableFromMetaFunc func(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error)
+
+func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc) error {
 	schTbls := &schemaTables{
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(di.Tables)),
@@ -276,9 +306,9 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
 	b.is.schemaMap[di.Name.L] = schTbls
 	for _, t := range di.Tables {
 		schemaID := di.ID
-		alloc := autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID))
+		alloc := autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID), t.IsAutoIncColUnsigned())
 		var tbl table.Table
-		tbl, err := tables.TableFromMeta(alloc, t)
+		tbl, err := tableFromMeta(alloc, t)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -289,22 +319,16 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
 	return nil
 }
 
-func (b *Builder) createSchemaTablesForPerfSchemaDB() {
-	perfSchemaDB := perfschema.GetDBMeta()
-	perfSchemaTblNames := &schemaTables{
-		dbInfo: perfSchemaDB,
-		tables: make(map[string]table.Table, len(perfSchemaDB.Tables)),
-	}
-	b.is.schemaMap[perfSchemaDB.Name.L] = perfSchemaTblNames
-	for _, t := range perfSchemaDB.Tables {
-		tbl, ok := perfschema.GetTable(t.Name.O)
-		if !ok {
-			continue
-		}
-		perfSchemaTblNames.tables[t.Name.L] = tbl
-		bucketIdx := tableBucketIdx(t.ID)
-		b.is.sortedTablesBuckets[bucketIdx] = append(b.is.sortedTablesBuckets[bucketIdx], tbl)
-	}
+type virtualTableDriver struct {
+	*model.DBInfo
+	TableFromMeta func(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error)
+}
+
+var drivers []*virtualTableDriver
+
+// RegisterVirtualTable register virtual tables to the builder.
+func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc) {
+	drivers = append(drivers, &virtualTableDriver{dbInfo, tableFromMeta})
 }
 
 func (b *Builder) createSchemaTablesForInfoSchemaDB() {

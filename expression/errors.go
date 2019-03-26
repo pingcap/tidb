@@ -31,7 +31,8 @@ var (
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
-	errZlibZData                     = terror.ClassTypes.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
+	errZlibZData                     = terror.ClassExpression.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
+	errZlibZBuf                      = terror.ClassExpression.New(mysql.ErrZlibZBuf, mysql.MySQLErrName[mysql.ErrZlibZBuf])
 	errIncorrectArgs                 = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	errUnknownCharacterSet           = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
 	errDefaultValue                  = terror.ClassExpression.New(mysql.ErrInvalidDefault, "invalid default value")
@@ -40,6 +41,7 @@ var (
 	errWarnAllowedPacketOverflowed   = terror.ClassExpression.New(mysql.ErrWarnAllowedPacketOverflowed, mysql.MySQLErrName[mysql.ErrWarnAllowedPacketOverflowed])
 	errWarnOptionIgnored             = terror.ClassExpression.New(mysql.WarnOptionIgnored, mysql.MySQLErrName[mysql.WarnOptionIgnored])
 	errTruncatedWrongValue           = terror.ClassExpression.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	errUnknownLocale                 = terror.ClassExpression.New(mysql.ErrUnknownLocale, mysql.MySQLErrName[mysql.ErrUnknownLocale])
 )
 
 func init() {
@@ -48,6 +50,7 @@ func init() {
 		mysql.ErrDivisionByZero:                    mysql.ErrDivisionByZero,
 		mysql.ErrSpDoesNotExist:                    mysql.ErrSpDoesNotExist,
 		mysql.ErrZlibZData:                         mysql.ErrZlibZData,
+		mysql.ErrZlibZBuf:                          mysql.ErrZlibZBuf,
 		mysql.ErrWrongArguments:                    mysql.ErrWrongArguments,
 		mysql.ErrUnknownCharacterSet:               mysql.ErrUnknownCharacterSet,
 		mysql.ErrInvalidDefault:                    mysql.ErrInvalidDefault,
@@ -58,17 +61,19 @@ func init() {
 		mysql.ErrWarnAllowedPacketOverflowed:       mysql.ErrWarnAllowedPacketOverflowed,
 		mysql.WarnOptionIgnored:                    mysql.WarnOptionIgnored,
 		mysql.ErrTruncatedWrongValue:               mysql.ErrTruncatedWrongValue,
+		mysql.ErrUnknownLocale:                     mysql.ErrUnknownLocale,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
 
 // handleInvalidTimeError reports error or warning depend on the context.
 func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
-	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err) || types.ErrTruncatedWrongValue.Equal(err)) {
+	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err) ||
+		types.ErrTruncatedWrongValue.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err)) {
 		return err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateOrDeleteStmt) {
+	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
 		return err
 	}
 	sc.AppendWarning(err)
@@ -78,7 +83,7 @@ func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 // handleDivisionByZeroError reports error or warning depend on the context.
 func handleDivisionByZeroError(ctx sessionctx.Context) error {
 	sc := ctx.GetSessionVars().StmtCtx
-	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
+	if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
 		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
 			return nil
 		}

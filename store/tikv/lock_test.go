@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"math"
 	"runtime"
 	"time"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 type testLockSuite struct {

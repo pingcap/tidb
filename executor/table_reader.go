@@ -14,8 +14,10 @@
 package executor
 
 import (
+	"context"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
@@ -24,8 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -35,12 +36,11 @@ var _ Executor = &TableReaderExecutor{}
 type TableReaderExecutor struct {
 	baseExecutor
 
-	table           table.Table
-	physicalTableID int64
-	keepOrder       bool
-	desc            bool
-	ranges          []*ranger.Range
-	dagPB           *tipb.DAGRequest
+	table     table.Table
+	keepOrder bool
+	desc      bool
+	ranges    []*ranger.Range
+	dagPB     *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
@@ -66,6 +66,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
+	}
 	if e.corColInAccess {
 		ts := e.plans[0].(*plannercore.PhysicalTableScan)
 		access := ts.AccessCondition
@@ -77,6 +81,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 
 	e.resultHandler = &tableResultHandler{}
+	if e.feedback != nil && e.feedback.Hist() != nil {
+		// EncodeInt don't need *statement.Context.
+		e.ranges = e.feedback.Hist().SplitRange(nil, e.ranges, false)
+	}
 	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
@@ -99,12 +107,16 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
-func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tableReader.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
+	if err := e.resultHandler.nextChunk(ctx, req.Chunk); err != nil {
 		e.feedback.Invalidate()
 		return err
 	}
@@ -113,8 +125,12 @@ func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	e.ctx.StoreQueryFeedback(e.feedback)
 	err := e.resultHandler.Close()
+	if e.runtimeStats != nil {
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID())
+		copStats.SetRowNum(e.feedback.Actual())
+	}
+	e.ctx.StoreQueryFeedback(e.feedback)
 	return errors.Trace(err)
 }
 
@@ -122,7 +138,7 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, e.feedback).
+	kvReq, err := builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
@@ -132,7 +148,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result, err := distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

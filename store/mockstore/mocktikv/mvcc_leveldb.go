@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"sync"
 
@@ -27,7 +28,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/codec"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // MVCCLevelDB implements the MVCCStore interface.
@@ -52,7 +54,10 @@ type MVCCLevelDB struct {
 	// NextKey_0       -- (11)
 	// ...
 	// EOF
+
+	// db represents leveldb
 	db *leveldb.DB
+	// mu used for lock
 	// leveldb can not guarantee multiple operations to be atomic, for example, read
 	// then write, another write may happen during it, so this lock is necessory.
 	mu sync.RWMutex
@@ -177,7 +182,7 @@ type lockDecoder struct {
 	expectKey []byte
 }
 
-// lockDecoder decodes the lock value if current iterator is at expectKey::lock.
+// Decode decodes the lock value if current iterator is at expectKey::lock.
 func (dec *lockDecoder) Decode(iter *Iterator) (bool, error) {
 	if iter.Error() != nil || !iter.Valid() {
 		return false, iter.Error()
@@ -210,7 +215,7 @@ type valueDecoder struct {
 	expectKey []byte
 }
 
-// valueDecoder decodes a mvcc value if iter key is expectKey.
+// Decode decodes a mvcc value if iter key is expectKey.
 func (dec *valueDecoder) Decode(iter *Iterator) (bool, error) {
 	if iter.Error() != nil || !iter.Valid() {
 		return false, iter.Error()
@@ -241,7 +246,7 @@ type skipDecoder struct {
 	currKey []byte
 }
 
-// skipDecoder skips the iterator as long as its key is currKey, the new key would be stored.
+// Decode skips the iterator as long as its key is currKey, the new key would be stored.
 func (dec *skipDecoder) Decode(iter *Iterator) (bool, error) {
 	if iter.Error() != nil {
 		return false, iter.Error()
@@ -262,11 +267,11 @@ func (dec *skipDecoder) Decode(iter *Iterator) (bool, error) {
 
 type mvccEntryDecoder struct {
 	expectKey []byte
-	// Just values and lock is valid.
+	// mvccEntry represents values and lock is valid.
 	mvccEntry
 }
 
-// mvccEntryDecoder decodes a mvcc entry.
+// Decode decodes a mvcc entry.
 func (dec *mvccEntryDecoder) Decode(iter *Iterator) (bool, error) {
 	ldec := lockDecoder{expectKey: dec.expectKey}
 	ok, err := ldec.Decode(iter)
@@ -372,7 +377,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
-		log.Error("scan new iterator fail:", errors.ErrorStack(err))
+		logutil.Logger(context.Background()).Error("scan new iterator fail", zap.Error(err))
 		return nil
 	}
 
@@ -396,7 +401,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 		skip := skipDecoder{currKey}
 		ok, err = skip.Decode(iter)
 		if err != nil {
-			log.Error("seek to next key error:", errors.ErrorStack(err))
+			logutil.Logger(context.Background()).Error("seek to next key error", zap.Error(err))
 			break
 		}
 		currKey = skip.currKey
@@ -451,7 +456,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 			helper.entry.values = append(helper.entry.values, value)
 		}
 		if err != nil {
-			log.Error("Unmarshal fail:", errors.Trace(err))
+			logutil.Logger(context.Background()).Error("unmarshal fail", zap.Error(err))
 			break
 		}
 		succ = iter.Prev()
@@ -502,7 +507,25 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
 	for _, m := range mutations {
-		err := prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl)
+		// If the operation is Insert, check if key is exists at first.
+		var err error
+		if m.GetOp() == kvrpcpb.Op_Insert {
+			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI)
+			if err != nil {
+				errs = append(errs, err)
+				anyError = true
+				continue
+			}
+			if v != nil {
+				err = &ErrKeyAlreadyExist{
+					Key: m.Key,
+				}
+				errs = append(errs, err)
+				anyError = true
+				continue
+			}
+		}
+		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl)
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
@@ -551,11 +574,15 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		return ErrRetryable("write conflict")
 	}
 
+	op := mutation.GetOp()
+	if op == kvrpcpb.Op_Insert {
+		op = kvrpcpb.Op_Put
+	}
 	lock := mvccLock{
 		startTS: startTS,
 		primary: primary,
 		value:   mutation.Value,
-		op:      mutation.GetOp(),
+		op:      op,
 		ttl:     ttl,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
@@ -563,6 +590,13 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// Check assertions.
+	if (ok && mutation.Assertion == kvrpcpb.Assertion_NotExist) ||
+		(!ok && mutation.Assertion == kvrpcpb.Assertion_Exist) {
+		logutil.Logger(context.Background()).Error("ASSERTION FAIL!!!", zap.Stringer("mutation", mutation))
+	}
+
 	batch.Put(writeKey, writeValue)
 	return nil
 }
@@ -975,6 +1009,37 @@ func (mvcc *MVCCLevelDB) RawScan(startKey, endKey []byte, limit int) []Pair {
 			Value: append([]byte{}, value...),
 			Err:   err,
 		})
+	}
+	return pairs
+}
+
+// RawReverseScan implements the RawKV interface.
+// Scan the range of [endKey, startKey)
+// It doesn't support Scanning from "", because locating the last Region is not yet implemented.
+func (mvcc *MVCCLevelDB) RawReverseScan(startKey, endKey []byte, limit int) []Pair {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	iter := mvcc.db.NewIterator(&util.Range{
+		Limit: startKey,
+	}, nil)
+
+	success := iter.Last()
+
+	var pairs []Pair
+	for success && len(pairs) < limit {
+		key := iter.Key()
+		value := iter.Value()
+		err := iter.Error()
+		if bytes.Compare(key, endKey) < 0 {
+			break
+		}
+		pairs = append(pairs, Pair{
+			Key:   append([]byte{}, key...),
+			Value: append([]byte{}, value...),
+			Err:   err,
+		})
+		success = iter.Prev()
 	}
 	return pairs
 }

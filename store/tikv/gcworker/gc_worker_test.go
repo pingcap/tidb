@@ -14,20 +14,20 @@
 package gcworker
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -86,6 +86,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	close(s.gcWorker.done)
 	ok, _, err := s.gcWorker.prepare()
 	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
 	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 	c.Assert(err, IsNil)
 	c.Assert(lastRun, NotNil)
@@ -144,6 +145,19 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcMaxConcurrency)
+
+	// Change GC enable status.
+	s.oracle.AddOffset(time.Minute * 40)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, gcDisableValue)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, gcEnableValue)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
@@ -199,4 +213,29 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 	c.Assert(err, IsNil)
 	err = s.gcWorker.doGC(ctx, 20)
 	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
+	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+	// Now the row must be set to the default value.
+	str, err := s.gcWorker.loadValueFromSysTable(gcModeKey)
+	c.Assert(err, IsNil)
+	c.Assert(str, Equals, gcModeDistributed)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, false)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
 }

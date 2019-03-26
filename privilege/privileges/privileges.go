@@ -14,6 +14,7 @@
 package privileges
 
 import (
+	"context"
 	"strings"
 
 	"github.com/pingcap/parser/auth"
@@ -21,7 +22,8 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // SkipWithGrant causes the server to start without using the privilege system at all.
@@ -57,9 +59,45 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 	return mysqlPriv.RequestVerification(p.user, p.host, db, table, column, priv)
 }
 
+// RequestVerificationWithUser implements the Manager interface.
+func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool {
+	if SkipWithGrant {
+		return true
+	}
+
+	if user == nil {
+		return false
+	}
+
+	// Skip check for INFORMATION_SCHEMA database.
+	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
+	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+		return true
+	}
+
+	mysqlPriv := p.Handle.Get()
+	return mysqlPriv.RequestVerification(user.Username, user.Hostname, db, table, column, priv)
+}
+
+// GetEncodedPassword implements the Manager interface.
+func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.Logger(context.Background()).Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return ""
+	}
+	pwd := record.Password
+	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
+		logutil.Logger(context.Background()).Error("user password from system DB not like sha1sum", zap.String("user", user))
+		return ""
+	}
+	return pwd
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte) (u string, h string, success bool) {
-
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
@@ -70,16 +108,26 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
-		log.Errorf("Get user privilege record fail: user %v, host %v", user, host)
+		logutil.Logger(context.Background()).Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
 		return
 	}
 
 	u = record.User
 	h = record.Host
 
+	// Login a locked account is not allowed.
+	locked := record.AccountLocked
+	if locked {
+		logutil.Logger(context.Background()).Error("try to login a locked account",
+			zap.String("user", user), zap.String("host", host))
+		success = false
+		return
+	}
+
 	pwd := record.Password
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
-		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
+		logutil.Logger(context.Background()).Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return
 	}
 
@@ -97,7 +145,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 
 	hpwd, err := auth.DecodePassword(pwd)
 	if err != nil {
-		log.Errorf("Decode password string error %v", err)
+		logutil.Logger(context.Background()).Error("decode password string failed", zap.Error(err))
 		return
 	}
 
@@ -141,4 +189,20 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	}
 
 	return
+}
+
+// ActiveRoles implements privilege.Manager ActiveRoles interface.
+func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
+	mysqlPrivilege := p.Handle.Get()
+	u := p.user
+	h := p.host
+	for _, r := range roleList {
+		ok := mysqlPrivilege.FindRole(u, h, r)
+		if !ok {
+			logutil.Logger(context.Background()).Error("find role failed", zap.Stringer("role", r))
+			return false, r.String()
+		}
+	}
+	ctx.GetSessionVars().ActiveRoles = roleList
+	return true, ""
 }

@@ -106,3 +106,21 @@ func BenchmarkExtractColumns(b *testing.B) {
 	}
 	b.ReportAllocs()
 }
+
+func BenchmarkExprFromSchema(b *testing.B) {
+	conditions := []Expression{
+		newFunction(ast.EQ, newColumn(0), newColumn(1)),
+		newFunction(ast.EQ, newColumn(1), newColumn(2)),
+		newFunction(ast.EQ, newColumn(2), newColumn(3)),
+		newFunction(ast.EQ, newColumn(3), newLonglong(1)),
+		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+	}
+	expr := ComposeCNFCondition(mock.NewContext(), conditions...)
+	schema := &Schema{Columns: ExtractColumns(expr)}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ExprFromSchema(expr, schema)
+	}
+	b.ReportAllocs()
+}

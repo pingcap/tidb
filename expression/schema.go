@@ -90,15 +90,27 @@ func (s *Schema) Clone() *Schema {
 
 // ExprFromSchema checks if all columns of this expression are from the same schema.
 func ExprFromSchema(expr Expression, schema *Schema) bool {
-	cols := ExtractColumns(expr)
-	return len(schema.ColumnsIndices(cols)) > 0
+	switch v := expr.(type) {
+	case *Column:
+		return schema.Contains(v)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			if !ExprFromSchema(arg, schema) {
+				return false
+			}
+		}
+		return true
+	case *CorrelatedColumn, *Constant:
+		return true
+	}
+	return false
 }
 
 // FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
 func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	col, _, err := s.FindColumnAndIndex(astCol)
-	return col, errors.Trace(err)
+	return col, err
 }
 
 // FindColumnAndIndex finds an Column and its index from schema for a ast.ColumnName.

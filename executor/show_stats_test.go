@@ -15,12 +15,10 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestShowStatsMeta(c *C) {
+func (s *testSuite1) TestShowStatsMeta(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -36,22 +34,35 @@ func (s *testSuite) TestShowStatsMeta(c *C) {
 	c.Assert(result.Rows()[0][1], Equals, "t")
 }
 
-func (s *testSuite) TestShowStatsHistograms(c *C) {
+func (s *testSuite1) TestShowStatsHistograms(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("analyze table t")
-	result := tk.MustQuery("show stats_histograms").Sort()
+	result := tk.MustQuery("show stats_histograms")
+	c.Assert(len(result.Rows()), Equals, 0)
+	tk.MustExec("insert into t values(1,1)")
+	tk.MustExec("analyze table t")
+	result = tk.MustQuery("show stats_histograms").Sort()
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[0][3], Equals, "a")
 	c.Assert(result.Rows()[1][3], Equals, "b")
 	result = tk.MustQuery("show stats_histograms where column_name = 'a'")
 	c.Assert(len(result.Rows()), Equals, 1)
 	c.Assert(result.Rows()[0][3], Equals, "a")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
+	tk.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null)")
+	res := tk.MustQuery("show stats_histograms where table_name = 't'")
+	c.Assert(len(res.Rows()), Equals, 0)
+	tk.MustExec("analyze table t index idx_b")
+	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_b'")
+	c.Assert(len(res.Rows()), Equals, 1)
 }
 
-func (s *testSuite) TestShowStatsBuckets(c *C) {
+func (s *testSuite1) TestShowStatsBuckets(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -65,32 +76,7 @@ func (s *testSuite) TestShowStatsBuckets(c *C) {
 	result.Check(testkit.Rows("test t  idx 1 0 1 1 (1, 1) (1, 1)"))
 }
 
-func (s *testSuite) TestShowStatsHealthy(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
-	tk.MustExec("create index idx on t(a)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
-	tk.MustExec("insert into t values (1), (2)")
-	do, _ := session.GetDomain(s.store)
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
-	tk.MustExec("analyze table t")
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
-	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
-	do.StatsHandle().Update(do.InfoSchema())
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
-	tk.MustExec("analyze table t")
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
-	tk.MustExec("delete from t")
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
-	do.StatsHandle().Update(do.InfoSchema())
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
-}
-
-func (s *testSuite) TestShowStatsHasNullValue(c *C) {
+func (s *testSuite1) TestShowStatsHasNullValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, index idx(a))")
@@ -99,7 +85,7 @@ func (s *testSuite) TestShowStatsHasNullValue(c *C) {
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  idx 1 0 1 1 NULL NULL"))
 }
 
-func (s *testSuite) TestShowPartitionStats(c *C) {
+func (s *testSuite1) TestShowPartitionStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("use test")
@@ -117,14 +103,16 @@ func (s *testSuite) TestShowPartitionStats(c *C) {
 	c.Assert(result.Rows()[0][2], Equals, "p0")
 
 	result = tk.MustQuery("show stats_histograms").Sort()
-	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(len(result.Rows()), Equals, 3)
 	c.Assert(result.Rows()[0][2], Equals, "p0")
 	c.Assert(result.Rows()[0][3], Equals, "a")
 	c.Assert(result.Rows()[1][2], Equals, "p0")
-	c.Assert(result.Rows()[1][3], Equals, "idx")
+	c.Assert(result.Rows()[1][3], Equals, "b")
+	c.Assert(result.Rows()[2][2], Equals, "p0")
+	c.Assert(result.Rows()[2][3], Equals, "idx")
 
 	result = tk.MustQuery("show stats_buckets").Sort()
-	result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1", "test t p0 idx 1 0 1 1 1 1"))
+	result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1", "test t p0 b 0 0 1 1 1 1", "test t p0 idx 1 0 1 1 1 1"))
 
 	result = tk.MustQuery("show stats_healthy")
 	result.Check(testkit.Rows("test t p0 100"))

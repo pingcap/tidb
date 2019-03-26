@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -52,7 +51,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 
 	defaultTime, err := getSystemTimestamp(ctx)
 	if err != nil {
-		return d, errors.Trace(err)
+		return d, err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
@@ -63,16 +62,16 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 				if err != nil {
-					return d, errors.Trace(err)
+					return d, err
 				}
 			}
 		} else if upperX == types.ZeroDatetimeStr {
 			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
-			terror.Log(errors.Trace(err))
+			terror.Log(err)
 		} else {
 			value, err = types.ParseTime(sc, x, tp, fsp)
 			if err != nil {
-				return d, errors.Trace(err)
+				return d, err
 			}
 		}
 	case *driver.ValueExpr:
@@ -80,39 +79,39 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 		case types.KindString:
 			value, err = types.ParseTime(sc, x.GetString(), tp, fsp)
 			if err != nil {
-				return d, errors.Trace(err)
+				return d, err
 			}
 		case types.KindInt64:
 			value, err = types.ParseTimeFromNum(sc, x.GetInt64(), tp, fsp)
 			if err != nil {
-				return d, errors.Trace(err)
+				return d, err
 			}
 		case types.KindNull:
 			return d, nil
 		default:
-			return d, errors.Trace(errDefaultValue)
+			return d, errDefaultValue
 		}
 	case *ast.FuncCallExpr:
 		if x.FnName.L == ast.CurrentTimestamp {
 			d.SetString(strings.ToUpper(ast.CurrentTimestamp))
 			return d, nil
 		}
-		return d, errors.Trace(errDefaultValue)
+		return d, errDefaultValue
 	case *ast.UnaryOperationExpr:
 		// support some expression, like `-1`
 		v, err := EvalAstExpr(ctx, x)
 		if err != nil {
-			return d, errors.Trace(err)
+			return d, err
 		}
 		ft := types.NewFieldType(mysql.TypeLonglong)
 		xval, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, ft)
 		if err != nil {
-			return d, errors.Trace(err)
+			return d, err
 		}
 
 		value, err = types.ParseTimeFromNum(sc, xval.GetInt64(), tp, fsp)
 		if err != nil {
-			return d, errors.Trace(err)
+			return d, err
 		}
 	default:
 		return d, nil
@@ -131,7 +130,7 @@ func getSystemTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	sessionVars := ctx.GetSessionVars()
 	timestampStr, err := variable.GetSessionSystemVar(sessionVars, "timestamp")
 	if err != nil {
-		return now, errors.Trace(err)
+		return now, err
 	}
 
 	if timestampStr == "" {
@@ -139,7 +138,7 @@ func getSystemTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 	timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr)
 	if err != nil {
-		return time.Time{}, errors.Trace(err)
+		return time.Time{}, err
 	}
 	if timestamp <= 0 {
 		return now, nil

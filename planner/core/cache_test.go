@@ -28,7 +28,7 @@ type testCacheSuite struct {
 }
 
 func (s *testCacheSuite) SetUpSuite(c *C) {
-	ctx := mockContext()
+	ctx := MockContext()
 	ctx.GetSessionVars().SnapshotTS = 0
 	ctx.GetSessionVars().SQLMode = mysql.ModeNone
 	ctx.GetSessionVars().TimeZone = time.UTC

@@ -14,6 +14,7 @@
 package privileges
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -50,10 +51,11 @@ func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
 
 // UserRecord is used to represent a user record in privilege cache.
 type UserRecord struct {
-	Host       string // max length 60, primary key
-	User       string // max length 16, primary key
-	Password   string // max length 41
-	Privileges mysql.PrivilegeType
+	Host          string // max length 60, primary key
+	User          string // max length 32, primary key
+	Password      string // max length 41
+	Privileges    mysql.PrivilegeType
+	AccountLocked bool // A role record when this field is true
 
 	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
@@ -103,12 +105,42 @@ type columnsPrivRecord struct {
 	patTypes []byte
 }
 
+// RoleGraphEdgesTable is used to cache relationship between and role.
+type roleGraphEdgesTable struct {
+	roleList map[string]bool
+}
+
+// Find method is used to find role from table
+func (g roleGraphEdgesTable) Find(user, host string) bool {
+	if host == "" {
+		host = "%"
+	}
+	key := user + "@" + host
+	if g.roleList == nil {
+		return false
+	}
+	_, ok := g.roleList[key]
+	return ok
+}
+
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
 	User        []UserRecord
 	DB          []dbRecord
 	TablesPriv  []tablesPrivRecord
 	ColumnsPriv []columnsPrivRecord
+	RoleGraph   map[string]roleGraphEdgesTable
+}
+
+// FindRole is used to detect whether there is edges between users and roles.
+func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdentity) bool {
+	rec := p.matchUser(user, host)
+	r := p.matchUser(role.Username, role.Hostname)
+	if rec != nil && r != nil {
+		key := rec.User + "@" + rec.Host
+		return p.RoleGraph[key].Find(role.Username, role.Hostname)
+	}
+	return false
 }
 
 // LoadAll loads the tables from database to memory.
@@ -141,6 +173,14 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 		}
 		log.Warn("mysql.columns_priv missing")
 	}
+
+	err = p.LoadRoleGraph(ctx)
+	if err != nil {
+		if !noSuchTable(err) {
+			return errors.Trace(err)
+		}
+		log.Warn("mysql.role_edges missing")
+	}
 	return nil
 }
 
@@ -154,9 +194,19 @@ func noSuchTable(err error) bool {
 	return false
 }
 
+// LoadRoleGraph loads the mysql.role_edges table from database.
+func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
+	p.RoleGraph = make(map[string]roleGraphEdgesTable)
+	err := p.loadTable(ctx, "select FROM_USER, FROM_HOST, TO_USER, TO_HOST from mysql.role_edges;", p.decodeRoleEdgesTable)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
-	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Index_priv,Create_user_priv,Trigger_priv from mysql.user;", p.decodeUserTableRow)
+	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Create_view_priv,Show_view_priv,Index_priv,Create_user_priv,Trigger_priv,Create_role_priv,Drop_role_priv,account_locked from mysql.user;", p.decodeUserTableRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -253,7 +303,7 @@ func (p MySQLPrivilege) SortUserTable() {
 
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
+	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
@@ -277,16 +327,16 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	defer terror.Call(rs.Close)
 
 	fs := rs.Fields()
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			return nil
 		}
-		it := chunk.NewIterator4Chunk(chk)
+		it := chunk.NewIterator4Chunk(req.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			err = decodeTableRow(row, fs)
 			if err != nil {
@@ -296,7 +346,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
 		// The result will reference memory in the chunk, so the chunk must not be reused
 		// here, otherwise some werid bug will happen!
-		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 
@@ -311,13 +361,17 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "password":
 			value.Password = row.GetString(i)
+		case f.ColumnAsName.L == "account_locked":
+			if row.GetEnum(i).String() == "Y" {
+				value.AccountLocked = true
+			}
 		case f.Column.Tp == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
-				return errInvalidPrivilegeType.GenWithStack("Unknown Privilege Type!")
+				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
 			}
 			value.Privileges |= priv
 		}
@@ -373,6 +427,31 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row chunk.Row, fs []*ast.Resul
 		}
 	}
 	p.TablesPriv = append(p.TablesPriv, value)
+	return nil
+}
+
+func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*ast.ResultField) error {
+	var fromUser, fromHost, toHost, toUser string
+	for i, f := range fs {
+		switch {
+		case f.ColumnAsName.L == "from_host":
+			fromHost = row.GetString(i)
+		case f.ColumnAsName.L == "from_user":
+			fromUser = row.GetString(i)
+		case f.ColumnAsName.L == "to_host":
+			toHost = row.GetString(i)
+		case f.ColumnAsName.L == "to_user":
+			toUser = row.GetString(i)
+		}
+	}
+	fromKey := fromUser + "@" + fromHost
+	toKey := toUser + "@" + toHost
+	roleGraph, ok := p.RoleGraph[toKey]
+	if !ok {
+		roleGraph = roleGraphEdgesTable{roleList: make(map[string]bool)}
+		p.RoleGraph[toKey] = roleGraph
+	}
+	roleGraph.roleList[fromKey] = true
 	return nil
 }
 
@@ -646,7 +725,7 @@ func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allP
 		if priv&p == 0 {
 			continue
 		}
-		s, _ := allPrivNames[p]
+		s := allPrivNames[p]
 		pstrs = append(pstrs, s)
 	}
 	return strings.Join(pstrs, ",")

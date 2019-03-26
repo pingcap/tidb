@@ -34,7 +34,7 @@ type testJoinReorderDPSuite struct {
 }
 
 func (s *testJoinReorderDPSuite) SetUpTest(c *C) {
-	s.ctx = mockContext()
+	s.ctx = MockContext()
 	s.ctx.GetSessionVars().PlanID = -1
 }
 
@@ -49,7 +49,7 @@ func (mj mockLogicalJoin) init(ctx sessionctx.Context) *mockLogicalJoin {
 	return &mj
 }
 
-func (mj *mockLogicalJoin) deriveStats() (*property.StatsInfo, error) {
+func (mj *mockLogicalJoin) recursiveDeriveStats() (*property.StatsInfo, error) {
 	if mj.stats == nil {
 		mj.stats = mj.statsMap[mj.involvedNodeSet]
 	}

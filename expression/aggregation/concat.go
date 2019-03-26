@@ -48,13 +48,13 @@ func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row chunk.
 	sepArg := cf.Args[len(cf.Args)-1]
 	sepDatum, err := sepArg.Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if sepDatum.IsNull() {
 		return errors.Errorf("Invalid separator argument.")
 	}
 	cf.separator, err = sepDatum.ToString()
-	return errors.Trace(err)
+	return err
 }
 
 // Update implements Aggregation interface.
@@ -63,7 +63,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	if !cf.sepInited {
 		err := cf.initSeparator(sc, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		cf.sepInited = true
 	}
@@ -72,7 +72,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	for i, length := 0, len(cf.Args)-1; i < length; i++ {
 		value, err := cf.Args[i].Eval(row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if value.IsNull() {
 			return nil
@@ -82,7 +82,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	if cf.HasDistinct {
 		d, err := evalCtx.DistinctChecker.Check(datumBuf)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !d {
 			return nil

@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/opentracing/opentracing-go"
@@ -25,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
@@ -36,13 +37,13 @@ type Compiler struct {
 
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span1 := opentracing.StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 
 	infoSchema := GetInfoSchema(c.Ctx)
-	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
+	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -76,7 +77,7 @@ func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plannercore.Plan) (expen
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
-	log.Warnf("[EXPENSIVE_QUERY] %s", sql)
+	logutil.Logger(context.Background()).Warn("EXPENSIVE_QUERY", zap.String("SQL", sql))
 	return
 }
 
@@ -122,7 +123,114 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	if inRestrictedSQL {
 		return
 	}
-	metrics.StmtNodeCounter.WithLabelValues(GetStmtLabel(stmtNode)).Inc()
+
+	typeLabel := GetStmtLabel(stmtNode)
+	metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
+
+	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
+		return
+	}
+
+	dbLabels := getStmtDbLabel(stmtNode)
+	for dbLabel := range dbLabels {
+		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
+	}
+}
+
+func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
+	dbLabelSet := make(map[string]struct{})
+
+	switch x := stmtNode.(type) {
+	case *ast.AlterTableStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelSet[dbLabel] = struct{}{}
+	case *ast.CreateIndexStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelSet[dbLabel] = struct{}{}
+	case *ast.CreateTableStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelSet[dbLabel] = struct{}{}
+	case *ast.InsertStmt:
+		dbLabels := getDbFromResultNode(x.Table.TableRefs)
+		for _, db := range dbLabels {
+			dbLabelSet[db] = struct{}{}
+		}
+		dbLabels = getDbFromResultNode(x.Select)
+		for _, db := range dbLabels {
+			dbLabelSet[db] = struct{}{}
+		}
+	case *ast.DropIndexStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelSet[dbLabel] = struct{}{}
+	case *ast.DropTableStmt:
+		tables := x.Tables
+		for _, table := range tables {
+			dbLabel := table.Schema.O
+			if _, ok := dbLabelSet[dbLabel]; !ok {
+				dbLabelSet[dbLabel] = struct{}{}
+			}
+		}
+	case *ast.SelectStmt:
+		dbLabels := getDbFromResultNode(x)
+		for _, db := range dbLabels {
+			dbLabelSet[db] = struct{}{}
+		}
+	case *ast.UpdateStmt:
+		if x.TableRefs != nil {
+			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+	case *ast.DeleteStmt:
+		if x.TableRefs != nil {
+			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+	}
+
+	return dbLabelSet
+}
+
+func getDbFromResultNode(resultNode ast.ResultSetNode) []string { //may have duplicate db name
+	var dbLabels []string
+
+	if resultNode == nil {
+		return dbLabels
+	}
+
+	switch x := resultNode.(type) {
+	case *ast.TableSource:
+		return getDbFromResultNode(x.Source)
+	case *ast.SelectStmt:
+		if x.From != nil {
+			return getDbFromResultNode(x.From.TableRefs)
+		}
+	case *ast.TableName:
+		dbLabels = append(dbLabels, x.DBInfo.Name.O)
+	case *ast.Join:
+		if x.Left != nil {
+			dbs := getDbFromResultNode(x.Left)
+			if dbs != nil {
+				for _, db := range dbs {
+					dbLabels = append(dbLabels, db)
+				}
+			}
+		}
+
+		if x.Right != nil {
+			dbs := getDbFromResultNode(x.Right)
+			if dbs != nil {
+				for _, db := range dbs {
+					dbLabels = append(dbLabels, db)
+				}
+			}
+		}
+	}
+
+	return dbLabels
 }
 
 // GetStmtLabel generates a label for a statement.
@@ -134,6 +242,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "AnalyzeTable"
 	case *ast.BeginStmt:
 		return "Begin"
+	case *ast.ChangeStmt:
+		return "Change"
 	case *ast.CommitStmt:
 		return "Commit"
 	case *ast.CreateDatabaseStmt:
@@ -142,6 +252,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "CreateIndex"
 	case *ast.CreateTableStmt:
 		return "CreateTable"
+	case *ast.CreateViewStmt:
+		return "CreateView"
 	case *ast.CreateUserStmt:
 		return "CreateUser"
 	case *ast.DeleteStmt:
@@ -196,7 +308,7 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 	var is infoschema.InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(infoschema.InfoSchema)
-		log.Infof("con:%d use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
+		logutil.Logger(context.Background()).Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
 	} else {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}

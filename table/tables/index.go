@@ -196,7 +196,8 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error) {
+func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64,
+	opts ...*table.CreateIdxOpt) (int64, error) {
 	writeBufs := ctx.GetSessionVars().GetWriteStmtBufs()
 	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	key, distinct, err := c.GenIndexKey(ctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
@@ -229,12 +230,21 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error {
+func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64, ss kv.Transaction) error {
 	key, _, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	err = m.Delete(key)
+	if ss != nil {
+		switch c.idxInfo.State {
+		case model.StatePublic:
+			// If the index is in public state, delete this index means it must exists.
+			ss.SetAssertion(key, kv.Exist)
+		default:
+			ss.SetAssertion(key, kv.None)
+		}
+	}
 	return errors.Trace(err)
 }
 

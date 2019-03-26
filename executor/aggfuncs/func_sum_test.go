@@ -31,12 +31,8 @@ func (s *testSuite) TestMergePartialResult4SumDecimal(c *C) {
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncSum,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
-	}
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncSum, args, false)
 	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build sum func for partial phase.
@@ -57,9 +53,9 @@ func (s *testSuite) TestMergePartialResult4SumDecimal(c *C) {
 	partialSumFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
 	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(10)) == 0, IsTrue)
 
-	row := iter.Begin()
-	row = iter.Next()
-	for row = iter.Next(); row != iter.End(); row = iter.Next() {
+	iter.Begin()
+	iter.Next()
+	for row := iter.Next(); row != iter.End(); row = iter.Next() {
 		partialSumFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
 	}
 	resultChk.Reset()
@@ -87,12 +83,8 @@ func (s *testSuite) TestMergePartialResult4SumFloat(c *C) {
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncSum,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeDouble),
-	}
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncSum, args, false)
 	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build sum func for partial phase.
@@ -113,9 +105,9 @@ func (s *testSuite) TestMergePartialResult4SumFloat(c *C) {
 	// (0+1+2+3+4)
 	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(10), IsTrue)
 
-	row := iter.Begin()
-	row = iter.Next()
-	for row = iter.Next(); row != iter.End(); row = iter.Next() {
+	iter.Begin()
+	iter.Next()
+	for row := iter.Next(); row != iter.End(); row = iter.Next() {
 		partialSumFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
 	}
 	resultChk.Reset()

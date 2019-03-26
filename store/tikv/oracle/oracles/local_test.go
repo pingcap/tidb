@@ -14,10 +14,9 @@
 package oracles
 
 import (
+	"context"
 	"testing"
 	"time"
-
-	"golang.org/x/net/context"
 )
 
 func TestLocalOracle(t *testing.T) {
@@ -41,12 +40,12 @@ func TestIsExpired(t *testing.T) {
 	o := NewLocalOracle()
 	defer o.Close()
 	ts, _ := o.GetTimestamp(context.Background())
-	time.Sleep(1 * time.Second)
-	expire := o.IsExpired(uint64(ts), 500)
+	time.Sleep(50 * time.Millisecond)
+	expire := o.IsExpired(uint64(ts), 40)
 	if !expire {
 		t.Error("should expired")
 	}
-	expire = o.IsExpired(uint64(ts), 2000)
+	expire = o.IsExpired(uint64(ts), 200)
 	if expire {
 		t.Error("should not expired")
 	}

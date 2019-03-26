@@ -14,6 +14,8 @@
 package mocktikv
 
 import (
+	"context"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coprocessor.Response {
@@ -70,6 +71,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		IndexScan:      &tipb.IndexScan{Desc: false},
+		execDetail:     new(execDetail),
 	}
 	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob))
 	var cms *statistics.CMSketch
@@ -137,6 +139,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 			startTS:        analyzeReq.GetStartTs(),
 			isolationLevel: h.isolationLevel,
 			mvccStore:      h.mvccStore,
+			execDetail:     new(execDetail),
 		},
 	}
 	e.fields = make([]*ast.ResultField, len(columns))
@@ -211,24 +214,24 @@ func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error)
 	return datumRow, nil
 }
 
-func (e *analyzeColumnsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	row, err := e.getNext(ctx)
 	if row == nil || err != nil {
 		return errors.Trace(err)
 	}
 	for i := 0; i < len(row); i++ {
-		chk.AppendDatum(i, &row[i])
+		req.AppendDatum(i, &row[i])
 	}
 	return nil
 }
 
-func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
+func (e *analyzeColumnsExec) NewRecordBatch() *chunk.RecordBatch {
 	fields := make([]*types.FieldType, 0, len(e.fields))
 	for _, field := range e.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunkWithCapacity(fields, 1)
+	return chunk.NewRecordBatch(chunk.NewChunkWithCapacity(fields, 1))
 }
 
 // Close implements the sqlexec.RecordSet Close interface.

@@ -47,8 +47,14 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, conds []expression.
 		sf := cond.(*expression.ScalarFunction)
 		lCol := sf.GetArgs()[0].(*expression.Column)
 		rCol := sf.GetArgs()[1].(*expression.Column)
-		lIdx := findNodeIndexInGroup(joinGroup, lCol)
-		rIdx := findNodeIndexInGroup(joinGroup, rCol)
+		lIdx, err := findNodeIndexInGroup(joinGroup, lCol)
+		if err != nil {
+			return nil, err
+		}
+		rIdx, err := findNodeIndexInGroup(joinGroup, rCol)
+		if err != nil {
+			return nil, err
+		}
 		addEdge(lIdx, rIdx, sf)
 	}
 	visited := make([]bool, len(joinGroup))
@@ -160,7 +166,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan LogicalPlan, e
 		}
 	}
 	join := s.newJoin(leftPlan, rightPlan, eqConds)
-	_, err := join.deriveStats()
+	_, err := join.recursiveDeriveStats()
 	return join, err
 }
 
@@ -178,4 +184,13 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) Lo
 		cartesianJoinGroup = resultJoinGroup
 	}
 	return cartesianJoinGroup[0]
+}
+
+func findNodeIndexInGroup(group []LogicalPlan, col *expression.Column) (int, error) {
+	for i, plan := range group {
+		if plan.Schema().Contains(col) {
+			return i, nil
+		}
+	}
+	return -1, ErrUnknownColumn.GenWithStackByArgs(col, "JOIN REORDER RULE")
 }

@@ -59,7 +59,7 @@ var (
 	// ErrTxnTooLarge is the error when transaction is too large, lock time reached the maximum value.
 	ErrTxnTooLarge = terror.ClassKV.New(codeTxnTooLarge, "transaction is too large")
 	// ErrEntryTooLarge is the error when a key value entry is too large.
-	ErrEntryTooLarge = terror.ClassKV.New(codeEntryTooLarge, "entry is too large")
+	ErrEntryTooLarge = terror.ClassKV.New(codeEntryTooLarge, "entry too large, the max entry size is %d, the size of data is %d")
 
 	// ErrNotCommitted is the error returned by CommitVersion when this
 	// transaction is not committed.
@@ -99,9 +99,5 @@ func IsRetryableError(err error) bool {
 
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
-	if ErrNotExist.Equal(err) {
-		return true
-	}
-
-	return false
+	return ErrNotExist.Equal(err)
 }

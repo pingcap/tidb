@@ -14,12 +14,12 @@
 package tikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
-	"golang.org/x/net/context"
+	gofail "github.com/pingcap/gofail/runtime"
 )
 
 func (s *testStoreSuite) TestFailBusyServerKV(c *C) {

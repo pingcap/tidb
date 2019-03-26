@@ -14,6 +14,7 @@
 package tables_test
 
 import (
+	"context"
 	"io"
 	"time"
 
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testIndexSuite{})
@@ -99,7 +99,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	err = index.Delete(sc, txn, values, 1)
+	err = index.Delete(sc, txn, values, 1, nil)
 	c.Assert(err, IsNil)
 
 	it, err = index.SeekFirst(txn)

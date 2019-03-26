@@ -15,6 +15,7 @@ package testkit
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 	"sync/atomic"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 // TestKit is a utility to run sql test.
@@ -161,6 +161,11 @@ func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
 	tk.c.Assert(insertID, check.Equals, int64(tk.Se.LastInsertID()))
 }
 
+// CheckLastMessage checks last message after executing MustExec
+func (tk *TestKit) CheckLastMessage(msg string) {
+	tk.c.Assert(tk.Se.LastMessage(), check.Equals, msg)
+}
+
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	res, err := tk.Exec(sql, args...)
@@ -178,6 +183,26 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
 	return tk.ResultSetToResult(rs, comment)
+}
+
+// QueryToErr executes a sql statement and discard results.
+func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
+	comment := check.Commentf("sql:%s, args:%v", sql, args)
+	res, err := tk.Exec(sql, args...)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(res, check.NotNil, comment)
+	_, resErr := session.GetRows4Test(context.Background(), tk.Se, res)
+	tk.c.Assert(res.Close(), check.IsNil)
+	return resErr
+}
+
+// ExecToErr executes a sql statement and discard results.
+func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.c.Assert(res.Close(), check.IsNil)
+	}
+	return err
 }
 
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.

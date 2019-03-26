@@ -22,8 +22,9 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 func intRangeValue(column *column, min int64, max int64) (int64, int64) {
@@ -31,13 +32,13 @@ func intRangeValue(column *column, min int64, max int64) (int64, int64) {
 	if len(column.min) > 0 {
 		min, err = strconv.ParseInt(column.min, 10, 64)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal(err.Error())
 		}
 
 		if len(column.max) > 0 {
 			max, err = strconv.ParseInt(column.max, 10, 64)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatal(err.Error())
 			}
 		}
 	}
@@ -67,7 +68,7 @@ func randInt64Value(column *column, min int64, max int64) int64 {
 		idx := randInt(0, len(column.set)-1)
 		data, err := strconv.ParseInt(column.set[idx], 10, 64)
 		if err != nil {
-			log.Warnf("rand int64 error: %s", err)
+			log.Warn("rand int64 failed", zap.Error(err))
 		}
 		return data
 	}
@@ -198,13 +199,6 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = float64(uniqInt64Value(column, 0, math.MaxInt64))
 		} else {
-			if column.hist != nil {
-				if tp.Tp == mysql.TypeDouble {
-					data = column.hist.randFloat64()
-				} else {
-					data = float64(column.hist.randFloat32())
-				}
-			}
 			if isUnsigned {
 				data = float64(randInt64Value(column, 0, math.MaxInt64-1))
 			} else {
@@ -318,7 +312,7 @@ func closeDBs(dbs []*sql.DB) {
 	for _, db := range dbs {
 		err := closeDB(db)
 		if err != nil {
-			log.Errorf("close db failed - %v", err)
+			log.Error("close DB failed", zap.Error(err))
 		}
 	}
 }

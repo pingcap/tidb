@@ -14,10 +14,12 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -30,11 +32,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"go.uber.org/zap"
 )
 
 var _ Executor = &IndexLookUpJoin{}
@@ -61,7 +63,10 @@ type IndexLookUpJoin struct {
 	joinResult *chunk.Chunk
 	innerIter  chunk.Iterator
 
-	joiner joiner
+	joiner      joiner
+	isOuterJoin bool
+
+	requiredRows int64
 
 	indexRanges   []*ranger.Range
 	keyOff2IdxOff []int
@@ -94,12 +99,15 @@ type lookUpJoinTask struct {
 	doneCh   chan error
 	cursor   int
 	hasMatch bool
+	hasNull  bool
 
 	memTracker *memory.Tracker // track memory usage.
 }
 
 type outerWorker struct {
 	outerCtx
+
+	lookup *IndexLookUpJoin
 
 	ctx      sessionctx.Context
 	executor Executor
@@ -146,9 +154,12 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	// The trick here is `getStartTS` will cache start ts in the dataReaderBuilder,
 	// so even txn is destroyed later, the dataReaderBuilder could still use the
 	// cached start ts to construct DAG.
-	e.innerCtx.readerBuilder.getStartTS()
+	_, err := e.innerCtx.readerBuilder.getStartTS()
+	if err != nil {
+		return err
+	}
 
-	err := e.children[0].Open(ctx)
+	err = e.children[0].Open(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -185,6 +196,7 @@ func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask)
 		batchSize:        32,
 		maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
 		parentMemTracker: e.memTracker,
+		lookup:           e,
 	}
 	return ow
 }
@@ -208,12 +220,15 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 }
 
 // Next implements the Executor interface.
-func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	if e.isOuterJoin {
+		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
+	}
+	req.Reset()
 	e.joinResult.Reset()
 	for {
 		task, err := e.getFinishedTask(ctx)
@@ -231,20 +246,22 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, err := e.joiner.tryToMatch(outerRow, e.innerIter, chk)
+			matched, isNull, err := e.joiner.tryToMatch(outerRow, e.innerIter, req.Chunk)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			task.hasMatch = task.hasMatch || matched
+			task.hasNull = task.hasNull || isNull
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
 			if !task.hasMatch {
-				e.joiner.onMissMatch(outerRow, chk)
+				e.joiner.onMissMatch(task.hasNull, outerRow, req.Chunk)
 			}
 			task.cursor++
 			task.hasMatch = false
+			task.hasNull = false
 		}
-		if chk.NumRows() == e.maxChunkSize {
+		if req.IsFull() {
 			return nil
 		}
 	}
@@ -299,7 +316,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("outerWorker panic stack is:\n%s", buf)
+			logutil.Logger(ctx).Error("outerWorker panicked", zap.String("stack", string(buf)))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			task.doneCh <- errors.Errorf("%v", r)
 			ow.pushToChan(ctx, task, ow.resultCh)
@@ -353,10 +370,16 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	task.memTracker.AttachTo(ow.parentMemTracker)
 
 	ow.increaseBatchSize()
+	if ow.lookup.isOuterJoin { // if is outerJoin, push the requiredRows down
+		requiredRows := int(atomic.LoadInt64(&ow.lookup.requiredRows))
+		task.outerResult.SetRequiredRows(requiredRows, ow.maxBatchSize)
+	} else {
+		task.outerResult.SetRequiredRows(ow.batchSize, ow.maxBatchSize)
+	}
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
-	for task.outerResult.NumRows() < ow.batchSize {
-		err := ow.executor.Next(ctx, ow.executorChk)
+	for !task.outerResult.IsFull() {
+		err := ow.executor.Next(ctx, chunk.NewRecordBatch(ow.executorChk))
 		if err != nil {
 			return task, errors.Trace(err)
 		}
@@ -401,7 +424,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("innerWorker panic stack is:\n%s", buf)
+			logutil.Logger(ctx).Error("innerWorker panicked", zap.String("stack", string(buf)))
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- errors.Errorf("%v", r)
 		}
@@ -477,7 +500,12 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 	dLookupKey := make([]types.Datum, 0, keyLen)
 	for i, keyCol := range iw.outerCtx.keyCols {
 		outerValue := outerRow.GetDatum(keyCol, iw.outerCtx.rowTypes[keyCol])
-
+		// Join-on-condition can be promised to be equal-condition in
+		// IndexNestedLoopJoin, thus the filter will always be false if
+		// outerValue is null, and we don't need to lookup it.
+		if outerValue.IsNull() {
+			return nil, nil
+		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {
@@ -539,7 +567,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		err := innerExec.Next(ctx, iw.executorChk)
+		err := innerExec.Next(ctx, chunk.NewRecordBatch(iw.executorChk))
 		if err != nil {
 			return errors.Trace(err)
 		}

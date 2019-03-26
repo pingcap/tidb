@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"runtime"
 	"strconv"
 
@@ -28,10 +29,10 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"go.uber.org/zap"
 )
 
 var _ Executor = &AnalyzeExec{}
@@ -51,7 +52,7 @@ const (
 )
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -72,15 +73,16 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			err = result.Err
 			if errors.Trace(err) == errAnalyzeWorkerPanic {
 				panicCnt++
+			} else {
+				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
 			}
-			log.Error(errors.ErrorStack(err))
 			continue
 		}
 		for i, hg := range result.Hist {
 			err1 := statsHandle.SaveStatsToStorage(result.PhysicalTableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
 			if err1 != nil {
 				err = err1
-				log.Error(errors.ErrorStack(err))
+				logutil.Logger(ctx).Error("save stats to storage failed", zap.Error(err))
 				continue
 			}
 		}
@@ -122,7 +124,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
+			logutil.Logger(context.Background()).Error("analyze worker panicked", zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- statistics.AnalyzeResult{
 				Err: errAnalyzeWorkerPanic,
@@ -175,6 +177,9 @@ func (e *AnalyzeIndexExec) open() error {
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	ctx := context.TODO()
 	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
@@ -251,7 +256,6 @@ type AnalyzeColumnsExec struct {
 	pkInfo          *model.ColumnInfo
 	concurrency     int
 	priority        int
-	keepOrder       bool
 	analyzePB       *tipb.AnalyzeReq
 	resultHandler   *tableResultHandler
 	maxNumBuckets   uint64
@@ -265,7 +269,7 @@ func (e *AnalyzeColumnsExec) open() error {
 		ranges = ranger.FullIntRange(false)
 	}
 	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := splitRanges(ranges, e.keepOrder)
+	firstPartRanges, secondPartRanges := splitRanges(ranges, true)
 	firstResult, err := e.buildResp(firstPartRanges)
 	if err != nil {
 		return errors.Trace(err)
@@ -286,9 +290,11 @@ func (e *AnalyzeColumnsExec) open() error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
+	// Always set KeepOrder of the request to be true, in order to compute
+	// correct `correlation` of columns.
 	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
-		SetKeepOrder(e.keepOrder).
+		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
 	if err != nil {
@@ -360,7 +366,8 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 	}
 	for i, col := range e.colsInfo {
 		for j, s := range collectors[i].Samples {
-			collectors[i].Samples[j], err = tablecodec.DecodeColumnValue(s.GetBytes(), &col.FieldType, timeZone)
+			collectors[i].Samples[j].Ordinal = j
+			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

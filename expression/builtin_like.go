@@ -16,7 +16,6 @@ package expression
 import (
 	"regexp"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -41,7 +40,7 @@ type likeFunctionClass struct {
 
 func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	argTp := []types.EvalType{types.ETString, types.ETString, types.ETInt}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTp...)
@@ -67,17 +66,17 @@ func (b *builtinLikeSig) Clone() builtinFunc {
 func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	valStr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, err
 	}
 
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	patternStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, err
 	}
 	val, isNull, err := b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, err
 	}
 	escape := byte(val)
 	patChars, patTypes := stringutil.CompilePattern(patternStr, escape)
@@ -91,7 +90,7 @@ type regexpFunctionClass struct {
 
 func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
 	bf.tp.Flen = 1
@@ -117,12 +116,12 @@ func (b *builtinRegexpBinarySig) Clone() builtinFunc {
 func (b *builtinRegexpBinarySig) evalInt(row chunk.Row) (int64, bool, error) {
 	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, err
 	}
 
 	pat, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, err
 	}
 
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
@@ -148,12 +147,12 @@ func (b *builtinRegexpSig) Clone() builtinFunc {
 func (b *builtinRegexpSig) evalInt(row chunk.Row) (int64, bool, error) {
 	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, err
 	}
 
 	pat, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, err
 	}
 
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.

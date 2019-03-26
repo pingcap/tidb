@@ -14,6 +14,7 @@
 package meta
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -31,7 +32,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/structure"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -154,7 +156,7 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
-// GenAutoTableIDIDKeyValue generate meta key by dbID, tableID and coresponding value by autoID.
+// GenAutoTableIDIDKeyValue generate meta key by dbID, tableID and corresponding value by autoID.
 func (m *Meta) GenAutoTableIDIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
 	dbKey := m.dbKey(dbID)
 	autoTableIDKey := m.autoTableIDKey(tableID)
@@ -274,8 +276,8 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 	return m.txn.HSet(mDBs, dbKey, data)
 }
 
-// CreateTable creates a table with tableInfo in database.
-func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
+// CreateTableOrView creates a table with tableInfo in database.
+func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -296,6 +298,17 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 
+// CreateTableAndSetAutoID creates a table with tableInfo in database,
+// and rebases the table autoID.
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoID int64) error {
+	err := m.CreateTableOrView(dbID, tableInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoID)
+	return errors.Trace(err)
+}
+
 // DropDatabase drops whole database.
 func (m *Meta) DropDatabase(dbID int64) error {
 	// Check if db exists.
@@ -311,10 +324,10 @@ func (m *Meta) DropDatabase(dbID int64) error {
 	return nil
 }
 
-// DropTable drops table in database.
+// DropTableOrView drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTable(dbID int64, tblID int64, delAutoID bool) error {
+func (m *Meta) DropTableOrView(dbID int64, tblID int64, delAutoID bool) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -735,10 +748,10 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 		return errors.Trace(err)
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID)); err != nil {
-		log.Warn("remove ddl reorg end handle error:", err)
+		logutil.Logger(context.Background()).Warn("remove DDL reorg end handle", zap.Error(err))
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID)); err != nil {
-		log.Warn("remove ddl reorg physical id error:", err)
+		logutil.Logger(context.Background()).Warn("remove DDL reorg physical ID", zap.Error(err))
 	}
 	return nil
 }
@@ -769,7 +782,10 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physic
 			endHandle = math.MaxInt64
 		}
 		physicalTableID = job.TableID
-		log.Warnf("new TiDB binary running on old TiDB ddl reorg data, partition %v [%v %v]", physicalTableID, startHandle, endHandle)
+		logutil.Logger(context.Background()).Warn("new TiDB binary running on old TiDB DDL reorg data",
+			zap.Int64("partition ID", physicalTableID),
+			zap.Int64("startHandle", startHandle),
+			zap.Int64("endHandle", endHandle))
 	}
 	return
 }

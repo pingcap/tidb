@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testUnitTestSuit{})
@@ -35,7 +34,7 @@ type testUnitTestSuit struct {
 }
 
 func (s *testUnitTestSuit) SetUpSuite(c *C) {
-	s.ctx = mockContext()
+	s.ctx = MockContext()
 }
 
 func (s *testUnitTestSuit) newTypeWithFlen(typeByte byte, flen int) *types.FieldType {
@@ -190,7 +189,6 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			idxColLens:   tt.idxColLens,
 		}
 
-		logrus.Warnf("idx cols: %v", path.idxCols)
 		access, remained := path.splitCorColAccessCondFromFilters()
 		c.Assert(fmt.Sprintf("%s", access), Equals, tt.access, comment)
 		c.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
