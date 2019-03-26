@@ -81,9 +81,32 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err erro
 		return nil
 	case *ast.DropStatsStmt:
 		err = e.executeDropStats(x)
+	case *ast.SetRoleStmt:
+		err = e.executeSetRole(x)
 	}
 	e.done = true
 	return errors.Trace(err)
+}
+
+func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
+	checkDup := make(map[string]*auth.RoleIdentity, len(s.RoleList))
+	// Check whether RoleNameList contain duplicate role name.
+	for _, r := range s.RoleList {
+		key := r.String()
+		checkDup[key] = r
+	}
+	roleList := make([]*auth.RoleIdentity, 0, 10)
+	for _, v := range checkDup {
+		roleList = append(roleList, v)
+	}
+
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	ok, roleName := checker.ActiveRoles(e.ctx, roleList)
+	if !ok {
+		u := e.ctx.GetSessionVars().User
+		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+	}
+	return nil
 }
 
 func (e *SimpleExec) dbAccessDenied(dbname string) error {
