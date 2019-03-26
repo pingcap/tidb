@@ -2490,3 +2490,14 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 	tk.MustExec("rollback")
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
 }
+
+func (s *testSessionSuite) TestGrantViewRelated(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table if not exists t (a int)")
+	tk.MustExec("create view v_version29 as select * from t")
+	tk.MustExec("create user 'u_version29'@'%'")
+
+	// Test grant view related privileges.
+	tk.MustExec(`grant show view on v_version29 to 'u_version29'@'%'`)
+	tk.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`)
+}

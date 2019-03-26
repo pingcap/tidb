@@ -105,7 +105,7 @@ const (
 		Table_name	CHAR(64),
 		Grantor		CHAR(77),
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
-		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index','Alter'),
+		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
@@ -304,6 +304,7 @@ const (
 	version26 = 26
 	version27 = 27
 	version28 = 28
+	version29 = 29
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -473,6 +474,10 @@ func upgrade(s Session) {
 
 	if ver < version28 {
 		upgradeToVer28(s)
+	}
+
+	if ver < version29 {
+		upgradeToVer29(s)
 	}
 
 	updateBootstrapVer(s)
@@ -755,6 +760,10 @@ func upgradeToVer27(s Session) {
 
 func upgradeToVer28(s Session) {
 	doReentrantDDL(s, CreateBindInfoTable)
+}
+
+func upgradeToVer29(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index', 'Alter', 'Create View', 'Show View', 'Trigger', 'References')")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
