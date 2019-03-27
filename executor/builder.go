@@ -1884,8 +1884,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.kvRanges = kvRanges
-	err = e.open(ctx)
+	err = e.open(ctx, kvRanges)
 	return e, errors.Trace(err)
 }
 

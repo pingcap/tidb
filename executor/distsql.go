@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/cznic/mathutil"
 	"math"
 	"runtime"
 	"sort"
@@ -347,8 +348,6 @@ type IndexLookUpExecutor struct {
 
 	// parentReqRows indicates how many rows the parent want now.
 	parentReqRows int64
-	kvRanges      []kv.KeyRange
-	workerStarted bool
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
@@ -367,8 +366,6 @@ type IndexLookUpExecutor struct {
 	corColInAccess  bool
 	idxCols         []*expression.Column
 	colLens         []int
-
-	selectResultHook // for testing
 }
 
 // Open implements the Executor Open interface.
@@ -380,19 +377,19 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	err = e.open(ctx)
+	err = e.open(ctx, kvRanges)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
 	return errors.Trace(err)
 }
 
-func (e *IndexLookUpExecutor) open(ctx context.Context) error {
+func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	// We have to initialize "memTracker" and other execution resources in here
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
@@ -418,14 +415,11 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	return nil
-}
 
-func (e *IndexLookUpExecutor) startWorkers(ctx context.Context) (err error) {
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	err = e.startIndexWorker(ctx, e.kvRanges, workCh)
+	err = e.startIndexWorker(ctx, kvRanges, workCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -452,17 +446,18 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := e.SelectResult(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, getPhysicalPlanIDs(e.idxPlans))
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, getPhysicalPlanIDs(e.idxPlans))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	result.Fetch(ctx)
 	worker := &indexWorker{
-		idxLookup: e,
-		workCh:    workCh,
-		finished:  e.finished,
-		resultCh:  e.resultCh,
-		keepOrder: e.keepOrder,
+		idxLookup:    e,
+		workCh:       workCh,
+		finished:     e.finished,
+		resultCh:     e.resultCh,
+		keepOrder:    e.keepOrder,
+		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
@@ -533,10 +528,6 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	if !e.workerStarted {
-		return nil
-	}
-
 	close(e.finished)
 	// Drain the resultCh and discard the result, in case that Next() doesn't fully
 	// consume the data, background worker still writing to resultCh and block forever.
@@ -545,7 +536,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.idxWorkerWg.Wait()
 	e.tblWorkerWg.Wait()
 	e.finished = nil
-	e.workerStarted = false
 	e.memTracker.Detach()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
@@ -562,12 +552,6 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	atomic.StoreInt64(&e.parentReqRows, int64(req.RequiredRows()))
-	if !e.workerStarted { // lazy start
-		if err := e.startWorkers(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		e.workerStarted = true
-	}
 	req.Reset()
 	for {
 		resultTask, err := e.getResultTask()
@@ -614,6 +598,8 @@ type indexWorker struct {
 	finished  <-chan struct{}
 	resultCh  chan<- *lookupTableTask
 	keepOrder bool
+
+	maxBatchSize int
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -666,6 +652,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	requiredNow := int(atomic.LoadInt64(&w.idxLookup.parentReqRows))
+	requiredNow = mathutil.Min(requiredNow, w.maxBatchSize)
 	handles = make([]int64, 0, requiredNow)
 	for len(handles) < requiredNow {
 		chk.SetRequiredRows(requiredNow-len(handles), w.idxLookup.maxChunkSize)
