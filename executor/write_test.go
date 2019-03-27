@@ -1473,7 +1473,7 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	// for on duplicate key
 	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
 	r.Check(testkit.Rows("160"))
 
