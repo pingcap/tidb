@@ -272,6 +272,7 @@ type PhysicalLimit struct {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
+	KeepOrder bool
 }
 
 // AggregationType stands for the mode of aggregation plan.

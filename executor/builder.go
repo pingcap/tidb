@@ -1255,6 +1255,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	}
 	e := &UnionExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExecs...),
+		keepOrder:    v.KeepOrder,
 	}
 	return e
 }

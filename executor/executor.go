@@ -1163,6 +1163,10 @@ type UnionExec struct {
 	initialized   bool
 
 	childrenResults []*chunk.Chunk
+
+	// Unparallel version
+	keepOrder bool
+	idx       int
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1256,6 +1260,11 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
+
+	if e.keepOrder {
+		return e.nextUnParallel(ctx, req)
+	}
+
 	if !e.initialized {
 		e.initialize(ctx)
 		e.initialized = true
@@ -1273,6 +1282,22 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	return nil
 }
 
+func (e *UnionExec) nextUnParallel(ctx context.Context, req *chunk.RecordBatch) error {
+	for e.idx < len(e.children) {
+		child := e.children[e.idx]
+		if err := child.Next(ctx, req); err != nil {
+			return err
+		}
+
+		if req.NumRows() > 0 {
+			return nil
+		}
+
+		e.idx++
+	}
+	return nil
+}
+
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	close(e.finished)
@@ -1282,6 +1307,7 @@ func (e *UnionExec) Close() error {
 		}
 	}
 	e.resourcePools = nil
+	e.idx = 0
 	return errors.Trace(e.baseExecutor.Close())
 }
 
