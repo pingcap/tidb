@@ -1853,9 +1853,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	}
 	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables) > 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
-			sortMergeJoinTables:       sortMergeTables,
-			indexNestedLoopJoinTables: INLJTables,
-			hashJoinTables:            hashJoinTables,
+			sortMergeJoinHint:       joinHintInfo{tables: sortMergeTables},
+			indexNestedLoopJoinHint: joinHintInfo{tables: INLJTables},
+			hashJoinHint:            joinHintInfo{tables: hashJoinTables},
 		})
 		return true
 	}
@@ -1863,7 +1863,19 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 }
 
 func (b *PlanBuilder) popTableHints() {
+	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
+	b.appendUnmatchedJoinHintWarning(TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinHint)
+	b.appendUnmatchedJoinHintWarning(TiDBMergeJoin, hintInfo.sortMergeJoinHint)
+	b.appendUnmatchedJoinHintWarning(TiDBHashJoin, hintInfo.hashJoinHint)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
+}
+
+func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, hintInfo joinHintInfo) {
+	if len(hintInfo.tables) == 0 || hintInfo.matched {
+		return
+	}
+	errMsg := fmt.Sprintf("Optimizer Hint %s is inapplicable because there are no matching table names. Maybe you can use the table alias name", restore2JoinHint(joinType, hintInfo))
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
 // TableHints returns the *tableHintInfo of PlanBuilder.

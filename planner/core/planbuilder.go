@@ -47,21 +47,26 @@ type visitInfo struct {
 }
 
 type tableHintInfo struct {
-	indexNestedLoopJoinTables []model.CIStr
-	sortMergeJoinTables       []model.CIStr
-	hashJoinTables            []model.CIStr
+	indexNestedLoopJoinHint joinHintInfo
+	sortMergeJoinHint       joinHintInfo
+	hashJoinHint            joinHintInfo
+}
+
+type joinHintInfo struct {
+	tables  []model.CIStr
+	matched bool
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
-	return info.matchTableName(tableNames, info.sortMergeJoinTables)
+	return info.matchTableName(tableNames, &info.sortMergeJoinHint)
 }
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*model.CIStr) bool {
-	return info.matchTableName(tableNames, info.hashJoinTables)
+	return info.matchTableName(tableNames, &info.hashJoinHint)
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
-	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables)
+	return info.matchTableName(tableNames, &info.indexNestedLoopJoinHint)
 }
 
 // matchTableName checks whether the hint hit the need.
@@ -72,13 +77,14 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 // Which it joins on with depend on sequence of traverse
 // and without reorder, user might adjust themselves.
 // This is similar to MySQL hints.
-func (info *tableHintInfo) matchTableName(tables []*model.CIStr, tablesInHints []model.CIStr) bool {
+func (info *tableHintInfo) matchTableName(tables []*model.CIStr, joinHint *joinHintInfo) bool {
 	for _, tableName := range tables {
 		if tableName == nil {
 			continue
 		}
-		for _, curEntry := range tablesInHints {
+		for _, curEntry := range joinHint.tables {
 			if curEntry.L == tableName.L {
+				joinHint.matched = true
 				return true
 			}
 		}
@@ -86,11 +92,14 @@ func (info *tableHintInfo) matchTableName(tables []*model.CIStr, tablesInHints [
 	return false
 }
 
-func (info *tableHintInfo) restore2IndexJoinHint() string {
-	buffer := bytes.NewBufferString("/*+ TIDB_INLJ(")
-	for i, tableName := range info.indexNestedLoopJoinTables {
+func restore2JoinHint(joinType string, joinHint joinHintInfo) string {
+	buffer := bytes.NewBufferString("/*+ ")
+	buffer.WriteString(strings.ToUpper(joinType))
+	buffer.WriteString("(")
+	tables := joinHint.tables
+	for i, tableName := range tables {
 		buffer.WriteString(tableName.O)
-		if i < len(info.indexNestedLoopJoinTables)-1 {
+		if i < len(tables)-1 {
 			buffer.WriteString(", ")
 		}
 	}
