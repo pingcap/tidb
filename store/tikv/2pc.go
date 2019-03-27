@@ -128,7 +128,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		keys = append(keys, k)
 		entrySize := len(k) + len(v)
 		if entrySize > kv.TxnEntrySizeLimit {
-			return kv.ErrEntryTooLarge
+			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
 		}
 		size += entrySize
 		return nil
