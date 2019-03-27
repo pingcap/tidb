@@ -457,7 +457,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		finished:     e.finished,
 		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrder,
+		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
+		maxChunkSize: e.maxChunkSize,
+	}
+	if worker.batchSize > worker.maxBatchSize {
+		worker.batchSize = worker.maxBatchSize
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
@@ -603,7 +608,10 @@ type indexWorker struct {
 	resultCh  chan<- *lookupTableTask
 	keepOrder bool
 
+	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
+	batchSize    int
 	maxBatchSize int
+	maxChunkSize int
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -656,10 +664,10 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	requiredNow := int(atomic.LoadInt64(&w.idxLookup.parentReqRows))
-	requiredNow = mathutil.Min(requiredNow, w.maxBatchSize)
+	requiredNow = mathutil.Min(requiredNow, w.batchSize)
 	handles = make([]int64, 0, requiredNow)
 	for len(handles) < requiredNow {
-		chk.SetRequiredRows(requiredNow-len(handles), w.idxLookup.maxChunkSize)
+		chk.SetRequiredRows(requiredNow-len(handles), w.maxChunkSize)
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, err
@@ -670,6 +678,10 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		for i := 0; i < chk.NumRows(); i++ {
 			handles = append(handles, chk.GetRow(i).GetInt64(0))
 		}
+	}
+	w.batchSize *= 2
+	if w.batchSize > w.maxBatchSize {
+		w.batchSize = w.maxBatchSize
 	}
 	return handles, nil
 }
