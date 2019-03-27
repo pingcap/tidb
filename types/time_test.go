@@ -1223,6 +1223,7 @@ func (s *testTimeSuite) TestExtractTimeValue(c *C) {
 		{"aa1bb1", "YEAR_MONTH", 1, 1, 0, 0},
 		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0},
 		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0},
+		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0},
 	}
 	for _, col := range tbl {
 		res1, res2, res3, res4, err := types.ExtractTimeValue(col.unit, col.format)

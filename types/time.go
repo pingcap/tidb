@@ -1613,6 +1613,7 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, fl
 func extractTimeValue(format string, index, cnt int) (int64, int64, int64, float64, error) {
 	neg := false
 	originalFmt := format
+	format = strings.TrimSpace(format)
 	if len(format) > 0 && format[0] == '-' {
 		neg = true
 		format = format[1:]
