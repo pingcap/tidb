@@ -2239,14 +2239,6 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "TableReader(Table(t))->Window(sum(cast(test.t.b)), sum(cast(test.t.c)) over(order by test.t.a asc range between unbounded preceding and current row))->Projection",
 		},
 		{
-			sql:    "select row_number() over w, sum(c) over w from t window w as (order by a)",
-			result: "TableReader(Table(t))->Window(row_number() over(order by test.t.a asc))->Window(sum(cast(test.t.c)) over(order by test.t.a asc range between unbounded preceding and current row))->Projection",
-		},
-		{
-			sql:    "select row_number() over w, sum(c) over w from t window w as (rows between 1 preceding and 1 following)",
-			result: "TableReader(Table(t))->Window(row_number() over())->Window(sum(cast(test.t.c)) over(rows between 1 preceding and 1 following))->Projection",
-		},
-		{
 			sql:    "delete from t order by (sum(a) over())",
 			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
 		},
