@@ -1611,7 +1611,6 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, fl
 // MySQL permits any punctuation delimiter in the expr format.
 // See https://dev.mysql.com/doc/refman/8.0/en/expressions.html#temporal-intervals
 func extractTimeValue(format string, index, cnt int) (int64, int64, int64, float64, error) {
-
 	neg := false
 	originalFmt := format
 	if len(format) > 0 && format[0] == '-' {
