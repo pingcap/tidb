@@ -318,3 +318,27 @@ func readGaugeInt(g prometheus.Gauge) int {
 	m.Write(mm)
 	return int(mm.GetGauge().GetValue())
 }
+
+// unit test for issue https://github.com/pingcap/tidb/issues/9478
+func (s *testPrepareSuite) TestPrepareWithWindowFunction(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_window_function = 0")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table window_prepare(a int, b double)")
+	tk.MustExec("insert into window_prepare values(1, 1.1), (2, 1.9)")
+	tk.MustExec("prepare stmt1 from 'select row_number() over() from window_prepare';")
+	// Test the unnamed window can be executed successfully.
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1", "2"))
+	// Test the stmt can be prepared successfully.
+	tk.MustExec("prepare stmt2 from 'select count(a) over (order by a rows between ? preceding and ? preceding) from window_prepare'")
+}
