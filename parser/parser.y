@@ -64,7 +64,7 @@ import (
 	odbcTimeType			"t"
 	odbcTimestampType		"ts"
 
-	/* The following tokens belong to ReservedKeyword. */
+	/* The following tokens belong to ReservedKeyword. Notice: make sure these tokens are contained in ReservedKeyword. */
 	add			"ADD"
 	all 			"ALL"
 	alter			"ALTER"
@@ -182,8 +182,6 @@ import (
 	minuteMicrosecond	"MINUTE_MICROSECOND"
 	minuteSecond 		"MINUTE_SECOND"
 	mod 			"MOD"
-	node_id			"NODE_ID"
-	node_state		"NODE_STATE"
 	not			"NOT"
 	noWriteToBinLog 	"NO_WRITE_TO_BINLOG"
 	nthValue		"NTH_VALUE"
@@ -267,7 +265,7 @@ import (
 	zerofill		"ZEROFILL"
 	natural			"NATURAL"
 
-	/* The following tokens belong to UnReservedKeyword. */
+	/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */
 	action		"ACTION"
 	after		"AFTER"
 	always		"ALWAYS"
@@ -437,7 +435,7 @@ import (
 	week		"WEEK"
 	yearType	"YEAR"
 
-	/* The following tokens belong to NotKeywordToken. */
+	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate			"ADDDATE"
 	bitAnd			"BIT_AND"
 	bitOr			"BIT_OR"
@@ -484,15 +482,17 @@ import (
 	varPop			"VAR_POP"
 	varSamp			"VAR_SAMP"
 
-	/* The following tokens belong to TiDBKeyword. */
+	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin		"ADMIN"
 	buckets		"BUCKETS"
 	cancel		"CANCEL"
 	ddl		"DDL"
-	drainer         "DRAINER"
+	drainer		"DRAINER"
 	jobs		"JOBS"
-	job		    "JOB"
-	pump            "PUMP"
+	job		"JOB"
+	nodeID		"NODE_ID"
+	nodeState	"NODE_STATE"
+	pump		"PUMP"
 	stats		"STATS"
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
@@ -3087,7 +3087,8 @@ UnReservedKeyword:
 
 
 TiDBKeyword:
-"ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "DRAINER" | "JOBS" | "JOB" | "PUMP" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ" | "RESTORE"
+ "ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ"
+| "TIDB_SMJ" | "TIDB_INLJ" | "RESTORE"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
