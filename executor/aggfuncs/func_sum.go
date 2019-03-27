@@ -240,11 +240,14 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if err != nil {
 			return errors.Trace(err)
 		}
-		decStr := string(hack.String(input.ToString()))
-		if isNull || p.valSet.Exist(decStr) {
+		if isNull {
 			continue
 		}
-		p.valSet.Insert(decStr)
+		if decStr := string(hack.String(input.ToString())); p.valSet.Exist(decStr) {
+			continue
+		} else {
+			p.valSet.Insert(decStr)
+		}
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
