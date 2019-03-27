@@ -1521,44 +1521,46 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 			table:     v.Table.Name.L,
 			err:       nil,
 		})
-		if len(v.Specs) == 1 && v.Specs[0].Tp == ast.AlterTableRenameTable {
-			b.visitInfo = append(b.visitInfo, visitInfo{
-				privilege: mysql.DropPriv,
-				db:        v.Table.Schema.L,
-				table:     v.Table.Name.L,
-				err:       nil,
-			})
-			b.visitInfo = append(b.visitInfo, visitInfo{
-				privilege: mysql.CreatePriv,
-				db:        v.Specs[0].NewTable.Schema.L,
-				table:     v.Specs[0].NewTable.Name.L,
-				err:       nil,
-			})
-			b.visitInfo = append(b.visitInfo, visitInfo{
-				privilege: mysql.InsertPriv,
-				db:        v.Specs[0].NewTable.Schema.L,
-				table:     v.Specs[0].NewTable.Name.L,
-				err:       nil,
-			})
-		} else if len(v.Specs) == 1 && v.Specs[0].Tp == ast.AlterTableDropPartition {
-			b.visitInfo = append(b.visitInfo, visitInfo{
-				privilege: mysql.DropPriv,
-				db:        v.Table.Schema.L,
-				table:     v.Table.Name.L,
-				err:       nil,
-			})
-		} else {
-			b.visitInfo = append(b.visitInfo, visitInfo{
-				privilege: mysql.InsertPriv,
-				db:        v.Table.Schema.L,
-				table:     v.Table.Name.L,
-				err:       nil,
-			})
-			b.visitInfo = append(b.visitInfo, visitInfo{
-				privilege: mysql.CreatePriv,
-				db:        v.Table.Schema.L,
-				err:       nil,
-			})
+		for _, spec := range v.Specs {
+			if spec.Tp == ast.AlterTableRenameTable {
+				b.visitInfo = append(b.visitInfo, visitInfo{
+					privilege: mysql.DropPriv,
+					db:        v.Table.Schema.L,
+					table:     v.Table.Name.L,
+					err:       nil,
+				})
+				b.visitInfo = append(b.visitInfo, visitInfo{
+					privilege: mysql.CreatePriv,
+					db:        spec.NewTable.Schema.L,
+					table:     spec.NewTable.Name.L,
+					err:       nil,
+				})
+				b.visitInfo = append(b.visitInfo, visitInfo{
+					privilege: mysql.InsertPriv,
+					db:        spec.NewTable.Schema.L,
+					table:     spec.NewTable.Name.L,
+					err:       nil,
+				})
+			} else if v.Specs[0].Tp == ast.AlterTableDropPartition {
+				b.visitInfo = append(b.visitInfo, visitInfo{
+					privilege: mysql.DropPriv,
+					db:        v.Table.Schema.L,
+					table:     v.Table.Name.L,
+					err:       nil,
+				})
+			} else {
+				b.visitInfo = append(b.visitInfo, visitInfo{
+					privilege: mysql.InsertPriv,
+					db:        v.Table.Schema.L,
+					table:     v.Table.Name.L,
+					err:       nil,
+				})
+				b.visitInfo = append(b.visitInfo, visitInfo{
+					privilege: mysql.CreatePriv,
+					db:        v.Table.Schema.L,
+					err:       nil,
+				})
+			}
 		}
 	case *ast.CreateDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
