@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"github.com/cznic/mathutil"
 	"math"
 	"runtime"
 	"sort"
@@ -24,6 +23,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -528,6 +528,10 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
+	if e.finished == nil {
+		return nil
+	}
+
 	close(e.finished)
 	// Drain the resultCh and discard the result, in case that Next() doesn't fully
 	// consume the data, background worker still writing to resultCh and block forever.
