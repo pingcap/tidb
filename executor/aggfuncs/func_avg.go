@@ -185,11 +185,11 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		if isNull {
 			continue
 		}
-		if decStr := string(hack.String(input.ToString())); p.valSet.Exist(decStr) {
+		decStr := string(hack.String(input.ToString()))
+		if p.valSet.Exist(decStr) {
 			continue
-		} else {
-			p.valSet.Insert(decStr)
 		}
+		p.valSet.Insert(decStr)
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
