@@ -86,12 +86,12 @@ func (e *groupConcat) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4GroupConcat)(pr)
-	v, isNull, preLen := "", false, 0
+	v, isNull := "", false
 	for _, row := range rowsInGroup {
 		if p.buffer != nil && p.buffer.Len() != 0 {
-			preLen = p.buffer.Len()
 			p.buffer.WriteString(e.sep)
 		}
+		rowBuffer := &bytes.Buffer{}
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
@@ -100,17 +100,18 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			if isNull {
 				break
 			}
-			if p.buffer == nil {
-				p.buffer = &bytes.Buffer{}
-			}
-			p.buffer.WriteString(v)
+			rowBuffer.WriteString(v)
 		}
 		if isNull {
 			if p.buffer != nil {
-				p.buffer.Truncate(preLen)
+				p.buffer.Truncate(p.buffer.Len() - rowBuffer.Len())
 			}
 			continue
 		}
+		if p.buffer == nil {
+			p.buffer = &bytes.Buffer{}
+		}
+		p.buffer.WriteString(v)
 	}
 	if p.buffer != nil {
 		return e.truncatePartialResultIfNeed(sctx, p.buffer)
