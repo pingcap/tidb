@@ -2217,7 +2217,6 @@ func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 }
 
 func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
-
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
