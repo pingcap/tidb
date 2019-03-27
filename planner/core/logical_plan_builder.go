@@ -2982,10 +2982,10 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 	return frame, err
 }
 
-func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupeFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
+func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
 	args := make([]ast.ExprNode, 0, 4)
 	windowMap := make(map[*ast.WindowFuncExpr]int)
-	for spec, funcs := range groupeFuncs {
+	for spec, funcs := range groupedFuncs {
 		args = args[:0]
 		for _, windowFunc := range funcs {
 			args = append(args, windowFunc.Args...)
@@ -3071,8 +3071,8 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, name string) (*as
 // groupWindowFuncs groups the window functions according to the window specification name.
 // TODO: We can group the window function by the definition of window specification.
 func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, error) {
-	// updatedSpec is used to handle the specifications that have frame clause changed.
-	updatedSpec := make(map[string]*ast.WindowSpec)
+	// updatedSpecMap is used to handle the specifications that have frame clause changed.
+	updatedSpecMap := make(map[string]*ast.WindowSpec)
 	groupedWindow := make(map[*ast.WindowSpec][]*ast.WindowFuncExpr)
 	for _, windowFunc := range windowFuncs {
 		if windowFunc.Spec.Name.L == "" {
@@ -3102,10 +3102,10 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
 		} else {
-			if _, ok := updatedSpec[name]; !ok {
-				updatedSpec[name] = newSpec
+			if _, ok := updatedSpecMap[name]; !ok {
+				updatedSpecMap[name] = newSpec
 			}
-			updatedSpec := updatedSpec[name]
+			updatedSpec := updatedSpecMap[name]
 			groupedWindow[updatedSpec] = append(groupedWindow[updatedSpec], windowFunc)
 		}
 	}
