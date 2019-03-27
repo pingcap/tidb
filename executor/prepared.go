@@ -226,7 +226,7 @@ func (e *ExecuteExec) Build() error {
 	b := newExecutorBuilder(e.ctx, e.is)
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
-		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("name label of PREPARE statement", e.name))
+		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))
 		return errors.Trace(b.err)
 	}
 	e.stmtExec = stmtExec
