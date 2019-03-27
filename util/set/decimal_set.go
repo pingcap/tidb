@@ -15,23 +15,24 @@ package set
 
 import (
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // DecimalSet is a decimal set.
-type DecimalSet map[types.MyDecimal]struct{}
+type DecimalSet map[hack.MutableString]struct{}
 
 // NewDecimalSet builds a decimal set.
 func NewDecimalSet() DecimalSet {
-	return make(map[types.MyDecimal]struct{})
+	return make(map[hack.MutableString]struct{})
 }
 
 // Exist checks whether `val` exists in `s`.
 func (s DecimalSet) Exist(val *types.MyDecimal) bool {
-	_, ok := s[*val]
+	_, ok := s[hack.String(val.ToString())]
 	return ok
 }
 
 // Insert inserts `val` into `s`.
 func (s DecimalSet) Insert(val *types.MyDecimal) {
-	s[*val] = struct{}{}
+	s[hack.String(val.ToString())] = struct{}{}
 }
