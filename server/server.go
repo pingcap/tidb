@@ -351,7 +351,7 @@ func (s *Server) Run() error {
 			return nil
 		})
 		if err != nil {
-			return err
+			continue
 		}
 
 		go s.onConn(clientConn)
