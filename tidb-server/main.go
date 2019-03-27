@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
@@ -528,5 +530,6 @@ func cleanup() {
 	} else {
 		svr.KillAllConnections()
 	}
+	plugin.Shutdown(context.Background())
 	closeDomainAndStorage()
 }
