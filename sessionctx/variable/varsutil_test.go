@@ -145,9 +145,9 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		//{"SYSTEM", "Local", false, 0},
 		{"+10:00", "", true, -10 * time.Hour, nil},
 		{"-6:00", "", true, 6 * time.Hour, nil},
-		{"+13:00", "", true, -13 * time.Hour, nil},
+		{"+14:00", "", true, -14 * time.Hour, nil},
 		{"-12:59", "", true, 12*time.Hour + 59*time.Minute, nil},
-		{"+13:01", "", false, -13 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("+13:01")},
+		{"+14:01", "", false, -14 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("+14:01")},
 		{"-13:00", "", false, 13 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("-13:00")},
 	}
 	for _, tt := range tests {
