@@ -71,8 +71,8 @@ import (
 const (
 	connStatusDispatching int32 = iota
 	connStatusReading
-	connStatusShutdown     // Closed by server.
-	connStatusWaitShutdown // Notified by server to close.
+	connStatusShutdown      // Closed by server.
+	connStatusWaitShutdown  // Notified by server to close.
 )
 
 // newClientConn creates a *clientConn object.
@@ -112,6 +112,7 @@ type clientConn struct {
 	mu struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
+		resultSets []ResultSet
 	}
 }
 
@@ -1047,6 +1048,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
+	cc.mu.Lock()
+	cc.mu.resultSets = rs
+	cc.mu.Unlock()
 	if rs != nil {
 		if len(rs) == 1 {
 			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
