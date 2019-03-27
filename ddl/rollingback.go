@@ -193,7 +193,7 @@ func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err
 }
 
 func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
-	dbInfo, err := checkSchemaExistAndCancelNonExistJob(t, job)
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}

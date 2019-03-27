@@ -71,7 +71,7 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	dbInfo, err := checkSchemaExistAndCancelNonExistJob(t, job)
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -120,7 +120,7 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func checkSchemaExistAndCancelNonExistJob(t *meta.Meta, job *model.Job) (*model.DBInfo, error) {
+func checkSchemaExistAndCancelNotExistJob(t *meta.Meta, job *model.Job) (*model.DBInfo, error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return nil, errors.Trace(err)
