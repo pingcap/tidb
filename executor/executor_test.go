@@ -3067,3 +3067,16 @@ func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
 	c.Assert(strings.Split(b, ".")[1], Equals, "00")
 	c.Assert(len(strings.Split(d, ".")[1]), Equals, 3)
 }
+
+func (s *testSuite) TestDoSubquery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int)`)
+	_, err := tk.Exec(`do 1 in (select * from t)`)
+	c.Assert(err, IsNil, Commentf("err %v", err))
+	tk.MustExec(`insert into t values(1)`)
+	r, err := tk.Exec(`do 1 in (select * from t)`)
+	c.Assert(err, IsNil, Commentf("err %v", err))
+	c.Assert(r, IsNil, Commentf("result of Do not empty"))
+}
