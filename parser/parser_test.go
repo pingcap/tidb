@@ -716,6 +716,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show stats_healthy.
 		{"show stats_healthy", true, "SHOW STATS_HEALTHY"},
 		{"show stats_healthy where table_name = 't'", true, "SHOW STATS_HEALTHY WHERE `table_name`='t'"},
+		// for show pump/drainer status.
+		{"show pump status", true, "SHOW PUMP STATUS"},
+		{"show drainer status", true, "SHOW DRAINER STATUS"},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
@@ -795,6 +798,10 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"flush status", true, "FLUSH STATUS"},
 		{"flush tidb plugins plugin1", true, "FLUSH TIDB PLUGINS plugin1"},
 		{"flush tidb plugins plugin1, plugin2", true, "FLUSH TIDB PLUGINS plugin1, plugin2"},
+
+		// for change statement
+		{"change pump to node_state ='paused' for node_id '127.0.0.1:8250'", true, "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:8250'"},
+		{"change drainer to node_state ='paused' for node_id '127.0.0.1:8249'", true, "CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:8249'"},
 	}
 	s.RunTest(c, table)
 }
@@ -1593,6 +1600,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a.b, b);", false, ""},
 		{"CREATE TABLE foo (a, b.c);", false, ""},
 		{"CREATE TABLE (name CHAR(50) BINARY)", false, ""},
+		// test use key word as column name
+		{"CREATE TABLE foo (pump varchar(50), b int);", true, "CREATE TABLE `foo` (`pump` VARCHAR(50),`b` INT)"},
+		{"CREATE TABLE foo (drainer varchar(50), b int);", true, "CREATE TABLE `foo` (`drainer` VARCHAR(50),`b` INT)"},
+		{"CREATE TABLE foo (node_id varchar(50), b int);", true, "CREATE TABLE `foo` (`node_id` VARCHAR(50),`b` INT)"},
+		{"CREATE TABLE foo (node_state varchar(50), b int);", true, "CREATE TABLE `foo` (`node_state` VARCHAR(50),`b` INT)"},
 		// for table option
 		{"create table t (c int) avg_row_length = 3", true, "CREATE TABLE `t` (`c` INT) AVG_ROW_LENGTH = 3"},
 		{"create table t (c int) avg_row_length 3", true, "CREATE TABLE `t` (`c` INT) AVG_ROW_LENGTH = 3"},
