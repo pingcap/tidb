@@ -53,6 +53,9 @@ type Storage interface {
 	// GetTiKVClient gets the TiKV client.
 	GetTiKVClient() Client
 
+	// GetDebugClient gets the debug client.
+	GetDebugClient() *DebugClient
+
 	// Closed returns the closed channel.
 	Closed() <-chan struct{}
 }

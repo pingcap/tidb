@@ -109,7 +109,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), newDebugClient(security), !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -132,6 +132,7 @@ type tikvStore struct {
 	oracle       oracle.Oracle
 	client       Client
 	pdClient     pd.Client
+	dClient      *DebugClient
 	regionCache  *RegionCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
@@ -175,7 +176,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	return nil
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, dClient *DebugClient, enableGC bool) (*tikvStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -185,6 +186,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		uuid:        uuid,
 		oracle:      o,
 		client:      client,
+		dClient:     dClient,
 		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
 		kv:          spkv,
@@ -375,6 +377,10 @@ func (s *tikvStore) SetTiKVClient(client Client) {
 
 func (s *tikvStore) GetTiKVClient() (client Client) {
 	return s.client
+}
+
+func (s *tikvStore) GetDebugClient() (dClient *DebugClient) {
+	return s.dClient
 }
 
 func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
