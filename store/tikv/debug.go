@@ -97,6 +97,7 @@ func (c *DebugClient) createConns(addr string) error {
 	return nil
 }
 
+// SendRequest send debug request
 func (c *DebugClient) SendRequest(ctx context.Context, addr string, req *debugrpc.Request, timeout time.Duration) (*debugrpc.Response, error) {
 	conn, err := c.getConn(addr)
 	if err != nil {

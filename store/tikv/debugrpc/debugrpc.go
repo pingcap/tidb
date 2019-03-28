@@ -27,6 +27,7 @@ const (
 	DebugGetRegionProperties
 )
 
+// Request for debug protobuf
 type Request struct {
 	Type                   DebugType
 	Get                    *debugpb.GetRequest
@@ -44,6 +45,7 @@ type Request struct {
 	GetRegionProperties    *debugpb.GetRegionPropertiesRequest
 }
 
+// Response for debug protobuf
 type Response struct {
 	Type                   DebugType
 	Get                    *debugpb.GetResponse
