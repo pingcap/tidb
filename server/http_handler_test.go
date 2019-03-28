@@ -71,7 +71,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 		types.NewBytesDatum([]byte("foobar")),
 		types.NewFloat64Datum(-100.25),
 	}
-	var expectIndexValues []string
+	exprectIndexValues := make([]string, 0, len(indexValues))
 	for _, v := range indexValues {
 		str, err := v.ToString()
 		if err != nil {
