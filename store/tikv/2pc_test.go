@@ -43,7 +43,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	spkv := NewMockSafePointKV()
-	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false)
+	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, nil, false)
 	c.Assert(err, IsNil)
 	store.EnableTxnLocalLatches(1024000)
 	s.store = store
