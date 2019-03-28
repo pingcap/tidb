@@ -212,7 +212,7 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 	}
 	c.mu.RUnlock()
 
-	r, err := c.loadRegionByID(bo, regionID)
+	r, err := c.LoadRegionByID(bo, regionID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -409,8 +409,8 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 	}
 }
 
-// loadRegionByID loads region from pd client, and picks the first peer as leader.
-func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, error) {
+// LoadRegionByID loads region from pd client, and picks the first peer as leader.
+func (c *RegionCache) LoadRegionByID(bo *Backoffer, regionID uint64) (*Region, error) {
 	var backoffErr error
 	for {
 		if backoffErr != nil {

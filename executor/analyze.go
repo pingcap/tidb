@@ -14,8 +14,8 @@
 package executor
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"runtime"
 	"strconv"
 
@@ -120,7 +120,7 @@ type analyzeTask struct {
 	idxExec     *AnalyzeIndexExec
 	colExec     *AnalyzeColumnsExec
 	idxFastExec *AnalyzeIndexFastExec
-	colFastExec *AnalyzeColumnsFastExec
+	colFastExec *AnalyzeFastExec
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
@@ -427,14 +427,71 @@ func (e *AnalyzeIndexFastExec) buildStats() (hist *statistics.Histogram, cms *st
 	// }
 
 	// txn.
-	store := e.ctx.GetStore()
-	client := e.ctx.GetClient()
-	fmt.Println(store.(*tikv.Store).GetRegionCache())
+	store, ok := e.ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, nil, errors.Errorf("Only support fast analyze in tikv storage.")
+	}
+	cache := store.GetRegionCache()
+	// regionReqSender := tikv.NewRegionRequestSender(cache, store.GetTiKVClient())
+	startKey, endKey := tablecodec.GetTableIndexKeyRange(e.table.Meta().ID, e.idxInfo.ID)
+	// regionIDs, err := cache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+	// if err != nil {
+	// 	return nil, nil, errors.Trace(err)
+	// }
+	// for _, regionID := range regionIDs {
+	// 	region := cache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
+
+	// }
+	var loc *tikv.KeyLocation
+	bo := tikv.NewBackoffer(context.Background(), 500)
+	var scanLocs []*tikv.KeyLocation
+	var sampLocs []*tikv.KeyLocation
+	for loc, err = cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = cache.LocateKey(bo, append(loc.EndKey, byte(0))) {
+		var start, end []byte
+		start = loc.StartKey
+		// region, err := cache.LoadRegionByID(bo, loc.Region.GetID())
+		// if err != nil {
+		// 	return nil, nil, errors.Trace(err)
+		// }
+		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
+			scanLocs = append(scanLocs, loc)
+			// req := &tikvrpc.Request{
+			// 	Type:    tikvrpc.CmdGet,
+			// 	Context: *region.GetContext(),
+			// 	Get: &kvrpcpb.GetRequest{
+			// 		Key: endKey,
+			// 	},
+			// }
+			// resp, err := store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
+			// if err != nil {
+			// 	break
+			// }
+			// resp
+		} else {
+			sampLocs = append(sampLocs, loc)
+		}
+	}
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	rowCount := uint64(0)
+	for _, loc := range sampLocs {
+		_, _, startVals, err := tablecodec.DecodeIndexKey(loc.StartKey)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		_, _, endVals, err := tablecodec.DecodeIndexKey(loc.EndKey)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
+	}
 
 	return nil, nil, nil
 }
 
-func analyzeColumnsFastExec(colFastExec *AnalyzeColumnsFastExec) statistics.AnalyzeResult {
+func analyzeColumnsFastExec(colFastExec *AnalyzeFastExec) statistics.AnalyzeResult {
 	hist, cms, err := colFastExec.buildStats()
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
@@ -442,7 +499,7 @@ func analyzeColumnsFastExec(colFastExec *AnalyzeColumnsFastExec) statistics.Anal
 	result := statistics.AnalyzeResult{
 		Hist:    []*statistics.Histogram{hist},
 		Cms:     []*statistics.CMSketch{cms},
-		IsIndex: 1,
+		IsIndex: 0,
 	}
 	if hist.Len() > 0 {
 		result.Count = hist.Buckets[hist.Len()-1].Count
@@ -450,18 +507,21 @@ func analyzeColumnsFastExec(colFastExec *AnalyzeColumnsFastExec) statistics.Anal
 	return result
 }
 
-// AnalyzeColumnsFastExec represents Fast Analyze Columns executor.
-type AnalyzeColumnsFastExec struct {
+// AnalyzeFastExec represents Fast Analyze Columns executor.
+type AnalyzeFastExec struct {
 	ctx             sessionctx.Context
 	PhysicalTableID int64
 	colsInfo        []*model.ColumnInfo
 	concurrency     int
-	result          distsql.SelectResult
 	maxNumBuckets   uint64
 	table           table.Table
+	cache           *tikv.RegionCache
+	sampLocs        chan *tikc.Location
+	scanLocs        []*tikv.Location
+	sampLocRowCount uint64
 }
 
-func (e *AnalyzeColumnsFastExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
+func (e *AnalyzeFastExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
 	// txn, err := e.ctx.Txn(true)
 	// if err != nil {
 	// 	return errors.Trace(err)
@@ -471,5 +531,69 @@ func (e *AnalyzeColumnsFastExec) buildStats() (hist *statistics.Histogram, cms *
 	// kvStore := e.ctx.GetStore()
 	// kvClient := e.ctx.GetClient()
 
+	store, ok := e.ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, nil, errors.Errorf("Only support fast analyze in tikv storage.")
+	}
+	cache := store.GetRegionCache()
+	// regionReqSender := tikv.NewRegionRequestSender(cache, store.GetTiKVClient())
+	startKey, endKey := tablecodec.GetTableIndexKeyRange(e.table.Meta().ID, e.idxInfo.ID)
+	// regionIDs, err := cache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+	// if err != nil {
+	// 	return nil, nil, errors.Trace(err)
+	// }
+	// for _, regionID := range regionIDs {
+	// 	region := cache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
+
+	// }
+	var loc *tikv.KeyLocation
+	bo := tikv.NewBackoffer(context.Background(), 500)
+	var scanLocs []*tikv.KeyLocation
+	for loc, err = cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = cache.LocateKey(bo, append(loc.EndKey, byte(0))) {
+		var start, end []byte
+		start = loc.StartKey
+		// region, err := cache.LoadRegionByID(bo, loc.Region.GetID())
+		// if err != nil {
+		// 	return nil, nil, errors.Trace(err)
+		// }
+		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
+			scanLocs <- loc
+			// req := &tikvrpc.Request{
+			// 	Type:    tikvrpc.CmdGet,
+			// 	Context: *region.GetContext(),
+			// 	Get: &kvrpcpb.GetRequest{
+			// 		Key: endKey,
+			// 	},
+			// }
+			// resp, err := store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
+			// if err != nil {
+			// 	break
+			// }
+			// resp
+		} else {
+			sampLocs = append(sampLocs, loc)
+		}
+	}
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	rowCount := uint64(0)
+	e.doOnceSamp(<-sampLocs)
+	// for _, loc := range sampLocs {
+	// 	_, _, startVals, err := tablecodec.DecodeIndexKey(loc.StartKey)
+	// 	if err != nil {
+	// 		return nil, nil, errors.Trace(err)
+	// 	}
+	// 	_, _, endVals, err := tablecodec.DecodeIndexKey(loc.EndKey)
+	// 	if err != nil {
+	// 		return nil, nil, errors.Trace(err)
+	// 	}
+
+	// }
 	return nil, nil, nil
+}
+
+func (e *AnalyzeFastExec) doOnceSamp(loc *tikv.Location) {
+	req
 }
