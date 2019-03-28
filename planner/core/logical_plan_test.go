@@ -1535,7 +1535,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
 		{
@@ -1612,6 +1612,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		},
 		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", "", nil},
+				{mysql.GrantPriv, "test", "ttt", "", nil},
+			},
+		},
+		{
+			sql: `grant select on ttt to 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "ttt", "", nil},
 				{mysql.GrantPriv, "test", "ttt", "", nil},
