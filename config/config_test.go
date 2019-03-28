@@ -39,7 +39,6 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
 	conf.TiKVClient.CommitTimeout = "10s"
-	conf.CheckMb4ValueInUTF8 = true
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = path.Join(path.Dir(localFile), configFile)
