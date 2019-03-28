@@ -408,6 +408,9 @@ func (s *testSuite1) TestGroupConcatAggr(c *C) {
 
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR '123') from test group by id order by id")
 	result.Check(testkit.Rows("1 101232012330", "2 20", "3 200123500"))
+
+	// issue #9920
+	tk.MustQuery("select group_concat(123, null)").Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestSelectDistinct(c *C) {
