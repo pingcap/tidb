@@ -341,4 +341,6 @@ func (s *testPrepareSuite) TestPrepareWithWindowFunction(c *C) {
 	tk.MustQuery("execute stmt1").Check(testkit.Rows("1", "2"))
 	// Test the stmt can be prepared successfully.
 	tk.MustExec("prepare stmt2 from 'select count(a) over (order by a rows between ? preceding and ? preceding) from window_prepare'")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt2 using @a, @b").Check(testkit.Rows("0", "0"))
 }
