@@ -416,7 +416,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 	return nil
 }
 
-func (e IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
+func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
