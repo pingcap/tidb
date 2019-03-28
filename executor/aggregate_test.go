@@ -581,6 +581,7 @@ func (s *testSuite1) TestAggEliminator(c *C) {
 	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
 	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select group_concat(b, b) from t group by a").Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
 }
 
 func (s *testSuite1) TestMaxMinFloatScalaFunc(c *C) {
