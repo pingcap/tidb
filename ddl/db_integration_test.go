@@ -177,7 +177,7 @@ func (s *testIntegrationSuite) TestCreateTableWithKeyWord(c *C) {
 	tk.MustExec("USE test;")
 
 	_, err := tk.Exec("create table t1(pump varchar(20), drainer varchar(20), node_id varchar(20), node_state varchar(20));")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite) TestUniqueKeyNullValue(c *C) {
