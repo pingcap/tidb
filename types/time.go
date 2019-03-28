@@ -419,7 +419,7 @@ func GetFsp(s string) (fsp int) {
 func getFracIndex(s string) (index int) {
 	index = -1
 	for i := len(s) - 1; i >= 0; i-- {
-		if !unicode.IsNumber(rune(s[i])) {
+		if unicode.IsPunct(rune(s[i])) {
 			if s[i] == '.' {
 				index = i
 			}
