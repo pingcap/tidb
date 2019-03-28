@@ -2420,6 +2420,35 @@ func (s *testDBSuite) TestModifyColumnNullToNotNull(c *C) {
 	s.mustExec(c, "drop table t1")
 }
 
+func (s *testDBSuite) TestInsertIntoAddDropColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (id int auto_increment, primary key(id));")
+	s.mustExec(c, "insert into t1(id) values(499)")
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateWriteOnly, model.StateWriteReorganization, model.StateDeleteOnly, model.StateDeleteReorganization:
+		default:
+			return
+		}
+		_, err := s.tk.Exec("insert into t1 values(500, 'test')")
+		c.Assert(err, ErrorMatches, ".*Column count doesn't match.*")
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	go backgroundExec(s.store, "alter table t1 add column name varchar(20) not null after id", done)
+	err := <-done
+	c.Assert(err, IsNil)
+
+	go backgroundExec(s.store, "alter table t1 drop column name", done)
+	err = <-done
+	c.Assert(err, IsNil)
+}
+
 func (s *testDBSuite) TestTransactionOnAddDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
