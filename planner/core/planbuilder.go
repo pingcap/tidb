@@ -92,14 +92,13 @@ func (info *tableHintInfo) matchTableName(tables []*model.CIStr, joinHint *joinH
 	return false
 }
 
-func restore2JoinHint(joinType string, joinHint joinHintInfo) string {
+func (info *joinHintInfo) restore2JoinHint(hintType string) string {
 	buffer := bytes.NewBufferString("/*+ ")
-	buffer.WriteString(strings.ToUpper(joinType))
+	buffer.WriteString(strings.ToUpper(hintType))
 	buffer.WriteString("(")
-	tables := joinHint.tables
-	for i, tableName := range tables {
+	for i, tableName := range info.tables {
 		buffer.WriteString(tableName.O)
-		if i < len(tables)-1 {
+		if i < len(info.tables)-1 {
 			buffer.WriteString(", ")
 		}
 	}

@@ -1874,7 +1874,7 @@ func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, hintInfo j
 	if len(hintInfo.tables) == 0 || hintInfo.matched {
 		return
 	}
-	errMsg := fmt.Sprintf("Optimizer Hint %s is inapplicable because there are no matching table names. Maybe you can use the table alias name", restore2JoinHint(joinType, hintInfo))
+	errMsg := fmt.Sprintf("Optimizer Hint %s is inapplicable because there are no matching table names. Maybe you can use the table alias name", hintInfo.restore2JoinHint(joinType))
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
