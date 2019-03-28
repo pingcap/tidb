@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
@@ -337,10 +336,6 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 				return defaultVal, errors.Trace(err)
 			}
 			defaultVal = t.String()
-			// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
-			//              This will fix bug in version 0.
-			// TODO: remove this version field after there is no old version 0.
-			col.Version = model.ColumnInfoVersion1
 		}
 	}
 	return defaultVal, nil
@@ -362,6 +357,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		Offset:    offset,
 		Name:      colDef.Name.Name,
 		FieldType: *colDef.Tp,
+		// TODO: remove this version field after there is no old version.
+		Version: model.CurrLatestColumnInfoVersion,
 	})
 
 	if !isExplicitTimeStamp() {
@@ -1302,19 +1299,21 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 	if s.Cols == nil {
 		for i, v := range schemaCols {
 			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:   v.AsName,
-				ID:     int64(i),
-				Offset: i,
-				State:  model.StatePublic,
+				Name:    v.AsName,
+				ID:      int64(i),
+				Offset:  i,
+				State:   model.StatePublic,
+				Version: model.CurrLatestColumnInfoVersion,
 			})
 		}
 	} else {
 		for i, v := range s.Cols {
 			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:   v,
-				ID:     int64(i),
-				Offset: i,
-				State:  model.StatePublic,
+				Name:    v,
+				ID:      int64(i),
+				Offset:  i,
+				State:   model.StatePublic,
+				Version: model.CurrLatestColumnInfoVersion,
 			})
 		}
 	}
@@ -2316,6 +2315,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *specNewColumn.Tp,
 		Name:               newColName,
+		Version:            col.Version,
 	})
 
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
@@ -2551,8 +2551,9 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 			return errors.Trace(err)
 		}
 	}
-
-	if origCharset == toCharset && origCollate == toCollate {
+	// Old version schema charset maybe modified when load schema if TreatOldVersionUTF8AsUTF8MB4 was enable.
+	// So even if the origCharset equal toCharset, we still need to do the ddl for old version schema.
+	if origCharset == toCharset && origCollate == toCollate && tb.Meta().Version >= model.TableInfoVersion2 {
 		// nothing to do.
 		return nil
 	}
@@ -2751,7 +2752,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
 	}
 
-	if indexInfo := schemautil.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
+	if indexInfo := expression.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
 		return ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
@@ -2892,7 +2893,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	if indexInfo := schemautil.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
+	if indexInfo := expression.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
 		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 

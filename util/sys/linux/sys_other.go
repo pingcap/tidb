@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -10,17 +10,15 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build !linux
 
-package schemautil
+package linux
 
-import "github.com/pingcap/parser/model"
+import "runtime"
 
-// FindIndexByName finds index by name.
-func FindIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
-	for _, idx := range indices {
-		if idx.Name.L == idxName {
-			return idx
-		}
-	}
-	return nil
+// OSVersion returns version info of operation system.
+// for non-linux system will only return os and arch info.
+func OSVersion() (osVersion string, err error) {
+	osVersion = runtime.GOOS + "." + runtime.GOARCH
+	return
 }

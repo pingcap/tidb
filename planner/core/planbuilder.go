@@ -30,11 +30,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/schemautil"
 )
 
 type visitInfo struct {
@@ -157,6 +157,26 @@ type PlanBuilder struct {
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
 func (b *PlanBuilder) GetVisitInfo() []visitInfo {
 	return b.visitInfo
+}
+
+// GetDBTableInfo gets the accessed dbs and tables info.
+func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
+	var tables []stmtctx.TableEntry
+	existsFunc := func(tbls []stmtctx.TableEntry, tbl *stmtctx.TableEntry) bool {
+		for _, t := range tbls {
+			if t == *tbl {
+				return true
+			}
+		}
+		return false
+	}
+	for _, v := range b.visitInfo {
+		tbl := &stmtctx.TableEntry{DB: v.db, Table: v.table}
+		if !existsFunc(tables, tbl) {
+			tables = append(tables, *tbl)
+		}
+	}
+	return tables
 }
 
 // GetOptFlag gets the optFlag of the PlanBuilder.
@@ -753,7 +773,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
-		idx := schemautil.FindIndexByName(idxName.L, tblInfo.Indices)
+		idx := expression.FindIndexByName(idxName.L, tblInfo.Indices)
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
