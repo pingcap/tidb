@@ -21,7 +21,7 @@ func abs(n int64) int64 {
 
 // uintSizeTable is used as a table to do comparison to get uint length is faster than doing loop on division with 10
 var uintSizeTable = [21]uint64{
-	0, // redundant 0 here, so to make function lenOfUint64Fast to count from 1 and return i directly
+	0, // redundant 0 here, so to make function StrLenOfUint64Fast to count from 1 and return i directly
 	9, 99, 999, 9999, 99999,
 	999999, 9999999, 99999999, 999999999, 9999999999,
 	99999999999, 999999999999, 9999999999999, 99999999999999, 999999999999999,
@@ -29,8 +29,8 @@ var uintSizeTable = [21]uint64{
 	maxUint,
 } // maxUint is 18446744073709551615 and it has 20 digits
 
-// LenOfUint64Fast efficiently calculate the string character lengths of an uint64 as input
-func LenOfUint64Fast(x uint64) int {
+// StrLenOfUint64Fast efficiently calculate the string character lengths of an uint64 as input
+func StrLenOfUint64Fast(x uint64) int {
 	for i := 1; ; i++ {
 		if x <= uintSizeTable[i] {
 			return i
@@ -38,11 +38,11 @@ func LenOfUint64Fast(x uint64) int {
 	}
 }
 
-// LenOfInt64Fast efficiently calculate the string character lengths of an int64 as input
-func LenOfInt64Fast(x int64) int {
+// StrLenOfInt64Fast efficiently calculate the string character lengths of an int64 as input
+func StrLenOfInt64Fast(x int64) int {
 	size := 0
 	if x < 0 {
 		size = 1 // add "-" sign on the length count
 	}
-	return size + LenOfUint64Fast(uint64(abs(x)))
+	return size + StrLenOfUint64Fast(uint64(abs(x)))
 }

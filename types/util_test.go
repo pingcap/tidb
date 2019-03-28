@@ -24,16 +24,16 @@ var _ = Suite(&UtilTest{})
 
 type UtilTest struct{}
 
-func (s *UtilTest) TestLenOfUint64Fast_RandomTestCases(c *C) {
+func (s *UtilTest) TestStrLenOfUint64Fast_RandomTestCases(c *C) {
 	for i := 0; i < 1000000; i++ {
 		num := rand.Uint64()
 		expected := len(strconv.FormatUint(num, 10))
-		actual := LenOfUint64Fast(num)
+		actual := StrLenOfUint64Fast(num)
 		c.Assert(actual, Equals, expected)
 	}
 }
 
-func (s *UtilTest) TestLenOfUint64Fast_ManualTestCases(c *C) {
+func (s *UtilTest) TestStrLenOfUint64Fast_ManualTestCases(c *C) {
 	nums := [22]uint64{0,
 		1, 12, 123, 1234, 12345,
 		123456, 1234567, 12345678, 123456789, 1234567890,
@@ -45,7 +45,7 @@ func (s *UtilTest) TestLenOfUint64Fast_ManualTestCases(c *C) {
 
 	for _, num := range nums {
 		expected := len(strconv.FormatUint(num, 10))
-		actual := LenOfUint64Fast(num)
+		actual := StrLenOfUint64Fast(num)
 		c.Assert(actual, Equals, expected)
 	}
 }
