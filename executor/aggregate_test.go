@@ -641,3 +641,52 @@ func (s *testSuite1) TestFirstRowEnum(c *C) {
 		`a`,
 	))
 }
+
+func (s *testSuite1) TestAggJSON(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a datetime, b json, index idx(a));`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:00', '["a", "b", 1]');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:01', '["a", "b", 1]');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:02', '["a", "b", 1]');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:03', '{"k1": "value", "k2": [10, 20]}');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:04', '{"k1": "value", "k2": [10, 20]}');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:05', '{"k1": "value", "k2": [10, 20]}');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:06', '"hello"');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:07', '"hello"');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:08', '"hello"');`)
+	tk.MustExec(`set @@sql_mode='';`)
+	tk.MustQuery(`select b from t group by a order by a;`).Check(testkit.Rows(
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`"hello"`,
+		`"hello"`,
+		`"hello"`,
+	))
+	tk.MustQuery(`select min(b) from t group by a order by a;`).Check(testkit.Rows(
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`"hello"`,
+		`"hello"`,
+		`"hello"`,
+	))
+	tk.MustQuery(`select max(b) from t group by a order by a;`).Check(testkit.Rows(
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`"hello"`,
+		`"hello"`,
+		`"hello"`,
+	))
+}
