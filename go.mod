@@ -92,4 +92,4 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/kvproto => github.com/MyonKeminta/kvproto v0.0.0-20190227051826-efa537e2c3f5
+replace github.com/pingcap/kvproto => github.com/MyonKeminta/kvproto v0.0.0-20190325062618-10e1d546cb0f
