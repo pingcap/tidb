@@ -1220,6 +1220,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 
+	if len(cfg.Plugin.Load) > 0 {
+		plugin.InitWatchLoops(dom.GetEtcdClient())
+	}
+
 	if raw, ok := store.(domain.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
