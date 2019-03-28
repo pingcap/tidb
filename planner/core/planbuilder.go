@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -135,6 +135,11 @@ type PlanBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
+	// colVisitInfo is used for column-level privilege check
+	colVisitInfo map[string]*visitInfo
+	// fills table name for current select, and remains empty for subqueries
+	tblNameToOrigTbl   map[string]*expression.Column
+	colNameToOrigTable map[string]*expression.Column
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo

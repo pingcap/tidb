@@ -40,8 +40,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -138,11 +139,44 @@ func (b *PlanBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 	case *ast.TableSource:
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
+			origTblNameToOrigTbl := b.tblNameToOrigTbl
+			origColNameToOrigTbl := b.colNameToOrigTable
+			b.tblNameToOrigTbl = make(map[string]*expression.Column)
+			b.colNameToOrigTable = make(map[string]*expression.Column)
 			p, err = b.buildSelect(v)
+			b.tblNameToOrigTbl = origTblNameToOrigTbl
+			b.colNameToOrigTable = origColNameToOrigTbl
 		case *ast.UnionStmt:
+			origTblNameToOrigTbl := b.tblNameToOrigTbl
+			origColNameToOrigTbl := b.colNameToOrigTable
+			b.tblNameToOrigTbl = make(map[string]*expression.Column)
+			b.colNameToOrigTable = make(map[string]*expression.Column)
 			p, err = b.buildUnion(v)
+			b.tblNameToOrigTbl = origTblNameToOrigTbl
+			b.colNameToOrigTable = origColNameToOrigTbl
 		case *ast.TableName:
+			// Only select from table name will introduce new column privileges
+			if b.tblNameToOrigTbl == nil {
+				b.tblNameToOrigTbl = make(map[string]*expression.Column)
+			}
+			if b.colNameToOrigTable == nil {
+				b.colNameToOrigTable = make(map[string]*expression.Column)
+			}
 			p, err = b.buildDataSource(v)
+			// isSelectTable = true
+			if x.AsName.L != "" {
+				// DBName:      dbName,
+				// TblName:     tableInfo.Name,
+				// ColName:     col.Name,
+				tc := &expression.Column{
+					DBName:  v.Schema,
+					TblName: v.Name,
+				}
+				if tc.DBName.L == "" {
+					model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+				}
+				b.tblNameToOrigTbl[x.AsName.L] = tc
+			}
 		default:
 			err = ErrUnsupportedType.GenWithStackByArgs(v)
 		}
@@ -153,6 +187,7 @@ func (b *PlanBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 		if v, ok := p.(*DataSource); ok {
 			v.TableAsName = &x.AsName
 		}
+
 		for _, col := range p.Schema().Columns {
 			col.OrigTblName = col.TblName
 			if x.AsName.L != "" {
@@ -508,6 +543,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 }
 
 func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, error) {
+	b.buildVisitInfo(where)
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	if b.curClause != havingClause {
 		b.curClause = whereClause
@@ -1260,6 +1296,9 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	}
 	if sel.GroupBy != nil {
 		extractor.gbyItems = sel.GroupBy.Items
+		for _, e := range sel.GroupBy.Items {
+			b.buildVisitInfo(e.Expr)
+		}
 	}
 	// Extract agg funcs from having clause.
 	if sel.Having != nil {
@@ -1269,6 +1308,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 			return nil, nil, errors.Trace(extractor.err)
 		}
 		sel.Having.Expr = n.(ast.ExprNode)
+		b.buildVisitInfo(sel.Having.Expr)
 	}
 	havingAggMapper := extractor.aggMapper
 	extractor.aggMapper = make(map[*ast.AggregateFuncExpr]int)
@@ -1283,6 +1323,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 				return nil, nil, errors.Trace(extractor.err)
 			}
 			item.Expr = n.(ast.ExprNode)
+			b.buildVisitInfo(item.Expr)
 		}
 	}
 	sel.Fields.Fields = extractor.selectFields
@@ -1294,6 +1335,7 @@ func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
 		f.Expr = n.(ast.ExprNode)
+		b.buildVisitInfo(f.Expr)
 	}
 	aggList := extractor.AggFuncs
 	totalAggMapper := make(map[*ast.AggregateFuncExpr]int)
@@ -1324,6 +1366,7 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 			return nil, extractor.err
 		}
 		field.Expr = n.(ast.ExprNode)
+		b.buildVisitInfo(field.Expr)
 	}
 	for _, spec := range sel.WindowSpecs {
 		_, ok := spec.Accept(extractor)
@@ -1837,6 +1880,100 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
+func (b *PlanBuilder) buildVisitInfo(f ast.ExprNode) {
+	switch x := f.(type) {
+	case *ast.BetweenExpr:
+		b.buildVisitInfo(x.Expr)
+		b.buildVisitInfo(x.Left)
+		b.buildVisitInfo(x.Right)
+	case *ast.BinaryOperationExpr:
+		b.buildVisitInfo(x.L)
+		b.buildVisitInfo(x.R)
+	case *ast.CaseExpr:
+		b.buildVisitInfo(x.Value)
+		b.buildVisitInfo(x.ElseClause)
+		for _, when := range x.WhenClauses {
+			b.buildVisitInfo(when.Expr)
+			b.buildVisitInfo(when.Result)
+		}
+	case *ast.ColumnNameExpr:
+		if x.Name.Table.L == "" {
+			if tb, ok := b.colNameToOrigTable[x.Name.Name.L]; ok {
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tb.DBName.L, tb.TblName.L, x.Name.Name.L, ErrTableaccessDenied)
+			}
+		} else if x.Name.Schema.L == "" {
+			if tb, ok := b.tblNameToOrigTbl[x.Name.Table.L]; ok {
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tb.DBName.L, tb.TblName.L, x.Name.Name.L, ErrTableaccessDenied)
+			}
+		} else {
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, x.Name.Schema.L, x.Name.Table.L, x.Name.Name.L, ErrTableaccessDenied)
+		}
+	case *ast.CompareSubqueryExpr:
+		b.buildVisitInfo(x.L)
+		b.buildVisitInfo(x.R)
+	case *ast.DefaultExpr:
+		if x.Name.Table.L == "" {
+			if tb, ok := b.colNameToOrigTable[x.Name.Name.L]; ok {
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tb.DBName.L, tb.TblName.L, x.Name.Name.L, ErrTableaccessDenied)
+			}
+		} else if x.Name.Schema.L == "" {
+			if tb, ok := b.tblNameToOrigTbl[x.Name.Table.L]; ok {
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tb.DBName.L, tb.TblName.L, x.Name.Name.L, ErrTableaccessDenied)
+			}
+		} else {
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, x.Name.Schema.L, x.Name.Table.L, x.Name.Name.L, ErrTableaccessDenied)
+		}
+	case *ast.ExistsSubqueryExpr:
+		b.buildVisitInfo(x.Sel)
+	case *ast.IsNullExpr:
+		b.buildVisitInfo(x.Expr)
+	case *ast.IsTruthExpr:
+		b.buildVisitInfo(x.Expr)
+	case *ast.ParenthesesExpr:
+	case *ast.PatternInExpr:
+		b.buildVisitInfo(x.Expr)
+		for i := range x.List {
+			b.buildVisitInfo(x.List[i])
+		}
+		b.buildVisitInfo(x.Sel)
+	case *ast.PatternLikeExpr:
+		b.buildVisitInfo(x.Expr)
+		b.buildVisitInfo(x.Pattern)
+	case *ast.PatternRegexpExpr:
+		b.buildVisitInfo(x.Expr)
+		b.buildVisitInfo(x.Pattern)
+	case *ast.PositionExpr:
+		b.buildVisitInfo(x.P)
+	case *ast.RowExpr:
+		for i := range x.Values {
+			b.buildVisitInfo(x.Values[i])
+		}
+	case *ast.SubqueryExpr:
+	case *ast.UnaryOperationExpr:
+		b.buildVisitInfo(x.V)
+	case *ast.ValuesExpr:
+		if x.Column != nil {
+			b.buildVisitInfo(x.Column)
+		}
+	case *ast.VariableExpr:
+		b.buildVisitInfo(x.Value)
+	case *ast.FuncCallExpr:
+		for i := range x.Args {
+			b.buildVisitInfo(x.Args[i])
+		}
+	case *ast.WindowFuncExpr:
+		for i := range x.Args {
+			b.buildVisitInfo(x.Args[i])
+		}
+	case *ast.AggregateFuncExpr:
+		for i := range x.Args {
+			b.buildVisitInfo(x.Args[i])
+		}
+	default:
+		logrus.Infof("%v", reflect.TypeOf(x))
+	}
+}
+
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	var sortMergeTables, INLJTables, hashJoinTables []model.CIStr
 	for _, hint := range hints {
@@ -1890,6 +2027,8 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
 		windowMap                     map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
+
+		columnNameSchema = make(map[string]*expression.Column)
 	)
 
 	if sel.From != nil {
@@ -1901,10 +2040,27 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		p = b.buildTableDual()
 	}
 
+	for _, c := range p.Schema().Columns {
+		sch, ok := columnNameSchema[c.ColName.L]
+		if ok {
+			// cannot ref only by colname
+			sch.Index = -1
+		}
+		columnNameSchema[c.ColName.L] = &expression.Column{
+			OrigColName: model.NewCIStr(c.ColName.O),
+			DBName:      model.NewCIStr(c.DBName.O),
+			OrigTblName: model.NewCIStr(c.OrigTblName.O),
+		}
+	}
+
 	originalFields := sel.Fields.Fields
 	sel.Fields.Fields, err = b.unfoldWildStar(p, sel.Fields.Fields)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	for _, f := range sel.Fields.Fields {
+		b.buildVisitInfo(f.Expr)
 	}
 
 	if sel.GroupBy != nil {
@@ -2084,11 +2240,11 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	}
 
 	tableInfo := tbl.Meta()
-	var authErr error
-	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Hostname, b.ctx.GetSessionVars().User.Username, tableInfo.Name.L)
-	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
+	// var authErr error = nil
+	// if b.ctx.GetSessionVars().User != nil {
+	// 	authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Hostname, b.ctx.GetSessionVars().User.Username, tableInfo.Name.L)
+	// }
+	// b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
 	if tableInfo.IsView() {
 		return b.BuildDataSourceFromView(dbName, tableInfo)
@@ -2153,6 +2309,11 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 			OrigColName: col.Name,
 			ID:          col.ID,
 			RetType:     &col.FieldType,
+		}
+		b.colNameToOrigTable[col.Name.L] = &expression.Column{
+			DBName:  dbName,
+			TblName: tableInfo.Name,
+			ColName: col.Name,
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
@@ -2562,7 +2723,8 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, col.OrigTblName.L, "", nil)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, col.OrigTblName.L, col.ColName.L, nil)
+		b.buildVisitInfo(assign.Expr)
 	}
 	return newList, p, nil
 }
