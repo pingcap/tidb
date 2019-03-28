@@ -345,8 +345,8 @@ type IndexLookUpExecutor struct {
 	tblWorkerWg sync.WaitGroup
 	finished    chan struct{}
 
-	requiredRowsCh  chan int
-	batchSizeIsInit bool
+	kvRanges      []kv.KeyRange
+	workerStarted bool
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
@@ -376,19 +376,19 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
+	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	err = e.open(ctx, kvRanges)
+	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
 	return errors.Trace(err)
 }
 
-func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
+func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 	// We have to initialize "memTracker" and other execution resources in here
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
@@ -398,7 +398,6 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
-	e.requiredRowsCh = make(chan int, 1)
 
 	var err error
 	if e.corColInIdxSide {
@@ -414,12 +413,14 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			return errors.Trace(err)
 		}
 	}
+	return nil
+}
 
+func (e IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	err = e.startIndexWorker(ctx, kvRanges, workCh)
-	if err != nil {
+	if err := e.startIndexWorker(ctx, e.kvRanges, workCh, initBatchSize); err != nil {
 		return errors.Trace(err)
 	}
 	e.startTableWorker(ctx, workCh)
@@ -427,7 +428,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 }
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
-func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask) error {
+func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
@@ -456,7 +457,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		finished:     e.finished,
 		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrder,
-		batchSize:    e.maxChunkSize,
+		batchSize:    initBatchSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
 	}
@@ -465,14 +466,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
-		// init worker's batchSize to the first RequiredRows to
-		// reduce the memory usage and network-waiting time
-		requiredRow, ok := <-e.requiredRowsCh
-		if !ok {
-			return
-		}
-		worker.batchSize = int(requiredRow)
-
 		ctx1, cancel := context.WithCancel(ctx)
 		count, err := worker.fetchHandles(ctx1, result)
 		if err != nil {
@@ -545,7 +538,9 @@ func (e *IndexLookUpExecutor) Close() error {
 	}
 
 	close(e.finished)
-	close(e.requiredRowsCh)
+	if !e.workerStarted {
+		return nil
+	}
 	// Drain the resultCh and discard the result, in case that Next() doesn't fully
 	// consume the data, background worker still writing to resultCh and block forever.
 	for range e.resultCh {
@@ -568,9 +563,11 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	if !e.batchSizeIsInit {
-		e.requiredRowsCh <- req.RequiredRows()
-		e.batchSizeIsInit = true
+	if !e.workerStarted {
+		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
+			return errors.Trace(err)
+		}
+		e.workerStarted = true
 	}
 	req.Reset()
 	for {

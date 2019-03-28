@@ -1894,11 +1894,11 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	kvRanges, err := buildKvRangesForIndexJoin(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, values, indexRanges, keyOff2IdxOff)
+	e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = e.open(ctx, kvRanges)
+	err = e.open(ctx)
 	return e, errors.Trace(err)
 }
 
