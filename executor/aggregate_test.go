@@ -640,7 +640,7 @@ func (s *testSuite) TestFirstRowEnum(c *C) {
 	))
 }
 
-func (s *testSuite1) TestAggJSON(c *C) {
+func (s *testSuite) TestAggJSON(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a datetime, b json, index idx(a));`)
