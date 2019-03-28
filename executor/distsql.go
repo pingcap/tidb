@@ -424,6 +424,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 		return errors.Trace(err)
 	}
 	e.startTableWorker(ctx, workCh)
+	e.workerStarted = true
 	return nil
 }
 
@@ -545,6 +546,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.idxWorkerWg.Wait()
 	e.tblWorkerWg.Wait()
 	e.finished = nil
+	e.workerStarted = false
 	e.memTracker.Detach()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
@@ -564,7 +566,6 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
 			return errors.Trace(err)
 		}
-		e.workerStarted = true
 	}
 	req.Reset()
 	for {
