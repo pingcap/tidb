@@ -2499,5 +2499,9 @@ func (s *testSessionSuite) TestGrantViewRelated(c *C) {
 
 	// Test grant view related privileges.
 	tk.MustExec(`grant show view on v_version29 to 'u_version29'@'%'`)
+	result := tk.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29'")
+	result.Check(testkit.Rows("Show View"))
 	tk.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`)
+	result = tk.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29_c'")
+	result.Check(testkit.Rows("Create View"))
 }
