@@ -315,8 +315,7 @@ func (a *aggregationPushDownSolver) optimize(p LogicalPlan) (LogicalPlan, error)
 	if !p.context().GetSessionVars().AllowAggPushDown {
 		return p, nil
 	}
-	a.aggPushDown(p)
-	return p, nil
+	return a.aggPushDown(p)
 }
 
 // aggPushDown tries to push down aggregate functions to join paths.
