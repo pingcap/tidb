@@ -421,9 +421,11 @@ func RoundFrac(t gotime.Time, fsp int) (gotime.Time, error) {
 }
 
 // TruncateFrac truncates fractional seconds precision with new fsp and returns a new one.
+// 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:10
+// 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
 func TruncateFrac(t gotime.Time, fsp int) (gotime.Time, error) {
 	if _, err := CheckFsp(fsp); err != nil {
-		return t, errors.Trace(err)
+		return t, err
 	}
 	return t.Truncate(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil
 }
