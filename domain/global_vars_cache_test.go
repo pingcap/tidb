@@ -37,11 +37,12 @@ func (gvcSuite *testGVCSuite) TestSimple(c *C) {
 
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
+	defer store.Close()
 	ddlLease := 50 * time.Millisecond
 	dom := NewDomain(store, ddlLease, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
 	c.Assert(err, IsNil)
-	defer func() { dom.Close() }()
+	defer dom.Close()
 
 	// Get empty global vars cache.
 	gvc := dom.GetGlobalVarsCache()
