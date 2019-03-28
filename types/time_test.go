@@ -162,6 +162,8 @@ func (s *testTimeSuite) TestDate(c *C) {
 		{"2015-06-01 12:12:12", "2015-06-01"},
 		{"0001-01-01 00:00:00", "0001-01-01"},
 		{"0001-01-01", "0001-01-01"},
+		{"2019.01.01", "2019-01-01"},
+		{"2019/01/01", "2019-01-01"},
 	}
 
 	for _, test := range table {
@@ -172,6 +174,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 
 	errTable := []string{
 		"0121231",
+		"2019.01",
 	}
 
 	for _, test := range errTable {
