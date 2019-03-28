@@ -399,15 +399,11 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 
 // GetFsp gets the fsp of a string.
 func GetFsp(s string) (fsp int) {
-	length := len(s)
-	for i := length - 1; i >= 0; i-- {
-		if !unicode.IsNumber(rune(s[i])) {
-			if s[i] == '.' {
-				fsp = length - i - 1
-			}
-
-			break
-		}
+	index := getFracIndex(s)
+	if index < 0 {
+		fsp = 0
+	} else {
+		fsp = len(s) - getFracIndex(s) - 1
 	}
 
 	if fsp == len(s) {
@@ -416,6 +412,23 @@ func GetFsp(s string) (fsp int) {
 		fsp = 6
 	}
 	return
+}
+
+// find the last '.' for get fracStr, index = -1 means fracStr not found.
+// for format like '2019.01.01 00:00:00', the fracStr should be empty
+func getFracIndex(s string) (index int) {
+	index = -1
+	for i := len(s) - 1; i >= 0; i-- {
+		if !unicode.IsNumber(rune(s[i])) {
+			if s[i] == '.' {
+				index = i
+			}
+
+			break
+		}
+	}
+
+	return index
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -610,25 +623,13 @@ func ParseDateFormat(format string) []string {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 // The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 func splitDateTime(format string) (seps []string, fracStr string) {
-	// find the last '.' for get fracStr
-	// but for format like '2019.01.01 00:00:00', the fracStr should be empty
-	index := 0
-	for i := len(format) - 1; i >= 0; i-- {
-		if !unicode.IsNumber(rune(format[i])) {
-			if format[i] == '.' {
-				index = i
-			}
-
-			break
-		}
-	}
-
+	index := getFracIndex(format)
 	if index > 0 {
 		fracStr = format[index+1:]
 		format = format[:index]
 	}
-	seps = ParseDateFormat(format)
 
+	seps = ParseDateFormat(format)
 	return
 }
 
@@ -645,10 +646,6 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	)
 
 	seps, fracStr := splitDateTime(str)
-	if err != nil {
-		return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(str))
-	}
-
 	var truncatedOrIncorrect bool
 	switch len(seps) {
 	case 1:
@@ -764,9 +761,6 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 			return ZeroDatetime, errors.Trace(err)
 		}
 	}
-	/*else {
-		fsp = 0
-	}*/
 
 	tmp := FromDate(year, month, day, hour, minute, second, microsecond)
 	if overflow {
