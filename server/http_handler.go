@@ -161,9 +161,15 @@ func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 	return kvResp.MvccGetByKey, nil
 }
 
-func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+type mvccKV struct {
+	Key   []byte      `json:"key"`
+	Value interface{} `json:"value"`
+}
+
+func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
-	return t.getMvccByEncodedKey(encodedKey)
+	data, err := t.getMvccByEncodedKey(encodedKey)
+	return &mvccKV{encodedKey, data}, err
 }
 
 func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
@@ -234,7 +240,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	}
 }
 
-func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
+func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*mvccKV, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
@@ -251,7 +257,8 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return t.getMvccByEncodedKey(encodedKey)
+	data, err := t.getMvccByEncodedKey(encodedKey)
+	return &mvccKV{encodedKey, data}, err
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
