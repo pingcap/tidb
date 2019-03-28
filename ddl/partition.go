@@ -54,6 +54,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		if s.Partition.Tp == model.PartitionTypeRange && s.Partition.ColumnNames == nil {
 			enable = true
 		}
+		// Partition by hash is enabled by default.
+		// Note that linear hash is not enabled.
+		if s.Partition.Tp == model.PartitionTypeHash {
+			enable = true
+		}
 	}
 	if !enable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
