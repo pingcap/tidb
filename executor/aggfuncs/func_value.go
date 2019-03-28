@@ -174,6 +174,7 @@ type value4JSON struct {
 func (v *value4JSON) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalJSON(ctx, row)
+	v.val = v.val.Copy() // deep copy to avoid content change.
 	return err
 }
 
