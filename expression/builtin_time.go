@@ -240,8 +240,14 @@ var (
 	_ builtinFunc = &builtinSubDateDatetimeDecimalSig{}
 )
 
-func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
-	tr, err := types.RoundFrac(t, fsp)
+func convertTimeToMysqlTime(t time.Time, fsp int, roundMode types.RoundMode) (types.Time, error) {
+	var tr time.Time
+	var err error
+	if roundMode == types.ModeTruncate {
+		tr, err = types.TruncateFrac(t, fsp)
+	} else {
+		tr, err = types.RoundFrac(t, fsp)
+	}
 	if err != nil {
 		return types.Time{}, errors.Trace(err)
 	}
@@ -1610,7 +1616,7 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, row chunk.Row, arg Expres
 
 	sc := ctx.GetSessionVars().StmtCtx
 	tmp := time.Unix(integralPart, fractionalPart).In(sc.TimeZone)
-	t, err := convertTimeToMysqlTime(tmp, fsp)
+	t, err := convertTimeToMysqlTime(tmp, fsp, types.ModeHalfEven)
 	if err != nil {
 		return res, true, errors.Trace(err)
 	}
@@ -1932,7 +1938,7 @@ func (b *builtinSysDateWithFspSig) evalTime(row chunk.Row) (d types.Time, isNull
 
 	loc := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(loc)
-	result, err := convertTimeToMysqlTime(now, int(fsp))
+	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeHalfEven)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -1954,7 +1960,7 @@ func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
 func (b *builtinSysDateWithoutFspSig) evalTime(row chunk.Row) (d types.Time, isNull bool, err error) {
 	tz := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(tz)
-	result, err := convertTimeToMysqlTime(now, 0)
+	result, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2262,8 +2268,12 @@ func (c *utcTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	return sig, nil
 }
 
-func evalUTCTimestampWithFsp(fsp int) (types.Time, bool, error) {
-	result, err := convertTimeToMysqlTime(time.Now().UTC(), fsp)
+func evalUTCTimestampWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool, error) {
+	nowTs, err := getSystemTimestamp(ctx)
+	if err != nil {
+		return types.Time{}, true, err
+	}
+	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeHalfEven)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2295,7 +2305,7 @@ func (b *builtinUTCTimestampWithArgSig) evalTime(row chunk.Row) (types.Time, boo
 		return types.Time{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", num)
 	}
 
-	result, isNull, err := evalUTCTimestampWithFsp(int(num))
+	result, isNull, err := evalUTCTimestampWithFsp(b.ctx, int(num))
 	return result, isNull, errors.Trace(err)
 }
 
@@ -2312,7 +2322,7 @@ func (b *builtinUTCTimestampWithoutArgSig) Clone() builtinFunc {
 // evalTime evals UTC_TIMESTAMP().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
 func (b *builtinUTCTimestampWithoutArgSig) evalTime(row chunk.Row) (types.Time, bool, error) {
-	result, isNull, err := evalUTCTimestampWithFsp(0)
+	result, isNull, err := evalUTCTimestampWithFsp(b.ctx, 0)
 	return result, isNull, errors.Trace(err)
 }
 
@@ -2351,7 +2361,15 @@ func evalNowWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool, error) {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, err := convertTimeToMysqlTime(sysTs, fsp)
+	// In MySQL's implementation, now() will truncate the result instead of rounding it.
+	// Results below are from MySQL 5.7, which can prove it.
+	// mysql> select now(6), now(3), now();
+	//	+----------------------------+-------------------------+---------------------+
+	//	| now(6)                     | now(3)                  | now()               |
+	//	+----------------------------+-------------------------+---------------------+
+	//	| 2019-03-25 15:57:56.612966 | 2019-03-25 15:57:56.612 | 2019-03-25 15:57:56 |
+	//	+----------------------------+-------------------------+---------------------+
+	result, err := convertTimeToMysqlTime(sysTs, fsp, types.ModeTruncate)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -3807,8 +3825,17 @@ func goTimeToMysqlUnixTimestamp(t time.Time, decimal int) (*types.MyDecimal, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = dec.Round(dec, decimal, types.ModeHalfEven)
-	return dec, errors.Trace(err)
+
+	// In MySQL's implementation, unix_timestamp() will truncate the result instead of rounding it.
+	// Results below are from MySQL 5.7, which can prove it.
+	//	mysql> select unix_timestamp(), unix_timestamp(now(0)), now(0), unix_timestamp(now(3)), now(3), now(6);
+	//	+------------------+------------------------+---------------------+------------------------+-------------------------+----------------------------+
+	//	| unix_timestamp() | unix_timestamp(now(0)) | now(0)              | unix_timestamp(now(3)) | now(3)                  | now(6)                     |
+	//	+------------------+------------------------+---------------------+------------------------+-------------------------+----------------------------+
+	//	|       1553503194 |             1553503194 | 2019-03-25 16:39:54 |         1553503194.992 | 2019-03-25 16:39:54.992 | 2019-03-25 16:39:54.992969 |
+	//	+------------------+------------------------+---------------------+------------------------+-------------------------+----------------------------+
+	err = dec.Round(dec, decimal, types.ModeTruncate)
+	return dec, err
 }
 
 type builtinUnixTimestampCurrentSig struct {
