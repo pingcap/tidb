@@ -418,6 +418,11 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		mutations[i] = &tmp.Mutation
 	}
 
+	onePc := false
+	if len(batch.keys) == len(c.keys) {
+		onePc = true
+	}
+
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdPrewrite,
 		Prewrite: &pb.PrewriteRequest{
@@ -425,6 +430,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
 			LockTtl:      c.lockTTL,
+			Commit:       onePc,
 		},
 		Context: pb.Context{
 			Priority: c.priority,
@@ -455,6 +461,8 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
 			c.updateMaxReadTs(prewriteResp.GetMaxReadTs())
+			c.commitTS = prewriteResp.CommitTs
+			c.mu.committed = true
 			return nil
 		}
 		var locks []*Lock
@@ -705,64 +713,70 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	start = time.Now()
-	// Here `mu` doesn't need to be locked
-	if c.useCalculatedCommitTs &&
-		!c.mu.isMaxReadTsInvalid &&
-		time.Since(c.txn.startTime) <= calculateCommitTsTxnDurationLimit {
-		c.commitTS = c.mu.maxReadTs + 1
-		if c.startTS > c.mu.maxReadTs {
-			c.commitTS = c.startTS + 1
+	if c.commitTS == 0 {
+		start = time.Now()
+		// Here `mu` doesn't need to be locked
+		if c.useCalculatedCommitTs &&
+			!c.mu.isMaxReadTsInvalid &&
+			time.Since(c.txn.startTime) <= calculateCommitTsTxnDurationLimit {
+			metrics.TiKVTxnCommitTsSourceCounter.WithLabelValues("calculated").Inc()
+			c.commitTS = c.mu.maxReadTs + 1
+			if c.startTS > c.mu.maxReadTs {
+				c.commitTS = c.startTS + 1
+			}
+			log.Debugf("con:%d 2PC commit with calculated TS. startTs: %d, maxReadTs: %d, commitTs: %d", c.connID, c.startTS, c.mu.maxReadTs, c.commitTS)
+		} else {
+			metrics.TiKVTxnCommitTsSourceCounter.WithLabelValues("pd").Inc()
+			log.Debugf("con:%d 2PC will get commitTs from PD", c.connID)
+			commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
+			if err != nil {
+				log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
+				return errors.Trace(err)
+			}
+
+			// check commitTS
+			if commitTS <= c.startTS {
+				err = errors.Errorf("con:%d Invalid transaction tso with start_ts=%v while commit_ts=%v",
+					c.connID, c.startTS, commitTS)
+				log.Error(err)
+				return errors.Trace(err)
+			}
+			c.commitTS = commitTS
 		}
-		log.Debugf("con:%d 2PC commit with calculated TS. startTs: %d, maxReadTs: %d, commitTs: %d", c.connID, c.startTS, c.mu.maxReadTs, c.commitTS)
-	} else {
-		log.Debugf("con:%d 2PC will get commitTs from PD", c.connID)
-		commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
+		c.detail.GetCommitTsTime = time.Since(start)
+		if err = c.checkSchemaValid(); err != nil {
+			return errors.Trace(err)
+		}
+
+		// gofail: var tmpMaxTxnTime uint64
+		// if tmpMaxTxnTime > 0 {
+		//  c.maxTxnTimeUse = tmpMaxTxnTime
+		// }
+
+		if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
+			err = errors.Errorf("con:%d txn takes too much time, start: %d, commit: %d", c.connID, c.startTS, c.commitTS)
+			return errors.Annotate(err, txnRetryableMark)
+		}
+
+		start = time.Now()
+		commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
+		err = c.commitKeys(commitBo, c.keys)
+		c.detail.CommitTime = time.Since(start)
+		c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond
 		if err != nil {
-			log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
-			return errors.Trace(err)
+			if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
+				log.Warnf("con:%d 2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", c.connID, err, undeterminedErr, c.startTS)
+				log.Error(err)
+				err = errors.Trace(terror.ErrResultUndetermined)
+			}
+			if !c.mu.committed {
+				log.Debugf("con:%d 2PC failed on commit: %v, tid: %d", c.connID, err, c.startTS)
+				return errors.Trace(err)
+			}
+			log.Debugf("con:%d 2PC succeed with error: %v, tid: %d", c.connID, err, c.startTS)
 		}
-
-		// check commitTS
-		if commitTS <= c.startTS {
-			err = errors.Errorf("con:%d Invalid transaction tso with start_ts=%v while commit_ts=%v",
-				c.connID, c.startTS, commitTS)
-			log.Error(err)
-			return errors.Trace(err)
-		}
-		c.commitTS = commitTS
-	}
-	c.detail.GetCommitTsTime = time.Since(start)
-	if err = c.checkSchemaValid(); err != nil {
-		return errors.Trace(err)
-	}
-
-	// gofail: var tmpMaxTxnTime uint64
-	// if tmpMaxTxnTime > 0 {
-	//  c.maxTxnTimeUse = tmpMaxTxnTime
-	// }
-
-	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
-		err = errors.Errorf("con:%d txn takes too much time, start: %d, commit: %d", c.connID, c.startTS, c.commitTS)
-		return errors.Annotate(err, txnRetryableMark)
-	}
-
-	start = time.Now()
-	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
-	err = c.commitKeys(commitBo, c.keys)
-	c.detail.CommitTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond
-	if err != nil {
-		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
-			log.Warnf("con:%d 2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", c.connID, err, undeterminedErr, c.startTS)
-			log.Error(err)
-			err = errors.Trace(terror.ErrResultUndetermined)
-		}
-		if !c.mu.committed {
-			log.Debugf("con:%d 2PC failed on commit: %v, tid: %d", c.connID, err, c.startTS)
-			return errors.Trace(err)
-		}
-		log.Debugf("con:%d 2PC succeed with error: %v, tid: %d", c.connID, err, c.startTS)
+	} else {
+		metrics.TiKVTxnCommitTsSourceCounter.WithLabelValues("one_pc").Inc()
 	}
 	metrics.TiKVTwoPCDuration.WithLabelValues("prewrite").Observe(c.detail.PrewriteTime.Seconds())
 	metrics.TiKVTwoPCDuration.WithLabelValues("commit_ts").Observe(c.detail.GetCommitTsTime.Seconds())
