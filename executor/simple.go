@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -103,7 +104,7 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txnCtx.Histroy != nil {
+	if txnCtx.History != nil {
 		err := e.ctx.NewTxn()
 		if err != nil {
 			return errors.Trace(err)
@@ -348,6 +349,14 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		defer sysSessionPool.Put(ctx)
 		err = dom.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 		return errors.Trace(err)
+	case ast.FlushTiDBPlugin:
+		dom := domain.GetDomain(e.ctx)
+		for _, pluginName := range s.Plugins {
+			err := plugin.NotifyFlush(dom, pluginName)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	return nil
 }
