@@ -310,6 +310,29 @@ type SessionVars struct {
 
 	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
 	ConstraintCheckInPlace bool
+
+	// CommandValue indicates which command current session is doing.
+	CommandValue uint32
+}
+
+// ConnectionInfo present connection used by audit.
+type ConnectionInfo struct {
+	ConnectionID      uint32
+	ConnectionType    string
+	Host              string
+	ClientIP          string
+	ClientPort        string
+	ServerID          int
+	ServerPort        int
+	Duration          float64
+	User              string
+	ServerOSLoginUser string
+	OSVersion         string
+	ClientVersion     string
+	ServerVersion     string
+	SSLVersion        string
+	PID               int
+	DB                string
 }
 
 // NewSessionVars creates a session vars object.

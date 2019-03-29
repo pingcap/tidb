@@ -92,6 +92,13 @@ type StatementContext struct {
 	TableIDs         []int64
 	IndexIDs         []int64
 	StmtType         string
+	Tables           []TableEntry
+}
+
+// TableEntry presents table in db.
+type TableEntry struct {
+	DB    string
+	Table string
 }
 
 // AddAffectedRows adds affected rows.
