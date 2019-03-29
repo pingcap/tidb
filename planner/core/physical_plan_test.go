@@ -1436,7 +1436,7 @@ func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
 	c.Assert(core.ToString(p), Equals, "Apply{TableReader(Table(t))->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(t3.d,t2.g)}->StreamAgg")
 }
 
-func (s *testPlanSuite) TestUnmatchedJoinHint(c *C) {
+func (s *testPlanSuite) TestUnmatchedTableInHint(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -1454,15 +1454,15 @@ func (s *testPlanSuite) TestUnmatchedJoinHint(c *C) {
 	}{
 		{
 			sql:     "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
-			warning: "[planner:1815]Optimizer Hint /*+ TIDB_SMJ(t3, t4) */ is inapplicable because there are no matching table names. Maybe you can use the table alias name",
+			warning: "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name",
 		},
 		{
 			sql:     "SELECT /*+ TIDB_HJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
-			warning: "[planner:1815]Optimizer Hint /*+ TIDB_HJ(t3, t4) */ is inapplicable because there are no matching table names. Maybe you can use the table alias name",
+			warning: "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_HJ(t3, t4) */. Maybe you can use the table alias name",
 		},
 		{
 			sql:     "SELECT /*+ TIDB_INLJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
-			warning: "[planner:1815]Optimizer Hint /*+ TIDB_INLJ(t3, t4) */ is inapplicable because there are no matching table names. Maybe you can use the table alias name",
+			warning: "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_INLJ(t3, t4) */. Maybe you can use the table alias name",
 		},
 		{
 			sql:     "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
@@ -1470,7 +1470,7 @@ func (s *testPlanSuite) TestUnmatchedJoinHint(c *C) {
 		},
 		{
 			sql:     "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
-			warning: "",
+			warning: "[planner:1815]There are no matching table names for (t4) in optimizer hint /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name",
 		},
 	}
 	for _, test := range tests {

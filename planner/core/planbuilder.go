@@ -47,26 +47,37 @@ type visitInfo struct {
 }
 
 type tableHintInfo struct {
-	indexNestedLoopJoinHint joinHintInfo
-	sortMergeJoinHint       joinHintInfo
-	hashJoinHint            joinHintInfo
+	indexNestedLoopJoinTables []hintTableInfo
+	sortMergeJoinTables       []hintTableInfo
+	hashJoinTables            []hintTableInfo
 }
 
-type joinHintInfo struct {
-	tables  []model.CIStr
+type hintTableInfo struct {
+	name    model.CIStr
 	matched bool
 }
 
+func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
+	if len(tableNames) == 0 {
+		return nil
+	}
+	hintTables := make([]hintTableInfo, 0, len(tableNames))
+	for _, tableName := range tableNames {
+		hintTables = append(hintTables, hintTableInfo{name: tableName})
+	}
+	return hintTables
+}
+
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
-	return info.matchTableName(tableNames, &info.sortMergeJoinHint)
+	return info.matchTableName(tableNames, info.sortMergeJoinTables)
 }
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*model.CIStr) bool {
-	return info.matchTableName(tableNames, &info.hashJoinHint)
+	return info.matchTableName(tableNames, info.hashJoinTables)
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
-	return info.matchTableName(tableNames, &info.indexNestedLoopJoinHint)
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables)
 }
 
 // matchTableName checks whether the hint hit the need.
@@ -77,33 +88,45 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 // Which it joins on with depend on sequence of traverse
 // and without reorder, user might adjust themselves.
 // This is similar to MySQL hints.
-func (info *tableHintInfo) matchTableName(tables []*model.CIStr, joinHint *joinHintInfo) bool {
+func (info *tableHintInfo) matchTableName(tables []*model.CIStr, hintTables []hintTableInfo) bool {
+	hintMatched := false
 	for _, tableName := range tables {
 		if tableName == nil {
 			continue
 		}
-		for _, curEntry := range joinHint.tables {
-			if curEntry.L == tableName.L {
-				joinHint.matched = true
-				return true
+		for i, curEntry := range hintTables {
+			if curEntry.name.L == tableName.L {
+				hintTables[i].matched = true
+				hintMatched = true
+				break
 			}
 		}
 	}
-	return false
+	return hintMatched
 }
 
-func (info *joinHintInfo) restore2JoinHint(hintType string) string {
+func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
 	buffer := bytes.NewBufferString("/*+ ")
 	buffer.WriteString(strings.ToUpper(hintType))
 	buffer.WriteString("(")
-	for i, tableName := range info.tables {
-		buffer.WriteString(tableName.O)
-		if i < len(info.tables)-1 {
+	for i, table := range hintTables {
+		buffer.WriteString(table.name.L)
+		if i < len(hintTables)-1 {
 			buffer.WriteString(", ")
 		}
 	}
 	buffer.WriteString(") */")
 	return buffer.String()
+}
+
+func extractUnmatchedTables(hintTables []hintTableInfo) []string {
+	var tableNames []string
+	for _, table := range hintTables {
+		if !table.matched {
+			tableNames = append(tableNames, table.name.O)
+		}
+	}
+	return tableNames
 }
 
 // clauseCode indicates in which clause the column is currently.
