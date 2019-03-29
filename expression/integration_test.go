@@ -1957,6 +1957,40 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	result.Check(testkit.Rows("1 0 -9 -0.001 0.999 <nil> aaa"))
 }
 
+func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (d date)")
+	tk.MustExec("set sql_mode='traditional'")
+	overflowSQLs := []string{
+		"insert into t1 (d) select date_add('2000-01-01',interval 8000 year)",
+		"insert into t1 (d) select date_sub('2000-01-01', INTERVAL 2001 YEAR)",
+		"insert into t1 (d) select date_add('9999-12-31',interval 1 year)",
+		"insert into t1 (d) select date_sub('1000-01-01', INTERVAL 1 YEAR)",
+		"insert into t1 (d) select date_add('9999-12-31',interval 1 day)",
+		"insert into t1 (d) select date_sub('1000-01-01', INTERVAL 1 day)",
+		"insert into t1 (d) select date_sub('1000-01-01', INTERVAL 1 second)",
+	}
+
+	for _, sql := range overflowSQLs {
+		_, err := tk.Exec(sql)
+		c.Assert(err.Error(), Equals, "[types:1441]Datetime function: datetime field overflow")
+	}
+
+	tk.MustExec("set sql_mode=''")
+	for _, sql := range overflowSQLs {
+		tk.MustExec(sql)
+	}
+
+	rows := make([]string, 0, len(overflowSQLs))
+	for range overflowSQLs {
+		rows = append(rows, "<nil>")
+	}
+	tk.MustQuery("select * from t1").Check(testkit.Rows(rows...))
+}
+
 func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
