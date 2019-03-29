@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,16 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package schemautil
+package aggfuncs_test
 
-import "github.com/pingcap/parser/model"
+import (
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+)
 
-// FindIndexByName finds index by name.
-func FindIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
-	for _, idx := range indices {
-		if idx.Name.L == idxName {
-			return idx
-		}
-	}
-	return nil
+func (s *testSuite) TestMergePartialResult4GroupConcat(c *C) {
+	test := buildAggMergeTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, "0 1 2 3 4", "2 3 4", "0 1 2 3 4 2 3 4")
+	s.testMergePartialResult(c, test)
 }
