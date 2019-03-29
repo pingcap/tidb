@@ -37,8 +37,8 @@ type Manager interface {
 
 const key keyType = 0
 
-// BindBinder2Manager binds Manager to context.
-func BindBinder2Manager(ctx sessionctx.Context, pc Manager) {
+// BindBinderManager binds Manager to context.
+func BindBinderManager(ctx sessionctx.Context, pc Manager) {
 	ctx.SetValue(key, pc)
 }
 

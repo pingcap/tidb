@@ -784,7 +784,7 @@ func (do *Domain) BindHandle() *bindinfo.Handle {
 // be called only once in BootstrapSession.
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewHandle()
+	do.bindHandle = bindinfo.NewHandle(ctx)
 
 	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser)
 	err := bindCacheUpdater.Update(true)

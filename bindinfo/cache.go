@@ -14,8 +14,10 @@
 package bindinfo
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -23,6 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -47,6 +50,9 @@ type cache map[string][]*bindMeta
 // Handle holds an atomic cache.
 type Handle struct {
 	atomic.Value
+	lock sync.Mutex
+	ctx  sessionctx.Context
+	exec sqlexec.SQLExecutor
 }
 
 // BindCacheUpdater is used to update the global cache.
@@ -85,8 +91,13 @@ func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.
 }
 
 // NewHandle creates a Handle with a cache.
-func NewHandle() *Handle {
-	handle := &Handle{}
+func NewHandle(ctx sessionctx.Context) *Handle {
+	exec, _ := ctx.(sqlexec.SQLExecutor)
+	handle := &Handle{
+		ctx:  ctx,
+		exec: exec,
+	}
+
 	return handle
 }
 
@@ -192,4 +203,78 @@ func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) err
 	}
 	b[hash] = append(b[hash], newNode)
 	return nil
+}
+
+// AddGlobalBind implements GlobalBindAccessor.AddGlobalBind interface.
+func (b *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation string) error {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	ctx := context.TODO()
+	_, err := b.exec.Execute(ctx, "BEGIN")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err == nil {
+			_, err = b.exec.Execute(ctx, "COMMIT")
+		} else {
+			_, rbErr := b.exec.Execute(ctx, "ROLLBACK")
+			terror.Log(errors.Trace(rbErr))
+		}
+	}()
+
+	sql := fmt.Sprintf("SELECT status FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
+		originSQL, defaultDB)
+	rs, err := b.exec.Execute(ctx, sql)
+	if err != nil {
+		return err
+	}
+	if len(rs) == 1 {
+		chkBatch := rs[0].NewRecordBatch()
+		for {
+			err = rs[0].Next(context.TODO(), chkBatch)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if chkBatch.NumRows() == 0 {
+				break
+			}
+			it := chunk.NewIterator4Chunk(chkBatch.Chunk)
+			for row := it.Begin(); row != it.End(); row = it.Next() {
+				status := row.GetString(0)
+				if status == BindUsing {
+					err = errors.New("origin sql already has binding sql")
+					return err
+				}
+				sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' and default_db='%s'", originSQL, defaultDB)
+				_, err = b.exec.Execute(ctx, sql)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+	}
+
+	txn, err := b.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ts := oracle.GetTimeFromTS(txn.StartTS())
+	bindSQL = getEscapeCharacter(bindSQL)
+	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
+		originSQL, bindSQL, defaultDB, BindUsing, ts, ts, charset, collation)
+	_, err = b.exec.Execute(ctx, sql)
+	return errors.Trace(err)
+}
+
+func getEscapeCharacter(str string) string {
+	var buffer bytes.Buffer
+	for _, v := range str {
+		if v == '\'' || v == '"' || v == '\\' {
+			buffer.WriteString("\\")
+		}
+		buffer.WriteString(string(v))
+	}
+	return buffer.String()
 }
