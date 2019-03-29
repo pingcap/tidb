@@ -518,14 +518,15 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 
 func killConn(conn *clientConn) {
 	conn.mu.RLock()
-	for _, resultSet := range conn.mu.resultSets {
+	resultSets := conn.mu.resultSets
+	cancelFunc := conn.mu.cancelFunc
+	conn.mu.RUnlock()
+	for _, resultSet := range resultSets {
 		// resultSet.Close() is reentrant so it's safe to kill a same connID multiple times
 		if err := resultSet.Close(); err != nil {
 			logutil.Logger(context.Background()).Error("close result set error", zap.Uint32("connID", conn.connectionID), zap.Error(err))
 		}
 	}
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
 	if cancelFunc != nil {
 		cancelFunc()
 	}

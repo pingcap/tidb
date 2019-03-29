@@ -1050,6 +1050,12 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	}
 	cc.mu.Lock()
 	cc.mu.resultSets = rs
+	status := atomic.LoadInt32(&cc.status)
+	if status == connStatusShutdown || status == connStatusWaitShutdown {
+		cc.mu.Unlock()
+		killConn(cc)
+		return errors.New("killed by another connection")
+	}
 	cc.mu.Unlock()
 	if rs != nil {
 		if len(rs) == 1 {
