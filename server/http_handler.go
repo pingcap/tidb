@@ -290,15 +290,23 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 }
 
 func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
-	schema, err := t.schema()
+	tbInfo, err := t.getTable(dbName, tableName)
 	if err != nil {
 		return 0, errors.Trace(err)
+	}
+	return tbInfo.ID, nil
+}
+
+func (t *tikvHandlerTool) getTable(dbName, tableName string) (*model.TableInfo, error) {
+	schema, err := t.schema()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
-		return 0, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return tableVal.Meta().ID, nil
+	return tableVal.Meta(), nil
 }
 
 func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
@@ -1463,7 +1471,8 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			data, err = h.handleMvccGetByIdx(params, values)
 		}
 	case opMvccGetByKey:
-		data, err = h.handleMvccGetByKey(params)
+		decode := len(req.URL.Query().Get("decode")) > 0
+		data, err = h.handleMvccGetByKey(params, decode)
 	case opMvccGetByTxn:
 		data, err = h.handleMvccGetByTxn(params)
 	default:
@@ -1507,17 +1516,69 @@ func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 	return h.getMvccByIdxValue(idx, values, idxCols, handleStr)
 }
 
-func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {
+func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData bool) (interface{}, error) {
 	handle, err := strconv.ParseInt(params[pHandle], 0, 64)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	tableID, err := h.getTableID(params[pDBName], params[pTableName])
+	tb, err := h.getTable(params[pDBName], params[pTableName])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return h.getMvccByHandle(tableID, handle)
+	resp, err := h.getMvccByHandle(tb.ID, handle)
+	if err != nil {
+		return nil, err
+	}
+	if !decodeData {
+		return resp, nil
+	}
+	colMap := make(map[int64]*types.FieldType, 3)
+	for _, col := range tb.Columns {
+		colMap[col.ID] = &col.FieldType
+	}
+
+	respValue := resp.Value.(*kvrpcpb.MvccGetByKeyResponse)
+	var result interface{} = resp
+	if respValue.Info != nil {
+		datas := make(map[string][]map[string]string)
+		for _, w := range respValue.Info.Writes {
+			if len(w.ShortValue) > 0 {
+				datas[strconv.FormatUint(w.StartTs, 10)] = h.decodeMvccData(w.ShortValue, colMap, tb)
+			}
+		}
+
+		for _, v := range respValue.Info.Values {
+			if len(v.Value) > 0 {
+				datas[strconv.FormatUint(v.StartTs, 10)] = h.decodeMvccData(v.Value, colMap, tb)
+			}
+		}
+
+		if len(datas) > 0 {
+			result = map[string]interface{}{
+				"key":  resp.Key,
+				"info": respValue.Info,
+				"data": datas,
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) []map[string]string {
+	rs, _ := tablecodec.DecodeRow(bs, colMap, time.UTC)
+	var record []map[string]string
+	for _, col := range tb.Columns {
+		if c, ok := rs[col.ID]; ok {
+			data := "nil"
+			if !c.IsNull() {
+				data, _ = c.ToString()
+			}
+			record = append(record, map[string]string{col.Name.O: data})
+		}
+	}
+	return record
 }
 
 func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface{}, error) {
