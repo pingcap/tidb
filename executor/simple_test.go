@@ -160,6 +160,48 @@ func (s *testSuite3) TestRole(c *C) {
 	tk.MustExec(dropRoleSQL)
 }
 
+func (s *testSuite3) TestDefaultRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	createRoleSQL := `CREATE ROLE r_1, r_2, r_3, u_1;`
+	tk.MustExec(createRoleSQL)
+
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','u_1')")
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','u_1')")
+
+	tk.MustExec("flush privileges;")
+
+	setRoleSQL := `SET DEFAULT ROLE r_3 TO u_1;`
+	_, err := tk.Exec(setRoleSQL)
+	c.Check(err, NotNil)
+
+	setRoleSQL = `SET DEFAULT ROLE r_1 TO u_1;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, IsNil)
+	result := tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
+	result.Check(testkit.Rows("r_1"))
+	setRoleSQL = `SET DEFAULT ROLE r_2 TO u_1;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, IsNil)
+	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
+	result.Check(testkit.Rows("r_2"))
+
+	setRoleSQL = `SET DEFAULT ROLE ALL TO u_1;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, IsNil)
+	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
+	result.Check(testkit.Rows("r_1", "r_2"))
+
+	setRoleSQL = `SET DEFAULT ROLE NONE TO u_1;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, IsNil)
+	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
+	result.Check(nil)
+
+	dropRoleSQL := `DROP USER r_1, r_2, r_3, u_1;`
+	tk.MustExec(dropRoleSQL)
+}
+
 func (s *testSuite3) TestUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.

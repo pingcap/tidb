@@ -56,6 +56,9 @@ type Manager interface {
 	// ActiveRoles active roles for current session.
 	// The first illegal role will be returned.
 	ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
+
+	// FindEdge find if there is an edge between role and user.
+	FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool
 }
 
 const key keyType = 0
