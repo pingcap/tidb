@@ -17,10 +17,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/schemautil"
 	"go.uber.org/zap"
 )
 
@@ -68,7 +68,7 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := expression.FindIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob
@@ -213,7 +213,7 @@ func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errors.Trace(err)
 	}
 	// Here rename index is done in a transaction, if the job is not completed, it can be canceled.
-	idx := schemautil.FindIndexByName(from.L, tblInfo.Indices)
+	idx := expression.FindIndexByName(from.L, tblInfo.Indices)
 	if idx.State == model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob

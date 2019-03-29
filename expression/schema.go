@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -258,4 +259,14 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 // NewSchema returns a schema made by its parameter.
 func NewSchema(cols ...*Column) *Schema {
 	return &Schema{Columns: cols, TblID2Handle: make(map[int64][]*Column)}
+}
+
+// FindIndexByName finds index by name.
+func FindIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
+	for _, idx := range indices {
+		if idx.Name.L == idxName {
+			return idx
+		}
+	}
+	return nil
 }
