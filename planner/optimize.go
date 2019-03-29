@@ -49,6 +49,9 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 		if err := plannercore.CheckPrivilege(pm, builder.GetVisitInfo()); err != nil {
 			return nil, err
 		}
+		if err := plannercore.CheckColumnPrivilege(pm, builder.GetColVisitInfo(), ctx.GetSessionVars().User); err != nil {
+			return nil, err
+		}
 	}
 
 	// Handle the execute statement.

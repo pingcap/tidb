@@ -178,14 +178,17 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 
 // String implements Stringer interface.
 func (col *Column) String() string {
-	result := col.ColName.L
-	if col.TblName.L != "" {
-		result = col.TblName.L + "." + result
-	}
+	var builder strings.Builder
 	if col.DBName.L != "" {
-		result = col.DBName.L + "." + result
+		builder.WriteString(col.DBName.L)
+		builder.WriteString(".")
 	}
-	return result
+	if col.TblName.L != "" {
+		builder.WriteString(col.TblName.L)
+		builder.WriteString(".")
+	}
+	builder.WriteString(col.ColName.L)
+	return builder.String()
 }
 
 // MarshalJSON implements json.Marshaler interface.

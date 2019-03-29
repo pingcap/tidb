@@ -14,10 +14,13 @@
 package core
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
@@ -90,6 +93,26 @@ func CheckPrivilege(pm privilege.Manager, vs []visitInfo) error {
 				return ErrPrivilegeCheckFail
 			}
 			return v.err
+		}
+	}
+	return nil
+}
+
+// CheckColumnPrivilege checks the column level privilege for a user.
+func CheckColumnPrivilege(pm privilege.Manager, vs map[string]visitInfo, user *auth.UserIdentity) error {
+	for _, v := range vs {
+		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
+			if user != nil {
+				if v.privilege&mysql.SelectPriv == mysql.SelectPriv {
+					fmt.Println("!!!!!!!!!! %v", ErrColumnaccessDenied.Code())
+					return ErrColumnaccessDenied.GenWithStackByArgs("SELECT", user.Username, user.Hostname, v.column, v.db+"'.'"+v.table)
+				} else if v.privilege&mysql.InsertPriv == mysql.InsertPriv {
+					return ErrColumnaccessDenied.GenWithStackByArgs("INSERT", user.Username, user.Hostname, v.column, v.db+"'.'"+v.table)
+				} else if v.privilege&mysql.UpdatePriv == mysql.UpdatePriv {
+					return ErrColumnaccessDenied.GenWithStackByArgs("UPDATE", user.Username, user.Hostname, v.column, v.db+"'.'"+v.table)
+				}
+			}
+			return ErrPrivilegeCheckFail
 		}
 	}
 	return nil

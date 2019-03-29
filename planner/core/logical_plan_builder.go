@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -1899,14 +1898,30 @@ func (b *PlanBuilder) buildVisitInfo(f ast.ExprNode) {
 	case *ast.ColumnNameExpr:
 		if x.Name.Table.L == "" {
 			if tb, ok := b.colNameToOrigTable[x.Name.Name.L]; ok {
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tb.DBName.L, tb.TblName.L, x.Name.Name.L, ErrTableaccessDenied)
+				b.colVisitInfo[tb.String()] = visitInfo{
+					privilege: mysql.SelectPriv,
+					db:        tb.DBName.L,
+					table:     tb.TblName.L,
+					column:    x.Name.Name.L,
+				}
 			}
 		} else if x.Name.Schema.L == "" {
 			if tb, ok := b.tblNameToOrigTbl[x.Name.Table.L]; ok {
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tb.DBName.L, tb.TblName.L, x.Name.Name.L, ErrTableaccessDenied)
+				tb.ColName = x.Name.Name
+				b.colVisitInfo[tb.String()] = visitInfo{
+					privilege: mysql.SelectPriv,
+					db:        tb.DBName.L,
+					table:     tb.TblName.L,
+					column:    x.Name.Name.L,
+				}
 			}
 		} else {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, x.Name.Schema.L, x.Name.Table.L, x.Name.Name.L, ErrTableaccessDenied)
+			b.colVisitInfo[x.Name.String()] = visitInfo{
+				privilege: mysql.SelectPriv,
+				db:        x.Name.Schema.L,
+				table:     x.Name.Table.L,
+				column:    x.Name.Name.L,
+			}
 		}
 	case *ast.CompareSubqueryExpr:
 		b.buildVisitInfo(x.L)
@@ -1914,14 +1929,30 @@ func (b *PlanBuilder) buildVisitInfo(f ast.ExprNode) {
 	case *ast.DefaultExpr:
 		if x.Name.Table.L == "" {
 			if tb, ok := b.colNameToOrigTable[x.Name.Name.L]; ok {
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tb.DBName.L, tb.TblName.L, x.Name.Name.L, ErrTableaccessDenied)
+				b.colVisitInfo[tb.String()] = visitInfo{
+					privilege: mysql.SelectPriv,
+					db:        tb.DBName.L,
+					table:     tb.TblName.L,
+					column:    x.Name.Name.L,
+				}
 			}
 		} else if x.Name.Schema.L == "" {
 			if tb, ok := b.tblNameToOrigTbl[x.Name.Table.L]; ok {
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tb.DBName.L, tb.TblName.L, x.Name.Name.L, ErrTableaccessDenied)
+				tb.ColName = x.Name.Name
+				b.colVisitInfo[tb.String()] = visitInfo{
+					privilege: mysql.SelectPriv,
+					db:        tb.DBName.L,
+					table:     tb.TblName.L,
+					column:    x.Name.Name.L,
+				}
 			}
 		} else {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, x.Name.Schema.L, x.Name.Table.L, x.Name.Name.L, ErrTableaccessDenied)
+			b.colVisitInfo[x.Name.String()] = visitInfo{
+				privilege: mysql.SelectPriv,
+				db:        x.Name.Schema.L,
+				table:     x.Name.Table.L,
+				column:    x.Name.Name.L,
+			}
 		}
 	case *ast.ExistsSubqueryExpr:
 		b.buildVisitInfo(x.Sel)
@@ -1969,8 +2000,6 @@ func (b *PlanBuilder) buildVisitInfo(f ast.ExprNode) {
 		for i := range x.Args {
 			b.buildVisitInfo(x.Args[i])
 		}
-	default:
-		logrus.Infof("%v", reflect.TypeOf(x))
 	}
 }
 
@@ -2604,7 +2633,7 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		if t.TableInfo.IsView() {
 			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
+		// b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
 	if sel.Where != nil {
@@ -2651,6 +2680,8 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName.L)
 		modifyColumns[columnFullName] = struct{}{}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, col.DBName.L, col.TblName.L, col.ColName.L, nil)
+		b.buildVisitInfo(assign.Expr)
 	}
 
 	// If columns in set list contains generated columns, raise error.
@@ -2723,8 +2754,6 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, col.OrigTblName.L, col.ColName.L, nil)
-		b.buildVisitInfo(assign.Expr)
 	}
 	return newList, p, nil
 }

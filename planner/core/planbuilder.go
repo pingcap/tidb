@@ -136,7 +136,7 @@ type PlanBuilder struct {
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// colVisitInfo is used for column-level privilege check
-	colVisitInfo map[string]*visitInfo
+	colVisitInfo map[string]visitInfo
 	// fills table name for current select, and remains empty for subqueries
 	tblNameToOrigTbl   map[string]*expression.Column
 	colNameToOrigTable map[string]*expression.Column
@@ -162,6 +162,11 @@ type PlanBuilder struct {
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
 func (b *PlanBuilder) GetVisitInfo() []visitInfo {
 	return b.visitInfo
+}
+
+// GetColVisitInfo gets the column level visit info of the PlanBuilder.
+func (b *PlanBuilder) GetColVisitInfo() map[string]visitInfo {
+	return b.colVisitInfo
 }
 
 // GetDBTableInfo gets the accessed dbs and tables info.
@@ -192,9 +197,10 @@ func (b *PlanBuilder) GetOptFlag() uint64 {
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuilder {
 	return &PlanBuilder{
-		ctx:       sctx,
-		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
+		ctx:          sctx,
+		is:           is,
+		colMapper:    make(map[*ast.ColumnNameExpr]int),
+		colVisitInfo: make(map[string]visitInfo),
 	}
 }
 
@@ -1208,12 +1214,12 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		IsReplace:   insert.IsReplace,
 	}.Init(b.ctx)
 
-	b.visitInfo = append(b.visitInfo, visitInfo{
-		privilege: mysql.InsertPriv,
-		db:        tn.DBInfo.Name.L,
-		table:     tableInfo.Name.L,
-		err:       nil,
-	})
+	// b.visitInfo = append(b.visitInfo, visitInfo{
+	// 	privilege: mysql.InsertPriv,
+	// 	db:        tn.DBInfo.Name.L,
+	// 	table:     tableInfo.Name.L,
+	// 	err:       nil,
+	// })
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
@@ -1231,19 +1237,19 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 
 	if len(insert.Setlist) > 0 {
 		// Branch for `INSERT ... SET ...`.
-		err := b.buildSetValuesOfInsert(insert, insertPlan, mockTablePlan, checkRefColumn)
+		err := b.buildSetValuesOfInsert(insert, insertPlan, mockTablePlan, checkRefColumn, tn.Schema)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
-		err := b.buildValuesListOfInsert(insert, insertPlan, mockTablePlan, checkRefColumn)
+		err := b.buildValuesListOfInsert(insert, insertPlan, mockTablePlan, checkRefColumn, tn.Schema)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
 		// Branch for `INSERT ... SELECT ...`.
-		err := b.buildSelectPlanOfInsert(insert, insertPlan)
+		err := b.buildSelectPlanOfInsert(insert, insertPlan, tn.Schema)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1252,6 +1258,8 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
 	columnByName := make(map[string]*table.Column, len(insertPlan.Table.Cols()))
 	for _, col := range insertPlan.Table.Cols() {
+		// b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tn.Schema.L, tableInfo.Name.L, col.Name.L, nil)
+		// fmt.Println("%s.%s.%s", tn.Schema, tableInfo.Name.L, col.Name.L)
 		columnByName[col.Name.L] = col
 	}
 	onDupColSet, dupCols, err := insertPlan.validateOnDup(insert.OnDuplicate, columnByName, tableInfo)
@@ -1328,7 +1336,7 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 	return affectedValuesCols, nil
 }
 
-func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node, dbName model.CIStr) error {
 	tableInfo := insertPlan.Table.Meta()
 	colNames := make([]string, 0, len(insert.Setlist))
 	exprCols := make([]*expression.Column, 0, len(insert.Setlist))
@@ -1353,6 +1361,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan 
 		if tCol.IsGenerated() {
 			return ErrBadGeneratedColumn.GenWithStackByArgs(tCol.Name.O, tableInfo.Name.O)
 		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName.L, insertPlan.Table.Meta().Name.L, tCol.Name.L, nil)
 	}
 
 	for i, assign := range insert.Setlist {
@@ -1369,7 +1378,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan 
 	return nil
 }
 
-func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node, dbName model.CIStr) error {
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return errors.Trace(err)
@@ -1387,6 +1396,8 @@ func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 			if col.IsGenerated() {
 				return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 			}
+			fmt.Println(dbName.L, insertPlan.Table.Meta().Name.L, col.Name.L)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName.L, insertPlan.Table.Meta().Name.L, col.Name.L, nil)
 		}
 	}
 
@@ -1430,7 +1441,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 	return nil
 }
 
-func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan *Insert) error {
+func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan *Insert, dbName model.CIStr) error {
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return errors.Trace(err)
@@ -1456,6 +1467,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 		if col.IsGenerated() {
 			return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName.L, insertPlan.Table.Meta().Name.L, col.Name.L, nil)
 	}
 
 	insertPlan.SelectPlan, err = DoOptimize(b.optFlag, selectPlan.(LogicalPlan))
