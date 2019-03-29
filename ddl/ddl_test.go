@@ -20,6 +20,7 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -32,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -91,7 +92,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 		go util.WithRecovery(func() { w.start(d.ddlCtx) },
 			func(r interface{}) {
 				if r != nil {
-					log.Errorf("[ddl-%s] ddl %s meet panic", w, d.uuid)
+					log.Error("[ddl] restart DDL worker meet panic", zap.String("worker", w.String()), zap.String("ID", d.uuid))
 				}
 			})
 		asyncNotify(worker.ddlJobCh)

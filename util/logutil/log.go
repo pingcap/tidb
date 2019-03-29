@@ -15,6 +15,7 @@ package logutil
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -23,7 +24,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	zaplog "github.com/pingcap/log"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -286,4 +289,28 @@ func InitLogger(cfg *LogConfig) error {
 	}
 
 	return nil
+}
+
+type ctxKeyType int
+
+const ctxLogKey ctxKeyType = iota
+
+// Logger gets a contextual logger from current context.
+// contextual logger will output common fields from context.
+func Logger(ctx context.Context) *zap.Logger {
+	if ctxlogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		return ctxlogger
+	}
+	return zaplog.L()
+}
+
+// WithKeyValue attaches key/value to context.
+func WithKeyValue(ctx context.Context, key, value string) context.Context {
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = zaplog.L()
+	}
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.String(key, value)))
 }
