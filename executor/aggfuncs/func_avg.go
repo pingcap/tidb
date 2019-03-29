@@ -185,7 +185,11 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		if isNull {
 			continue
 		}
-		decStr := string(hack.String(input.ToString()))
+		hash, err := input.ToHashKey()
+		if err != nil {
+			return err
+		}
+		decStr := string(hack.String(hash))
 		if p.valSet.Exist(decStr) {
 			continue
 		}
