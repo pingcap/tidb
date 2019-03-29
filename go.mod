@@ -2,6 +2,8 @@ module github.com/pingcap/tidb
 
 require (
 	github.com/BurntSushi/toml v0.3.1
+	github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc // indirect
+	github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf // indirect
 	github.com/apache/thrift v0.0.0-20161221203622-b2a4d4ae21c7 // indirect
 	github.com/beorn7/perks v0.0.0-20160229213445-3ac7bf7a47d1 // indirect
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
@@ -48,7 +50,7 @@ require (
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20190226063853-f6c0b7ffff11
-	github.com/pingcap/parser v0.0.0-20190326083041-06045580997a
+	github.com/pingcap/parser v0.0.0-20190328044348-9945885931bb
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
 	github.com/pingcap/tipb v0.0.0-20180910045846-371b48b15d93
@@ -56,7 +58,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/client_golang v0.8.0
 	github.com/prometheus/client_model v0.0.0-20171117100541-99fa1f4be8e5
-	github.com/prometheus/common v0.0.0-20180426121432-d811d2e9bf89 // indirect
+	github.com/prometheus/common v0.0.0-20180426121432-d811d2e9bf89
 	github.com/prometheus/procfs v0.0.0-20180408092902-8b1c2da0d56d // indirect
 	github.com/sirupsen/logrus v0.0.0-20170323161349-3bcb09397d6d
 	github.com/spaolacci/murmur3 v0.0.0-20150829172844-0d12bf811670
@@ -76,6 +78,7 @@ require (
 	golang.org/x/tools v0.0.0-20181105230042-78dc5bac0cac
 	google.golang.org/genproto v0.0.0-20180427144745-86e600f69ee4 // indirect
 	google.golang.org/grpc v1.12.0
+	gopkg.in/alecthomas/kingpin.v2 v2.2.6 // indirect
 	gopkg.in/fsnotify.v1 v1.4.7 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0-20161104145732-dd45e6a67c53
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
