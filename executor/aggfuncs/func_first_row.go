@@ -380,7 +380,7 @@ func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		if err != nil {
 			return errors.Trace(err)
 		}
-		p.gotFirstRow, p.isNull, p.val = true, isNull, input
+		p.gotFirstRow, p.isNull, p.val = true, isNull, input.Copy()
 		break
 	}
 	return nil
