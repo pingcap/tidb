@@ -627,7 +627,7 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			continue
 		}
 		if p.isNull {
-			p.val = input
+			p.val = input.Copy()
 			p.isNull = false
 			continue
 		}
