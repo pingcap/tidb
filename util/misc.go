@@ -28,6 +28,8 @@ const (
 	DefaultMaxRetries = 30
 	// RetryInterval indicates retry interval.
 	RetryInterval uint64 = 500
+	// WriteConflictMarker is used when transaction writing is conflicted.
+	WriteConflictMarker = "[write conflict]"
 )
 
 // RunWithRetry will run the f with backoff and retry.
