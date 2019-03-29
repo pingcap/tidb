@@ -179,6 +179,10 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 		}
 	}
 
+	// begin a transaction to insert role graph edges.
+	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
+		return errors.Trace(err)
+	}
 	for _, user := range s.Users {
 		exists, err := userExists(e.ctx, user.Username, user.Hostname)
 		if err != nil {
@@ -187,10 +191,6 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 		if !exists {
 			failedUsers = append(failedUsers, user.String())
 			continue
-		}
-		// begin a transaction to insert role graph edges.
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
-			return errors.Trace(err)
 		}
 		for _, role := range s.Roles {
 			if role.Hostname == "" {
@@ -202,15 +202,12 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
 					return errors.Trace(err)
 				}
-				continue
+				return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
 			}
 		}
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
-			failedUsers = append(failedUsers, user.String())
-		}
 	}
-	if len(failedUsers) > 0 {
-		return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", strings.Join(failedUsers, ","))
+	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
+		return err
 	}
 	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
 	return errors.Trace(err)
