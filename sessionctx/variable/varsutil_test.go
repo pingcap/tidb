@@ -220,4 +220,17 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 	c.Assert(v.EnableTablePartition, IsTrue)
+
+	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, true)
+	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"golang.org/x/net/context"
 )
@@ -280,6 +281,28 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 	s.checkCache(c, 0)
 }
 
+func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
+	// Create a separated region cache to do this test.
+	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	cache := NewRegionCache(pdCli)
+
+	region := createSampleRegion([]byte("k1"), []byte("k2"))
+	region.meta.Id = 1
+	region.meta.RegionEpoch = &metapb.RegionEpoch{Version: 10, ConfVer: 10}
+	cache.insertRegionToCache(region)
+
+	r1 := metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 9, ConfVer: 10}}
+	r2 := metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 10, ConfVer: 9}}
+
+	bo := NewBackoffer(context.Background(), 2000000)
+
+	err := cache.OnRegionEpochNotMatch(bo, &RPCContext{Region: region.VerID()}, []*metapb.Region{&r1})
+	c.Assert(err, IsNil)
+	err = cache.OnRegionEpochNotMatch(bo, &RPCContext{Region: region.VerID()}, []*metapb.Region{&r2})
+	c.Assert(err, IsNil)
+	c.Assert(len(bo.errors), Equals, 2)
+}
+
 func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
 	regionCnt := 999
 	cluster := createClusterWithStoresAndRegions(regionCnt)
@@ -367,6 +390,15 @@ func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
 	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("m"))
 	c.Assert(err, IsNil)
 	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
+}
+
+func createSampleRegion(startKey, endKey []byte) *Region {
+	return &Region{
+		meta: &metapb.Region{
+			StartKey: startKey,
+			EndKey:   endKey,
+		},
+	}
 }
 
 func BenchmarkOnRequestFail(b *testing.B) {

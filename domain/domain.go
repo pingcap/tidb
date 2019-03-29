@@ -175,6 +175,12 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 			done <- err
 			return
 		}
+		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
+		if config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
+			for _, tbInfo := range tables {
+				infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo)
+			}
+		}
 		di.Tables = make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
 			if tbl.State != model.StatePublic {
@@ -591,8 +597,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
-				Endpoints:   addrs,
-				DialTimeout: 5 * time.Second,
+				Endpoints:        addrs,
+				AutoSyncInterval: 30 * time.Second,
+				DialTimeout:      5 * time.Second,
 				DialOptions: []grpc.DialOption{
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
@@ -716,6 +723,11 @@ func (p *sessionPool) Close() {
 // SysSessionPool returns the system session pool.
 func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
+}
+
+// GetEtcdClient returns the etcd client.
+func (do *Domain) GetEtcdClient() *clientv3.Client {
+	return do.etcdClient
 }
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it

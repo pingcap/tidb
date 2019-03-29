@@ -54,6 +54,10 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 			statsTbl := h.GetTableStats(tbl)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
+					// Pass a nil StatementContext to avoid column stats being marked as needed.
+					if statsTbl.ColumnIsInvalid(nil, col.ID) {
+						continue
+					}
 					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count))
 				}
 				for _, idx := range statsTbl.Indices {

@@ -131,8 +131,14 @@ func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	finalPlan := eliminatePhysicalProjection(physical)
+	finalPlan := postOptimize(physical)
 	return finalPlan, nil
+}
+
+func postOptimize(plan PhysicalPlan) PhysicalPlan {
+	plan = eliminatePhysicalProjection(plan)
+	plan = injectExtraProjection(plan)
+	return plan
 }
 
 func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {

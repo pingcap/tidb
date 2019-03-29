@@ -32,6 +32,10 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 // canProjectionBeEliminatedStrict checks whether a projection can be
 // eliminated, returns true if the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
+	// If this projection is specially added for `DO`, we keep it.
+	if p.CalculateNoDelay == true {
+		return false
+	}
 	if p.Schema().Len() == 0 {
 		return true
 	}
@@ -51,9 +55,9 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
 	dst := replace[string(origin.HashCode(nil))]
 	if dst != nil {
-		colName, retType := origin.ColName, origin.RetType
+		colName, retType, inOperand := origin.ColName, origin.RetType, origin.InOperand
 		*origin = *dst
-		origin.ColName, origin.RetType = colName, retType
+		origin.ColName, origin.RetType, origin.InOperand = colName, retType, inOperand
 	}
 }
 

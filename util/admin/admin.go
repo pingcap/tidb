@@ -83,6 +83,37 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
+func isJobRollbackable(job *model.Job, id int64) error {
+	switch job.Type {
+	case model.ActionRenameIndex:
+		if job.SchemaState != model.StateNone {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
+	case model.ActionDropIndex:
+		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
+		if job.SchemaState == model.StateDeleteOnly ||
+			job.SchemaState == model.StateDeleteReorganization {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
+	case model.ActionDropSchema, model.ActionDropTable:
+		// To simplify the rollback logic, cannot be canceled in the following states.
+		if job.SchemaState == model.StateWriteOnly ||
+			job.SchemaState == model.StateDeleteOnly {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
+	case model.ActionDropColumn, model.ActionModifyColumn,
+		model.ActionDropTablePartition, model.ActionAddTablePartition,
+		model.ActionRebaseAutoID, model.ActionShardRowID,
+		model.ActionTruncateTable, model.ActionAddForeignKey,
+		model.ActionDropForeignKey, model.ActionRenameTable,
+		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition:
+		if job.SchemaState != model.StateNone {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
+	}
+	return nil
+}
+
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
@@ -113,6 +144,11 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
 				continue
 			}
+			errs[i] = isJobRollbackable(job, id)
+			if errs[i] != nil {
+				continue
+			}
+
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
 			err := job.DecodeArgs(job.RawArgs)
@@ -413,8 +449,8 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
-				if mysql.HasNotNullFlag(col.Flag) {
-					return false, errors.New("Miss")
+				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
+					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
 				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
@@ -620,8 +656,8 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 		ri, ok := rowMap[col.ID]
 		if !ok {
-			if mysql.HasNotNullFlag(col.Flag) {
-				return nil, errors.New("Miss")
+			if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
+				return nil, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h)
 			}
 			// NULL value is regarded as its default value.
 			colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
@@ -701,6 +737,7 @@ const (
 	codeInvalidColumnState                = 3
 	codeDDLJobNotFound                    = 4
 	codeCancelFinishedJob                 = 5
+	codeCannotCancelDDLJob                = 6
 )
 
 var (
@@ -712,4 +749,6 @@ var (
 	ErrDDLJobNotFound = terror.ClassAdmin.New(codeDDLJobNotFound, "DDL Job:%v not found")
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
 	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(codeCancelFinishedJob, "This job:%v is finished, so can't be cancelled")
+	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
+	ErrCannotCancelDDLJob = terror.ClassAdmin.New(codeCannotCancelDDLJob, "This job:%v is almost finished, can't be cancelled now")
 )

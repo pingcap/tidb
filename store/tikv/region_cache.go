@@ -483,14 +483,26 @@ func (c *RegionCache) DropStoreOnSendRequestFail(ctx *RPCContext, err error) {
 		failedStoreID, failedStoreAddr, err)
 }
 
-// OnRegionStale removes the old region and inserts new regions into the cache.
-func (c *RegionCache) OnRegionStale(ctx *RPCContext, newRegions []*metapb.Region) error {
+// OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
+func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.dropRegionFromCache(ctx.Region)
 
-	for _, meta := range newRegions {
+	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, backoff.
+	for _, meta := range currentRegions {
+		if meta.GetId() == ctx.Region.id &&
+			(meta.GetRegionEpoch().GetConfVer() < ctx.Region.confVer ||
+				meta.GetRegionEpoch().GetVersion() < ctx.Region.ver) {
+			err := errors.Errorf("region epoch is ahead of tikv. rpc ctx: %+v, currentRegions: %+v", ctx, currentRegions)
+			log.Info(err.Error())
+			return bo.Backoff(BoRegionMiss, err)
+		}
+	}
+
+	// If the region epoch is not ahead of TiKV's, replace region meta in region cache.
+	for _, meta := range currentRegions {
 		if _, ok := c.pdClient.(*codecPDClient); ok {
 			if err := decodeRegionMetaKey(meta); err != nil {
 				return errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)

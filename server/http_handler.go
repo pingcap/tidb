@@ -62,6 +62,7 @@ const (
 	pRegionID   = "regionID"
 	pStartTS    = "startTS"
 	pTableName  = "table"
+	pTableID    = "tableID"
 	pColumnID   = "colID"
 	pColumnTp   = "colTp"
 	pColumnFlag = "colFlag"
@@ -315,6 +316,10 @@ type binlogRecover struct{}
 
 // schemaHandler is the handler for list database or table schemas.
 type schemaHandler struct {
+	*tikvHandlerTool
+}
+
+type dbTableHandler struct {
 	*tikvHandlerTool
 }
 
@@ -581,7 +586,17 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				atomic.StoreUint32(&variable.DDLSlowOprThreshold, uint32(threshold))
 			}
 		}
-
+		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
+			switch checkMb4ValueInUtf8 {
+			case "0":
+				config.GetGlobalConfig().CheckMb4ValueInUTF8 = false
+			case "1":
+				config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
@@ -1369,4 +1384,46 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		clusterInfo.AllServersDiffVersions = allVersions
 	}
 	writeData(w, clusterInfo)
+}
+
+// dbTableInfo is used to report the database, table information and the current schema version.
+type dbTableInfo struct {
+	DBInfo        *model.DBInfo    `json:"db_info"`
+	TableInfo     *model.TableInfo `json:"table_info"`
+	SchemaVersion int64            `json:"schema_version"`
+}
+
+//ServeHTTP handles request of database information and table information by tableID.
+func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	tableID := params[pTableID]
+	tblID, err := strconv.Atoi(tableID)
+	if err != nil {
+		writeError(w, errors.Errorf("Wrong tableID: %v", tableID))
+		return
+	}
+
+	schema, err := h.schema()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	dbTblInfo := dbTableInfo{
+		SchemaVersion: schema.SchemaMetaVersion(),
+	}
+	tbl, ok := schema.TableByID(int64(tblID))
+	if !ok {
+		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		return
+	}
+	dbTblInfo.TableInfo = tbl.Meta()
+	dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
+	if !ok {
+		log.Warnf("can not find the database of table id: %v, table name: %v", dbTblInfo.TableInfo.ID, dbTblInfo.TableInfo.Name)
+		writeData(w, dbTblInfo)
+		return
+	}
+	dbTblInfo.DBInfo = dbInfo
+	writeData(w, dbTblInfo)
 }

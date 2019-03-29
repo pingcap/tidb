@@ -367,7 +367,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			if job.IsDone() || job.IsRollbackDone() {
-				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
 				if !job.IsRollbackDone() {
 					job.State = model.JobStateSynced
 				}
@@ -388,7 +387,13 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				return errors.Trace(err)
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
-			return errors.Trace(w.handleUpdateJobError(t, job, err))
+			if err = w.handleUpdateJobError(t, job, err); err != nil {
+				return errors.Trace(err)
+			}
+			if job.IsDone() || job.IsRollbackDone() {
+				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
+			}
+			return nil
 		})
 
 		if runJobErr != nil {
@@ -414,7 +419,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
 		w.waitSchemaChanged(nil, d, waitTime, schemaVer, job)
-		if job.IsSynced() {
+		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
@@ -514,15 +519,15 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	// Save errors in job, so that others can know errors happened.
 	if err != nil {
-		// If job is not cancelled, we should log this error.
-		if job.State != model.JobStateCancelled {
-			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
-		} else {
-			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, errors.ErrorStack(err))
-		}
-
 		job.Error = toTError(err)
 		job.ErrorCount++
+
+		// If job is cancelled, we shouldn't return this error.
+		if job.State == model.JobStateCancelled {
+			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, errors.ErrorStack(err))
+			return ver, nil
+		}
+		log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
 	}
 	return
 }

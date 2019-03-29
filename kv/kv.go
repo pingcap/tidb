@@ -150,10 +150,10 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
-	// GetSnapshot returns the snapshot of this transaction.
-	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
+	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+	BatchGet(keys []Key) (map[string][]byte, error)
 }
 
 // Client is used to send request to KV layer.

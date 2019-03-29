@@ -306,6 +306,23 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
+func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool) {
+	var condition expression.Expression
+	if rCol, ok := r.(*expression.Column); ok && (er.asScalar || not) {
+		rCol.InOperand = true
+		// If both input columns of `!= all / = any` expression are not null, we can treat the expression
+		// as normal column equal condition.
+		if lCol, ok := l.(*expression.Column); ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			rCol.InOperand = false
+		}
+	}
+	condition, er.err = er.constructBinaryOpFunction(l, r, ast.EQ)
+	if er.err != nil {
+		return
+	}
+	er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, not)
+}
+
 func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) (ast.Node, bool) {
 	v.L.Accept(er)
 	if er.err != nil {
@@ -333,7 +350,6 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 		return v, true
 	}
-	var condition expression.Expression
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
@@ -351,20 +367,23 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	switch v.Op {
 	// Only EQ, NE and NullEQ can be composed with and.
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
-		condition, er.err = er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
-		if er.err != nil {
-			er.err = errors.Trace(er.err)
-			return v, true
-		}
 		if v.Op == opcode.EQ {
 			if v.All {
 				er.handleEQAll(lexpr, rexpr, np)
 			} else {
-				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, false)
+				// `a = any(subq)` will be rewriten as `a in (subq)`.
+				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, false)
+				if er.err != nil {
+					return v, true
+				}
 			}
 		} else if v.Op == opcode.NE {
 			if v.All {
-				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, true)
+				// `a != all(subq)` will be rewriten as `a not in (subq)`.
+				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, true)
+				if er.err != nil {
+					return v, true
+				}
 			} else {
 				er.handleNEAny(lexpr, rexpr, np)
 			}
@@ -410,14 +429,15 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	plan4Agg.AggFuncs = []*aggregation.AggFuncDesc{funcMaxOrMin}
 
 	cond := expression.NewFunctionInternal(er.ctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, colMaxOrMin)
-	er.buildQuantifierPlan(plan4Agg, cond, rexpr, all)
+	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, all)
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
-func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, cond, rexpr expression.Expression, all bool) {
-	funcIsNull := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
+func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, cond, lexpr, rexpr expression.Expression, all bool) {
+	innerIsNull := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
+	outerIsNull := expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), lexpr)
 
-	funcSum := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncSum, []expression.Expression{funcIsNull}, false)
+	funcSum := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
 	colSum := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_sum"),
 		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -425,29 +445,38 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcSum)
 	plan4Agg.schema.Append(colSum)
+	innerHasNull := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.Zero)
+
+	// Build `count(1)` aggregation to check if subquery is empty.
+	funcCount := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{expression.One}, false)
+	colCount := &expression.Column{
+		ColName:  model.NewCIStr("agg_col_cnt"),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  funcCount.RetTp,
+	}
+	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcCount)
+	plan4Agg.schema.Append(colCount)
 
 	if all {
-		funcCount := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{funcIsNull}, false)
-		colCount := &expression.Column{
-			ColName:  model.NewCIStr("agg_col_cnt"),
-			UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  funcCount.RetTp,
-		}
-		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcCount)
-		plan4Agg.schema.Append(colCount)
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
-		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) = 0, true, null).
-		hasNotNull := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), colSum, expression.Zero)
-		nullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), hasNotNull, expression.One, expression.Null)
-		cond = expression.ComposeCNFCondition(er.ctx, cond, nullChecker)
-		// If the set is empty, it should always return true.
-		checkEmpty := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), colCount, expression.Zero)
-		cond = expression.ComposeDNFCondition(er.ctx, cond, checkEmpty)
+		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) != 0, null, true).
+		innerNullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), innerHasNull, expression.Null, expression.One)
+		cond = expression.ComposeCNFCondition(er.ctx, cond, innerNullChecker)
+		// If the subquery is empty, it should always return true.
+		emptyChecker := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), colCount, expression.Zero)
+		// If outer key is null, and subquery is not empty, it should always return null, even when it is `null = all (1, 2)`.
+		outerNullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), outerIsNull, expression.Null, expression.Zero)
+		cond = expression.ComposeDNFCondition(er.ctx, cond, emptyChecker, outerNullChecker)
 	} else {
-		// For "any" expression, if the record set has null and the cond return false, the result should be NULL.
-		hasNull := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.Zero)
-		nullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), hasNull, expression.Null, expression.Zero)
-		cond = expression.ComposeDNFCondition(er.ctx, cond, nullChecker)
+		// For "any" expression, if the subquery has null and the cond returns false, the result should be NULL.
+		// Specifically, `t.id < any (select s.id from s)` would be rewrote to `t.id < max(s.id) or if(sum(s.id is null) != 0, null, false)`
+		innerNullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), innerHasNull, expression.Null, expression.Zero)
+		cond = expression.ComposeDNFCondition(er.ctx, cond, innerNullChecker)
+		// If the subquery is empty, it should always return false.
+		emptyChecker := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colCount, expression.Zero)
+		// If outer key is null, and subquery is not empty, it should return null.
+		outerNullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), outerIsNull, expression.Null, expression.One)
+		cond = expression.ComposeCNFCondition(er.ctx, cond, emptyChecker, outerNullChecker)
 	}
 
 	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
@@ -500,7 +529,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	gtFunc := expression.NewFunctionInternal(er.ctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.One)
 	neCond := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
 	cond := expression.ComposeDNFCondition(er.ctx, gtFunc, neCond)
-	er.buildQuantifierPlan(plan4Agg, cond, rexpr, false)
+	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, false)
 }
 
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
@@ -526,7 +555,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	leFunc := expression.NewFunctionInternal(er.ctx, ast.LE, types.NewFieldType(mysql.TypeTiny), count, expression.One)
 	eqCond := expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
 	cond := expression.ComposeCNFCondition(er.ctx, leFunc, eqCond)
-	er.buildQuantifierPlan(plan4Agg, cond, rexpr, true)
+	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, true)
 }
 
 func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (ast.Node, bool) {
@@ -648,6 +677,18 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
+		rCol := rexpr.(*expression.Column)
+		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
+		// normal column equal condition, so we specially mark the inner operand here.
+		if v.Not || asScalar {
+			rCol.InOperand = true
+			// If both input columns of `in` expression are not null, we can treat the expression
+			// as normal column equal condition instead.
+			lCol, ok := lexpr.(*expression.Column)
+			if ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+				rCol.InOperand = false
+			}
+		}
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for _, col := range np.Schema().Columns {
@@ -659,8 +700,6 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 			return v, true
 		}
 	}
-	// a in (subq) will be rewrote as a = any(subq).
-	// a not in (subq) will be rewrote as a != all(subq).
 	checkCondition, err := er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
 	if err != nil {
 		er.err = errors.Trace(err)

@@ -92,3 +92,41 @@ func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
 	tk.MustQuery("execute stmt1 using @a, @b").Check(testkit.Rows("1 3", "1 3"))
 	tk.MustQuery("execute stmt1 using @a, @b").Check(testkit.Rows("1 3", "1 3"))
 }
+
+// unit test for issue https://github.com/pingcap/tidb/issues/8518
+func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	orgCapacity := core.PreparedPlanCacheCapacity
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+		core.PreparedPlanCacheCapacity = orgCapacity
+	}()
+	core.SetPreparedPlanCache(true)
+	core.PreparedPlanCacheCapacity = 100
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`create table t1 (
+		id int(11) unsigned not null primary key auto_increment,
+		partner_id varchar(35) not null,
+		t1_status_id int(10) unsigned
+	  );`)
+	tk.MustExec(`insert into t1 values ("1", "partner1", "10"), ("2", "partner2", "10"), ("3", "partner3", "10"), ("4", "partner4", "10");"`)
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec(`create table t3 (
+		id int(11) not null default '0',
+		preceding_id int(11) not null default '0',
+		primary key  (id,preceding_id)
+	  );`)
+	tk.MustExec(`prepare stmt from 'SELECT DISTINCT t1.partner_id
+	FROM t1
+		LEFT JOIN t3 ON t1.id = t3.id
+		LEFT JOIN t1 pp ON pp.id = t3.preceding_id
+	GROUP BY t1.id ;'`)
+	tk.MustQuery("execute stmt").Sort().Check(testkit.Rows("partner1", "partner2", "partner3", "partner4"))
+}

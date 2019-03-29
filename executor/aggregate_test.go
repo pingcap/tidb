@@ -239,7 +239,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory columns in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "759"
+	columnCountOfAllInformationSchemaTables := "769"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -407,6 +407,9 @@ func (s *testSuite) TestGroupConcatAggr(c *C) {
 
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR '123') from test group by id order by id")
 	result.Check(testkit.Rows("1 101232012330", "2 20", "3 200123500"))
+
+	// issue #9920
+	tk.MustQuery("select group_concat(123, null)").Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestSelectDistinct(c *C) {
@@ -603,6 +606,32 @@ func (s *testSuite) TestBuildProjBelowAgg(c *C) {
 		"4 3 18 7,7,7 8"))
 }
 
+func (s *testSuite) TestInjectProjBelowTopN(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (i int);")
+	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
+	tk.MustQuery("explain select * from t order by i + 1").Check(testkit.Rows(
+		"Projection_8 10000.00 root test.t.i",
+		"└─Sort_4 10000.00 root col_1:asc",
+		"  └─Projection_9 10000.00 root test.t.i, plus(test.t.i, 1)",
+		"    └─TableReader_7 10000.00 root data:TableScan_6",
+		"      └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+	rs := tk.MustQuery("select * from t order by i + 1 ")
+	rs.Check(testkit.Rows(
+		"1", "1", "1", "2", "2", "2", "3", "3", "3"))
+	tk.MustQuery("explain select * from t order by i + 1 limit 2").Check(testkit.Rows(
+		"Projection_15 2.00 root test.t.i",
+		"└─TopN_7 2.00 root col_1:asc, offset:0, count:2",
+		"  └─Projection_16 2.00 root test.t.i, plus(test.t.i, 1)",
+		"    └─TableReader_12 2.00 root data:TopN_11",
+		"      └─TopN_11 2.00 cop plus(test.t.i, 1):asc, offset:0, count:2",
+		"        └─TableScan_10 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+	rs = tk.MustQuery("select * from t order by i + 1 limit 2")
+	rs.Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select i, i, i from t order by i + 1").Check(testkit.Rows("1 1 1", "1 1 1", "1 1 1", "2 2 2", "2 2 2", "2 2 2", "3 3 3", "3 3 3", "3 3 3"))
+}
+
 func (s *testSuite) TestFirstRowEnum(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`use test;`)
@@ -611,5 +640,54 @@ func (s *testSuite) TestFirstRowEnum(c *C) {
 	tk.MustExec(`insert into t values('a');`)
 	tk.MustQuery(`select a from t group by a;`).Check(testkit.Rows(
 		`a`,
+	))
+}
+
+func (s *testSuite) TestAggJSON(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a datetime, b json, index idx(a));`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:00', '["a", "b", 1]');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:01', '["a", "b", 1]');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:02', '["a", "b", 1]');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:03', '{"k1": "value", "k2": [10, 20]}');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:04', '{"k1": "value", "k2": [10, 20]}');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:05', '{"k1": "value", "k2": [10, 20]}');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:06', '"hello"');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:07', '"hello"');`)
+	tk.MustExec(`insert into t values('2019-03-20 21:50:08', '"hello"');`)
+	tk.MustExec(`set @@sql_mode='';`)
+	tk.MustQuery(`select b from t group by a order by a;`).Check(testkit.Rows(
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`"hello"`,
+		`"hello"`,
+		`"hello"`,
+	))
+	tk.MustQuery(`select min(b) from t group by a order by a;`).Check(testkit.Rows(
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`"hello"`,
+		`"hello"`,
+		`"hello"`,
+	))
+	tk.MustQuery(`select max(b) from t group by a order by a;`).Check(testkit.Rows(
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`["a", "b", 1]`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`{"k1": "value", "k2": [10, 20]}`,
+		`"hello"`,
+		`"hello"`,
+		`"hello"`,
 	))
 }

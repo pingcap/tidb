@@ -305,6 +305,9 @@ type SessionVars struct {
 	EnableStreaming bool
 
 	writeStmtBufs WriteStmtBufs
+
+	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
+	ConstraintCheckInPlace bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -555,6 +558,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
+	case TiDBConstraintCheckInPlace:
+		s.ConstraintCheckInPlace = TiDBOptOn(val)
 	case TiDBBatchInsert:
 		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:
@@ -601,6 +606,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
 		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
+	case TiDBCheckMb4ValueInUTF8:
+		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

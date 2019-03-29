@@ -193,6 +193,12 @@ func (p *LogicalJoin) updateEQCond() {
 	for i := len(p.OtherConditions) - 1; i >= 0; i-- {
 		need2Remove := false
 		if eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {
+			// If it is a column equal condition converted from `[not] in (subq)`, do not move it
+			// to EqualConditions, and keep it in OtherConditions. Reference comments in `extractOnCondition`
+			// for detailed reasons.
+			if expression.IsEQCondFromIn(eqCond) {
+				continue
+			}
 			lExpr, rExpr := eqCond.GetArgs()[0], eqCond.GetArgs()[1]
 			if expression.ExprFromSchema(lExpr, lChild.Schema()) && expression.ExprFromSchema(rExpr, rChild.Schema()) {
 				lKeys = append(lKeys, lExpr)

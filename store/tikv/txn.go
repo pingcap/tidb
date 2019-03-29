@@ -108,6 +108,38 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	return ret, nil
 }
 
+func (txn *tikvTxn) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	if txn.IsReadOnly() {
+		return txn.snapshot.BatchGet(keys)
+	}
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]kv.Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := txn.GetMemBuffer().Get(key)
+		if kv.IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
+	}
+	storageValues, err := txn.snapshot.BatchGet(shrinkKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
+}
+
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 	txn.setCnt++
 
@@ -286,8 +318,4 @@ func (txn *tikvTxn) Size() int {
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return txn.us.GetMemBuffer()
-}
-
-func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
-	return txn.snapshot
 }

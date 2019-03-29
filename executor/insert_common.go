@@ -458,10 +458,12 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		recordID, err = d.ToInt64(e.ctx.GetSessionVars().StmtCtx)
-		if e.filterErr(err) != nil {
-			return types.Datum{}, errors.Trace(err)
+		sc := e.ctx.GetSessionVars().StmtCtx
+		datum, err1 := d.ConvertTo(sc, &c.FieldType)
+		if e.filterErr(err1) != nil {
+			return types.Datum{}, err1
 		}
+		recordID = datum.GetInt64()
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
@@ -555,7 +557,9 @@ func (e *InsertValues) addRecord(row []types.Datum) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	txn.SetOption(kv.PresumeKeyNotExists, nil)
+	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
+		txn.SetOption(kv.PresumeKeyNotExists, nil)
+	}
 	h, err := e.Table.AddRecord(e.ctx, row)
 	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {

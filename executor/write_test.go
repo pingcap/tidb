@@ -285,6 +285,17 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
 
+func (s *testSuite) TestMultiBatch(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t0 (i int)")
+	tk.MustExec("insert into t0 values (1), (1)")
+	tk.MustExec("create table t (i int unique key)")
+	tk.MustExec("set @@tidb_dml_batch_size = 1")
+	tk.MustExec("insert ignore into t select * from t0")
+	tk.MustExec("admin check table t")
+}
+
 func (s *testSuite) TestInsertAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2188,4 +2199,18 @@ func (s *testSuite) TestAutoIDInRetry(c *C) {
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t;create table t (i int key);`)
+	tk.MustExec(`insert t values (1);`)
+	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
+	tk.MustExec(`begin;`)
+	_, err := tk.Exec(`insert t values (1);`)
+	c.Assert(err, NotNil)
+	tk.MustExec(`update t set i = 2 where i = 1;`)
+	tk.MustExec(`commit;`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
 }

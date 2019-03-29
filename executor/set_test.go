@@ -16,6 +16,7 @@ package executor_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
@@ -219,6 +220,9 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
+	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
+
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
 
@@ -248,6 +252,11 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("20"))
 	_, err = tk.Exec("set global tidb_query_log_max_len = 20")
 	c.Assert(err, NotNil)
+
+	tk.MustExec("set tidb_constraint_check_in_place = 1")
+	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_constraint_check_in_place = 0")
+	tk.MustQuery(`select @@global.tidb_constraint_check_in_place;`).Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
