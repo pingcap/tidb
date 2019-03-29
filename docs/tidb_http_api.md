@@ -382,7 +382,7 @@ timezone.*
 1. Download TiDB debug info
 
     ```shell
-    curl http://127.0.0.1:10080/debug/zip?seconds=60 --output debug.zip
+    curl http://{TiDBIP}:10080/debug/zip?seconds=60 --output debug.zip
     ```
     
     zip file will include:
