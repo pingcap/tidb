@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
@@ -187,8 +188,7 @@ func (e *InsertValues) insertRows(ctx context.Context, exec func(ctx context.Con
 		return err
 	}
 	sessVars := e.ctx.GetSessionVars()
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
-	batchSize := sessVars.DMLBatchSize
+	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 
 	e.lazyFillAutoID = true
 
@@ -200,19 +200,19 @@ func (e *InsertValues) insertRows(ctx context.Context, exec func(ctx context.Con
 			return err
 		}
 		rows = append(rows, row)
-		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
+		if batchInsert && int(e.rowCount)%sessVars.DMLBatchSize == 0 {
 			// Before batch insert, fill the batch allocated autoIDs.
 			rows, err = e.lazyAdjustAutoIncrementDatum(ctx, rows)
 			if err != nil {
 				return err
 			}
-			if err = exec(ctx, rows); err != nil {
+			if err := exec(ctx, rows); err != nil {
+				return err
+			}
+			if err := batchDMLCommit(ctx, e.ctx); err != nil {
 				return err
 			}
 			rows = rows[:0]
-			if err = e.doBatchInsert(ctx); err != nil {
-				return err
-			}
 		}
 	}
 	// Fill the batch allocated autoIDs.
@@ -324,8 +324,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 		// If StrictSQLMode is disabled and it is a insert-select statement, it also handle BadNullAsWarning.
 		sessVars.StmtCtx.BadNullAsWarning = true
 	}
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
-	batchSize := sessVars.DMLBatchSize
+	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 
 	for {
 		err := selectExec.Next(ctx, chk)
@@ -344,14 +343,14 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 				return err
 			}
 			rows = append(rows, row)
-			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
-				if err = exec(ctx, rows); err != nil {
-					return err
+			if batchInsert && int(e.rowCount)%sessVars.DMLBatchSize == 0 {
+				if err := exec(ctx, rows); err != nil {
+					return errors.Trace(err)
+				}
+				if err := batchDMLCommit(ctx, e.ctx); err != nil {
+					return errors.Trace(err)
 				}
 				rows = rows[:0]
-				if err = e.doBatchInsert(ctx); err != nil {
-					return err
-				}
 			}
 		}
 	}
@@ -365,7 +364,7 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	}
 	if err := e.ctx.NewTxn(ctx); err != nil {
 		// We should return a special error for batch insert.
-		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+		return ErrBatchDMLFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	if !sessVars.LightningMode {
 		txn, err := e.ctx.Txn(true)

@@ -25,19 +25,19 @@ const (
 	codePrepareDDL
 	codeResultIsEmpty
 	codeErrBuildExec
-	codeBatchInsertFail
+	codeBatchDMLFail
 	codeGetStartTS
 )
 
 // Error instances.
 var (
-	ErrGetStartTS      = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
-	ErrUnknownPlan     = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
-	ErrPrepareMulti    = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
-	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements with parameters")
-	ErrResultIsEmpty   = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
-	ErrBuildExecutor   = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
-	ErrBatchInsertFail = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
+	ErrGetStartTS    = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
+	ErrUnknownPlan   = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
+	ErrPrepareMulti  = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
+	ErrPrepareDDL    = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
+	ErrResultIsEmpty = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
+	ErrBuildExecutor = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
+	ErrBatchDMLFail  = terror.ClassExecutor.New(codeBatchDMLFail, "Batch DML failed, please clean the table and try again. %s")
 
 	ErrCantCreateUserWithGrant     = terror.ClassExecutor.New(mysql.ErrCantCreateUserWithGrant, mysql.MySQLErrName[mysql.ErrCantCreateUserWithGrant])
 	ErrPasswordNoMatch             = terror.ClassExecutor.New(mysql.ErrPasswordNoMatch, mysql.MySQLErrName[mysql.ErrPasswordNoMatch])

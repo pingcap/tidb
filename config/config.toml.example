@@ -41,6 +41,9 @@ mem-quota-query = 34359738368
 # Enable coprocessor streaming.
 enable-streaming = false
 
+# Enable batch commit for the DMLs.
+enable-batch-dml = false
+
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
