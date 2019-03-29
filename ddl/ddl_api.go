@@ -1584,7 +1584,7 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (charset, collate string, err error) {
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (ca, co string, err error) {
 	charsets := make([]string, 0, len(options))
 	collates := make([]string, 0, len(options))
 	for i := startIdx; i < len(options); i++ {
@@ -1606,15 +1606,18 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		if charsets[0] == "" {
 			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs("")
 		}
-		charset = charsets[0]
+		ca = charsets[0]
 	}
 	if len(collates) != 0 {
 		for i := range collates {
 			if collates[i] == "" {
 				return "", "", ErrUnknownCollation.GenWithStackByArgs("")
 			}
+			if len(ca) != 0 && !charset.ValidCharsetAndCollation(ca, collates[i]) {
+				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(collates[i], ca)
+			}
 		}
-		collate = collates[len(collates)-1]
+		co = collates[len(collates)-1]
 	}
 	return
 }

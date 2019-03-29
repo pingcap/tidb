@@ -608,6 +608,14 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1302]Conflicting declarations: 'CHARACTER SET latin1' and 'CHARACTER SET utf8'")
 
+	rs, err = tk.Exec("alter table t charset utf8 collate utf8mb4_bin;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1253]COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'utf8'")
+
+	rs, err = tk.Exec("alter table t charset utf8 collate utf8_bin collate utf8mb4_bin collate utf8_bin;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1253]COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'utf8'")
+
 	// Test change column charset when changing table charset.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(a varchar(10)) charset utf8")
