@@ -15,6 +15,7 @@ package executor
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/plugin"
 	"strings"
 	"time"
 
@@ -138,6 +139,16 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, svalue)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
+			if auditPlugin.OnGlobalVariableEvent != nil {
+				auditPlugin.OnGlobalVariableEvent(context.Background(), e.ctx.GetSessionVars(), name, svalue)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 	} else {
 		// Set session scope system variable.
