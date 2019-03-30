@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -39,10 +40,11 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -334,10 +336,6 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 				return defaultVal, errors.Trace(err)
 			}
 			defaultVal = t.String()
-			// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
-			//              This will fix bug in version 0.
-			// TODO: remove this version field after there is no old version 0.
-			col.Version = model.ColumnInfoVersion1
 		}
 	}
 	return defaultVal, nil
@@ -359,6 +357,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		Offset:    offset,
 		Name:      colDef.Name.Name,
 		FieldType: *colDef.Tp,
+		// TODO: remove this version field after there is no old version.
+		Version: model.CurrLatestColumnInfoVersion,
 	})
 
 	if !isExplicitTimeStamp() {
@@ -570,13 +570,13 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
 			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
-				log.Error(errors.ErrorStack(err))
+				context.Background()
+				logutil.Logger(ddlLogCtx).Error("set default value failed", zap.Error(err))
 			}
 		} else {
 			if err := c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp)); err != nil {
-				log.Error(errors.ErrorStack(err))
+				logutil.Logger(ddlLogCtx).Error("set default value failed", zap.Error(err))
 			}
-
 		}
 	}
 }
@@ -697,6 +697,13 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var exists bool
 	var autoIncrementColumn string
 	for i, colDef := range colDefs {
+		for _, option := range colDef.Options {
+			if option.Tp == ast.ColumnOptionGenerated {
+				if err := checkIllegalFn4GeneratedColumn(colDef.Name.Name.L, option.Expr); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
 		if checkIsAutoIncrementColumn(colDef) {
 			exists, autoIncrementColumn = true, colDef.Name.Name.L
 		}
@@ -1292,19 +1299,21 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 	if s.Cols == nil {
 		for i, v := range schemaCols {
 			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:   v.AsName,
-				ID:     int64(i),
-				Offset: i,
-				State:  model.StatePublic,
+				Name:    v.AsName,
+				ID:      int64(i),
+				Offset:  i,
+				State:   model.StatePublic,
+				Version: model.CurrLatestColumnInfoVersion,
 			})
 		}
 	} else {
 		for i, v := range s.Cols {
 			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:   v,
-				ID:     int64(i),
-				Offset: i,
-				State:  model.StatePublic,
+				Name:    v,
+				ID:      int64(i),
+				Offset:  i,
+				State:   model.StatePublic,
+				Version: model.CurrLatestColumnInfoVersion,
 			})
 		}
 	}
@@ -1354,17 +1363,113 @@ func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo
 		return err
 	}
 
-	// TODO: Check CreatePartitionValue.
-	// Range columns partition key supports multiple data types with integer、datetime、string.
-	// if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
-	// 	return errors.Trace(err)
-	// }
+	if err := checkRangeColumnsPartitionType(tbInfo, pi.Columns); err != nil {
+		return err
+	}
+
+	if err := checkRangeColumnsPartitionValue(ctx, tbInfo, pi); err != nil {
+		return err
+	}
 
 	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
 		return errors.Trace(err)
 	}
 
 	return checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions)))
+}
+
+func checkRangeColumnsPartitionType(tbInfo *model.TableInfo, columns []model.CIStr) error {
+	for _, col := range columns {
+		colInfo := getColumnInfoByName(tbInfo, col.L)
+		if colInfo == nil {
+			return errors.Trace(ErrFieldNotFoundPart)
+		}
+		// The permitted data types are shown in the following list:
+		// All integer types
+		// DATE and DATETIME
+		// CHAR, VARCHAR, BINARY, and VARBINARY
+		// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-columns.html
+		switch colInfo.FieldType.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		case mysql.TypeDate, mysql.TypeDatetime:
+		case mysql.TypeVarchar, mysql.TypeString:
+		default:
+			return ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.O)
+		}
+	}
+	return nil
+}
+
+func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) error {
+	// Range columns partition key supports multiple data types with integer、datetime、string.
+	defs := pi.Definitions
+	if len(defs) < 1 {
+		return errors.Trace(ErrPartitionsMustBeDefined)
+	}
+
+	curr := &defs[0]
+	if len(curr.LessThan) != len(pi.Columns) {
+		return errors.Trace(ErrPartitionColumnList)
+	}
+	for i := 1; i < len(defs); i++ {
+		prev, curr := curr, &defs[i]
+		succ, err := checkTwoRangeColumns(ctx, curr, prev, pi, tbInfo)
+		if err != nil {
+			return err
+		}
+		if !succ {
+			return errors.Trace(ErrRangeNotIncreasing)
+		}
+	}
+	return nil
+}
+
+func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDefinition, pi *model.PartitionInfo, tbInfo *model.TableInfo) (bool, error) {
+	if len(curr.LessThan) != len(pi.Columns) {
+		return false, errors.Trace(ErrPartitionColumnList)
+	}
+	for i := 0; i < len(pi.Columns); i++ {
+		// Special handling for MAXVALUE.
+		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) {
+			// If current is maxvalue, it certainly >= previous.
+			return true, nil
+		}
+		if strings.EqualFold(prev.LessThan[i], partitionMaxValue) {
+			// Current is not maxvalue, and previous is maxvalue.
+			return false, nil
+		}
+
+		// Current and previous is the same.
+		if strings.EqualFold(curr.LessThan[i], prev.LessThan[i]) {
+			continue
+		}
+
+		// The tuples of column values used to define the partitions are strictly increasing:
+		// PARTITION p0 VALUES LESS THAN (5,10,'ggg')
+		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
+		// PARTITION p2 VALUES LESS THAN (15,30,'sss')
+		succ, err := parseAndEvalBoolExpr(ctx, fmt.Sprintf("(%s) > (%s)", curr.LessThan[i], prev.LessThan[i]), tbInfo)
+		if err != nil {
+			return false, err
+		}
+
+		if succ {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func parseAndEvalBoolExpr(ctx sessionctx.Context, expr string, tbInfo *model.TableInfo) (bool, error) {
+	e, err := expression.ParseSimpleExprWithTableInfo(ctx, expr, tbInfo)
+	if err != nil {
+		return false, err
+	}
+	res, _, err1 := e.EvalInt(ctx, chunk.Row{})
+	if err1 != nil {
+		return false, err1
+	}
+	return res > 0, nil
 }
 
 func checkCharsetAndCollation(cs string, co string) error {
@@ -1741,6 +1846,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// generated columns occurring later in table.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
+			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
+				return errors.Trace(err)
+			}
 			referableColNames := make(map[string]struct{}, len(t.Cols()))
 			for _, col := range t.Cols() {
 				referableColNames[col.Name.L] = struct{}{}
@@ -2089,8 +2197,8 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
-// setDefaultAndComment is only used in getModifiableColumnJob.
-func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// processColumnOptions is only used in getModifiableColumnJob.
+func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	if len(options) == 0 {
 		return nil
 	}
@@ -2133,6 +2241,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			col.GeneratedExprString = buf.String()
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
+			col.GeneratedExpr = opt.Expr
 			for _, colName := range findColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
@@ -2182,7 +2291,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
-	// which will be done by `setDefaultAndComment` later.
+	// which will be done by `processColumnOptions` later.
 	if specNewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
@@ -2206,6 +2315,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *specNewColumn.Tp,
 		Name:               newColName,
+		Version:            col.Version,
 	})
 
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
@@ -2223,7 +2333,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = setDefaultAndComment(ctx, newCol, specNewColumn.Options); err != nil {
+	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -2441,8 +2551,9 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 			return errors.Trace(err)
 		}
 	}
-
-	if origCharset == toCharset && origCollate == toCollate {
+	// Old version schema charset maybe modified when load schema if TreatOldVersionUTF8AsUTF8MB4 was enable.
+	// So even if the origCharset equal toCharset, we still need to do the ddl for old version schema.
+	if origCharset == toCharset && origCollate == toCollate && tb.Meta().Version >= model.TableInfoVersion2 {
 		// nothing to do.
 		return nil
 	}
@@ -2641,7 +2752,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
 	}
 
-	if indexInfo := schemautil.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
+	if indexInfo := expression.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
 		return ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
@@ -2782,7 +2893,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	if indexInfo := schemautil.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
+	if indexInfo := expression.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
 		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 

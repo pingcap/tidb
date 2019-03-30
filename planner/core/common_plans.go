@@ -133,6 +133,12 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
+// Change represents a change plan.
+type Change struct {
+	baseSchemaProducer
+	*ast.ChangeStmt
+}
+
 // Prepare represents prepare plan.
 type Prepare struct {
 	baseSchemaProducer

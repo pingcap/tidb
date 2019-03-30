@@ -76,6 +76,7 @@ const (
 	nmLogFile          = "log-file"
 	nmLogSlowQuery     = "log-slow-query"
 	nmReportStatus     = "report-status"
+	nmStatusHost       = "status-host"
 	nmStatusPort       = "status"
 	nmMetricsAddr      = "metrics-addr"
 	nmMetricsInterval  = "metrics-interval"
@@ -114,6 +115,7 @@ var (
 
 	// Status
 	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
+	statusHost      = flag.String(nmStatusHost, "0.0.0.0", "tidb server status host")
 	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
@@ -146,10 +148,9 @@ func main() {
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
+	setupBinlogClient()
 	setupMetrics()
 	createStoreAndDomain()
-	// setupBinlogClient should run after bootstrap
-	setupBinlogClient()
 	createServer()
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()
@@ -188,7 +189,7 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
-	if !binloginfo.ShouldEnableBinlog() {
+	if !cfg.Binlog.Enable {
 		return
 	}
 
@@ -208,7 +209,7 @@ func setupBinlogClient() {
 	}
 
 	if len(cfg.Binlog.BinlogSocket) == 0 {
-		client, err = pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
+		client, err = pumpcli.NewPumpsClient(cfg.Path, cfg.Binlog.Strategy, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	} else {
 		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	}
@@ -361,6 +362,9 @@ func overrideConfig() {
 	if actualFlags[nmReportStatus] {
 		cfg.Status.ReportStatus = *reportStatus
 	}
+	if actualFlags[nmStatusHost] {
+		cfg.Status.StatusHost = *statusHost
+	}
 	if actualFlags[nmStatusPort] {
 		var p int
 		p, err = strconv.Atoi(*statusPort)
@@ -453,7 +457,7 @@ func setGlobalVars() {
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
-	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())
+	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
 
 	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
 	variable.SysVars[variable.Socket].Value = cfg.Socket

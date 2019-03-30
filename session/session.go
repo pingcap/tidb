@@ -60,10 +60,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // Session context
@@ -267,13 +268,13 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	if s.statsCollector != nil {
 		do, err := GetDomain(s.store)
 		if err != nil {
-			log.Debug("domain not found: ", err)
+			logutil.Logger(context.Background()).Debug("domain not found", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
 		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
 		if err != nil {
-			log.Debug("store query feedback error: ", err)
+			logutil.Logger(context.Background()).Debug("store query feedback", zap.Error(err))
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
@@ -374,7 +375,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			// For autocommit single statement transactions, the history count is always 1.
 			// For explicit transactions, the statement count is more than 1.
 			history := GetHistory(s)
-			if history.Count() > 1 {
+			if history.Count() > 1 && strings.Contains(err.Error(), util.WriteConflictMarker) {
 				commitRetryLimit = 0
 			}
 		}
@@ -382,7 +383,10 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
 		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
-			log.Warnf("[%s] con:%d retryable error: %v, txn: %#v", s.getSQLLabel(), s.sessionVars.ConnectionID, err, &s.txn)
+			logutil.Logger(ctx).Warn("sql",
+				zap.String("label", s.getSQLLabel()),
+				zap.Error(err),
+				zap.String("txn", s.txn.GoString()))
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -408,7 +412,9 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 
 	if err != nil {
-		log.Warnf("con:%d finished txn:%#v, %v", s.sessionVars.ConnectionID, &s.txn, err)
+		logutil.Logger(ctx).Warn("commit failed",
+			zap.String("finished txn", s.txn.GoString()),
+			zap.Error(err))
 		return errors.Trace(err)
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
@@ -573,10 +579,16 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d sql:%s%s", connID, schemaVersion, retryCnt,
-					i, sqlForLog(st.OriginText()), sessVars.GetExecuteArgumentsInfo())
+				logutil.Logger(ctx).Warn("retrying",
+					zap.Int64("schemaVersion", schemaVersion),
+					zap.Uint("retryCnt", retryCnt),
+					zap.Int("queryNum", i),
+					zap.String("sql", sqlForLog(st.OriginText())+sessVars.GetExecuteArgumentsInfo()))
 			} else {
-				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d", connID, schemaVersion, retryCnt, i)
+				logutil.Logger(ctx).Warn("retrying",
+					zap.Int64("schemaVersion", schemaVersion),
+					zap.Uint("retryCnt", retryCnt),
+					zap.Int("queryNum", i))
 			}
 			_, err = st.Exec(ctx)
 			if err != nil {
@@ -588,8 +600,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				return errors.Trace(err)
 			}
 		}
-		log.Warnf("con:%d retrying_txn_start_ts:%d original_txn_start_ts:(%d)",
-			connID, s.GetSessionVars().TxnCtx.StartTS, orgStartTS)
+		logutil.Logger(ctx).Warn("transaction association",
+			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
+			zap.Uint64("original txnStartTS", orgStartTS))
 		if hook := ctx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
 			hook.(func())()
@@ -601,17 +614,25 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warnf("[%s] con:%d session:%v, err:%v in retry", label, connID, s, err)
+			logutil.Logger(ctx).Warn("sql",
+				zap.String("label", label),
+				zap.Stringer("session", s),
+				zap.Error(err))
 			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable)
 			return errors.Trace(err)
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
-			log.Warnf("[%s] con:%d Retry reached max count %d", label, connID, retryCnt)
+			logutil.Logger(ctx).Warn("sql",
+				zap.String("label", label),
+				zap.Uint("retry reached max count", retryCnt))
 			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax)
 			return errors.Trace(err)
 		}
-		log.Warnf("[%s] con:%d retryable error: %v, txn: %#v", label, connID, err, &s.txn)
+		logutil.Logger(ctx).Warn("sql",
+			zap.String("label", label),
+			zap.Error(err),
+			zap.String("txn", s.txn.GoString()))
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
@@ -687,7 +708,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 		}
 		defer func() {
 			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				log.Error(errors.ErrorStack(err))
+				logutil.Logger(context.Background()).Error("set tidbSnapshot error", zap.Error(err))
 			}
 		}()
 	}
@@ -889,8 +910,10 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
-			log.Warnf("con:%d schema_ver:%d session error:\n%v\n%s",
-				connID, s.sessionVars.TxnCtx.SchemaVersion, errors.ErrorStack(err), s)
+			logutil.Logger(ctx).Warn("run statement error",
+				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
+				zap.Error(err),
+				zap.String("session", s.String()))
 		}
 		return nil, errors.Trace(err)
 	}
@@ -929,7 +952,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
-		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
+		logutil.Logger(ctx).Warn("parse sql error",
+			zap.Error(err),
+			zap.String("sql", sql))
 		return nil, util.SyntaxError(err)
 	}
 	label := s.getSQLLabel()
@@ -948,7 +973,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
+			logutil.Logger(ctx).Warn("compile sql error",
+				zap.Error(err),
+				zap.String("sql", sql))
 			return nil, errors.Trace(err)
 		}
 		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
@@ -1086,7 +1113,8 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
-			log.Error("active transaction fail, err = ", err)
+			logutil.Logger(context.Background()).Error("active transaction fail",
+				zap.Error(err))
 			s.txn.cleanup()
 			s.sessionVars.TxnCtx.StartTS = 0
 			return &s.txn, errors.Trace(err)
@@ -1107,7 +1135,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 		vars := s.GetSessionVars()
-		log.Infof("con:%d schema_ver:%d NewTxn() inside a transaction auto commit: %d", vars.ConnectionID, vars.TxnCtx.SchemaVersion, txnID)
+		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
+			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
+			zap.Uint64("txnStartTS", txnID))
 	}
 
 	txn, err := s.store.Begin()
@@ -1173,7 +1203,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		s.sessionVars.User = user
 		return true
 	} else if user.Hostname == variable.DefHostname {
-		log.Errorf("User connection verification failed %s", user)
+		logutil.Logger(context.Background()).Error("user connection verification failed",
+			zap.Stringer("user", user))
 		return false
 	}
 
@@ -1191,7 +1222,8 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		}
 	}
 
-	log.Errorf("User connection verification failed %s", user)
+	logutil.Logger(context.Background()).Error("user connection verification failed",
+		zap.Stringer("user", user))
 	return false
 }
 
@@ -1258,7 +1290,7 @@ func loadSystemTZ(se *session) (string, error) {
 	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
 	defer func() {
 		if err := rss[0].Close(); err != nil {
-			log.Error(errors.ErrorStack(err))
+			logutil.Logger(context.Background()).Error("close result set error", zap.Error(err))
 		}
 	}()
 	req := rss[0].NewRecordBatch()
@@ -1272,7 +1304,7 @@ func loadSystemTZ(se *session) (string, error) {
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Plugin.Load) > 0 {
-		err := plugin.Init(context.Background(), plugin.Config{
+		err := plugin.Load(context.Background(), plugin.Config{
 			Plugins:        strings.Split(cfg.Plugin.Load, ","),
 			PluginDir:      cfg.Plugin.Dir,
 			GlobalSysVar:   &variable.SysVars,
@@ -1312,6 +1344,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	if len(cfg.Plugin.Load) > 0 {
+		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1327,17 +1366,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	err = dom.LoadBindInfoLoop(se2, se2.parser)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	// get global system variable tidb_log_bin from mysql.GLOBAL_VARIABLES
-	tidbLogBin, err := se1.GetGlobalSysVar(variable.TiDBLogBin)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	variable.SysVars[variable.TiDBLogBin].Value = tidbLogBin
-
-	if len(cfg.Plugin.Load) > 0 {
-		plugin.InitWatchLoops(dom.GetEtcdClient())
 	}
 
 	if raw, ok := store.(domain.EtcdBackend); ok {
@@ -1358,14 +1386,14 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // runInBootstrapSession create a special session for boostrap to run.
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
-// TODO: Using a bootstap tool for doing this may be better later.
+// TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	saveLease := schemaLease
 	schemaLease = chooseMinLease(schemaLease, 100*time.Millisecond)
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
-		log.Fatal(errors.ErrorStack(err))
+		logutil.Logger(context.Background()).Fatal("createSession error", zap.Error(err))
 	}
 	schemaLease = saveLease
 
@@ -1449,7 +1477,8 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 	})
 
 	if err != nil {
-		log.Fatalf("check bootstrapped err %v", err)
+		logutil.Logger(context.Background()).Fatal("check bootstrapped failed",
+			zap.Error(err))
 	}
 
 	if ver > notBootstrapped {
@@ -1471,7 +1500,8 @@ func finishBootstrap(store kv.Storage) {
 		return errors.Trace(err)
 	})
 	if err != nil {
-		log.Fatalf("finish bootstrap err %v", err)
+		logutil.Logger(context.Background()).Fatal("finish bootstrap failed",
+			zap.Error(err))
 	}
 }
 
@@ -1550,7 +1580,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
 		if err != nil {
 			vars.CommonGlobalLoaded = false
-			log.Errorf("Failed to load common global variables.")
+			logutil.Logger(context.Background()).Error("failed to load common global variables.")
 			return errors.Trace(err)
 		}
 		gvc.Update(rows, fields)
@@ -1650,10 +1680,18 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		user := vars.User
 		schemaVersion := vars.TxnCtx.SchemaVersion
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] con:%d schema_ver:%d %s (by %s).", vars.ConnectionID, schemaVersion, ss.SecureText(), user)
+			logutil.Logger(context.Background()).Info("[CRUCIAL OPERATION]",
+				zap.Uint64("con", vars.ConnectionID),
+				zap.Int64("schemaVersion", schemaVersion),
+				zap.String("secure text", ss.SecureText()),
+				zap.Stringer("user", user))
 		} else {
-			log.Infof("[CRUCIAL OPERATION] con:%d schema_ver:%d cur_db:%s %s (by %s).", vars.ConnectionID,
-				schemaVersion, vars.CurrentDB, stmt.Text(), user)
+			logutil.Logger(context.Background()).Info("[CRUCIAL OPERATION]",
+				zap.Uint64("con", vars.ConnectionID),
+				zap.Int64("schemaVersion", schemaVersion),
+				zap.String("cur_db", vars.CurrentDB),
+				zap.String("sql", stmt.Text()),
+				zap.Stringer("user", user))
 		}
 	default:
 		logQuery(node.Text(), vars)
@@ -1663,8 +1701,12 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		log.Infof("[GENERAL_LOG] con:%d user:%s schema_ver:%d txn_start_ts:%d current_db:%s, sql:%s%s",
-			vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, vars.CurrentDB, query,
-			vars.GetExecuteArgumentsInfo())
+		logutil.Logger(context.Background()).Info("[GENERAL_LOG]",
+			zap.Uint64("con", vars.ConnectionID),
+			zap.Stringer("user", vars.User),
+			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
+			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+			zap.String("current_db", vars.CurrentDB),
+			zap.String("sql", query+vars.GetExecuteArgumentsInfo()))
 	}
 }

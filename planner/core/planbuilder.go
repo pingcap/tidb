@@ -30,11 +30,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/schemautil"
 )
 
 type visitInfo struct {
@@ -159,6 +159,26 @@ func (b *PlanBuilder) GetVisitInfo() []visitInfo {
 	return b.visitInfo
 }
 
+// GetDBTableInfo gets the accessed dbs and tables info.
+func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
+	var tables []stmtctx.TableEntry
+	existsFunc := func(tbls []stmtctx.TableEntry, tbl *stmtctx.TableEntry) bool {
+		for _, t := range tbls {
+			if t == *tbl {
+				return true
+			}
+		}
+		return false
+	}
+	for _, v := range b.visitInfo {
+		tbl := &stmtctx.TableEntry{DB: v.db, Table: v.table}
+		if !existsFunc(tables, tbl) {
+			tables = append(tables, *tbl)
+		}
+	}
+	return tables
+}
+
 // GetOptFlag gets the optFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
 	return b.optFlag
@@ -212,13 +232,22 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
-		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
-		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt:
+		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
+		*ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt, *ast.SetRoleStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
+	case *ast.ChangeStmt:
+		return b.buildChange(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
+}
+
+func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
+	exe := &Change{
+		ChangeStmt: v,
+	}
+	return exe, nil
 }
 
 func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
@@ -658,23 +687,17 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 // getColsInfo returns the info of index columns, normal columns and primary key.
 func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
-	if tbl.PKIsHandle {
-		for _, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				pkCol = col
-			}
+	for _, col := range tbl.Columns {
+		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			pkCol = col
+		} else {
+			colsInfo = append(colsInfo, col)
 		}
 	}
 	for _, idx := range tn.TableInfo.Indices {
 		if idx.State == model.StatePublic {
 			indicesInfo = append(indicesInfo, idx)
 		}
-	}
-	for _, col := range tbl.Columns {
-		if col == pkCol {
-			continue
-		}
-		colsInfo = append(colsInfo, col)
 	}
 	return
 }
@@ -744,7 +767,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
-		idx := schemautil.FindIndexByName(idxName.L, tblInfo.Indices)
+		idx := expression.FindIndexByName(idxName.L, tblInfo.Indices)
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
@@ -1032,7 +1055,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
-		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
+		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.RevokeStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.KillStmt:
@@ -1056,11 +1079,14 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	return p, nil
 }
 
-func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
+func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
 	// To use GRANT, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
+	if dbName == "" {
+		dbName = sctx.GetSessionVars().CurrentDB
+	}
 	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 
 	var allPrivs []mysql.PrivilegeType
@@ -1570,7 +1596,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		}
 	case *ast.TruncateTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
-			privilege: mysql.DeletePriv,
+			privilege: mysql.DropPriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
 			err:       nil,

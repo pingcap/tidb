@@ -144,8 +144,6 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 
-	defer testleak.AfterTest(c)()
-
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (id int PRIMARY KEY, c1 TIMESTAMP(3) NOT NULL DEFAULT '2019-01-14 10:43:20', KEY idx1 (c1))")

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 )
 
 type testCommitterSuite struct {
@@ -319,7 +320,7 @@ func (s *testCommitterSuite) TestIllegalTso(c *C) {
 	txn.startTS = uint64(math.MaxUint64)
 	err := txn.Commit(context.Background())
 	c.Assert(err, NotNil)
-	errMsgMustContain(c, err, "invalid startTS")
+	errMsgMustContain(c, err, "invalid txnStartTS")
 }
 
 func errMsgMustContain(c *C, err error, msg string) {
@@ -337,7 +338,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	c.Assert(err, IsNil)
 	err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
 	c.Assert(err, NotNil)
-	errMsgMustContain(c, err, "write conflict")
+	errMsgMustContain(c, err, util.WriteConflictMarker)
 }
 
 func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {

@@ -31,10 +31,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // Histogram represents statistics for a column or index.
@@ -411,27 +412,22 @@ func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 
 // greaterRowCount estimates the row count where the column greater than value.
 func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
-	gtCount := hg.totalRowCount() - hg.lessRowCount(value) - hg.equalRowCount(value)
+	gtCount := hg.notNullCount() - hg.lessRowCount(value) - hg.equalRowCount(value)
 	if gtCount < 0 {
 		gtCount = 0
 	}
 	return gtCount
 }
 
-// greaterAndEqRowCount estimates the row count where the column greater than or equal to value.
-func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
-	return hg.totalRowCount() - hg.lessRowCount(value)
-}
-
 // lessRowCount estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCountWithBktIdx(value types.Datum) (float64, int) {
-	// all the values is null
+	// All the values are null.
 	if hg.Bounds.NumRows() == 0 {
 		return 0, 0
 	}
 	index, match := hg.Bounds.LowerBound(0, &value)
 	if index == hg.Bounds.NumRows() {
-		return hg.totalRowCount(), hg.Len() - 1
+		return hg.notNullCount(), hg.Len() - 1
 	}
 	// Since we store the lower and upper bound together, so dividing the index by 2 will get the bucket index.
 	bucketIdx := index / 2
@@ -454,21 +450,16 @@ func (hg *Histogram) lessRowCount(value types.Datum) float64 {
 	return result
 }
 
-// lessAndEqRowCount estimates the row count where the column less than or equal to value.
-func (hg *Histogram) lessAndEqRowCount(value types.Datum) float64 {
-	return hg.lessRowCount(value) + hg.equalRowCount(value)
-}
-
 // betweenRowCount estimates the row count where column greater or equal to a and less than b.
 func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 	lessCountA := hg.lessRowCount(a)
 	lessCountB := hg.lessRowCount(b)
 	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
 	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than
-	// lessCountB or totalRowCount-lessCountA.
+	// lessCountB or notNullCount-lessCountA.
 	if lessCountA >= lessCountB && hg.NDV > 0 {
-		result := math.Min(lessCountB, hg.totalRowCount()-lessCountA)
-		return math.Min(result, hg.totalRowCount()/float64(hg.NDV))
+		result := math.Min(lessCountB, hg.notNullCount()-lessCountA)
+		return math.Min(result, hg.notNullCount()/float64(hg.NDV))
 	}
 	return lessCountB - lessCountA
 }
@@ -477,6 +468,9 @@ func (hg *Histogram) totalRowCount() float64 {
 	return hg.notNullCount() + float64(hg.NullCount)
 }
 
+// notNullCount indicates the count of non-null values in column histogram and single-column index histogram,
+// for multi-column index histogram, since we cannot define null for the row, we treat all rows as non-null, that means,
+// notNullCount would return same value as totalRowCount for multi-column index histograms.
 func (hg *Histogram) notNullCount() float64 {
 	if hg.Len() == 0 {
 		return 0
@@ -779,7 +773,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 	if val.IsNull() {
 		return float64(c.NullCount), nil
 	}
-	// all the values is null
+	// All the values are null.
 	if c.Histogram.Bounds.NumRows() == 0 {
 		return 0.0, nil
 	}
@@ -813,17 +807,23 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			}
 			continue
 		}
-		// the interval case.
+		// The interval case.
 		cnt := c.betweenRowCount(rg.LowVal[0], rg.HighVal[0])
-		if c.outOfRange(rg.LowVal[0]) || c.outOfRange(rg.HighVal[0]) {
+		if (c.outOfRange(rg.LowVal[0]) && !rg.LowVal[0].IsNull()) || c.outOfRange(rg.HighVal[0]) {
 			cnt += float64(modifyCount) / outOfRangeBetweenRate
 		}
-		if rg.LowExclude {
+		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
+		// Note that, `cnt` does not include null values, we need specially handle cases
+		// where null is the lower bound.
+		if rg.LowExclude && !rg.LowVal[0].IsNull() {
 			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
+		}
+		if !rg.LowExclude && rg.LowVal[0].IsNull() {
+			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude {
 			highCnt, err := c.equalRowCount(sc, rg.HighVal[0], modifyCount)
@@ -860,34 +860,49 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 	return (collPseudo && idx.NotAccurate()) || idx.totalRowCount() == 0
 }
 
-func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) float64 {
+var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
+
+func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) (float64, error) {
+	if len(idx.Info.Columns) == 1 {
+		if bytes.Equal(b, nullKeyBytes) {
+			return float64(idx.NullCount), nil
+		}
+	}
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return float64(modifyCount) / (float64(idx.NDV))
+		return float64(modifyCount) / (float64(idx.NDV)), nil
 	}
 	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.QueryBytes(b))
+		return float64(idx.CMSketch.QueryBytes(b)), nil
 	}
-	return idx.Histogram.equalRowCount(val)
+	return idx.Histogram.equalRowCount(val), nil
 }
 
 func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range, modifyCount int64) (float64, error) {
 	totalCount := float64(0)
+	isSingleCol := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
 		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		rb, err := codec.EncodeKey(sc, nil, indexRange.HighVal...)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
-		if fullLen && bytes.Equal(lb, rb) {
-			if !indexRange.LowExclude && !indexRange.HighExclude {
-				totalCount += idx.equalRowCount(sc, lb, modifyCount)
+		if bytes.Equal(lb, rb) {
+			if indexRange.LowExclude || indexRange.HighExclude {
+				continue
 			}
-			continue
+			if fullLen {
+				count, err := idx.equalRowCount(sc, lb, modifyCount)
+				if err != nil {
+					return 0, err
+				}
+				totalCount += count
+				continue
+			}
 		}
 		if indexRange.LowExclude {
 			lb = kv.Key(lb).PrefixNext()
@@ -898,8 +913,12 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
 		totalCount += idx.betweenRowCount(l, r)
-		if idx.outOfRange(l) || idx.outOfRange(r) {
+		lowIsNull := bytes.Equal(lb, nullKeyBytes)
+		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
 			totalCount += float64(modifyCount) / outOfRangeBetweenRate
+		}
+		if isSingleCol && lowIsNull {
+			totalCount += float64(idx.NullCount)
 		}
 	}
 	if totalCount > idx.totalRowCount() {
@@ -1018,7 +1037,8 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			}
 			newIdxHist, err := idxHist.newIndexBySelectivity(sc, node)
 			if err != nil {
-				log.Warnf("[Histogram-in-plan]: error happened when calculating row count: %v, failed to build histogram for index %v of table %v", err, idxHist.Info.Name, idxHist.Info.Table)
+				logutil.Logger(context.Background()).Warn("[Histogram-in-plan]: error happened when calculating row count, failed to build histogram for index %v of table %v",
+					zap.String("index", idxHist.Info.Name.O), zap.String("table", idxHist.Info.Table.O), zap.Error(err))
 				continue
 			}
 			newColl.Indices[node.ID] = newIdxHist
@@ -1055,7 +1075,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByColumnRanges)
 		}
 		if err != nil {
-			log.Warnf("[Histogram-in-plan]: error happened when calculating row count: %v", err)
+			logutil.Logger(context.Background()).Warn("[Histogram-in-plan]: error happened when calculating row count", zap.Error(err))
 			continue
 		}
 		newColl.Columns[node.ID] = newCol

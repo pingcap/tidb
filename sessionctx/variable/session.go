@@ -191,6 +191,9 @@ type SessionVars struct {
 	// params for prepared statements
 	PreparedParams []types.Datum
 
+	// ActiveRoles stores active roles for current user
+	ActiveRoles []*auth.RoleIdentity
+
 	// retry information
 	RetryInfo *RetryInfo
 	// Should be reset on transaction finished.
@@ -339,6 +342,26 @@ type SessionVars struct {
 	SlowQueryFile string
 }
 
+// ConnectionInfo present connection used by audit.
+type ConnectionInfo struct {
+	ConnectionID      uint32
+	ConnectionType    string
+	Host              string
+	ClientIP          string
+	ClientPort        string
+	ServerID          int
+	ServerPort        int
+	Duration          float64
+	User              string
+	ServerOSLoginUser string
+	OSVersion         string
+	ClientVersion     string
+	ServerVersion     string
+	SSLVersion        string
+	PID               int
+	DB                string
+}
+
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
@@ -350,6 +373,7 @@ func NewSessionVars() *SessionVars {
 		TxnCtx:                    &TransactionContext{},
 		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},
+		ActiveRoles:               make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:             true,
 		Status:                    mysql.ServerStatusAutocommit,
 		StmtCtx:                   new(stmtctx.StatementContext),
@@ -697,8 +721,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
-	case TiDBCheckMb4ValueInUtf8:
-		config.GetGlobalConfig().CheckMb4ValueInUtf8 = TiDBOptOn(val)
+	case TiDBCheckMb4ValueInUTF8:
+		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
 	}
@@ -815,8 +839,8 @@ type BatchSize struct {
 }
 
 const (
-	// SlowLogPrefixStr is slow log row prefix.
-	SlowLogPrefixStr = "# "
+	// SlowLogRowPrefixStr is slow log row prefix.
+	SlowLogRowPrefixStr = "# "
 	// SlowLogSpaceMarkStr is slow log space mark.
 	SlowLogSpaceMarkStr = ": "
 	// SlowLogSQLSuffixStr is slow log suffix.
@@ -824,7 +848,7 @@ const (
 	// SlowLogTimeStr is slow log field name.
 	SlowLogTimeStr = "Time"
 	// SlowLogStartPrefixStr is slow log start row prefix.
-	SlowLogStartPrefixStr = SlowLogPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
+	SlowLogStartPrefixStr = SlowLogRowPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
 	// SlowLogUserStr is slow log field name.
@@ -860,26 +884,26 @@ const (
 func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
-	buf.WriteString(SlowLogPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
+	buf.WriteString(SlowLogRowPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
 	if s.User != nil {
-		buf.WriteString(SlowLogPrefixStr + SlowLogUserStr + SlowLogSpaceMarkStr + s.User.String() + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogUserStr + SlowLogSpaceMarkStr + s.User.String() + "\n")
 	}
 	if s.ConnectionID != 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogConnIDStr + SlowLogSpaceMarkStr + strconv.FormatUint(s.ConnectionID, 10) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogConnIDStr + SlowLogSpaceMarkStr + strconv.FormatUint(s.ConnectionID, 10) + "\n")
 	}
-	buf.WriteString(SlowLogPrefixStr + SlowLogQueryTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64) + "\n")
+	buf.WriteString(SlowLogRowPrefixStr + SlowLogQueryTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64) + "\n")
 	if len(execDetailStr) > 0 {
-		buf.WriteString(SlowLogPrefixStr + execDetailStr + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
 	}
 	if len(s.CurrentDB) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
 	}
 	if len(indexIDs) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
 	}
-	buf.WriteString(SlowLogPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
+	buf.WriteString(SlowLogRowPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
 	if len(digest) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"
