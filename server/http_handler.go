@@ -162,14 +162,14 @@ func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 }
 
 type mvccKV struct {
-	Key   []byte      `json:"key"`
+	Key   string      `json:"key"`
 	Value interface{} `json:"value"`
 }
 
 func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	data, err := t.getMvccByEncodedKey(encodedKey)
-	return &mvccKV{encodedKey, data}, err
+	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), data}, err
 }
 
 func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
@@ -258,7 +258,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 		return nil, errors.Trace(err)
 	}
 	data, err := t.getMvccByEncodedKey(encodedKey)
-	return &mvccKV{encodedKey, data}, err
+	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), data}, err
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
