@@ -191,6 +191,9 @@ type SessionVars struct {
 	// params for prepared statements
 	PreparedParams []types.Datum
 
+	// ActiveRoles stores active roles for current user
+	ActiveRoles []*auth.RoleIdentity
+
 	// retry information
 	RetryInfo *RetryInfo
 	// Should be reset on transaction finished.
@@ -339,6 +342,26 @@ type SessionVars struct {
 	SlowQueryFile string
 }
 
+// ConnectionInfo present connection used by audit.
+type ConnectionInfo struct {
+	ConnectionID      uint32
+	ConnectionType    string
+	Host              string
+	ClientIP          string
+	ClientPort        string
+	ServerID          int
+	ServerPort        int
+	Duration          float64
+	User              string
+	ServerOSLoginUser string
+	OSVersion         string
+	ClientVersion     string
+	ServerVersion     string
+	SSLVersion        string
+	PID               int
+	DB                string
+}
+
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
@@ -350,6 +373,7 @@ func NewSessionVars() *SessionVars {
 		TxnCtx:                    &TransactionContext{},
 		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},
+		ActiveRoles:               make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:             true,
 		Status:                    mysql.ServerStatusAutocommit,
 		StmtCtx:                   new(stmtctx.StatementContext),
@@ -697,8 +721,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
-	case TiDBCheckMb4ValueInUtf8:
-		config.GetGlobalConfig().CheckMb4ValueInUtf8 = TiDBOptOn(val)
+	case TiDBCheckMb4ValueInUTF8:
+		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
 	}

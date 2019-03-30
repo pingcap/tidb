@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1515,6 +1516,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%r');")
+	result.Check(testkit.Rows("12:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('25:00:00', '%r');")
+	result.Check(testkit.Rows("01:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%l %p');")
+	result.Check(testkit.Rows("12 AM"))
 
 	// for date_format
 	result = tk.MustQuery(`SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');`)
@@ -1948,6 +1955,40 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for unaryPlus
 	result = tk.MustQuery(`select +1, +0, +(-9), +(-0.001), +0.999, +null, +"aaa"`)
 	result.Check(testkit.Rows("1 0 -9 -0.001 0.999 <nil> aaa"))
+}
+
+func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (d date)")
+	tk.MustExec("set sql_mode='traditional'")
+	overflowSQLs := []string{
+		"insert into t1 (d) select date_add('2000-01-01',interval 8000 year)",
+		"insert into t1 (d) select date_sub('2000-01-01', INTERVAL 2001 YEAR)",
+		"insert into t1 (d) select date_add('9999-12-31',interval 1 year)",
+		"insert into t1 (d) select date_sub('1000-01-01', INTERVAL 1 YEAR)",
+		"insert into t1 (d) select date_add('9999-12-31',interval 1 day)",
+		"insert into t1 (d) select date_sub('1000-01-01', INTERVAL 1 day)",
+		"insert into t1 (d) select date_sub('1000-01-01', INTERVAL 1 second)",
+	}
+
+	for _, sql := range overflowSQLs {
+		_, err := tk.Exec(sql)
+		c.Assert(err.Error(), Equals, "[types:1441]Datetime function: datetime field overflow")
+	}
+
+	tk.MustExec("set sql_mode=''")
+	for _, sql := range overflowSQLs {
+		tk.MustExec(sql)
+	}
+
+	rows := make([]string, 0, len(overflowSQLs))
+	for range overflowSQLs {
+		rows = append(rows, "<nil>")
+	}
+	tk.MustQuery("select * from t1").Check(testkit.Rows(rows...))
 }
 
 func (s *testIntegrationSuite) TestBuiltin(c *C) {
@@ -2408,6 +2449,20 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", likeTests)
+
+	// for #9838
+	result = tk.MustQuery("select cast(1 as signed) + cast(9223372036854775807 as unsigned);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast(9223372036854775807 as unsigned) + cast(1 as signed);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	err = tk.QueryToErr("select cast(9223372036854775807 as signed) + cast(9223372036854775809 as unsigned);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(9223372036854775809 as unsigned) + cast(9223372036854775807 as signed);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(-9223372036854775807 as signed) + cast(9223372036854775806 as unsigned);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);")
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
@@ -4031,4 +4086,45 @@ func (s *testIntegrationSuite) TestIssue9325(c *C) {
 	tk.MustExec("insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01')")
 	result = tk.MustQuery("select * from t where a < timestamp'2019-02-16 14:21:00'")
 	result.Check(testkit.Rows("2019-02-16 14:19:59", "2019-02-16 14:20:01"))
+}
+
+func (s *testIntegrationSuite) TestIssue9710(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	getSAndMS := func(str string) (int, int) {
+		results := strings.Split(str, ":")
+		SAndMS := strings.Split(results[len(results)-1], ".")
+		var s, ms int
+		s, _ = strconv.Atoi(SAndMS[0])
+		if len(SAndMS) > 1 {
+			ms, _ = strconv.Atoi(SAndMS[1])
+		}
+		return s, ms
+	}
+
+	for {
+		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now())")
+		s, ms := getSAndMS(rs.Rows()[0][1].(string))
+		if ms < 500000 {
+			time.Sleep(time.Second / 10)
+			continue
+		}
+
+		s1, _ := getSAndMS(rs.Rows()[0][0].(string))
+		c.Assert(s, Equals, s1) // now() will truncate the result instead of rounding it
+
+		c.Assert(rs.Rows()[0][2], Equals, rs.Rows()[0][3]) // unix_timestamp() will truncate the result
+		break
+	}
+}
+
+// for issue #9770
+func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime(6), b timestamp)")
+	tk.MustExec("insert t values (20010101100000.123456, 20110707101112.123456)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2001-01-01 10:00:00.123456 2011-07-07 10:11:12"))
 }

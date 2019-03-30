@@ -15,6 +15,7 @@ package types
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -27,18 +28,19 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // Portable analogs of some common call errors.
 var (
-	ErrInvalidTimeFormat      = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
-	ErrInvalidWeekModeFormat  = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid week mode format: '%v'")
-	ErrInvalidYearFormat      = errors.New("invalid year format")
-	ErrInvalidYear            = errors.New("invalid year")
-	ErrZeroDate               = errors.New("datetime zero in date")
-	ErrIncorrectDatetimeValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
-	ErrTruncatedWrongValue    = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	ErrInvalidTimeFormat        = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
+	ErrInvalidWeekModeFormat    = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid week mode format: '%v'")
+	ErrInvalidYearFormat        = errors.New("invalid year format")
+	ErrInvalidYear              = errors.New("invalid year")
+	ErrZeroDate                 = errors.New("datetime zero in date")
+	ErrIncorrectDatetimeValue   = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
+	ErrDatetimeFunctionOverflow = terror.ClassTypes.New(mysql.ErrDatetimeFunctionOverflow, mysql.MySQLErrName[mysql.ErrDatetimeFunctionOverflow])
+	ErrTruncatedWrongValue      = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 )
 
 // Time format without fractional seconds precision.
@@ -263,7 +265,7 @@ func (t Time) ToNumber() *MyDecimal {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		log.Error("Fatal: never happen because we've control the format!")
+		logutil.Logger(context.Background()).Error("[fatal] never happen because we've control the format!")
 	}
 
 	if t.Fsp > 0 {
@@ -417,6 +419,16 @@ func RoundFrac(t gotime.Time, fsp int) (gotime.Time, error) {
 		return t, errors.Trace(err)
 	}
 	return t.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil
+}
+
+// TruncateFrac truncates fractional seconds precision with new fsp and returns a new one.
+// 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:10
+// 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
+func TruncateFrac(t gotime.Time, fsp int) (gotime.Time, error) {
+	if _, err := CheckFsp(fsp); err != nil {
+		return t, err
+	}
+	return t.Truncate(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil
 }
 
 // ToPackedUint encodes Time to a packed uint64 value.
@@ -1920,14 +1932,14 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		fmt.Fprintf(buf, "%d", t.Time.Hour())
 	case 'h', 'I':
 		t := t.Time.Hour()
-		if t == 0 || t == 12 {
+		if t%12 == 0 {
 			fmt.Fprintf(buf, "%02d", 12)
 		} else {
 			fmt.Fprintf(buf, "%02d", t%12)
 		}
 	case 'l':
 		t := t.Time.Hour()
-		if t == 0 || t == 12 {
+		if t%12 == 0 {
 			fmt.Fprintf(buf, "%d", 12)
 		} else {
 			fmt.Fprintf(buf, "%d", t%12)
@@ -1943,6 +1955,7 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		}
 	case 'r':
 		h := t.Time.Hour()
+		h %= 24
 		switch {
 		case h == 0:
 			fmt.Fprintf(buf, "%02d:%02d:%02d AM", 12, t.Time.Minute(), t.Time.Second())
@@ -2047,6 +2060,9 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 		_ = yearOfDay
 	}
 	if valueAMorPm, ok := ctx["%p"]; ok {
+		if _, ok := ctx["%H"]; ok {
+			return ErrInvalidTimeFormat.GenWithStackByArgs(t)
+		}
 		if t.hour == 0 {
 			return ErrInvalidTimeFormat.GenWithStackByArgs(t)
 		}
@@ -2188,28 +2204,6 @@ var dateFormatParserTable = map[string]dateFormatParser{
 
 // GetFormatType checks the type(Duration, Date or Datetime) of a format string.
 func GetFormatType(format string) (isDuration, isDate bool) {
-	durationTokens := map[string]struct{}{
-		"%h": {},
-		"%H": {},
-		"%i": {},
-		"%I": {},
-		"%s": {},
-		"%S": {},
-		"%k": {},
-		"%l": {},
-	}
-	dateTokens := map[string]struct{}{
-		"%y": {},
-		"%Y": {},
-		"%m": {},
-		"%M": {},
-		"%c": {},
-		"%b": {},
-		"%D": {},
-		"%d": {},
-		"%e": {},
-	}
-
 	format = skipWhiteSpace(format)
 	var token string
 	var succ bool
@@ -2222,9 +2216,19 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 			isDuration, isDate = false, false
 			break
 		}
-		if _, ok := durationTokens[token]; ok {
+		var durationTokens bool
+		var dateTokens bool
+		if len(token) >= 2 && token[0] == '%' {
+			switch token[1] {
+			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l':
+				durationTokens = true
+			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
+				dateTokens = true
+			}
+		}
+		if durationTokens {
 			isDuration = true
-		} else if _, ok := dateTokens[token]; ok {
+		} else if dateTokens {
 			isDate = true
 		}
 		if isDuration && isDate {
@@ -2429,6 +2433,7 @@ func hour24Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 		return input, false
 	}
 	t.hour = v
+	ctx["%H"] = v
 	return input[length:], true
 }
 
@@ -2593,4 +2598,50 @@ func DateFSP(date string) (fsp int) {
 		fsp = len(date) - i - 1
 	}
 	return
+}
+
+// DateTimeIsOverflow return if this date is overflow.
+// See: https://dev.mysql.com/doc/refman/8.0/en/datetime.html
+func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
+	tz := sc.TimeZone
+	if tz == nil {
+		tz = gotime.Local
+	}
+
+	var err error
+	var b, e, t gotime.Time
+	switch date.Type {
+	case mysql.TypeDate, mysql.TypeDatetime:
+		if b, err = MinDatetime.GoTime(tz); err != nil {
+			return false, err
+		}
+		if e, err = MaxDatetime.GoTime(tz); err != nil {
+			return false, err
+		}
+	case mysql.TypeTimestamp:
+		minTS, maxTS := MinTimestamp, MaxTimestamp
+		if tz != gotime.UTC {
+			if err = minTS.ConvertTimeZone(gotime.UTC, tz); err != nil {
+				return false, err
+			}
+			if err = maxTS.ConvertTimeZone(gotime.UTC, tz); err != nil {
+				return false, err
+			}
+		}
+		if b, err = minTS.Time.GoTime(tz); err != nil {
+			return false, err
+		}
+		if e, err = maxTS.Time.GoTime(tz); err != nil {
+			return false, err
+		}
+	default:
+		return false, nil
+	}
+
+	if t, err = date.Time.GoTime(tz); err != nil {
+		return false, err
+	}
+
+	inRange := (t.After(b) || t.Equal(b)) && (t.Before(e) || t.Equal(e))
+	return !inRange, nil
 }
