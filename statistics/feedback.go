@@ -1073,6 +1073,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 }
 
 func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCount float64) error {
+	lowIsNull := ran.LowVal[0].IsNull()
 	if q.tp == indexType {
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		lower, err := codec.EncodeKey(sc, nil, ran.LowVal[0])
@@ -1099,8 +1100,17 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 	ranges := q.hist.SplitRange([]*ranger.Range{ran})
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
-	for _, r := range ranges {
+	for i, r := range ranges {
+		// Though after `SplitRange`, we may have ranges like `[l, r]`, we still use
+		// `betweenRowCount` to compute the estimation since the ranges of feedback are all in `[l, r)`
+		// form, that is to say, we ignore the exclusiveness of ranges from `SplitRange` and just use
+		// its result of boundary values.
 		count := q.hist.betweenRowCount(r.LowVal[0], r.HighVal[0])
+		// We have to include `NullCount` of histogram for [l, r) cases where l is null because `betweenRowCount`
+		// does not include null values of lower bound.
+		if i == 0 && lowIsNull {
+			count += float64(q.hist.NullCount)
+		}
 		sum += count
 		counts = append(counts, count)
 	}
