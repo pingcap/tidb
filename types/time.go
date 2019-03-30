@@ -33,13 +33,14 @@ import (
 
 // Portable analogs of some common call errors.
 var (
-	ErrInvalidTimeFormat      = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
-	ErrInvalidWeekModeFormat  = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid week mode format: '%v'")
-	ErrInvalidYearFormat      = errors.New("invalid year format")
-	ErrInvalidYear            = errors.New("invalid year")
-	ErrZeroDate               = errors.New("datetime zero in date")
-	ErrIncorrectDatetimeValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
-	ErrTruncatedWrongValue    = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	ErrInvalidTimeFormat        = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
+	ErrInvalidWeekModeFormat    = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid week mode format: '%v'")
+	ErrInvalidYearFormat        = errors.New("invalid year format")
+	ErrInvalidYear              = errors.New("invalid year")
+	ErrZeroDate                 = errors.New("datetime zero in date")
+	ErrIncorrectDatetimeValue   = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
+	ErrDatetimeFunctionOverflow = terror.ClassTypes.New(mysql.ErrDatetimeFunctionOverflow, mysql.MySQLErrName[mysql.ErrDatetimeFunctionOverflow])
+	ErrTruncatedWrongValue      = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 )
 
 // Time format without fractional seconds precision.
@@ -462,6 +463,16 @@ func RoundFrac(t gotime.Time, fsp int) (gotime.Time, error) {
 		return t, errors.Trace(err)
 	}
 	return t.Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil
+}
+
+// TruncateFrac truncates fractional seconds precision with new fsp and returns a new one.
+// 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:10
+// 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
+func TruncateFrac(t gotime.Time, fsp int) (gotime.Time, error) {
+	if _, err := CheckFsp(fsp); err != nil {
+		return t, err
+	}
+	return t.Truncate(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond), nil
 }
 
 // ToPackedUint encodes Time to a packed uint64 value.
@@ -2467,4 +2478,50 @@ func DateFSP(date string) (fsp int) {
 		fsp = len(date) - i - 1
 	}
 	return
+}
+
+// DateTimeIsOverflow return if this date is overflow.
+// See: https://dev.mysql.com/doc/refman/8.0/en/datetime.html
+func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
+	tz := sc.TimeZone
+	if tz == nil {
+		tz = gotime.Local
+	}
+
+	var err error
+	var b, e, t gotime.Time
+	switch date.Type {
+	case mysql.TypeDate, mysql.TypeDatetime:
+		if b, err = MinDatetime.GoTime(tz); err != nil {
+			return false, err
+		}
+		if e, err = MaxDatetime.GoTime(tz); err != nil {
+			return false, err
+		}
+	case mysql.TypeTimestamp:
+		minTS, maxTS := MinTimestamp, MaxTimestamp
+		if tz != gotime.UTC {
+			if err = minTS.ConvertTimeZone(gotime.UTC, tz); err != nil {
+				return false, err
+			}
+			if err = maxTS.ConvertTimeZone(gotime.UTC, tz); err != nil {
+				return false, err
+			}
+		}
+		if b, err = minTS.Time.GoTime(tz); err != nil {
+			return false, err
+		}
+		if e, err = maxTS.Time.GoTime(tz); err != nil {
+			return false, err
+		}
+	default:
+		return false, nil
+	}
+
+	if t, err = date.Time.GoTime(tz); err != nil {
+		return false, err
+	}
+
+	inRange := (t.After(b) || t.Equal(b)) && (t.Before(e) || t.Equal(e))
+	return !inRange, nil
 }
