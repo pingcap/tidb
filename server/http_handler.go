@@ -1577,7 +1577,7 @@ func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldT
 		if c, ok := rs[col.ID]; ok {
 			data := "nil"
 			if !c.IsNull() {
-				data, _ = c.ToString()
+				data, err = c.ToString()
 			}
 			record = append(record, map[string]string{col.Name.O: data})
 		}
