@@ -1544,30 +1544,34 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 		datas := make(map[string][]map[string]string)
 		for _, w := range respValue.Info.Writes {
 			if len(w.ShortValue) > 0 {
-				datas[strconv.FormatUint(w.StartTs, 10)] = h.decodeMvccData(w.ShortValue, colMap, tb)
+				datas[strconv.FormatUint(w.StartTs, 10)], err = h.decodeMvccData(w.ShortValue, colMap, tb)
 			}
 		}
 
 		for _, v := range respValue.Info.Values {
 			if len(v.Value) > 0 {
-				datas[strconv.FormatUint(v.StartTs, 10)] = h.decodeMvccData(v.Value, colMap, tb)
+				datas[strconv.FormatUint(v.StartTs, 10)], err = h.decodeMvccData(v.Value, colMap, tb)
 			}
 		}
 
 		if len(datas) > 0 {
-			result = map[string]interface{}{
+			re := map[string]interface{}{
 				"key":  resp.Key,
 				"info": respValue.Info,
 				"data": datas,
 			}
+			if err != nil {
+				re["decode_error"] = err.Error()
+			}
+			result = re
 		}
 	}
 
 	return result, nil
 }
 
-func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) []map[string]string {
-	rs, _ := tablecodec.DecodeRow(bs, colMap, time.UTC)
+func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) ([]map[string]string, error) {
+	rs, err := tablecodec.DecodeRow(bs, colMap, time.UTC)
 	var record []map[string]string
 	for _, col := range tb.Columns {
 		if c, ok := rs[col.ID]; ok {
@@ -1578,7 +1582,7 @@ func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldT
 			record = append(record, map[string]string{col.Name.O: data})
 		}
 	}
-	return record
+	return record, err
 }
 
 func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface{}, error) {
