@@ -1201,8 +1201,14 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		IsReplace:   insert.IsReplace,
 	}.Init(b.ctx)
 
+	var authErr error
+	if b.ctx.GetSessionVars().User != nil {
+		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.Hostname,
+			b.ctx.GetSessionVars().User.Username, tableInfo.Name.L)
+	}
+
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tn.DBInfo.Name.L,
-		tableInfo.Name.L, "", nil)
+		tableInfo.Name.L, "", authErr)
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
@@ -1506,38 +1512,80 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 }
 
 func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
+	var authErr error
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Table.Schema.L,
-			v.Table.Name.L, "", nil)
+			v.Table.Name.L, "", authErr)
 		for _, spec := range v.Specs {
 			if spec.Tp == ast.AlterTableRenameTable {
+				if b.ctx.GetSessionVars().User != nil {
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
+						b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
-					v.Table.Name.L, "", nil)
+					v.Table.Name.L, "", authErr)
+
+				if b.ctx.GetSessionVars().User != nil {
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.Hostname,
+						b.ctx.GetSessionVars().User.Username, spec.NewTable.Name.L)
+				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, spec.NewTable.Schema.L,
-					spec.NewTable.Name.L, "", nil)
+					spec.NewTable.Name.L, "", authErr)
+
+				if b.ctx.GetSessionVars().User != nil {
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.Hostname,
+						b.ctx.GetSessionVars().User.Username, spec.NewTable.Name.L)
+				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, spec.NewTable.Schema.L,
-					spec.NewTable.Name.L, "", nil)
-			} else if v.Specs[0].Tp == ast.AlterTableDropPartition {
+					spec.NewTable.Name.L, "", authErr)
+			} else if spec.Tp == ast.AlterTableDropPartition {
+				if b.ctx.GetSessionVars().User != nil {
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
+						b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
-					v.Table.Name.L, "", nil)
+					v.Table.Name.L, "", authErr)
 			} else {
+				if b.ctx.GetSessionVars().User != nil {
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.Hostname,
+						b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.Table.Schema.L,
-					v.Table.Name.L, "", nil)
+					v.Table.Name.L, "", authErr)
+
+				// TODO: Add authErr
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L,
 					"", "", nil)
 			}
 		}
 	case *ast.CreateDatabaseStmt:
+		// TODO: Add authErr
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Name,
 			"", "", nil)
 	case *ast.CreateIndexStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("INDEX", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.IndexPriv, v.Table.Schema.L,
-			v.Table.Name.L, "", nil)
+			v.Table.Name.L, "", authErr)
 	case *ast.CreateTableStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L,
-			v.Table.Name.L, "", nil)
+			v.Table.Name.L, "", authErr)
 		if v.ReferTable != nil {
+			if b.ctx.GetSessionVars().User != nil {
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.Hostname,
+					b.ctx.GetSessionVars().User.Username, v.ReferTable.Name.L)
+			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, v.ReferTable.Schema.L,
 				v.ReferTable.Name.L, "", nil)
 		}
@@ -1557,8 +1605,12 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		}
 		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
 		if _, ok := plan.(LogicalPlan); ok {
+			if b.ctx.GetSessionVars().User != nil {
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
+					b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
+			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
-				v.ViewName.Name.L, "", nil)
+				v.ViewName.Name.L, "", authErr)
 		}
 		if v.Definer.CurrentUser {
 			v.Definer = b.ctx.GetSessionVars().User
@@ -1569,26 +1621,58 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 				"", "", err)
 		}
 	case *ast.DropDatabaseStmt:
+		// TODO: add authErr
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Name,
 			"", "", nil)
 	case *ast.DropIndexStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("INDEx", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.IndexPriv, v.Table.Schema.L,
-			v.Table.Name.L, "", nil)
+			v.Table.Name.L, "", authErr)
 	case *ast.DropTableStmt:
 		for _, tableVal := range v.Tables {
+			if b.ctx.GetSessionVars().User != nil {
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
+					b.ctx.GetSessionVars().User.Username, tableVal.Name.L)
+			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, tableVal.Schema.L,
-				tableVal.Name.L, "", nil)
+				tableVal.Name.L, "", authErr)
 		}
 	case *ast.TruncateTableStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", nil)
 	case *ast.RenameTableStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.OldTable.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.OldTable.Schema.L,
 			v.OldTable.Name.L, "", nil)
+
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.OldTable.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.OldTable.Schema.L,
 			v.OldTable.Name.L, "", nil)
+
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.NewTable.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.NewTable.Schema.L,
 			v.NewTable.Name.L, "", nil)
+
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.NewTable.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.NewTable.Schema.L,
 			v.NewTable.Name.L, "", nil)
 	}
