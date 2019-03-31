@@ -1587,7 +1587,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 					b.ctx.GetSessionVars().User.Username, v.ReferTable.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, v.ReferTable.Schema.L,
-				v.ReferTable.Name.L, "", nil)
+				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
 		plan, err := b.Build(v.Select)
@@ -1646,35 +1646,35 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
-			v.Table.Name.L, "", nil)
+			v.Table.Name.L, "", authErr)
 	case *ast.RenameTableStmt:
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.Hostname,
 				b.ctx.GetSessionVars().User.Username, v.OldTable.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.OldTable.Schema.L,
-			v.OldTable.Name.L, "", nil)
+			v.OldTable.Name.L, "", authErr)
 
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
 				b.ctx.GetSessionVars().User.Username, v.OldTable.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.OldTable.Schema.L,
-			v.OldTable.Name.L, "", nil)
+			v.OldTable.Name.L, "", authErr)
 
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.Hostname,
 				b.ctx.GetSessionVars().User.Username, v.NewTable.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.NewTable.Schema.L,
-			v.NewTable.Name.L, "", nil)
+			v.NewTable.Name.L, "", authErr)
 
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.Hostname,
 				b.ctx.GetSessionVars().User.Username, v.NewTable.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.NewTable.Schema.L,
-			v.NewTable.Name.L, "", nil)
+			v.NewTable.Name.L, "", authErr)
 	}
 	p := &DDL{Statement: node}
 	return p, nil
