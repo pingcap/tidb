@@ -557,6 +557,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	ctx := context.Background()
+	var err error
 
 	// for length
 	tk.MustExec("drop table if exists t")
@@ -900,6 +901,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	// for convert
 	result = tk.MustQuery(`select convert("123" using "binary"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
 	result.Check(testkit.Rows("123 123 中文 中文 中文 中文"))
+	// Charset 866 does not have a default collation configured currently, so this will return error.
+	_, err = tk.Exec(`select convert("123" using "866");`)
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: '866'")
+	// Test case in issue #4436.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(20));")
+	_, err = tk.Exec("select convert(a using a) from t;")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'a'")
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
