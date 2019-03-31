@@ -64,8 +64,8 @@ func (s *testDeleteRangeSuite) checkData(c *C, expectedData map[string]string) {
 	c.Assert(err, IsNil)
 
 	// Print log
-	var actualKeys []string
-	var expectedKeys []string
+	actualKeys := make([]string, 0, len(data))
+	expectedKeys := make([]string, 0, len(expectedData))
 	for key := range data {
 		actualKeys = append(actualKeys, key)
 	}
