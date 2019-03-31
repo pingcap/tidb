@@ -1798,7 +1798,7 @@ func handleTruncateError(sc *stmtctx.StatementContext) error {
 
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
-	var strs []string
+	strs := make([]string, 0, len(datums))
 	for _, datum := range datums {
 		if handleSpecialValue {
 			switch datum.Kind() {
