@@ -388,7 +388,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, "last_insert_id", ""},
 	{ScopeNone, "innodb_ft_cache_size", "8000000"},
 	{ScopeNone, LogBin, "0"},
-	{ScopeGlobal, TiDBLogBin, "0"},
 	{ScopeGlobal, "innodb_disable_sort_file_cache", "OFF"},
 	{ScopeGlobal, "log_error_verbosity", ""},
 	{ScopeNone, "performance_schema_hosts_size", "100"},
@@ -685,7 +684,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
-	{ScopeSession, TiDBCheckMb4ValueInUtf8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8)},
+	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
 	{ScopeSession, TiDBSlowQueryFile, ""},
 	{ScopeSession, TiDBEnableFastAnalyze, BoolToIntStr(DefTiDBUseFastAnalyze)},
 }
@@ -750,8 +749,6 @@ const (
 	SQLLogBin = "sql_log_bin"
 	// LogBin is the name for 'log_bin' system variable.
 	LogBin = "log_bin"
-	// TiDBLogBin is the name for 'tidb_log_bin' system variable.
-	TiDBLogBin = "tidb_log_bin"
 	// MaxSortLength is the name for 'max_sort_length' system variable.
 	MaxSortLength = "max_sort_length"
 	// MaxSpRecursionDepth is the name for 'max_sp_recursion_depth' system variable.
