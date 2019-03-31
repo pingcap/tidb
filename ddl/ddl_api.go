@@ -173,7 +173,6 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 
 func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef,
 	constraints []*ast.Constraint, tblCharset, dbCharset string) ([]*table.Column, []*ast.Constraint, error) {
-	var cols []*table.Column
 	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
@@ -183,6 +182,7 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 			break
 		}
 	}
+	cols := make([]*table.Column, 0, len(colDefs))
 	for i, colDef := range colDefs {
 		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, dbCharset)
 		if err != nil {
@@ -1061,7 +1061,7 @@ func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
 func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, dbCharset string) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	colDefs := s.Cols
-	var colObjects []interface{}
+	colObjects := make([]interface{}, 0, len(colDefs))
 	for _, col := range colDefs {
 		colObjects = append(colObjects, col)
 	}
@@ -1245,7 +1245,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	}
 	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
 
-	var colObjects []interface{}
+	colObjects := make([]interface{}, 0, len(viewInfo.Cols))
 	for _, col := range viewInfo.Cols {
 		colObjects = append(colObjects, col)
 	}
