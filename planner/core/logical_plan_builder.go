@@ -957,6 +957,9 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 	case *driver.ValueExpr:
 		val = v.GetValue()
 	case *driver.ParamMarkerExpr:
+		if !v.InExecute {
+			return 0, false, true
+		}
 		param, err := expression.GetParamExpression(ctx, v)
 		if err != nil {
 			return 0, false, false
@@ -2740,6 +2743,13 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	return del, nil
 }
 
+func getWindowName(name string) string {
+	if name == "" {
+		return "<unnamed window>"
+	}
+	return name
+}
+
 // buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
 // so after the projection, window functions only needs to deal with columns.
 func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []property.Item, []expression.Expression, error) {
@@ -2752,8 +2762,6 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 			return nil, nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(expr.Spec.Name.O)
 		}
 		expr.Spec = ref
-	} else {
-		expr.Spec.Name = model.NewCIStr("<unnamed window>")
 	}
 	spec := expr.Spec
 	if spec.Ref.L != "" {
@@ -2850,11 +2858,11 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 		}
 		// Rows type does not support interval range.
 		if boundClause.Unit != nil {
-			return nil, ErrWindowRowsIntervalUse.GenWithStackByArgs(spec.Name)
+			return nil, ErrWindowRowsIntervalUse.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
 		numRows, isNull, isExpectedType := getUintFromNode(b.ctx, boundClause.Expr)
 		if isNull || !isExpectedType {
-			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
 		bound.Num = numRows
 		return bound, nil
@@ -2872,36 +2880,42 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 	}
 
 	if len(orderByItems) != 1 {
-		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
+		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
 	col := orderByItems[0].Col
 	isNumeric, isTemporal := types.IsTypeNumeric(col.RetType.Tp), types.IsTypeTemporal(col.RetType.Tp)
 	if !isNumeric && !isTemporal {
-		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
+		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
 	// Interval bounds only support order by temporal types.
 	if boundClause.Unit != nil && isNumeric {
-		return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(spec.Name)
+		return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
 	// Non-interval bound only support order by numeric types.
 	if boundClause.Unit == nil && !isNumeric {
-		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
+		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
 
 	// TODO: We also need to raise error for non-deterministic expressions, like rand().
 	val, err := evalAstExpr(b.ctx, boundClause.Expr)
 	if err != nil {
-		return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(spec.Name)
+		return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
 	expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
 
-	// Do not raise warnings for truncate.
-	oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate
-	b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
-	uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
-	b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = oriIgnoreTruncate
-	if uVal < 0 || isNull || err != nil {
-		return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+	checker := &paramMarkerInPrepareChecker{}
+	boundClause.Expr.Accept(checker)
+
+	// If it has paramMarker and is in prepare stmt. We don't need to eval it since its value is not decided yet.
+	if !checker.inPrepareStmt {
+		// Do not raise warnings for truncate.
+		oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+		uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
+		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = oriIgnoreTruncate
+		if uVal < 0 || isNull || err != nil {
+			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+		}
 	}
 
 	desc := orderByItems[0].Desc
@@ -2939,6 +2953,26 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 	return bound, nil
 }
 
+// paramMarkerInPrepareChecker checks whether the given ast tree has paramMarker and is in prepare statement.
+type paramMarkerInPrepareChecker struct {
+	inPrepareStmt bool
+}
+
+// Enter implements Visitor Interface.
+func (pc *paramMarkerInPrepareChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch v := in.(type) {
+	case *driver.ParamMarkerExpr:
+		pc.inPrepareStmt = !v.InExecute
+		return v, true
+	}
+	return in, false
+}
+
+// Leave implements Visitor Interface.
+func (pc *paramMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
 // buildWindowFunctionFrame builds the window function frames.
 // See https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
 func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItems []property.Item) (*WindowFrame, error) {
@@ -2952,7 +2986,7 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 	frame := &WindowFrame{Type: frameClause.Type}
 	start := frameClause.Extent.Start
 	if start.Type == ast.Following && start.UnBounded {
-		return nil, ErrWindowFrameStartIllegal.GenWithStackByArgs(spec.Name)
+		return nil, ErrWindowFrameStartIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
 	var err error
 	frame.Start, err = b.buildWindowFunctionFrameBound(spec, orderByItems, &start)
@@ -2962,7 +2996,7 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 
 	end := frameClause.Extent.End
 	if end.Type == ast.Preceding && end.UnBounded {
-		return nil, ErrWindowFrameEndIllegal.GenWithStackByArgs(spec.Name)
+		return nil, ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
 	frame.End, err = b.buildWindowFunctionFrameBound(spec, orderByItems, &end)
 	return frame, err
@@ -2990,7 +3024,7 @@ func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExp
 	}
 	// For functions that operate on the entire partition, the frame clause will be ignored.
 	if !needFrame && expr.Spec.Frame != nil {
-		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(expr.F, expr.Spec.Name.O))
+		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(expr.F, getWindowName(expr.Spec.Name.O)))
 		expr.Spec.Frame = nil
 	}
 	frame, err := b.buildWindowFunctionFrame(&expr.Spec, orderBy)
@@ -3049,7 +3083,7 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 	}
 	if ref.OrderBy != nil {
 		if spec.OrderBy != nil {
-			return ErrWindowNoRedefineOrderBy.GenWithStackByArgs(spec.Name.O, ref.Name.O)
+			return ErrWindowNoRedefineOrderBy.GenWithStackByArgs(getWindowName(spec.Name.O), ref.Name.O)
 		}
 		spec.OrderBy = ref.OrderBy
 	}

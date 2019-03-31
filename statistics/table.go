@@ -355,7 +355,7 @@ func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.
 	return c.greaterRowCount(value) * c.getIncreaseFactor(t.Count)
 }
 
-// ColumnLessRowCount estimates the row count where the column less than value.
+// ColumnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
 func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
@@ -370,7 +370,11 @@ func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.D
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoBetweenRate
 	}
-	return c.betweenRowCount(a, b) * c.getIncreaseFactor(t.Count)
+	count := c.betweenRowCount(a, b)
+	if a.IsNull() {
+		count += float64(c.NullCount)
+	}
+	return count * c.getIncreaseFactor(t.Count)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -509,13 +513,27 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 	return newColl
 }
 
+// isSingleColIdxNullRange checks if a range is [NULL, NULL] on a single-column index.
+func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
+	if len(idx.Info.Columns) > 1 {
+		return false
+	}
+	l, h := ran.LowVal[0], ran.HighVal[0]
+	if l.IsNull() && h.IsNull() {
+		return true
+	}
+	return false
+}
+
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		rangePosition := getOrdinalOfRangeCond(sc, ran)
-		// first one is range, just use the previous way to estimate
-		if rangePosition == 0 {
+		// If first one is range, just use the previous way to estimate; if it is [NULL, NULL] range
+		// on single-column index, use previous way as well, because CMSketch does not contain null
+		// values in this case.
+		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
 			count, err := idx.getRowCount(sc, []*ranger.Range{ran}, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)

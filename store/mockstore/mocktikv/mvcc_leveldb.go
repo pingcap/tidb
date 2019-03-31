@@ -355,7 +355,7 @@ func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
-	var pairs []Pair
+	pairs := make([]Pair, 0, len(ks))
 	for _, k := range ks {
 		v, err := mvcc.getValue(k, startTS, isoLevel)
 		if v == nil && err == nil {
@@ -959,7 +959,7 @@ func (mvcc *MVCCLevelDB) RawBatchGet(keys [][]byte) [][]byte {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
-	var values [][]byte
+	values := make([][]byte, 0, len(keys))
 	for _, key := range keys {
 		value, err := mvcc.db.Get(key, nil)
 		terror.Log(err)

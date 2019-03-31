@@ -1828,11 +1828,11 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 
 		{"\"2011-11-11\"", "\"abc1000\"", "MICROSECOND", "<nil>", "<nil>"},
 		{"\"20111111 10:10:10\"", "\"1\"", "DAY", "<nil>", "<nil>"},
-		{"\"2011-11-11\"", "\"10\"", "SECOND_MICROSECOND", "<nil>", "<nil>"},
-		{"\"2011-11-11\"", "\"10.0000\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
-		{"\"2011-11-11\"", "\"10:10:10\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
+		{"\"2011-11-11\"", "\"10\"", "SECOND_MICROSECOND", "2011-11-11 00:00:00.100000", "2011-11-10 23:59:59.900000"},
+		{"\"2011-11-11\"", "\"10.0000\"", "MINUTE_MICROSECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50"},
+		{"\"2011-11-11\"", "\"10:10:10\"", "MINUTE_MICROSECOND", "2011-11-11 00:10:10.100000", "2011-11-10 23:49:49.900000"},
 
-		{"cast(\"2011-11-11\" as datetime)", "\"10:10:10\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
+		{"cast(\"2011-11-11\" as datetime)", "\"10:10:10\"", "MINUTE_MICROSECOND", "2011-11-11 00:10:10.100000", "2011-11-10 23:49:49.900000"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "1", "DAY", "2011-11-12 00:00:00", "2011-11-10 00:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "10", "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "10", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
@@ -1843,7 +1843,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "\"10\"", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "\"10\"", "SECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50"},
 
-		{"cast(\"2011-11-11\" as date)", "\"10:10:10\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
+		{"cast(\"2011-11-11\" as date)", "\"10:10:10\"", "MINUTE_MICROSECOND", "2011-11-11 00:10:10.100000", "2011-11-10 23:49:49.900000"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "1", "DAY", "2011-11-12", "2011-11-10"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "10", "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "10", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
@@ -4134,4 +4134,16 @@ func (s *testIntegrationSuite) TestIssue9710(c *C) {
 		c.Assert(rs.Rows()[0][2], Equals, rs.Rows()[0][3]) // unix_timestamp() will truncate the result
 		break
 	}
+}
+
+// for issue #9770
+func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime(6), b timestamp)")
+	tk.MustExec("insert t values (20010101100000.123456, 20110707101112.123456)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2001-01-01 10:00:00.123456 2011-07-07 10:11:12"))
 }
