@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -61,6 +62,20 @@ const (
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
 	CmdSplitRegion
+
+	CmdDebugGet CmdType = 2048 + iota
+	CmdDebugRaftLog
+	CmdDebugRegionInfo
+	CmdDebugRegionSize
+	CmdDebugScanMvcc
+	CmdDebugCompact
+	CmdDebugInjectFailPoint
+	CmdDebugRecoverFailPoint
+	CmdDebugListFailPoints
+	CmdDebugGetMetrics
+	CmdDebugCheckRegionConsistency
+	CmdDebugModifyTikvConfig
+	CmdDebugGetRegionProperties
 )
 
 func (t CmdType) String() string {
@@ -115,6 +130,32 @@ func (t CmdType) String() string {
 		return "MvccGetByStartTS"
 	case CmdSplitRegion:
 		return "SplitRegion"
+	case CmdDebugGet:
+		return "DebugGet"
+	case CmdDebugRaftLog:
+		return "DebugRaftLog"
+	case CmdDebugRegionInfo:
+		return "DebugRegionInfo"
+	case CmdDebugRegionSize:
+		return "DebugRegionSize"
+	case CmdDebugScanMvcc:
+		return "DebugScanMvcc"
+	case CmdDebugCompact:
+		return "DebugCompact"
+	case CmdDebugInjectFailPoint:
+		return "DebugInjectFailPoint"
+	case CmdDebugRecoverFailPoint:
+		return "DebugRecoverFailPoint"
+	case CmdDebugListFailPoints:
+		return "DebugListFailPoints"
+	case CmdDebugGetMetrics:
+		return "DebugGetMetics"
+	case CmdDebugCheckRegionConsistency:
+		return "DebugCheckRegionConsistency"
+	case CmdDebugModifyTikvConfig:
+		return "DebugModifyTikvConfig"
+	case CmdDebugGetRegionProperties:
+		return "DebugGetRegionProperties"
 	}
 	return "Unknown"
 }
@@ -147,6 +188,20 @@ type Request struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyRequest
 	MvccGetByStartTs   *kvrpcpb.MvccGetByStartTsRequest
 	SplitRegion        *kvrpcpb.SplitRegionRequest
+
+	DebugGet                    *debugpb.GetRequest
+	DebugRaftLog                *debugpb.RaftLogRequest
+	DebugRegionInfo             *debugpb.RegionInfoRequest
+	DebugRegionSize             *debugpb.RegionSizeRequest
+	DebugScanMvcc               *debugpb.ScanMvccRequest
+	DebugCompact                *debugpb.CompactRequest
+	DebugInjectFailPoint        *debugpb.InjectFailPointRequest
+	DebugRecoverFailPoint       *debugpb.RecoverFailPointRequest
+	DebugListFailPoints         *debugpb.ListFailPointsRequest
+	DebugGetMetrics             *debugpb.GetMetricsRequest
+	DebugCheckRegionConsistency *debugpb.RegionConsistencyCheckRequest
+	DebugModifyTikvConfig       *debugpb.ModifyTikvConfigRequest
+	DebugGetRegionProperties    *debugpb.GetRegionPropertiesRequest
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -196,6 +251,20 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 	return nil
 }
 
+// IsDebugReq check whether the req is debug req.
+func (req *Request) IsDebugReq() bool {
+	switch req.Type {
+	case CmdDebugGet, CmdDebugRaftLog, CmdDebugRegionInfo,
+		CmdDebugRegionSize, CmdDebugScanMvcc, CmdDebugCompact,
+		CmdDebugInjectFailPoint, CmdDebugRecoverFailPoint,
+		CmdDebugListFailPoints, CmdDebugGetMetrics,
+		CmdDebugCheckRegionConsistency, CmdDebugModifyTikvConfig,
+		CmdDebugGetRegionProperties:
+		return true
+	}
+	return false
+}
+
 // Response wraps all kv/coprocessor responses.
 type Response struct {
 	Type               CmdType
@@ -224,6 +293,20 @@ type Response struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS   *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion        *kvrpcpb.SplitRegionResponse
+
+	DebugGet                    *debugpb.GetResponse
+	DebugRaftLog                *debugpb.RaftLogResponse
+	DebugRegionInfo             *debugpb.RegionInfoResponse
+	DebugRegionSize             *debugpb.RegionSizeResponse
+	DebugScanMvcc               debugpb.Debug_ScanMvccClient
+	DebugCompact                *debugpb.CompactResponse
+	DebugInjectFailPoint        *debugpb.InjectFailPointResponse
+	DebugRecoverFailPoint       *debugpb.RecoverFailPointResponse
+	DebugListFailPoints         *debugpb.ListFailPointsResponse
+	DebugGetMetrics             *debugpb.GetMetricsResponse
+	DebugCheckRegionConsistency *debugpb.RegionConsistencyCheckResponse
+	DebugModifyTikvConfig       *debugpb.ModifyTikvConfigResponse
+	DebugGetRegionProperties    *debugpb.GetRegionPropertiesResponse
 }
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
@@ -583,6 +666,47 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.MvccGetByStartTS, err = client.MvccGetByStartTs(ctx, req.MvccGetByStartTs)
 	case CmdSplitRegion:
 		resp.SplitRegion, err = client.SplitRegion(ctx, req.SplitRegion)
+	default:
+		return nil, errors.Errorf("invalid request type: %v", req.Type)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return resp, nil
+}
+
+// CallDebugRPC launches a debug rpc call.
+func CallDebugRPC(ctx context.Context, client debugpb.DebugClient, req *Request) (*Response, error) {
+	resp := &Response{}
+	resp.Type = req.Type
+	var err error
+	switch req.Type {
+	case CmdDebugGet:
+		resp.DebugGet, err = client.Get(ctx, req.DebugGet)
+	case CmdDebugRaftLog:
+		resp.DebugRaftLog, err = client.RaftLog(ctx, req.DebugRaftLog)
+	case CmdDebugRegionInfo:
+		resp.DebugRegionInfo, err = client.RegionInfo(ctx, req.DebugRegionInfo)
+	case CmdDebugRegionSize:
+		resp.DebugRegionSize, err = client.RegionSize(ctx, req.DebugRegionSize)
+	case CmdDebugScanMvcc:
+		resp.DebugScanMvcc, err = client.ScanMvcc(ctx, req.DebugScanMvcc)
+	case CmdDebugCompact:
+		resp.DebugCompact, err = client.Compact(ctx, req.DebugCompact)
+	case CmdDebugInjectFailPoint:
+		resp.DebugInjectFailPoint, err = client.InjectFailPoint(ctx, req.DebugInjectFailPoint)
+	case CmdDebugRecoverFailPoint:
+		resp.DebugRecoverFailPoint, err = client.RecoverFailPoint(ctx, req.DebugRecoverFailPoint)
+	case CmdDebugListFailPoints:
+		resp.DebugListFailPoints, err = client.ListFailPoints(ctx, req.DebugListFailPoints)
+	case CmdDebugGetMetrics:
+		resp.DebugGetMetrics, err = client.GetMetrics(ctx, req.DebugGetMetrics)
+	case CmdDebugCheckRegionConsistency:
+		resp.DebugCheckRegionConsistency, err = client.CheckRegionConsistency(ctx, req.DebugCheckRegionConsistency)
+	case CmdDebugModifyTikvConfig:
+		resp.DebugModifyTikvConfig, err = client.ModifyTikvConfig(ctx, req.DebugModifyTikvConfig)
+	case CmdDebugGetRegionProperties:
+		resp.DebugGetRegionProperties, err = client.GetRegionProperties(ctx, req.DebugGetRegionProperties)
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}

@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/debugpb"
+
 	"github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
@@ -577,6 +579,17 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			return sendBatchRequest(ctx, addr, connArray, batchReq, timeout)
 		}
+	}
+
+	if req.IsDebugReq() {
+		client := debugpb.NewDebugClient(connArray.Get())
+		ctx1, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		resp, err := tikvrpc.CallDebugRPC(ctx1, client, req)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return resp, nil
 	}
 
 	client := tikvpb.NewTikvClient(connArray.Get())
