@@ -62,6 +62,9 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"170102036", "2017-01-02 03:06:00"},
 		{"170102039.", "2017-01-02 03:09:00"},
 		{"170102037.11", "2017-01-02 03:07:11.00"},
+		{"2018-01-01 18", "2018-01-01 18:00:00"},
+		{"2018/01/01-00:00:00", "2018-01-01 00:00:00"},
+		{"2018.01.01 00:00:00", "2018-01-01 00:00:00"},
 	}
 
 	for _, test := range table {
@@ -83,6 +86,9 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"2017-01-05 23:59:59.575601", 0, "2017-01-06 00:00:00"},
 		{"2017-01-31 23:59:59.575601", 0, "2017-02-01 00:00:00"},
 		{"2017-00-05 23:59:58.575601", 3, "2017-00-05 23:59:58.576"},
+		{"2017.00.05 23:59:58.575601", 3, "2017-00-05 23:59:58.576"},
+		{"2017/00/05 23:59:58.575601", 3, "2017-00-05 23:59:58.576"},
+		{"2017/00/05-23:59:58.575601", 3, "2017-00-05 23:59:58.576"},
 	}
 
 	for _, test := range fspTbl {
@@ -103,6 +109,8 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		"1000-09-31 00:00:00",
 		"1001-02-29 00:00:00",
 		"20170118.999",
+		"2018-01",
+		"2018.01",
 	}
 
 	for _, test := range errTable {
@@ -152,6 +160,8 @@ func (s *testTimeSuite) TestDate(c *C) {
 		{"2015-06-01 12:12:12", "2015-06-01"},
 		{"0001-01-01 00:00:00", "0001-01-01"},
 		{"0001-01-01", "0001-01-01"},
+		{"2019.01.01", "2019-01-01"},
+		{"2019/01/01", "2019-01-01"},
 	}
 
 	for _, test := range table {
@@ -162,6 +172,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 
 	errTable := []string{
 		"0121231",
+		"2019.01",
 	}
 
 	for _, test := range errTable {
@@ -1306,4 +1317,19 @@ func (s *testTimeSuite) TestGetFormatType(c *C) {
 	isDuration, isDate = types.GetFormatType(input)
 	c.Assert(isDuration, Equals, true)
 	c.Assert(isDate, Equals, false)
+}
+
+func (s *testTimeSuite) TestgetFracIndex(c *C) {
+	testCases := []struct {
+		str         string
+		expectIndex int
+	}{
+		{"2019.01.01 00:00:00", -1},
+		{"2019.01.01 00:00:00.1", 19},
+		{"12345.6", 5},
+	}
+	for _, testCase := range testCases {
+		index := types.GetFracIndex(testCase.str)
+		c.Assert(index, Equals, testCase.expectIndex)
+	}
 }
