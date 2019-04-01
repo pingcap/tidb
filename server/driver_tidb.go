@@ -16,7 +16,6 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/net/context"
+	"sync/atomic"
 )
 
 // TiDBDriver implements IDriver.
@@ -336,7 +336,7 @@ type tidbResultSet struct {
 	recordSet sqlexec.RecordSet
 	columns   []*ColumnInfo
 	rows      []chunk.Row
-	closed    bool
+	closed    int32
 }
 
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
@@ -359,10 +359,9 @@ func (trs *tidbResultSet) GetFetchedRows() []chunk.Row {
 }
 
 func (trs *tidbResultSet) Close() error {
-	if trs.closed {
+	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
 		return nil
 	}
-	trs.closed = true
 	return trs.recordSet.Close()
 }
 
