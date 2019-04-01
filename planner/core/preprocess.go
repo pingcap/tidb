@@ -434,8 +434,7 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]inter
 }
 
 func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
-	isPrimary := 0
-	isGenerated := 0
+	isPrimary, isGenerated := 0, 0
 
 	for _, op := range ops {
 		switch op.Tp {
