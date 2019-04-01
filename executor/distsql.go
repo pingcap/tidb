@@ -233,6 +233,8 @@ type IndexReaderExecutor struct {
 	idxCols        []*expression.Column
 	colLens        []int
 	plans          []plannercore.PhysicalPlan
+
+	selectResultHook // for testing
 }
 
 // Close clears all resources hold by current object.
@@ -294,7 +296,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+//<<<<<<< HEAD
+//	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+//=======
+	e.result, err = e.SelectResult(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+//>>>>>>> 435a08140... executor: control Chunk size for TableReader&IndexReader&IndexLookup (#9452)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -328,6 +334,9 @@ type IndexLookUpExecutor struct {
 	tblWorkerWg sync.WaitGroup
 	finished    chan struct{}
 
+	kvRanges      []kv.KeyRange
+	workerStarted bool
+
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 	feedback   *statistics.QueryFeedback
@@ -356,19 +365,23 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
+//<<<<<<< HEAD
+//	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
+//=======
+	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
+//>>>>>>> 435a08140... executor: control Chunk size for TableReader&IndexReader&IndexLookup (#9452)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	err = e.open(ctx, kvRanges)
+	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
 	return errors.Trace(err)
 }
 
-func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
+func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 	// We have to initialize "memTracker" and other execution resources in here
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
@@ -393,20 +406,32 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			return errors.Trace(err)
 		}
 	}
+	return nil
+}
 
+func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	err = e.startIndexWorker(ctx, kvRanges, workCh)
-	if err != nil {
+	if err := e.startIndexWorker(ctx, e.kvRanges, workCh, initBatchSize); err != nil {
 		return errors.Trace(err)
 	}
 	e.startTableWorker(ctx, workCh)
+	e.workerStarted = true
 	return nil
 }
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
-func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask) error {
+//<<<<<<< HEAD
+//func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask) error {
+//=======
+func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
+	}
+
+//>>>>>>> 435a08140... executor: control Chunk size for TableReader&IndexReader&IndexLookup (#9452)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -425,11 +450,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	result.Fetch(ctx)
 	worker := &indexWorker{
+		idxLookup:    e,
 		workCh:       workCh,
 		finished:     e.finished,
 		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrder,
-		batchSize:    e.maxChunkSize,
+		batchSize:    initBatchSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
 	}
@@ -503,7 +529,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	if e.finished == nil {
+	if !e.workerStarted || e.finished == nil {
 		return nil
 	}
 
@@ -515,6 +541,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.idxWorkerWg.Wait()
 	e.tblWorkerWg.Wait()
 	e.finished = nil
+	e.workerStarted = false
 	e.memTracker.Detach()
 	e.memTracker = nil
 	return nil
@@ -526,7 +553,16 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
-	chk.Reset()
+//<<<<<<< HEAD
+//	chk.Reset()
+//=======
+	if !e.workerStarted {
+		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	req.Reset()
+//>>>>>>> 435a08140... executor: control Chunk size for TableReader&IndexReader&IndexLookup (#9452)
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
@@ -538,7 +574,11 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		for resultTask.cursor < len(resultTask.rows) {
 			chk.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-			if chk.NumRows() >= e.maxChunkSize {
+//<<<<<<< HEAD
+//			if chk.NumRows() >= e.maxChunkSize {
+//=======
+			if req.IsFull() {
+//>>>>>>> 435a08140... executor: control Chunk size for TableReader&IndexReader&IndexLookup (#9452)
 				return nil
 			}
 		}
@@ -567,6 +607,7 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
 type indexWorker struct {
+	idxLookup *IndexLookUpExecutor
 	workCh    chan<- *lookupTableTask
 	finished  <-chan struct{}
 	resultCh  chan<- *lookupTableTask
@@ -599,7 +640,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
 	for {
 		handles, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {
@@ -628,6 +669,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	handles = make([]int64, 0, w.batchSize)
 	for len(handles) < w.batchSize {
+		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, err
