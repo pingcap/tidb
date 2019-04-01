@@ -39,9 +39,21 @@ type Manifest struct {
 	License        string
 	BuildTime      string
 	SysVars        map[string]*variable.SysVar
-	Validate       func(ctx context.Context, manifest *Manifest) error
-	OnInit         func(ctx context.Context, manifest *Manifest) error
-	OnShutdown     func(ctx context.Context, manifest *Manifest) error
+	// Validate defines the validate logic for plugin.
+	// returns error will stop load plugin process and TiDB startup.
+	Validate func(ctx context.Context, manifest *Manifest) error
+	// OnInit defines the plugin init logic.
+	// it will be called after domain init.
+	// return error will stop load plugin process and TiDB startup.
+	OnInit func(ctx context.Context, manifest *Manifest) error
+	// OnShutDown defines the plugin cleanup logic.
+	// return error will write log and continue shutdown.
+	OnShutdown func(ctx context.Context, manifest *Manifest) error
+	// OnFlush defines flush logic after executed `flush tidb plugins`.
+	// it will be called after OnInit.
+	// return error will write log and continue watch following flush.
+	OnFlush      func(ctx context.Context, manifest *Manifest) error
+	flushWatcher *flushWatcher
 }
 
 // ExportManifest exports a manifest to TiDB as a known format.
@@ -49,12 +61,6 @@ type Manifest struct {
 func ExportManifest(m interface{}) *Manifest {
 	v := reflect.ValueOf(m)
 	return (*Manifest)(unsafe.Pointer(v.Pointer()))
-}
-
-// AuditManifest presents a sub-manifest that every audit plugin must provide.
-type AuditManifest struct {
-	Manifest
-	NotifyEvent func(ctx context.Context, sctx *variable.SessionVars) error
 }
 
 // AuthenticationManifest presents a sub-manifest that every audit plugin must provide.

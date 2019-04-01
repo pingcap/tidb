@@ -19,6 +19,7 @@ package expression
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -36,7 +37,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/text/transform"
 )
 
@@ -264,7 +266,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT is -1.", i)
+			logutil.Logger(context.Background()).Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
@@ -322,7 +324,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
-				log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT_WS is -1.", i)
+				logutil.Logger(context.Background()).Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
 			bf.tp.Flen += argType.Flen
 		}
@@ -922,9 +924,33 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
-	// TODO: issue #4436: The second parameter should be a constant.
-	// TODO: issue #4474: Charset supported by TiDB and MySQL is not the same.
-	// TODO: Fix #4436 && #4474, set the correct charset and flag of `bf.tp`.
+
+	charsetArg, ok := args[1].(*Constant)
+	if !ok {
+		// `args[1]` is limited by parser to be a constant string,
+		// should never go into here.
+		return nil, errIncorrectArgs.GenWithStackByArgs("charset")
+	}
+	transcodingName := charsetArg.Value.GetString()
+	bf.tp.Charset = strings.ToLower(transcodingName)
+	// Quoted about the behavior of syntax CONVERT(expr, type) to CHAR():
+	// In all cases, the string has the default collation for the character set.
+	// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
+	// Here in syntax CONVERT(expr USING transcoding_name), behavior is kept the same,
+	// picking the default collation of target charset.
+	var err error
+	bf.tp.Collate, err = charset.GetDefaultCollation(bf.tp.Charset)
+	if err != nil {
+		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
+	}
+	// Result will be a binary string if converts charset to BINARY.
+	// See https://dev.mysql.com/doc/refman/5.7/en/charset-binary-set.html
+	if types.IsBinaryStr(bf.tp) {
+		types.SetBinChsClnFlag(bf.tp)
+	} else {
+		bf.tp.Flag &= ^mysql.BinaryFlag
+	}
+
 	bf.tp.Flen = mysql.MaxBlobWidth
 	sig := &builtinConvertSig{bf}
 	return sig, nil
@@ -941,6 +967,7 @@ func (b *builtinConvertSig) Clone() builtinFunc {
 }
 
 // evalString evals CONVERT(expr USING transcoding_name).
+// Syntax CONVERT(expr, type) is parsed as cast expr so not handled here.
 // See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -948,14 +975,13 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, err
 	}
 
-	charsetName, isNull, err := b.args[1].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return "", true, err
-	}
-
-	encoding, _ := charset.Lookup(charsetName)
+	// Since charset is already validated and set from getFunction(), there's no
+	// need to get charset from args again.
+	encoding, _ := charset.Lookup(b.tp.Charset)
+	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
+	// return with error.
 	if encoding == nil {
-		return "", true, errUnknownCharacterSet.GenWithStackByArgs(charsetName)
+		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
 
 	target, _, err := transform.String(encoding.NewDecoder(), expr)
@@ -1770,7 +1796,7 @@ func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			log.Errorf("getFlen4LpadAndRpad with error: %v", err.Error())
+			logutil.Logger(context.Background()).Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
 		}
 		if isNull || err != nil || length > mysql.MaxBlobWidth {
 			return mysql.MaxBlobWidth
@@ -2150,7 +2176,10 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	oldStr := result
 	result, _, err = transform.String(encoding.NewDecoder(), result)
 	if err != nil {
-		log.Errorf("Convert %s to %s with error: %v", oldStr, charsetName, err.Error())
+		logutil.Logger(context.Background()).Warn("change charset of string",
+			zap.String("string", oldStr),
+			zap.String("charset", charsetName),
+			zap.Error(err))
 		return "", true, err
 	}
 	return result, false, nil
@@ -2969,8 +2998,64 @@ func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool
 	} else if d > formatMaxDecimals {
 		d = formatMaxDecimals
 	}
+	xStr = roundFormatArgs(xStr, int(d))
 	dStr := strconv.FormatInt(d, 10)
 	return xStr, dStr, false, nil
+}
+
+func roundFormatArgs(xStr string, maxNumDecimals int) string {
+	if !strings.Contains(xStr, ".") {
+		return xStr
+	}
+
+	sign := false
+	// xStr cannot have '+' prefix now.
+	// It is built in `evalNumDecArgsFormat` after evaluating `Evalxxx` method.
+	if strings.HasPrefix(xStr, "-") {
+		xStr = strings.Trim(xStr, "-")
+		sign = true
+	}
+
+	xArr := strings.Split(xStr, ".")
+	integerPart := xArr[0]
+	decimalPart := xArr[1]
+
+	if len(decimalPart) > maxNumDecimals {
+		t := []byte(decimalPart)
+		carry := false
+		if t[maxNumDecimals] >= '5' {
+			carry = true
+		}
+		for i := maxNumDecimals - 1; i >= 0 && carry; i-- {
+			if t[i] == '9' {
+				t[i] = '0'
+			} else {
+				t[i] = t[i] + 1
+				carry = false
+			}
+		}
+		decimalPart = string(t)
+		t = []byte(integerPart)
+		for i := len(integerPart) - 1; i >= 0 && carry; i-- {
+			if t[i] == '9' {
+				t[i] = '0'
+			} else {
+				t[i] = t[i] + 1
+				carry = false
+			}
+		}
+		if carry {
+			integerPart = "1" + string(t)
+		} else {
+			integerPart = string(t)
+		}
+	}
+
+	xStr = integerPart + "." + decimalPart
+	if sign {
+		xStr = "-" + xStr
+	}
+	return xStr
 }
 
 type builtinFormatWithLocaleSig struct {

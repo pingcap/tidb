@@ -44,11 +44,10 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level:  logLevel,
-		Format: "highlight",
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, "highlight", "", logutil.EmptyFileLogConfig, false))
+	testleak.BeforeTest()
 	TestingT(t)
+	testleak.AfterTestT(t)()
 }
 
 var _ = Suite(&testFailDBSuite{})
@@ -64,7 +63,6 @@ type testFailDBSuite struct {
 }
 
 func (s *testFailDBSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -90,7 +88,6 @@ func (s *testFailDBSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
@@ -245,7 +242,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	c.Assert(ok, IsTrue)
 
 	// make reload failed.
-	s.dom.MockReloadFailed.SetValue(true)
+	gofail.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`)
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
 	for i := 0; i < 50; i++ {
@@ -259,7 +256,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	_, err := tk.Exec("insert into t values(1)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[domain:1]Information schema is out of date.")
-	s.dom.MockReloadFailed.SetValue(false)
+	gofail.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed")
 	// wait the schemaValidator is started.
 	for i := 0; i < 50; i++ {
 		if s.dom.SchemaValidator.IsStarted() {

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 )
 
+// testIsolationSuite represents test isolation suite.
 // The test suite takes too long under the race detector.
 type testIsolationSuite struct {
 	OneByOneSuite

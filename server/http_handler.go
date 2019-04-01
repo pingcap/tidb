@@ -51,7 +51,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -94,12 +96,12 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 func writeData(w http.ResponseWriter, data interface{}) {
-	js, err := json.Marshal(data)
+	js, err := json.MarshalIndent(data, "", " ")
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	log.Info(string(js))
+	logutil.Logger(context.Background()).Info(string(js))
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
@@ -146,9 +148,14 @@ func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 		},
 	}
 	kvResp, err := t.store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
-	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
-
 	if err != nil {
+		logutil.Logger(context.Background()).Info("get MVCC by encoded key failed",
+			zap.Binary("encodeKey", encodedKey),
+			zap.Reflect("region", keyLocation.Region),
+			zap.Binary("startKey", keyLocation.StartKey),
+			zap.Binary("endKey", keyLocation.EndKey),
+			zap.Reflect("kvResp", kvResp),
+			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return kvResp.MvccGetByKey, nil
@@ -164,7 +171,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	for {
 		curRegion, err := t.regionCache.LocateKey(bo, startKey)
 		if err != nil {
-			log.Error(startTS, startKey, err)
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS), zap.Binary("startKey", startKey), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 
@@ -176,19 +183,39 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
-		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
 		if err != nil {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		data := kvResp.MvccGetByStartTS
 		if err := data.GetRegionError(); err != nil {
-			log.Warn(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			logutil.Logger(context.Background()).Warn("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.Stringer("error", err))
 			continue
 		}
 
 		if len(data.GetError()) > 0 {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), data.GetError())
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", data.GetError()))
 			return nil, errors.New(data.GetError())
 		}
 
@@ -378,7 +405,7 @@ func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, er
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			log.Error(err)
+			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
 		}
 	}()
 	var regionResp storeHotRegionInfos
@@ -405,7 +432,7 @@ func (t *tikvHandlerTool) fetchRegionTableIndex(metrics map[uint64]regionMetric)
 	for regionID, regionMetric := range metrics {
 		region, err := t.regionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
 		if err != nil {
-			log.Error(err)
+			logutil.Logger(context.Background()).Error("locate region failed", zap.Error(err))
 			continue
 		}
 
@@ -695,12 +722,19 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if levelStr := req.Form.Get("log_level"); levelStr != "" {
+			err1 := logutil.SetLevel(levelStr)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+
 			l, err1 := log.ParseLevel(levelStr)
 			if err1 != nil {
 				writeError(w, err1)
 				return
 			}
 			log.SetLevel(l)
+
 			config.GetGlobalConfig().Log.Level = levelStr
 		}
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
@@ -724,7 +758,17 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				atomic.StoreUint32(&variable.DDLSlowOprThreshold, uint32(threshold))
 			}
 		}
-
+		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
+			switch checkMb4ValueInUtf8 {
+			case "0":
+				config.GetGlobalConfig().CheckMb4ValueInUTF8 = false
+			case "1":
+				config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
@@ -1536,7 +1580,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
-	var allVersions []domain.ServerVersionInfo
+	allVersions := make([]domain.ServerVersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
 		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
 			continue

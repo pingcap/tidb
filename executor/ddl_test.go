@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite3) TestTruncateTable(c *C) {
@@ -178,6 +179,13 @@ func (s *testSuite3) TestCreateView(c *C) {
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
+	//view with or_replace flag
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create view v1 (c,d) as select a,b from t1")
+	tk.MustExec("create or replace view v1 (c,d) as select a,b from t1 ")
+	tk.MustExec("create table if not exists t1 (a int ,b int)")
+	_, err = tk.Exec("create or replace view t1 as select * from t1")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error())
 }
 
 func (s *testSuite3) TestCreateDropDatabase(c *C) {
@@ -254,6 +262,10 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	r.Close()
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
+	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
+	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
+	tk.MustExec("drop view alter_view")
 }
 
 func (s *testSuite3) TestAddNotNullColumnNoDefault(c *C) {
@@ -296,8 +308,12 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("alter table mc modify column c2 text")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text CHARSET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
+	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
+	_, err = tk.Exec("alter table alter_view modify column c2 text")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
+	tk.MustExec("drop view alter_view")
 }
 
 func (s *testSuite3) TestDefaultDBAfterDropCurDB(c *C) {
@@ -577,4 +593,180 @@ func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("1000"))
+}
+
+func (s *testSuite3) TestIllegalFunctionCall4GeneratedColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t1 (b double generated always as (rand()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	_, err = tk.Exec("create table t1 (a varchar(64), b varchar(1024) generated always as (load_file(a)) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime generated always as (curdate()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime generated always as (current_time()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime generated always as (current_timestamp()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime, b varchar(10) generated always as (localtime()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	_, err = tk.Exec("create table t1 (a varchar(1024) generated always as (uuid()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a varchar(1024), b varchar(1024) generated always as (is_free_lock(a)) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
+
+	_, err = tk.Exec("alter table t1 add column d varchar(1024) generated always as (database());")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
+
+	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (connection_id());")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error())
+
+	_, err = tk.Exec("alter table t1 change column c cc bigint generated always as (connection_id());")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("cc").Error())
+}
+
+func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("b").Error())
+
+	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
+
+	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
+
+	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("drop table t1;")
+}
+
+func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(variable.DefTiDBDDLErrorCountLimit))
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = -1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '-1'"))
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(0))
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", uint64(math.MaxInt64)+1))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '%d'", uint64(math.MaxInt64)+1)))
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(math.MaxInt64))
+	_, err = tk.Exec("set @@global.tidb_ddl_error_count_limit = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(100))
+	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
+	res.Check(testkit.Rows("100"))
+}
+
+// Test issue #9205, fix the precision problem for time type default values
+// See https://github.com/pingcap/tidb/issues/9205 for details
+func (s *testSuite3) TestIssue9205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(c time DEFAULT '12:12:12.8');`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`alter table t add column c1 time default '12:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t alter column c1 set default '2019-02-01 12:12:10.4';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:10'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t modify c1 time DEFAULT '770:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '770:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+}
+
+func (s *testSuite3) TestCheckDefaultFsp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+
+	_, err := tk.Exec("create table t (  tt timestamp default now(1));")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("create table t (  tt timestamp(1) default current_timestamp);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("create table t (  tt timestamp(1) default now(2));")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	tk.MustExec("create table t (  tt timestamp(1) default now(1));")
+	tk.MustExec("create table t2 (  tt timestamp default current_timestamp());")
+	tk.MustExec("create table t3 (  tt timestamp default current_timestamp(0));")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp default now(2);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp(5) default current_timestamp;")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t add column ttt timestamp(5) default now(2);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+
+	_, err = tk.Exec("alter table t modify column tt timestamp(1) default now();")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("alter table t modify column tt timestamp(4) default now(5);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+
+	_, err = tk.Exec("alter table t change column tt tttt timestamp(4) default now(5);")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
+
+	_, err = tk.Exec("alter table t change column tt tttt timestamp(1) default now();")
+	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
 }

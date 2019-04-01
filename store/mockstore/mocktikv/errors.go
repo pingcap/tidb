@@ -26,7 +26,17 @@ type ErrLocked struct {
 
 // Error formats the lock to a string.
 func (e *ErrLocked) Error() string {
-	return fmt.Sprintf("key is locked, key: %q, primary: %q, startTS: %v", e.Key, e.Primary, e.StartTS)
+	return fmt.Sprintf("key is locked, key: %q, primary: %q, txnStartTS: %v", e.Key, e.Primary, e.StartTS)
+}
+
+// ErrKeyAlreadyExist is returned when key exists but this key has a constraint that
+// it should not exist. Client should return duplicated entry error.
+type ErrKeyAlreadyExist struct {
+	Key []byte
+}
+
+func (e *ErrKeyAlreadyExist) Error() string {
+	return fmt.Sprintf("key already exist, key: %q", e.Key)
 }
 
 // ErrRetryable suggests that client may restart the txn. e.g. write conflict.
@@ -48,5 +58,5 @@ func (e ErrAbort) Error() string {
 type ErrAlreadyCommitted uint64
 
 func (e ErrAlreadyCommitted) Error() string {
-	return fmt.Sprint("txn already committed")
+	return "txn already committed"
 }

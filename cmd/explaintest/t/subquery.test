@@ -1,0 +1,11 @@
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bigint);
+create table t2(a bigint, b bigint);
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
+
+drop table if exists t;
+create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
+insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
+analyze table t;
+explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;

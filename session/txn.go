@@ -16,8 +16,8 @@ package session
 import (
 	"context"
 	"fmt"
-	"runtime/debug"
 	"strings"
+	"sync/atomic"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -28,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	binlog "github.com/pingcap/tipb/go-binlog"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-binlog"
+	"go.uber.org/zap"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
@@ -89,12 +90,15 @@ func (st *TxnState) GoString() string {
 		s.WriteString("state=pending")
 	} else if st.Valid() {
 		s.WriteString("state=valid")
-		fmt.Fprintf(&s, ", startTS=%d", st.Transaction.StartTS())
+		fmt.Fprintf(&s, ", txnStartTS=%d", st.Transaction.StartTS())
 		if len(st.dirtyTableOP) > 0 {
-			fmt.Fprintf(&s, ", len(dirtyTable)=%d", len(st.dirtyTableOP))
+			fmt.Fprintf(&s, ", len(dirtyTable)=%d, %#v", len(st.dirtyTableOP), st.dirtyTableOP)
 		}
 		if len(st.mutations) > 0 {
-			fmt.Fprintf(&s, ", len(mutations)=%d", len(st.mutations))
+			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(st.mutations), st.mutations)
+		}
+		if st.buf != nil && st.buf.Len() != 0 {
+			fmt.Fprintf(&s, ", buf.length: %d, buf.size: %d", st.buf.Len(), st.buf.Size())
 		}
 	} else {
 		s.WriteString("state=invalid")
@@ -146,21 +150,28 @@ type dirtyTableOperation struct {
 	row    []types.Datum
 }
 
+var hasMockAutoIDRetry = int64(0)
+
+func enableMockAutoIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIDRetry, 1)
+}
+
+func mockAutoIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIDRetry) == 1
+}
+
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
-		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
-			st,
-			st.mutations,
-			st.dirtyTableOP,
-			st.buf,
-			debug.Stack())
+		logutil.Logger(context.Background()).Error("the code should never run here",
+			zap.String("TxnState", st.GoString()),
+			zap.Stack("something must be wrong"))
 		return errors.New("invalid transaction")
 	}
 	if st.doNotCommit != nil {
 		if err1 := st.Transaction.Rollback(); err1 != nil {
-			log.Error(err1)
+			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
 		}
 		return errors.Trace(st.doNotCommit)
 	}
@@ -168,6 +179,13 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	// mockCommitError8942 is used for PR #8942.
 	// gofail: var mockCommitError8942 bool
 	// if mockCommitError8942 {
+	//	return kv.ErrRetryable
+	// }
+
+	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
+	// gofail: var mockCommitRetryForAutoID bool
+	// if mockCommitRetryForAutoID && !mockAutoIDRetry() {
+	//	enableMockAutoIDRetry()
 	//	return kv.ErrRetryable
 	// }
 
@@ -202,6 +220,36 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 		return nil, kv.ErrNotExist
 	}
 	return val, nil
+}
+
+// BatchGet overrides the Transaction interface.
+func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]kv.Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := st.buf.Get(key)
+		if kv.IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
+	}
+	storageValues, err := st.Transaction.BatchGet(shrinkKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
 }
 
 // Set overrides the Transaction interface.
@@ -276,13 +324,14 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 }
 
 func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
+	dt := dirtyDB.GetDirtyTable(op.tid)
 	switch op.kind {
 	case table.DirtyTableAddRow:
-		dirtyDB.AddRow(op.tid, op.handle, op.row)
+		dt.AddRow(op.handle, op.row)
 	case table.DirtyTableDeleteRow:
-		dirtyDB.DeleteRow(op.tid, op.handle)
+		dt.DeleteRow(op.handle)
 	case table.DirtyTableTruncate:
-		dirtyDB.TruncateTable(op.tid)
+		dt.TruncateTable()
 	}
 }
 

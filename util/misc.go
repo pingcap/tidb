@@ -14,12 +14,16 @@
 package util
 
 import (
+	"context"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -29,6 +33,8 @@ const (
 	RetryInterval uint64 = 500
 	// GCTimeFormat is the format that gc_worker used to store times.
 	GCTimeFormat = "20060102-15:04:05 -0700"
+	// WriteConflictMarker is used when transaction writing is conflicted.
+	WriteConflictMarker = "[write conflict]"
 )
 
 // RunWithRetry will run the f with backoff and retry.
@@ -69,8 +75,9 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 			recoverFn(r)
 		}
 		if r != nil {
-			buf := GetStack()
-			log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
+			logutil.Logger(context.Background()).Error("panic in the recoverable goroutine",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
 		}
 	}()
 	exec()
@@ -94,4 +101,35 @@ func CompatibleParseGCTime(value string) (time.Time, error) {
 		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\"", value, GCTimeFormat)
 	}
 	return t, err
+}
+
+const (
+	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
+	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
+)
+
+// SyntaxError converts parser error to TiDB's syntax error.
+func SyntaxError(err error) error {
+	if err == nil {
+		return nil
+	}
+	logutil.Logger(context.Background()).Error("syntax error", zap.Error(err))
+
+	// If the error is already a terror with stack, pass it through.
+	if errors.HasStack(err) {
+		cause := errors.Cause(err)
+		if _, ok := cause.(*terror.Error); ok {
+			return err
+		}
+	}
+
+	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+}
+
+// SyntaxWarn converts parser warn to TiDB's syntax warn.
+func SyntaxWarn(err error) error {
+	if err == nil {
+		return nil
+	}
+	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }

@@ -162,6 +162,10 @@ type Column struct {
 	Index int
 
 	hashcode []byte
+
+	// InOperand indicates whether this column is the inner operand of column equal condition converted
+	// from `[not] in (subq)`.
+	InOperand bool
 }
 
 // Equal implements Expression interface.
@@ -231,18 +235,14 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 	if row.IsNull(col.Index) {
 		return "", true, nil
 	}
+
+	// Specially handle the ENUM/SET/BIT input value.
 	if col.GetType().Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
-		if val.IsNull() {
-			return "", true, nil
-		}
 		res, err := val.ToString()
-		resLen := len([]rune(res))
-		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
-			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
-		}
 		return res, err != nil, err
 	}
+
 	val := row.GetString(col.Index)
 	if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
 		valLen := len([]rune(val))

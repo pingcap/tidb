@@ -27,19 +27,18 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -626,6 +625,44 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.mustExec("delete from test")
 	})
 
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test OPTIONALLY
+	_, err = fp.WriteString(
+		`"a,b,c` + "\n" +
+			`"1",2,"3"` + "\n")
+	c.Assert(err, IsNil)
+
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("create table test (id INT NOT NULL PRIMARY KEY,  b INT,  c varchar(10))")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' IGNORE 1 LINES`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a int
+			b int
+			c sql.NullString
+		)
+		rows := dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		dbt.Check(b, Equals, 2)
+		dbt.Check(c.String, Equals, "3")
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		dbt.mustExec("delete from test")
+	})
+
 	// unsupport ClientLocalFiles capability
 	server.capability ^= tmysql.ClientLocalFiles
 	runTestsOnNewDB(c, func(config *mysql.Config) {
@@ -822,7 +859,7 @@ func runTestIssue3680(c *C) {
 	// is valid, call Ping."
 	err = db.Ping()
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: YES)")
+	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: NO)")
 }
 
 func runTestIssue3682(c *C) {
@@ -1014,7 +1051,7 @@ func waitUntilServerOnline(statusPort uint) {
 		}
 	}
 	if retry == retryTime {
-		log.Fatalf("Failed to connect db for %d retries in every 10 ms", retryTime)
+		log.Fatal("failed to connect DB in every 10 ms", zap.Int("retryTime", retryTime))
 	}
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
@@ -1028,6 +1065,6 @@ func waitUntilServerOnline(statusPort uint) {
 		time.Sleep(time.Millisecond * 10)
 	}
 	if retry == retryTime {
-		log.Fatalf("Failed to connect http status for %d retries in every 10 ms", retryTime)
+		log.Fatal("failed to connect HTTP status in every 10 ms", zap.Int("retryTime", retryTime))
 	}
 }

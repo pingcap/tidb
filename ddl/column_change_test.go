@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
@@ -42,7 +41,6 @@ type testColumnChangeSuite struct {
 }
 
 func (s *testColumnChangeSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	s.store = testCreateStore(c, "test_column_change")
 	s.dbInfo = &model.DBInfo{
@@ -58,7 +56,6 @@ func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 
 func (s *testColumnChangeSuite) TearDownSuite(c *C) {
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testColumnChangeSuite) TestColumnChange(c *C) {

@@ -32,8 +32,9 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // DDLExec represents a DDL executor.
@@ -60,7 +61,7 @@ func (e *DDLExec) toErr(err error) error {
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	txn, err1 := e.ctx.Txn(true)
 	if err1 != nil {
-		log.Error(err)
+		logutil.Logger(context.Background()).Error("active txn failed", zap.Error(err))
 		return errors.Trace(err1)
 	}
 	schemaInfoErr := checker.Check(txn.StartTS())
@@ -104,7 +105,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 		err = e.executeAlterTable(x)
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
-	case *ast.RestoreTableStmt:
+	case *ast.RecoverTableStmt:
 		err = e.executeRestoreTable(x)
 	}
 	if err != nil {
@@ -254,7 +255,10 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 		}
 
 		if config.CheckTableBeforeDrop {
-			log.Warnf("admin check table `%s`.`%s` before drop.", fullti.Schema.O, fullti.Name.O)
+			logutil.Logger(context.Background()).Warn("admin check table before drop",
+				zap.String("database", fullti.Schema.O),
+				zap.String("table", fullti.Name.O),
+			)
 			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 			if err != nil {
@@ -297,7 +301,7 @@ func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 // executeRestoreTable represents a recover table executor.
 // It is built from "restore table" statement,
 // is used to recover the table that deleted by mistake.
-func (e *DDLExec) executeRestoreTable(s *ast.RestoreTableStmt) error {
+func (e *DDLExec) executeRestoreTable(s *ast.RecoverTableStmt) error {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
@@ -328,7 +332,7 @@ func (e *DDLExec) executeRestoreTable(s *ast.RestoreTableStmt) error {
 	return errors.Trace(err)
 }
 
-func (e *DDLExec) getRestoreTableByJobID(s *ast.RestoreTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
+func (e *DDLExec) getRestoreTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
 	job, err := t.GetHistoryDDLJob(s.JobID)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -362,7 +366,7 @@ func (e *DDLExec) getRestoreTableByJobID(s *ast.RestoreTableStmt, t *meta.Meta, 
 	return job, table.Meta(), nil
 }
 
-func (e *DDLExec) getRestoreTableByTableName(s *ast.RestoreTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
+func (e *DDLExec) getRestoreTableByTableName(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
 	jobs, err := t.GetAllHistoryDDLJobs()
 	if err != nil {
 		return nil, nil, errors.Trace(err)

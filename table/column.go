@@ -18,7 +18,9 @@
 package table
 
 import (
+	"context"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -26,13 +28,16 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/timeutil"
+	"go.uber.org/zap"
 )
 
 // Column provides meta data describing a table column.
@@ -123,7 +128,8 @@ func truncateTrailingSpaces(v *types.Datum) {
 		length--
 	}
 	b = b[:length]
-	v.SetString(hack.String(b))
+	str := string(hack.String(b))
+	v.SetString(str)
 }
 
 // CastValues casts values based on columns type.
@@ -135,7 +141,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 		if err != nil {
 			if sc.DupKeyAsWarning {
 				sc.AppendWarning(err)
-				log.Warnf("cast values failed:%v", err)
+				logutil.Logger(context.Background()).Warn("CastValues failed", zap.Error(err))
 			} else {
 				return errors.Trace(err)
 			}
@@ -148,7 +154,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	err := ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-	log.Errorf("con:%d %v", ctx.GetSessionVars().ConnectionID, err)
+	logutil.Logger(context.Background()).Error("incorrect UTF-8 value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	// Truncate to valid utf8 string.
 	truncateVal := types.NewStringDatum(str[:i])
 	err = sc.HandleTruncate(err)
@@ -177,6 +183,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	}
 	str := casted.GetString()
 	utf8Charset := col.Charset == mysql.UTF8Charset
+	doMB4CharCheck := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUTF8
 	for i, w := 0, 0; i < len(str); i += w {
 		runeValue, width := utf8.DecodeRuneInString(str[i:])
 		if runeValue == utf8.RuneError {
@@ -186,7 +193,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 			}
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
-		} else if width > 3 && utf8Charset {
+		} else if width > 3 && doMB4CharCheck {
 			// Handle non-BMP characters.
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
@@ -349,18 +356,34 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 		return getColDefaultValueFromNil(ctx, col)
 	}
 
-	// Check and get timestamp/datetime default value.
-	if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-		value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
+	if col.Tp != mysql.TypeTimestamp && col.Tp != mysql.TypeDatetime {
+		value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
 		if err != nil {
-			return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
-				col.Name, errors.Trace(err))
+			return types.Datum{}, errors.Trace(err)
 		}
 		return value, nil
 	}
-	value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
+	// Check and get timestamp/datetime default value.
+	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
+			col.Name, errors.Trace(err))
+	}
+	// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
+	if col.Tp == mysql.TypeTimestamp {
+		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+			t := value.GetMysqlTime()
+			// For col.Version = 0, the timezone information of default value is already lost, so use the system timezone as the default value timezone.
+			defaultTimeZone := timeutil.SystemLocation()
+			if col.Version >= model.ColumnInfoVersion1 {
+				defaultTimeZone = time.UTC
+			}
+			err = t.ConvertTimeZone(defaultTimeZone, ctx.GetSessionVars().Location())
+			if err != nil {
+				return value, errors.Trace(err)
+			}
+			value.SetMysqlTime(t)
+		}
 	}
 	return value, nil
 }

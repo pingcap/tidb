@@ -78,6 +78,8 @@ type InfoSchema interface {
 	Clone() (result []*model.DBInfo)
 	SchemaTables(schema model.CIStr) []table.Table
 	SchemaMetaVersion() int64
+	// TableIsView indicates whether the schema.table is a view.
+	TableIsView(schema, table model.CIStr) bool
 }
 
 // Information Schema Name.
@@ -175,6 +177,15 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 		}
 	}
 	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+}
+
+func (is *infoSchema) TableIsView(schema, table model.CIStr) bool {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok := tbNames.tables[table.L]; ok {
+			return t.Meta().IsView()
+		}
+	}
+	return false
 }
 
 func (is *infoSchema) TableExists(schema, table model.CIStr) bool {

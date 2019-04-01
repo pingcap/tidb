@@ -30,7 +30,8 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var _ KvEncoder = &kvEncoder{}
@@ -126,12 +127,7 @@ func (e *kvEncoder) Close() error {
 
 func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affectedRows uint64, err error) {
 	e.se.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
-	defer func() {
-		err1 := e.se.RollbackTxn(context.Background())
-		if err1 != nil {
-			log.Error(errors.ErrorStack(err1))
-		}
-	}()
+	defer e.se.RollbackTxn(context.Background())
 
 	_, err = e.se.Execute(context.Background(), sql)
 	if err != nil {
@@ -169,12 +165,7 @@ func (e *kvEncoder) PrepareStmt(query string) (stmtID uint32, err error) {
 
 func (e *kvEncoder) EncodePrepareStmt(tableID int64, stmtID uint32, param ...interface{}) (kvPairs []KvPair, affectedRows uint64, err error) {
 	e.se.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
-	defer func() {
-		err1 := e.se.RollbackTxn(context.Background())
-		if err1 != nil {
-			log.Error(errors.ErrorStack(err1))
-		}
-	}()
+	defer e.se.RollbackTxn(context.Background())
 
 	_, err = e.se.ExecutePreparedStmt(context.Background(), stmtID, param...)
 	if err != nil {
@@ -234,13 +225,15 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 		return
 	}
 
+	dbName = strings.Replace(dbName, "`", "``", -1)
+
 	se.SetConnectionID(atomic.AddUint64(&mockConnID, 1))
-	_, err = se.Execute(context.Background(), fmt.Sprintf("create database if not exists %s", dbName))
+	_, err = se.Execute(context.Background(), fmt.Sprintf("create database if not exists `%s`", dbName))
 	if err != nil {
 		err = errors.Trace(err)
 		return
 	}
-	_, err = se.Execute(context.Background(), fmt.Sprintf("use %s", dbName))
+	_, err = se.Execute(context.Background(), fmt.Sprintf("use `%s`", dbName))
 	if err != nil {
 		err = errors.Trace(err)
 		return
@@ -267,7 +260,7 @@ func initGlobal() error {
 
 	if storeGlobal != nil {
 		if err1 := storeGlobal.Close(); err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			logutil.Logger(context.Background()).Error("storeGlobal close error", zap.Error(err1))
 		}
 	}
 	if domGlobal != nil {

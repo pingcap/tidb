@@ -23,7 +23,7 @@ var (
 			Subsystem: "session",
 			Name:      "parse_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
-			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
+			Buckets:   prometheus.ExponentialBuckets(0.00004, 1.6, 13), // 40us ~ 18ms
 		}, []string{LblSQLType})
 	SessionExecuteCompileDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -31,7 +31,8 @@ var (
 			Subsystem: "session",
 			Name:      "compile_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in query optimize.",
-			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
+			// Build plan may execute the statement, or allocate table ID, so it might take a long time.
+			Buckets: prometheus.ExponentialBuckets(0.00004, 2, 13), // 40us ~ 327ms
 		}, []string{LblSQLType})
 	SessionExecuteRunDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -106,6 +107,7 @@ const (
 	LblError       = "error"
 	LblRollback    = "rollback"
 	LblType        = "type"
+	LblDb          = "db"
 	LblResult      = "result"
 	LblSQLType     = "sql_type"
 	LblGeneral     = "general"

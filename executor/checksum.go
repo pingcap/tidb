@@ -24,9 +24,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var _ Executor = &ChecksumTableExec{}
@@ -70,7 +71,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 		result := <-resultCh
 		if result.Error != nil {
 			err = result.Error
-			log.Error(errors.ErrorStack(err))
+			logutil.Logger(ctx).Error("checksum failed", zap.Error(err))
 			continue
 		}
 		e.handleResult(result)
@@ -187,14 +188,12 @@ func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64
 }
 
 func (c *checksumContext) BuildRequests(ctx sessionctx.Context) ([]*kv.Request, error) {
-	var reqs []*kv.Request
-
+	reqs := make([]*kv.Request, 0, len(c.TableInfo.Indices)+1)
 	req, err := c.buildTableRequest(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	reqs = append(reqs, req)
-
 	for _, indexInfo := range c.TableInfo.Indices {
 		if indexInfo.State != model.StatePublic {
 			continue

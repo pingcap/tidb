@@ -243,6 +243,7 @@ type PhysicalMergeJoin struct {
 
 	JoinType JoinType
 
+	CompareFuncs    []expression.CompareFunc
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
@@ -383,4 +384,5 @@ type PhysicalWindow struct {
 	WindowFuncDesc *aggregation.WindowFuncDesc
 	PartitionBy    []property.Item
 	OrderBy        []property.Item
+	Frame          *WindowFrame
 }
