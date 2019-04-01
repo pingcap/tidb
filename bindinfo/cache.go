@@ -50,9 +50,8 @@ type cache map[string][]*bindMeta
 // Handle holds an atomic cache.
 type Handle struct {
 	atomic.Value
-	lock sync.Mutex
+	lock *sync.Mutex
 	ctx  sessionctx.Context
-	exec sqlexec.SQLExecutor
 }
 
 // BindCacheUpdater is used to update the global cache.
@@ -65,7 +64,7 @@ type BindCacheUpdater struct {
 	parser         *parser.Parser
 	lastUpdateTime types.Time
 	globalHandle   *Handle
-	lock           sync.Mutex
+	lock           *sync.Mutex
 }
 
 type bindRecord struct {
@@ -83,7 +82,7 @@ type bindRecord struct {
 }
 
 // NewBindCacheUpdater creates a new BindCacheUpdater.
-func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.Parser, lock sync.Mutex) *BindCacheUpdater {
+func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.Parser, lock *sync.Mutex) *BindCacheUpdater {
 	return &BindCacheUpdater{
 		ctx:          ctx,
 		parser:       parser,
@@ -93,11 +92,9 @@ func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.
 }
 
 // NewHandle creates a Handle with a cache.
-func NewHandle(ctx sessionctx.Context, lock sync.Mutex) *Handle {
-	exec, _ := ctx.(sqlexec.SQLExecutor)
+func NewHandle(ctx sessionctx.Context, lock *sync.Mutex) *Handle {
 	handle := &Handle{
 		ctx:  ctx,
-		exec: exec,
 		lock: lock,
 	}
 
@@ -217,22 +214,23 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 	defer h.lock.Unlock()
 
 	ctx := context.TODO()
-	_, err := h.exec.Execute(ctx, "BEGIN")
+	exec, _ := ctx.(sqlexec.SQLExecutor)
+	_, err := exec.Execute(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
 		if err == nil {
-			_, err = h.exec.Execute(ctx, "COMMIT")
+			_, err = exec.Execute(ctx, "COMMIT")
 		} else {
-			_, rbErr := h.exec.Execute(ctx, "ROLLBACK")
+			_, rbErr := exec.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(rbErr))
 		}
 	}()
 
 	sql := fmt.Sprintf("SELECT status FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
 		originSQL, defaultDB)
-	rs, err := h.exec.Execute(ctx, sql)
+	rs, err := exec.Execute(ctx, sql)
 	if err != nil {
 		return err
 	}
@@ -254,7 +252,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 					return err
 				}
 				sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' and default_db='%s'", originSQL, defaultDB)
-				_, err = h.exec.Execute(ctx, sql)
+				_, err = exec.Execute(ctx, sql)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -270,7 +268,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 	bindSQL = getEscapeCharacter(bindSQL)
 	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
 		originSQL, bindSQL, defaultDB, BindUsing, ts, ts, charset, collation)
-	_, err = h.exec.Execute(ctx, sql)
+	_, err = exec.Execute(ctx, sql)
 	return errors.Trace(err)
 }
 

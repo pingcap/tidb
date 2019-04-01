@@ -785,9 +785,9 @@ func (do *Domain) BindHandle() *bindinfo.Handle {
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	var lock sync.Mutex
-	do.bindHandle = bindinfo.NewHandle(ctx, lock)
+	do.bindHandle = bindinfo.NewHandle(ctx, &lock)
 
-	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser, lock)
+	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser, &lock)
 	err := bindCacheUpdater.Update(true)
 	if err != nil {
 		return errors.Trace(err)
