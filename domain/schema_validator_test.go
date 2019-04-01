@@ -95,7 +95,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	c.Assert(isTablesChanged, IsTrue, Commentf("currVer %d, newItem %v", currVer, newItem))
 
 	// All schema versions is expired.
-	ts = uint64(time.Now().Add(lease).UnixNano())
+	ts = uint64(time.Now().Add(2 * lease).UnixNano())
 	valid = validator.Check(ts, newItem.schemaVer, nil)
 	c.Assert(valid, Equals, ResultUnknown)
 
