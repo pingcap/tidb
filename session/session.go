@@ -375,7 +375,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			// For autocommit single statement transactions, the history count is always 1.
 			// For explicit transactions, the statement count is more than 1.
 			history := GetHistory(s)
-			if history.Count() > 1 {
+			if history.Count() > 1 && strings.Contains(err.Error(), util.WriteConflictMarker) {
 				commitRetryLimit = 0
 			}
 		}
@@ -565,9 +565,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
-			if st.IsReadOnly() {
-				continue
-			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]

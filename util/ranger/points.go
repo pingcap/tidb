@@ -134,9 +134,19 @@ func FullIntRange(isUnsigned bool) []*Range {
 	return []*Range{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
 }
 
-// FullRange is (-∞, +∞) for Range.
+// FullRange is [null, +∞) for Range.
 func FullRange() []*Range {
 	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+}
+
+// FullNotNullRange is (-∞, +∞) for Range.
+func FullNotNullRange() []*Range {
+	return []*Range{{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+}
+
+// NullRange is [null, null] for Range.
+func NullRange() []*Range {
+	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{{}}}}
 }
 
 // builder is the range builder struct.

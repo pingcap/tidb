@@ -188,14 +188,12 @@ func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64
 }
 
 func (c *checksumContext) BuildRequests(ctx sessionctx.Context) ([]*kv.Request, error) {
-	var reqs []*kv.Request
-
+	reqs := make([]*kv.Request, 0, len(c.TableInfo.Indices)+1)
 	req, err := c.buildTableRequest(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	reqs = append(reqs, req)
-
 	for _, indexInfo := range c.TableInfo.Indices {
 		if indexInfo.State != model.StatePublic {
 			continue
