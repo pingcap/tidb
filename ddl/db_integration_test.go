@@ -1295,7 +1295,7 @@ func (s *testIntegrationSuite) TestAlterAlgorithm(c *C) {
 	s.tk.MustExec("alter table t default charset = utf8mb4, ALGORITHM=INSTANT")
 }
 
-func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
+func (s *testIntegrationSuite) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists t")
