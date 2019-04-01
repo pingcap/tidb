@@ -1337,3 +1337,32 @@ func (s *testTimeSuite) TestgetFracIndex(c *C) {
 		c.Assert(index, Equals, testCase.expectIndex)
 	}
 }
+
+func (s *testTimeSuite) TestTimeOverflow(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		Input  string
+		Output bool
+	}{
+		{"2012-12-31 11:30:45", false},
+		{"12-12-31 11:30:45", false},
+		{"2012-12-31", false},
+		{"20121231", false},
+		{"2012-02-29", false},
+		{"2018-01-01 18", false},
+		{"18-01-01 18", false},
+		{"2018.01.01", false},
+		{"2018.01.01 00:00:00", false},
+		{"2018/01/01-00:00:00", false},
+	}
+
+	for _, test := range table {
+		t, err := types.ParseDatetime(sc, test.Input)
+		c.Assert(err, IsNil)
+		isOverflow, err := types.DateTimeIsOverflow(sc, t)
+		c.Assert(err, IsNil)
+		c.Assert(isOverflow, Equals, test.Output)
+	}
+}

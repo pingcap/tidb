@@ -40,9 +40,13 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 	}
 	for _, val := range values {
 		var d Datum
+		d.SetMinNotNull()
 		d.SetValue(val)
 		x := d.GetValue()
 		c.Assert(x, DeepEquals, val)
+		d.SetCollation(d.Collation())
+		c.Assert(d.Collation(), NotNil)
+		c.Assert(d.Length(), Equals, int(d.length))
 	}
 }
 
@@ -192,6 +196,50 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	// Convert to float32 and convert back to float64, we will get a different value.
 	c.Assert(converted.GetFloat64(), Not(Equals), 281.37)
 	c.Assert(converted.GetFloat64(), Equals, datum.GetFloat64())
+}
+
+func (ts *testTypeConvertSuite) TestToFloat64(c *C) {
+	var datum = NewDatum(float32(3.00))
+	sc := new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	converted, err := datum.ToFloat64(sc)
+	c.Assert(err, IsNil)
+	c.Assert(converted, Equals, float64(3.00))
+
+	datum = NewDatum(float64(12345.678))
+	sc = new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	converted, err = datum.ToFloat64(sc)
+	c.Assert(err, IsNil)
+	c.Assert(converted, Equals, float64(12345.678))
+
+	datum = NewDatum("12345.678")
+	sc = new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	converted, err = datum.ToFloat64(sc)
+	c.Assert(err, IsNil)
+	c.Assert(converted, Equals, float64(12345.678))
+
+	datum = NewDatum([]byte("12345.678"))
+	sc = new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	converted, err = datum.ToFloat64(sc)
+	c.Assert(err, IsNil)
+	c.Assert(converted, Equals, float64(12345.678))
+
+	datum = NewDatum(int64(12345))
+	sc = new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	converted, err = datum.ToFloat64(sc)
+	c.Assert(err, IsNil)
+	c.Assert(converted, Equals, float64(12345))
+
+	datum = NewDatum(uint64(123456))
+	sc = new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	converted, err = datum.ToFloat64(sc)
+	c.Assert(err, IsNil)
+	c.Assert(converted, Equals, float64(123456))
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
