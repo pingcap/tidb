@@ -1932,7 +1932,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		return nil
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec)
-	var groupByItems []expression.Expression
+	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
 	for _, item := range v.PartitionBy {
 		groupByItems = append(groupByItems, item.Col)
 	}

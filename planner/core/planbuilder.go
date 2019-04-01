@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/schemautil"
 )
 
 type visitInfo struct {
@@ -47,9 +46,25 @@ type visitInfo struct {
 }
 
 type tableHintInfo struct {
-	indexNestedLoopJoinTables []model.CIStr
-	sortMergeJoinTables       []model.CIStr
-	hashJoinTables            []model.CIStr
+	indexNestedLoopJoinTables []hintTableInfo
+	sortMergeJoinTables       []hintTableInfo
+	hashJoinTables            []hintTableInfo
+}
+
+type hintTableInfo struct {
+	name    model.CIStr
+	matched bool
+}
+
+func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
+	if len(tableNames) == 0 {
+		return nil
+	}
+	hintTables := make([]hintTableInfo, 0, len(tableNames))
+	for _, tableName := range tableNames {
+		hintTables = append(hintTables, hintTableInfo{name: tableName})
+	}
+	return hintTables
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
@@ -72,30 +87,45 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 // Which it joins on with depend on sequence of traverse
 // and without reorder, user might adjust themselves.
 // This is similar to MySQL hints.
-func (info *tableHintInfo) matchTableName(tables []*model.CIStr, tablesInHints []model.CIStr) bool {
+func (info *tableHintInfo) matchTableName(tables []*model.CIStr, hintTables []hintTableInfo) bool {
+	hintMatched := false
 	for _, tableName := range tables {
 		if tableName == nil {
 			continue
 		}
-		for _, curEntry := range tablesInHints {
-			if curEntry.L == tableName.L {
-				return true
+		for i, curEntry := range hintTables {
+			if curEntry.name.L == tableName.L {
+				hintTables[i].matched = true
+				hintMatched = true
+				break
 			}
 		}
 	}
-	return false
+	return hintMatched
 }
 
-func (info *tableHintInfo) restore2IndexJoinHint() string {
-	buffer := bytes.NewBufferString("/*+ TIDB_INLJ(")
-	for i, tableName := range info.indexNestedLoopJoinTables {
-		buffer.WriteString(tableName.O)
-		if i < len(info.indexNestedLoopJoinTables)-1 {
+func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
+	buffer := bytes.NewBufferString("/*+ ")
+	buffer.WriteString(strings.ToUpper(hintType))
+	buffer.WriteString("(")
+	for i, table := range hintTables {
+		buffer.WriteString(table.name.L)
+		if i < len(hintTables)-1 {
 			buffer.WriteString(", ")
 		}
 	}
 	buffer.WriteString(") */")
 	return buffer.String()
+}
+
+func extractUnmatchedTables(hintTables []hintTableInfo) []string {
+	var tableNames []string
+	for _, table := range hintTables {
+		if !table.matched {
+			tableNames = append(tableNames, table.name.O)
+		}
+	}
+	return tableNames
 }
 
 // clauseCode indicates in which clause the column is currently.
@@ -233,8 +263,9 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
-		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
-		*ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt, *ast.SetRoleStmt:
+		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
+		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
+		*ast.GrantRoleStmt, *ast.SetRoleStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
@@ -688,23 +719,17 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 // getColsInfo returns the info of index columns, normal columns and primary key.
 func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
-	if tbl.PKIsHandle {
-		for _, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				pkCol = col
-			}
+	for _, col := range tbl.Columns {
+		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			pkCol = col
+		} else {
+			colsInfo = append(colsInfo, col)
 		}
 	}
 	for _, idx := range tn.TableInfo.Indices {
 		if idx.State == model.StatePublic {
 			indicesInfo = append(indicesInfo, idx)
 		}
-	}
-	for _, col := range tbl.Columns {
-		if col == pkCol {
-			continue
-		}
-		colsInfo = append(colsInfo, col)
 	}
 	return
 }
@@ -774,7 +799,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
-		idx := schemautil.FindIndexByName(idxName.L, tblInfo.Indices)
+		idx := expression.FindIndexByName(idxName.L, tblInfo.Indices)
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
@@ -1063,6 +1088,9 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
+	case *ast.GrantRoleStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("GRANT ROLE")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.GrantPriv, "", "", "", err)
 	case *ast.RevokeStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.KillStmt:
