@@ -338,7 +338,7 @@ func (s *testSuite2) TestJoinCast(c *C) {
 	tk.MustExec("set @@tidb_init_chunk_size=1")
 	result = tk.MustQuery("select a from (select /*+ TIDB_INLJ(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a")
 	result.Sort().Check(testkit.Rows("1", "2", "3"))
-	tk.MustExec("set @@tidb_init_chunk_size=32")
+	tk.MustExec("set @@tidb_init_chunk_size=10")
 }
 
 func (s *testSuite2) TestUsing(c *C) {
