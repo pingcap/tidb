@@ -1687,6 +1687,20 @@ func (i inCastContext) String() string {
 // @see BuildCastFunction4Union
 const inUnionCastContext inCastContext = 0
 
+func buildSpecialCast(ctx sessionctx.Context, expr Expression, tp *types.FieldType) Expression {
+	switch f := expr.(type) {
+	case *ScalarFunction:
+		switch f.FuncName.L {
+		case ast.DayName:
+			switch tp.EvalType() {
+			case types.ETInt, types.ETReal:
+				return f
+			}
+		}
+	}
+	return nil
+}
+
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
 func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
@@ -1699,6 +1713,10 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	if sc := buildSpecialCast(ctx, expr, tp); sc != nil {
+		return sc
+	}
+
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
