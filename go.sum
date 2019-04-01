@@ -80,6 +80,8 @@ github.com/imtbkcat/parser v0.0.0-20190325051921-3d554ed1f8d3 h1:LrKnQ6svbHyjeQQ
 github.com/imtbkcat/parser v0.0.0-20190325051921-3d554ed1f8d3/go.mod h1:qupHD3o7J0aBb3bbVyXRnxe9kKy2MTY/6POS6NO/Ei8=
 github.com/imtbkcat/parser v0.0.0-20190329035110-68b83e7c2563 h1:dsrgQwgpitJC7HLPHsKxRvNDNA+BbeWojj8x5YWn5WA=
 github.com/imtbkcat/parser v0.0.0-20190329035110-68b83e7c2563/go.mod h1:qupHD3o7J0aBb3bbVyXRnxe9kKy2MTY/6POS6NO/Ei8=
+github.com/imtbkcat/parser v0.0.0-20190401043336-a458e4f8a051 h1:BXp5tsmtI7PXAsBa45yZH9fjXi3LRVXKPmadVgHm+bU=
+github.com/imtbkcat/parser v0.0.0-20190401043336-a458e4f8a051/go.mod h1:qupHD3o7J0aBb3bbVyXRnxe9kKy2MTY/6POS6NO/Ei8=
 github.com/jonboulle/clockwork v0.1.0 h1:VKV+ZcuP6l3yW9doeqz6ziZGgcynBVQO+obU0+0hcPo=
 github.com/jonboulle/clockwork v0.1.0/go.mod h1:Ii8DK3G1RaLaWxj9trq07+26W01tbo22gdxWY5EU2bo=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
