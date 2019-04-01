@@ -1196,6 +1196,21 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt)
 	if success {
 		s.sessionVars.User = user
+		// Load default active roles if login successed.
+		sql := `SELECT DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM %s.%s WHERE HOST='%s' AND USER='%s';`
+		sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.DefaultRoleTable, user.AuthHostname, user.AuthUsername)
+		rows, _, err := s.ExecRestrictedSQL(s, sql)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("cannot load default role from mysql.default_roles",
+				zap.Stringer("user", user))
+			return false
+		}
+		roleList := make([]*auth.RoleIdentity, 0, 10)
+		for _, r := range rows {
+			roleHost, roleName := r.GetString(0), r.GetString(1)
+			roleList = append(roleList, &auth.RoleIdentity{Username: roleName, Hostname: roleHost})
+		}
+		s.sessionVars.ActiveRoles = roleList
 		return true
 	} else if user.Hostname == variable.DefHostname {
 		logutil.Logger(context.Background()).Error("user connection verification failed",
@@ -1213,6 +1228,21 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 				AuthUsername: u,
 				AuthHostname: h,
 			}
+			// Load default active roles if login successed.
+			sql := `SELECT DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM %s.%s WHERE HOST='%s' AND USER='%s';`
+			sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.DefaultRoleTable, h, u)
+			rows, _, err := s.ExecRestrictedSQL(s, sql)
+			if err != nil {
+				logutil.Logger(context.Background()).Error("cannot load default role from mysql.default_roles",
+					zap.Stringer("user", user))
+				return false
+			}
+			roleList := make([]*auth.RoleIdentity, 0, 10)
+			for _, r := range rows {
+				roleHost, roleName := r.GetString(0), r.GetString(1)
+				roleList = append(roleList, &auth.RoleIdentity{Username: roleName, Hostname: roleHost})
+			}
+			s.sessionVars.ActiveRoles = roleList
 			return true
 		}
 	}
