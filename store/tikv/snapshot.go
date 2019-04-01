@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -320,7 +321,8 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 
 func conflictToString(conflict *pb.WriteConflict) string {
 	var buf bytes.Buffer
-	_, err := fmt.Fprintf(&buf, "WriteConflict: txnStartTS=%d, conflictTS=%d, key=", conflict.StartTs, conflict.ConflictTs)
+	_, err := fmt.Fprintf(&buf, "%s txnStartTS=%d, conflictTS=%d, key=",
+		util.WriteConflictMarker, conflict.StartTs, conflict.ConflictTs)
 	if err != nil {
 		logutil.Logger(context.Background()).Error("error", zap.Error(err))
 	}
