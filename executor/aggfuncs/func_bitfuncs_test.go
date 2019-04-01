@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,10 +19,11 @@ import (
 	"github.com/pingcap/parser/mysql"
 )
 
-func (s *testSuite) TestMergePartialResult4Avg(c *C) {
+func (s *testSuite) TestMergePartialResult4BitFuncs(c *C) {
 	tests := []aggMergeTest{
-		buildAggMergeTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, 2.0, 3.0, 2.375),
-		buildAggMergeTester(ast.AggFuncAvg, mysql.TypeDouble, 5, 2.0, 3.0, 2.375),
+		buildAggMergeTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5, 0, 0, 0),
+		buildAggMergeTester(ast.AggFuncBitOr, mysql.TypeLonglong, 5, 7, 7, 7),
+		buildAggMergeTester(ast.AggFuncBitXor, mysql.TypeLonglong, 5, 4, 5, 1),
 	}
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)

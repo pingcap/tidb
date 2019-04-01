@@ -56,6 +56,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err erro
 		return nil
 	}
 	switch x := e.Statement.(type) {
+	case *ast.GrantRoleStmt:
+		err = e.executeGrantRole(x)
 	case *ast.UseStmt:
 		err = e.executeUse(x)
 	case *ast.FlushStmt:
@@ -275,6 +277,52 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
+}
+
+func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
+	failedUsers := make([]string, 0, len(s.Users))
+	for _, role := range s.Roles {
+		exists, err := userExists(e.ctx, role.Username, role.Hostname)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", role.String())
+		}
+	}
+	for _, user := range s.Users {
+		exists, err := userExists(e.ctx, user.Username, user.Hostname)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
+		}
+	}
+
+	// begin a transaction to insert role graph edges.
+	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
+		return err
+	}
+
+	for _, user := range s.Users {
+		for _, role := range s.Roles {
+			sql := fmt.Sprintf(`INSERT IGNORE INTO %s.%s (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ('%s','%s','%s','%s')`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+				failedUsers = append(failedUsers, user.String())
+				logutil.Logger(context.Background()).Error(fmt.Sprintf("Error occur when executing %s", sql))
+				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+					return err
+				}
+				return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
+			}
+		}
+	}
+	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
+		return err
+	}
+	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
+	return err
 }
 
 func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
