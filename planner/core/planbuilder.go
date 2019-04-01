@@ -1558,15 +1558,21 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.Table.Schema.L,
 					v.Table.Name.L, "", authErr)
 
-				// TODO: Add authErr
+				if b.ctx.GetSessionVars().User != nil {
+					authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username,
+						b.ctx.GetSessionVars().User.Hostname, v.Table.Schema.L)
+				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L,
-					"", "", nil)
+					"", "", authErr)
 			}
 		}
 	case *ast.CreateDatabaseStmt:
-		// TODO: Add authErr
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username,
+				b.ctx.GetSessionVars().User.Hostname, v.Name)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Name,
-			"", "", nil)
+			"", "", authErr)
 	case *ast.CreateIndexStmt:
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("INDEX", b.ctx.GetSessionVars().User.Hostname,
@@ -1621,9 +1627,12 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 				"", "", err)
 		}
 	case *ast.DropDatabaseStmt:
-		// TODO: add authErr
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username,
+				b.ctx.GetSessionVars().User.Hostname, v.Name)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Name,
-			"", "", nil)
+			"", "", authErr)
 	case *ast.DropIndexStmt:
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("INDEx", b.ctx.GetSessionVars().User.Hostname,
