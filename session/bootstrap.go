@@ -305,7 +305,6 @@ const (
 	version26 = 26
 	version27 = 27
 	version28 = 28
-	version29 = 29
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -477,8 +476,8 @@ func upgrade(s Session) {
 		upgradeToVer28(s)
 	}
 
-	if ver < version29 {
-		upgradeToVer29(s)
+	if ver == version28 {
+		addPrimaryIndexOfrBindTable(s)
 	}
 
 	updateBootstrapVer(s)
@@ -763,7 +762,7 @@ func upgradeToVer28(s Session) {
 	doReentrantDDL(s, CreateBindInfoTable)
 }
 
-func upgradeToVer29(s Session) {
+func addPrimaryIndexOfrBindTable(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD INDEX primary_index (original_sql, default_db)", ddl.ErrDupKeyName)
 }
 
