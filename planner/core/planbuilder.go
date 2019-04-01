@@ -1550,20 +1550,6 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
 					v.Table.Name.L, "", authErr)
-			} else {
-				if b.ctx.GetSessionVars().User != nil {
-					authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.Hostname,
-						b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
-				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.Table.Schema.L,
-					v.Table.Name.L, "", authErr)
-
-				if b.ctx.GetSessionVars().User != nil {
-					authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username,
-						b.ctx.GetSessionVars().User.Hostname, v.Table.Schema.L)
-				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L,
-					"", "", authErr)
 			}
 		}
 	case *ast.CreateDatabaseStmt:
