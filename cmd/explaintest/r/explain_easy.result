@@ -47,7 +47,7 @@ IndexJoin_12	4166.67	root	left outer join, inner:IndexLookUp_11, outer key:test.
 │ └─TableScan_25	3333.33	cop	table:t1, range:(1,+inf], keep order:false, stats:pseudo
 └─IndexLookUp_11	0.00	root	
   ├─Selection_10	0.00	cop	not(isnull(test.t2.c1))
-  │ └─IndexScan_8	10.00	cop	table:t2, index:c1, range: decided by [test.t1.c2], keep order:false, stats:pseudo
+  │ └─IndexScan_8	10.00	cop	table:t2, index:c1, range: decided by [eq(test.t2.c1, test.t1.c2)], keep order:false, stats:pseudo
   └─TableScan_9	0.00	cop	table:t2, keep order:false
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info

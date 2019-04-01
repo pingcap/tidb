@@ -903,13 +903,13 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 	tk.MustExec("create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))")
 
 	tk.MustQuery("explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c;").Check(testkit.Rows(
-		"IndexJoin_9 12475.01 root inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
-		"├─TableReader_12 9980.01 root data:Selection_11",
-		"│ └─Selection_11 9980.01 cop not(isnull(test.t1.a)), not(isnull(test.t1.c))",
-		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─IndexReader_8 0.00 root index:Selection_7",
-		"  └─Selection_7 0.00 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
-		"    └─IndexScan_6 10.00 cop table:t2, index:a, b, c, range: decided by [test.t1.a test.t1.c], keep order:false, stats:pseudo",
+		"HashLeftJoin_6 12475.01 root inner join, inner:IndexReader_13, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.c, test.t2.c)], other cond:gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
+		"├─TableReader_10 9980.01 root data:Selection_9",
+		"│ └─Selection_9 9980.01 cop not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+		"│   └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─IndexReader_13 9980.01 root index:Selection_12",
+		"  └─Selection_12 9980.01 cop not(isnull(test.t2.c))",
+		"    └─IndexScan_11 9990.00 cop table:t2, index:a, b, c, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")

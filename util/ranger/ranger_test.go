@@ -15,6 +15,7 @@ package ranger_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/types"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -956,8 +957,9 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		c.Assert(col, NotNil)
 		conds = ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType)
+		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, types.UnspecifiedLength)
 		c.Assert(err, IsNil)
+
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))
 	}

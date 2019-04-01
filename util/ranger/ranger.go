@@ -261,7 +261,7 @@ func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 }
 
 // BuildColumnRange builds the range for sampling histogram to calculate the row count.
-func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, colLen int) ([]*Range, error) {
 	if len(conds) == 0 {
 		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
 	}
@@ -278,6 +278,16 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 	ranges, err := points2Ranges(sc, rangePoints, newTp)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if colLen != types.UnspecifiedLength {
+		for _, ran := range ranges {
+			if fixRangeDatum(&ran.LowVal[0], colLen, tp) {
+				ran.LowExclude = false
+			}
+			if fixRangeDatum(&ran.HighVal[0], colLen, tp) {
+				ran.HighExclude = false
+			}
+		}
 	}
 	return ranges, nil
 }
@@ -490,7 +500,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 // 1. 'expr' must be either 'EQUAL' or 'IN' function.
 // 2. 'points' should not be empty.
 func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.Expression) expression.Expression {
-	// len(points) cannot be 0 here, since we impose early termination in extractEqAndInCondition
+	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	sf, _ := expr.(*expression.ScalarFunction)
 	// Constant and Column args should have same RetType, simply get from first arg
 	retType := sf.GetArgs()[0].GetType()
