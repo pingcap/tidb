@@ -16,9 +16,9 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util/chunk"
 )
 

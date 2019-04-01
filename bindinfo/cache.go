@@ -214,7 +214,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 	defer h.lock.Unlock()
 
 	ctx := context.TODO()
-	exec, _ := ctx.(sqlexec.SQLExecutor)
+	exec, _ := h.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)

@@ -117,8 +117,8 @@ func (s *testSuite) TestBindParse(c *C) {
 		originSQL, bindSQL, defaultDb, status, charset, collation)
 	tk.MustExec(sql)
 	var lock sync.Mutex
-	bindHandle := bindinfo.NewHandle(tk.Se, lock)
-	bindCacheUpdater := bindinfo.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser, lock)
+	bindHandle := bindinfo.NewHandle(tk.Se, &lock)
+	bindCacheUpdater := bindinfo.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser, &lock)
 	err := bindCacheUpdater.Update(true)
 	c.Check(err, IsNil)
 	c.Check(len(bindHandle.Get()), Equals, 1)
@@ -152,7 +152,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	_, err = tk.Exec("create global binding for select * from t where i>99 using select * from t use index(index_t) where i>99")
 	c.Assert(err, NotNil)
 
-	var lock sync.Mutex
+	var lock = &sync.Mutex{}
 	bindHandle := bindinfo.NewHandle(tk.Se, lock)
 	bindCacheUpdater := bindinfo.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser, lock)
 	err = bindCacheUpdater.Update(true)
