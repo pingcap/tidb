@@ -677,7 +677,7 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var jobs []*model.Job
+	jobs := make([]*model.Job, 0, len(pairs))
 	for _, pair := range pairs {
 		job := &model.Job{}
 		err = job.Decode(pair.Value)

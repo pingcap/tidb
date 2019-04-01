@@ -363,7 +363,7 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	}
 
 	if lastRun != nil && lastRun.Add(*runInterval).After(now) {
-		logutil.Logger(context.Background()).Info("[gc worker] gc interval haven't past since last run, no need to gc",
+		logutil.Logger(context.Background()).Debug("[gc worker] skipping garbage collection because gc interval hasn't elapsed since last run",
 			zap.String("leaderTick on", w.uuid),
 			zap.Duration("interval", *runInterval),
 			zap.Time("last run", *lastRun))
