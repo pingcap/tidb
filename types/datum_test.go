@@ -240,6 +240,13 @@ func (ts *testTypeConvertSuite) TestToFloat64(c *C) {
 	converted, err = datum.ToFloat64(sc)
 	c.Assert(err, IsNil)
 	c.Assert(converted, Equals, float64(123456))
+
+	datum = NewDatum(byte(123))
+	sc = new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	converted, err = datum.ToFloat64(sc)
+	c.Assert(err, ErrorMatches, "cannot convert .*")
+	c.Assert(converted, Equals, float64(0))
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.

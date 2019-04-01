@@ -758,6 +758,21 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(nv.String(), Equals, t.Except)
 	}
+
+	cols := []struct {
+		input  time.Time
+		fsp    int
+		output time.Time
+	}{
+		{time.Date(2011, 11, 11, 10, 10, 10, 888888, time.UTC), 0, time.Date(2011, 11, 11, 10, 10, 10, 11, time.UTC)},
+		{time.Date(2011, 11, 11, 10, 10, 10, 111111, time.UTC), 0, time.Date(2011, 11, 11, 10, 10, 10, 10, time.UTC)},
+	}
+
+	for _, col := range cols {
+		res, err := types.RoundFrac(col.input, col.fsp)
+		c.Assert(res.Second(), Equals, col.output.Second())
+		c.Assert(err, IsNil)
+	}
 }
 
 func (s *testTimeSuite) TestConvert(c *C) {
@@ -831,6 +846,12 @@ func (s *testTimeSuite) TestCompare(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.Ret)
 	}
+
+	v1, err := types.ParseTime(nil, "2011-10-10 11:11:11", mysql.TypeDatetime, types.MaxFsp)
+	c.Assert(err, IsNil)
+	res, err := v1.CompareString(nil, "Test should error")
+	c.Assert(err, NotNil)
+	c.Assert(res, Equals, 0)
 
 	tbl = []struct {
 		Arg1 string
@@ -1364,5 +1385,47 @@ func (s *testTimeSuite) TestTimeOverflow(c *C) {
 		isOverflow, err := types.DateTimeIsOverflow(sc, t)
 		c.Assert(err, IsNil)
 		c.Assert(isOverflow, Equals, test.Output)
+	}
+}
+
+func (s *testTimeSuite) TestTruncateFrac(c *C) {
+	cols := []struct {
+		input  time.Time
+		fsp    int
+		output time.Time
+	}{
+		{time.Date(2011, 11, 11, 10, 10, 10, 888888, time.UTC), 0, time.Date(2011, 11, 11, 10, 10, 10, 11, time.UTC)},
+		{time.Date(2011, 11, 11, 10, 10, 10, 111111, time.UTC), 0, time.Date(2011, 11, 11, 10, 10, 10, 10, time.UTC)},
+	}
+
+	for _, col := range cols {
+		res, err := types.TruncateFrac(col.input, col.fsp)
+		c.Assert(res.Second(), Equals, col.output.Second())
+		c.Assert(err, IsNil)
+	}
+}
+func (s *testTimeSuite) TestTimeSub(c *C) {
+	tbl := []struct {
+		Arg1 string
+		Arg2 string
+		Ret  string
+	}{
+		{"2017-01-18 01:01:01", "2017-01-18 00:00:01", "01:01:00"},
+		{"2017-01-18 01:01:01", "2017-01-18 01:01:01", "00:00:00"},
+		{"2019-04-12 18:20:00", "2019-04-12 14:00:00", "04:20:00"},
+	}
+
+	sc := &stmtctx.StatementContext{
+		TimeZone: time.UTC,
+	}
+	for _, t := range tbl {
+		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		v2, err := types.ParseTime(nil, t.Arg2, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		dur, err := types.ParseDuration(sc, t.Ret, types.MaxFsp)
+		c.Assert(err, IsNil)
+		rec := v1.Sub(sc, &v2)
+		c.Assert(rec, Equals, dur)
 	}
 }
