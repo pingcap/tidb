@@ -162,8 +162,8 @@ func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 }
 
 type mvccKV struct {
-	Key   string      `json:"key"`
-	Value interface{} `json:"value"`
+	Key   string                        `json:"key"`
+	Value *kvrpcpb.MvccGetByKeyResponse `json:"value"`
 }
 
 func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
@@ -1538,7 +1538,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 		colMap[col.ID] = &col.FieldType
 	}
 
-	respValue := resp.Value.(*kvrpcpb.MvccGetByKeyResponse)
+	respValue := resp.Value
 	var result interface{} = resp
 	if respValue.Info != nil {
 		datas := make(map[string][]map[string]string)
