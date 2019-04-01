@@ -185,7 +185,7 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
-	if fromIdx := expression.FindIndexByName(from.L, tbl.Indices); fromIdx == nil {
+	if fromIdx := tbl.FindIndexByName(from.L); fromIdx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
 	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
@@ -195,7 +195,7 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 	// If spec.FromKey.L == spec.ToKey.L, we operate on the same index(case-insensitive) and change its name (case-sensitive)
 	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
 	// that's illegal by rule.
-	if toIdx := expression.FindIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
+	if toIdx := tbl.FindIndexByName(to.L); toIdx != nil && from.L != to.L {
 		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenWithStackByArgs(toIdx.Name.O))
 	}
 	return false, nil
@@ -207,7 +207,7 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	idx := expression.FindIndexByName(from.L, tblInfo.Indices)
+	idx := tblInfo.FindIndexByName(from.L)
 	idx.Name = to
 	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
@@ -246,7 +246,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := expression.FindIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := tblInfo.FindIndexByName(indexName.L)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, ErrDupKeyName.GenWithStack("index already exist %s", indexName)
@@ -415,7 +415,7 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 		return nil, nil, errors.Trace(err)
 	}
 
-	indexInfo := expression.FindIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := tblInfo.FindIndexByName(indexName.L)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
