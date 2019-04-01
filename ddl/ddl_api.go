@@ -1779,7 +1779,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		// Nothing need to do.
 		return nil
 	}
-	err = checkGlobalAutoID(d.sessPool, t, uVal)
+	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
 	if err != nil {
 		return err
 	}

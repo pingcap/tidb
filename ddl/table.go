@@ -489,12 +489,13 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = checkGlobalAutoID(w.sessPool, tbl, shardRowIDBits)
+		err = verifyNoOverflowShardBits(w.sessPool, tbl, shardRowIDBits)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
 		tblInfo.ShardRowIDBits = shardRowIDBits
+		// MaxShardRowIDBits use to check the overflow of auto ID.
 		tblInfo.MaxShardRowIDBits = shardRowIDBits
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -506,7 +507,7 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	return ver, nil
 }
 
-func checkGlobalAutoID(s *sessionPool, tbl table.Table, shardRowIDBits uint64) error {
+func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits uint64) error {
 	var ctx sessionctx.Context
 	ctx, err := s.get()
 	if err != nil {
