@@ -28,6 +28,10 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
+	DefTxnEntryCountLimit = 300 * 1000
+	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
@@ -164,6 +168,8 @@ type Performance struct {
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
+	TxnEntryCountLimit  uint64  `toml:"txn-entry-count-limit" json:"txn-entry-count-limit"`
+	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -309,6 +315,8 @@ var defaultConf = Config{
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
+		TxnEntryCountLimit:  DefTxnEntryCountLimit,
+		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
 	},
 	XProtocol: XProtocol{
 		XHost: "",
