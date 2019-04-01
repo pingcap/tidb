@@ -37,7 +37,8 @@ type aggregationEliminateChecker struct {
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
 func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation) *LogicalProjection {
 	for _, af := range agg.AggFuncs {
-		// TODO: Actually, we can rewrite GROUP_CONCAT.
+		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
+		// arguments it accepts are promised to be NOT-NULL.
 		// When it accepts only 1 argument, we can extract this argument into a
 		// projection.
 		// When it accepts multiple arguments, we can wrap the arguments with a
