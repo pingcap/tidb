@@ -27,9 +27,10 @@ import (
 )
 
 const (
-	codeErrParse               = terror.ErrCode(mysql.ErrParse)
-	codeErrSyntax              = terror.ErrCode(mysql.ErrSyntax)
-	codeErrUnknownCharacterSet = terror.ErrCode(mysql.ErrUnknownCharacterSet)
+	codeErrParse                   = terror.ErrCode(mysql.ErrParse)
+	codeErrSyntax                  = terror.ErrCode(mysql.ErrSyntax)
+	codeErrUnknownCharacterSet     = terror.ErrCode(mysql.ErrUnknownCharacterSet)
+	codeErrInvalidYearColumnLength = terror.ErrCode(mysql.ErrInvalidYearColumnLength)
 )
 
 var (
@@ -39,6 +40,8 @@ var (
 	ErrParse = terror.ClassParser.New(codeErrParse, mysql.MySQLErrName[mysql.ErrParse])
 	// ErrUnknownCharacterSet returns for no character set found error.
 	ErrUnknownCharacterSet = terror.ClassParser.New(codeErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
+	// ErrInvalidYearColumnLength returns for illegal column length for year type.
+	ErrInvalidYearColumnLength = terror.ClassParser.New(codeErrInvalidYearColumnLength, mysql.MySQLErrName[mysql.ErrInvalidYearColumnLength])
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodePattern  = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
@@ -48,9 +51,10 @@ var (
 
 func init() {
 	parserMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeErrSyntax:              mysql.ErrSyntax,
-		codeErrParse:               mysql.ErrParse,
-		codeErrUnknownCharacterSet: mysql.ErrUnknownCharacterSet,
+		codeErrSyntax:                  mysql.ErrSyntax,
+		codeErrParse:                   mysql.ErrParse,
+		codeErrUnknownCharacterSet:     mysql.ErrUnknownCharacterSet,
+		codeErrInvalidYearColumnLength: mysql.ErrInvalidYearColumnLength,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassParser] = parserMySQLErrCodes
 }
