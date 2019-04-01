@@ -1644,8 +1644,6 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: "alter table t add column a int(4)",
 			ans: []visitInfo{
 				{mysql.AlterPriv, "test", "t", "", nil},
-				{mysql.InsertPriv, "test", "t", "", nil},
-				{mysql.CreatePriv, "test", "", "", nil},
 			},
 		},
 		{
@@ -1658,7 +1656,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
-			sql: "alter table t_old rename  to t_new",
+			sql: "alter table t_old rename to t_new",
 			ans: []visitInfo{
 				{mysql.AlterPriv, "test", "t_old", "", nil},
 				{mysql.DropPriv, "test", "t_old", "", nil},
