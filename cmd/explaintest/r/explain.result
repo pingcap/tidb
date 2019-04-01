@@ -36,3 +36,4 @@ StreamAgg_8	8000.00	root	group by:col_2, funcs:group_concat(col_0, col_1, ",")
 └─Projection_18	10000.00	root	cast(test.t.a), cast(test.t.b), test.t.id
   └─TableReader_15	10000.00	root	data:TableScan_14
     └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:true, stats:pseudo
+drop table t;
