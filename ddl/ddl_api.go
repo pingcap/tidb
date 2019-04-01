@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -532,8 +533,12 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 			// its raw string content here.
 			return v.GetBinaryLiteral().ToString(), nil
 		}
-		// For other kind of fields (e.g. INT), we supply its integer value so that it acts as integers.
-		return v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		// For other kind of fields (e.g. INT), we supply its integer as string value.
+		value, err := v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return nil, err
+		}
+		return strconv.FormatUint(value, 10), nil
 	}
 
 	if tp == mysql.TypeDuration {
