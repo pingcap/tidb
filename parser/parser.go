@@ -12611,7 +12611,7 @@ yynewstate:
 			x := types.NewFieldType(mysql.TypeYear)
 			x.Flen = yyS[yypt-1].item.(int)
 			if x.Flen != types.UnspecifiedLength && x.Flen != 4 {
-				yylex.AppendError(yylex.Errorf("Supports only YEAR or YEAR(4) column."))
+				yylex.AppendError(ErrInvalidYearColumnLength.GenWithStackByArgs())
 				return -1
 			}
 			parser.yyVAL.item = x
