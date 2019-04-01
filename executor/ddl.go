@@ -106,7 +106,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
 	case *ast.RecoverTableStmt:
-		err = e.executeRestoreTable(x)
+		err = e.executeRecoverTable(x)
 	}
 	if err != nil {
 		return errors.Trace(e.toErr(err))
@@ -298,10 +298,10 @@ func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 	return errors.Trace(err)
 }
 
-// executeRestoreTable represents a recover table executor.
-// It is built from "restore table" statement,
+// executeRecoverTable represents a recover table executor.
+// It is built from "recover table" statement,
 // is used to recover the table that deleted by mistake.
-func (e *DDLExec) executeRestoreTable(s *ast.RecoverTableStmt) error {
+func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
@@ -311,9 +311,9 @@ func (e *DDLExec) executeRestoreTable(s *ast.RecoverTableStmt) error {
 	var job *model.Job
 	var tblInfo *model.TableInfo
 	if s.JobID != 0 {
-		job, tblInfo, err = e.getRestoreTableByJobID(s, t, dom)
+		job, tblInfo, err = e.getRecoverTableByJobID(s, t, dom)
 	} else {
-		job, tblInfo, err = e.getRestoreTableByTableName(s, t, dom)
+		job, tblInfo, err = e.getRecoverTableByTableName(s, t, dom)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -327,12 +327,12 @@ func (e *DDLExec) executeRestoreTable(s *ast.RecoverTableStmt) error {
 	if err != nil {
 		return errors.Errorf("recover table_id: %d, get original autoID from snapshot meta err: %s", job.TableID, err.Error())
 	}
-	// Call DDL RestoreTable
-	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, tblInfo, job.SchemaID, autoID, job.ID, job.StartTS)
+	// Call DDL RecoverTable
+	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, tblInfo, job.SchemaID, autoID, job.ID, job.StartTS)
 	return errors.Trace(err)
 }
 
-func (e *DDLExec) getRestoreTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
+func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
 	job, err := t.GetHistoryDDLJob(s.JobID)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -366,7 +366,7 @@ func (e *DDLExec) getRestoreTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 	return job, table.Meta(), nil
 }
 
-func (e *DDLExec) getRestoreTableByTableName(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
+func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
 	jobs, err := t.GetAllHistoryDDLJobs()
 	if err != nil {
 		return nil, nil, errors.Trace(err)

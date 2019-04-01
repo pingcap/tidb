@@ -128,7 +128,7 @@ func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 }
 
-func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
+func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -238,7 +238,7 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 	c.Assert(gcEnable, Equals, false)
 }
 
-func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
+func (s *testSerialSuite) TestRecoverTableByTableName(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -376,9 +376,9 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	// set hook
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionRestoreTable {
+		if job.Type == model.ActionRecoverTable {
 			gofail.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`)
-			gofail.Enable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr", `return(true)`)
+			gofail.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()
@@ -388,7 +388,7 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	// do recover table.
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
-	gofail.Disable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr")
+	gofail.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr")
 
 	// make sure enable GC after recover table.
 	enable, err := gcutil.CheckGCEnable(tk.Se)
@@ -402,7 +402,7 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
 
-func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
+func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -436,9 +436,9 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 	// set hook
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionRestoreTable {
+		if job.Type == model.ActionRecoverTable {
 			gofail.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`)
-			gofail.Enable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr", `return(true)`)
+			gofail.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()
@@ -448,7 +448,7 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 	// do recover table.
 	tk.MustExec("recover table t_recover")
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
-	gofail.Disable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr")
+	gofail.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr")
 
 	// make sure enable GC after recover table.
 	enable, err := gcutil.CheckGCEnable(tk.Se)

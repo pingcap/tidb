@@ -1642,7 +1642,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 			err:       nil,
 		})
 	case *ast.RecoverTableStmt:
-		// Restore table command can only be executed by administrator.
+		// Recover table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	}
 
