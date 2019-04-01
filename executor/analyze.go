@@ -16,8 +16,16 @@ package executor
 import (
 	"bytes"
 	"context"
+	"math"
+	"math/rand"
 	"runtime"
+	"sort"
 	"strconv"
+	"sync"
+	"sync/atomic"
+
+	"github.com/pingcap/kvproto/pkg/debugpb"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -507,6 +515,15 @@ func analyzeColumnsFastExec(colFastExec *AnalyzeFastExec) statistics.AnalyzeResu
 	return result
 }
 
+// AnalyzeFastTask is the task for build stats.
+type AnalyzeFastTask struct {
+	Location  *tikv.KeyLocation
+	isScan    bool
+	SampSize  uint64
+	LRowCount uint64
+	RRowCount uint64
+}
+
 // AnalyzeFastExec represents Fast Analyze Columns executor.
 type AnalyzeFastExec struct {
 	ctx             sessionctx.Context
@@ -516,84 +533,153 @@ type AnalyzeFastExec struct {
 	maxNumBuckets   uint64
 	table           table.Table
 	cache           *tikv.RegionCache
-	sampLocs        chan *tikc.Location
-	scanLocs        []*tikv.Location
+	wg              *sync.WaitGroup
+	sampLocs        chan *tikv.KeyLocation
 	sampLocRowCount uint64
+	tasks           chan *AnalyzeFastTask
 }
 
-func (e *AnalyzeFastExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
-	// txn, err := e.ctx.Txn(true)
-	// if err != nil {
-	// 	return errors.Trace(err)
-	// }
+func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error) {
+	defer e.wg.Done()
+	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
+	for {
+		loc, ok := <-e.sampLocs
+		if !ok {
+			return
+		}
+		req := &tikvrpc.Request{
+			DebugGetRegionProperties: &debugpb.GetRegionPropertiesRequest{
+				RegionId: loc.Region.GetID(),
+			},
+		}
+		var resp *tikvrpc.Response
+		var rpcCtx *tikv.RPCContext
+		rpcCtx, err := e.cache.GetRPCContext(bo, loc.Region)
+		if err != nil {
+			err = errors.Trace(err)
+			return
+		}
+		ctx := context.Background()
+		resp, err = client.SendRequest(ctx, rpcCtx.Addr, req, tikv.ReadTimeoutMedium)
+		if err != nil {
+			err = errors.Trace(err)
+			return
+		}
+		// TODO: duel with not_found
+		// ***
+		// ***
+		for i, name := range resp.DebugGetRegionProperties.Props {
+			if name == "num_rows" {
+				var cnt uint64
+				cnt, err = strconv.ParseUint(resp.DebugGetRegionProperties.Props[i].Value, 10, 64)
+				if err != nil {
+					err = errors.Trace(err)
+					return
+				}
+				newCount := atomic.AddUint64(e.sampLocRowCount, cnt)
+				task := &AnalyzeFastTask{
+					Location:  loc,
+					LRowCount: newCount - cnt,
+					RRowCount: newCount,
+				}
+				e.Tasks <- task
+			}
+		}
+	}
+}
 
-	// txn.
-	// kvStore := e.ctx.GetStore()
-	// kvClient := e.ctx.GetClient()
+func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
+	if e.wg == nil {
+		e.wg = &sync.WaitGroup{}
+	}
+	e.wg.Wait()
+
+	atomic.StoreUint64(&e.sampLocRowCount, 0)
+	bo := tikv.NewBackoffer(context.Background(), 500)
+	needRebuildForRoutine := make([]bool, 0, e.concurrency)
+	errs := make([]error, 0, e.concurrency)
+	for i := 0; i < e.concurrency; i++ {
+		e.wg.Add(1)
+		go e.getSampRegionsRowCount(bo, &needRebuildForRoutine[i], &errs[i])
+	}
 
 	store, ok := e.ctx.GetStore().(tikv.Storage)
 	if !ok {
-		return nil, nil, errors.Errorf("Only support fast analyze in tikv storage.")
+		return false, errors.Errorf("Only support fast analyze in tikv storage.")
 	}
-	cache := store.GetRegionCache()
-	// regionReqSender := tikv.NewRegionRequestSender(cache, store.GetTiKVClient())
-	startKey, endKey := tablecodec.GetTableIndexKeyRange(e.table.Meta().ID, e.idxInfo.ID)
-	// regionIDs, err := cache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
-	// if err != nil {
-	// 	return nil, nil, errors.Trace(err)
-	// }
-	// for _, regionID := range regionIDs {
-	// 	region := cache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
-
-	// }
+	e.cache = store.GetRegionCache()
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.table.Meta().ID)
 	var loc *tikv.KeyLocation
-	bo := tikv.NewBackoffer(context.Background(), 500)
-	var scanLocs []*tikv.KeyLocation
-	for loc, err = cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = cache.LocateKey(bo, append(loc.EndKey, byte(0))) {
+	var err error
+	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, append(loc.EndKey, byte(0))) {
 		var start, end []byte
 		start = loc.StartKey
-		// region, err := cache.LoadRegionByID(bo, loc.Region.GetID())
-		// if err != nil {
-		// 	return nil, nil, errors.Trace(err)
-		// }
 		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
-			scanLocs <- loc
-			// req := &tikvrpc.Request{
-			// 	Type:    tikvrpc.CmdGet,
-			// 	Context: *region.GetContext(),
-			// 	Get: &kvrpcpb.GetRequest{
-			// 		Key: endKey,
-			// 	},
-			// }
-			// resp, err := store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
-			// if err != nil {
-			// 	break
-			// }
-			// resp
+			e.tasks <- &AnalyzeFastTask{Location: loc, isScan: true}
 		} else {
-			sampLocs = append(sampLocs, loc)
+			e.sampLocs <- loc
 		}
 	}
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return false, errors.Trace(err)
+	}
+	close(e.sampLocs)
+	e.wg.Wait()
+	for i := 0; i < e.concurrency; i++ {
+		if errs[i] != nil {
+			return false, errors.Trace(errs[i])
+		}
+	}
+	for i := 0; i < e.concurrency; i++ {
+		if needRebuildForRoutine[i] == true {
+			return true, nil
+		}
 	}
 
-	rowCount := uint64(0)
-	e.doOnceSamp(<-sampLocs)
-	// for _, loc := range sampLocs {
-	// 	_, _, startVals, err := tablecodec.DecodeIndexKey(loc.StartKey)
-	// 	if err != nil {
-	// 		return nil, nil, errors.Trace(err)
-	// 	}
-	// 	_, _, endVals, err := tablecodec.DecodeIndexKey(loc.EndKey)
-	// 	if err != nil {
-	// 		return nil, nil, errors.Trace(err)
-	// 	}
-
-	// }
-	return nil, nil, nil
+	return false, nil
 }
 
-func (e *AnalyzeFastExec) doOnceSamp(loc *tikv.Location) {
-	req
+func lowerBound(array []uint64, key uint64) int {
+	l, r := 0, Len(array)
+	for l < r {
+		mid = (l + r) >> 1
+		if array[mid] < key {
+			l = mid + 1
+		} else {
+			r = mid
+		}
+	}
+	return l
+}
+
+func (e *AnalyzeFastExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
+	for {
+		needRebuild, err := e.buildSampTask()
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
+		if needRebuild {
+			continue
+		}
+
+		if e.sampLocRowCount < maxSampleSize*10 {
+			// TODO: return normal Analyze
+		}
+
+		randPos := make([]uint64, 0, maxSampleSize+1)
+		for i := 0; i < maxSampleSize; i++ {
+			randPos = append(randPos, uint64(rand.Int63n(e.sampLockRowCount)))
+		}
+		randPos = append(randPos, math.MaxUint64)
+		sort.Sort(randPos)
+
+		for _, task := range e.tasks {
+			if task.isScan == true {
+				continue
+			}
+			task.SampSize = lowerBound(randPos, task.RRowCount) - lowerBound(randPos, task.LRowCount)
+		}
+
+	}
 }
