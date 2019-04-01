@@ -46,9 +46,25 @@ type visitInfo struct {
 }
 
 type tableHintInfo struct {
-	indexNestedLoopJoinTables []model.CIStr
-	sortMergeJoinTables       []model.CIStr
-	hashJoinTables            []model.CIStr
+	indexNestedLoopJoinTables []hintTableInfo
+	sortMergeJoinTables       []hintTableInfo
+	hashJoinTables            []hintTableInfo
+}
+
+type hintTableInfo struct {
+	name    model.CIStr
+	matched bool
+}
+
+func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
+	if len(tableNames) == 0 {
+		return nil
+	}
+	hintTables := make([]hintTableInfo, 0, len(tableNames))
+	for _, tableName := range tableNames {
+		hintTables = append(hintTables, hintTableInfo{name: tableName})
+	}
+	return hintTables
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
@@ -71,30 +87,45 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 // Which it joins on with depend on sequence of traverse
 // and without reorder, user might adjust themselves.
 // This is similar to MySQL hints.
-func (info *tableHintInfo) matchTableName(tables []*model.CIStr, tablesInHints []model.CIStr) bool {
+func (info *tableHintInfo) matchTableName(tables []*model.CIStr, hintTables []hintTableInfo) bool {
+	hintMatched := false
 	for _, tableName := range tables {
 		if tableName == nil {
 			continue
 		}
-		for _, curEntry := range tablesInHints {
-			if curEntry.L == tableName.L {
-				return true
+		for i, curEntry := range hintTables {
+			if curEntry.name.L == tableName.L {
+				hintTables[i].matched = true
+				hintMatched = true
+				break
 			}
 		}
 	}
-	return false
+	return hintMatched
 }
 
-func (info *tableHintInfo) restore2IndexJoinHint() string {
-	buffer := bytes.NewBufferString("/*+ TIDB_INLJ(")
-	for i, tableName := range info.indexNestedLoopJoinTables {
-		buffer.WriteString(tableName.O)
-		if i < len(info.indexNestedLoopJoinTables)-1 {
+func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
+	buffer := bytes.NewBufferString("/*+ ")
+	buffer.WriteString(strings.ToUpper(hintType))
+	buffer.WriteString("(")
+	for i, table := range hintTables {
+		buffer.WriteString(table.name.L)
+		if i < len(hintTables)-1 {
 			buffer.WriteString(", ")
 		}
 	}
 	buffer.WriteString(") */")
 	return buffer.String()
+}
+
+func extractUnmatchedTables(hintTables []hintTableInfo) []string {
+	var tableNames []string
+	for _, table := range hintTables {
+		if !table.matched {
+			tableNames = append(tableNames, table.name.O)
+		}
+	}
+	return tableNames
 }
 
 // clauseCode indicates in which clause the column is currently.
