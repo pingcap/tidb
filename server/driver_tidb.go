@@ -16,6 +16,8 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"sync/atomic"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/net/context"
-	"sync/atomic"
 )
 
 // TiDBDriver implements IDriver.
