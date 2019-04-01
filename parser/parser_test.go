@@ -2006,6 +2006,9 @@ func (s *testParserSuite) TestErrorMsg(c *C) {
 	c.Assert(err.Error(), Equals, "line 1 column 31 near \"t1.a = t2.a;\" ")
 	_, _, err = parser.Parse("select * from t1 join t2 on t1.a >>> t2.a;", "", "")
 	c.Assert(err.Error(), Equals, "line 1 column 36 near \"> t2.a;\" ")
+
+	_, _, err = parser.Parse("create table t(f_year year(5))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", "", "")
+	c.Assert(err.Error(), Equals, "[parser:1818]Supports only YEAR or YEAR(4) column")
 }
 
 func (s *testParserSuite) TestOptimizerHints(c *C) {
