@@ -323,6 +323,16 @@ func (t *TableInfo) Cols() []*ColumnInfo {
 	return publicColumns[0 : maxOffset+1]
 }
 
+// FindIndexByName finds index by name.
+func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
+	for _, idx := range t.Indices {
+		if idx.Name.L == idxName {
+			return idx
+		}
+	}
+	return nil
+}
+
 // NewExtraHandleColInfo mocks a column info for extra handle column.
 func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
