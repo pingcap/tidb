@@ -1134,17 +1134,17 @@ func (s *testTimeSuite) TestExtractDurationValue(c *C) {
 			ans:    "02:01:01.000000",
 		},
 		{
-			unit:   "HOUR_MINUTE",
+			unit:   "HOUr_MINUTE",
 			format: "2:2",
 			ans:    "02:02:00",
 		},
 		{
-			unit:   "DAY_MICROSECOND",
+			unit:   "DAY_MICRoSECOND",
 			format: "1 1:1:1.02",
 			ans:    "25:01:01.020000",
 		},
 		{
-			unit:   "DAY_SECOND",
+			unit:   "DAY_SeCOND",
 			format: "1 02:03:04",
 			ans:    "26:03:04.000000",
 		},
@@ -1154,7 +1154,7 @@ func (s *testTimeSuite) TestExtractDurationValue(c *C) {
 			ans:    "25:02:00",
 		},
 		{
-			unit:   "DAY_HOUR",
+			unit:   "DAY_HOUr",
 			format: "1 1",
 			ans:    "25:00:00",
 		},

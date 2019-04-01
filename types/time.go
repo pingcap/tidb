@@ -1833,7 +1833,8 @@ func ExtractTimeValue(unit string, format string) (int64, int64, int64, float64,
 
 // ExtractDurationValue extract the value from format to Duration.
 func ExtractDurationValue(unit string, format string) (Duration, error) {
-	switch strings.ToUpper(unit) {
+	unit = strings.ToUpper(unit)
+	switch unit {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
 		return extractSingleDurationValue(unit, format)
 	case "SECOND_MICROSECOND":
