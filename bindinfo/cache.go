@@ -65,6 +65,7 @@ type BindCacheUpdater struct {
 	parser         *parser.Parser
 	lastUpdateTime types.Time
 	globalHandle   *Handle
+	lock           sync.Mutex
 }
 
 type bindRecord struct {
@@ -82,20 +83,22 @@ type bindRecord struct {
 }
 
 // NewBindCacheUpdater creates a new BindCacheUpdater.
-func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.Parser) *BindCacheUpdater {
+func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.Parser, lock sync.Mutex) *BindCacheUpdater {
 	return &BindCacheUpdater{
 		ctx:          ctx,
 		parser:       parser,
 		globalHandle: handle,
+		lock:         lock,
 	}
 }
 
 // NewHandle creates a Handle with a cache.
-func NewHandle(ctx sessionctx.Context) *Handle {
+func NewHandle(ctx sessionctx.Context, lock sync.Mutex) *Handle {
 	exec, _ := ctx.(sqlexec.SQLExecutor)
 	handle := &Handle{
 		ctx:  ctx,
 		exec: exec,
+		lock: lock,
 	}
 
 	return handle
@@ -112,6 +115,9 @@ func (h *Handle) Get() cache {
 
 // LoadDiff is used to load new bind info to cache bc.
 func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
+	bindCacheUpdater.lock.Lock()
+	defer bindCacheUpdater.lock.Unlock()
+
 	recordSets, err := bindCacheUpdater.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)

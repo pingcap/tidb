@@ -15,10 +15,10 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/domain"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -38,7 +38,7 @@ type CreateBindExec struct {
 // Next implements the Executor Next interface.
 func (e *CreateBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	req.Reset()
-	bm := bindinfo.GetBindManager(e.ctx)
+	bm := domain.GetDomain(e.ctx).BindHandle()
 	if bm == nil {
 		return errors.New("bind manager is nil")
 	}

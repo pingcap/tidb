@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -1271,12 +1270,6 @@ func CreateSession(store kv.Storage) (Session, error) {
 		Handle: do.PrivilegeHandle(),
 	}
 	privilege.BindPrivilegeManager(s, pm)
-
-	bm := &bindinfo.BindManager{
-		GlobalAccessor: do.BindHandle(),
-	}
-	bindinfo.BindBinderManager(s, bm)
-
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {

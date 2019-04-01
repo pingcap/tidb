@@ -13,10 +13,6 @@
 
 package bindinfo
 
-import (
-	"github.com/pingcap/tidb/sessionctx"
-)
-
 var _ Manager = (*BindManager)(nil)
 
 // BindManager implements Manager inferface.
@@ -24,30 +20,9 @@ type BindManager struct {
 	GlobalAccessor GlobalBindAccessor
 }
 
-type keyType int
-
-func (k keyType) String() string {
-	return "bind-key"
-}
-
 // Manager is the interface for providing bind related operations.
 type Manager interface {
 	AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation string) error
-}
-
-const key keyType = 0
-
-// BindBinderManager binds Manager to context.
-func BindBinderManager(ctx sessionctx.Context, pc Manager) {
-	ctx.SetValue(key, pc)
-}
-
-// GetBindManager gets Checker from context.
-func GetBindManager(ctx sessionctx.Context) Manager {
-	if v, ok := ctx.Value(key).(Manager); ok {
-		return v
-	}
-	return nil
 }
 
 //AddGlobalBind implements Manager's AddGlobalBind interface.
