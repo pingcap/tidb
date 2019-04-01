@@ -36,6 +36,8 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.BinlogSocket = "/tmp/socket"
+	conf.Performance.TxnEntryCountLimit = 1000
+	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.CheckMb4ValueInUTF8 = true
 	configFile := "config.toml"
@@ -45,6 +47,8 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`[performance]
+txn-entry-count-limit=2000
+txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"`)
 	c.Assert(err, IsNil)
@@ -55,6 +59,10 @@ commit-timeout="41s"`)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.BinlogSocket, Equals, "/tmp/socket")
+
+	// Test that the value will be overwritten by the config file.
+	c.Assert(conf.Performance.TxnEntryCountLimit, Equals, uint64(2000))
+	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(f.Close(), IsNil)
