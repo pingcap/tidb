@@ -353,7 +353,7 @@ func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
 		// 	Type: mysql.TypeTimestamp,
 		// }),
 	}
-	var valueStrs []string
+	valueStrs := make([]string, 0, len(values))
 	for _, v := range values {
 		str, err := v.ToString()
 		if err != nil {
