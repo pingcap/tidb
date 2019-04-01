@@ -399,11 +399,11 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 
 // GetFsp gets the fsp of a string.
 func GetFsp(s string) (fsp int) {
-	index := getFracIndex(s)
+	index := GetFracIndex(s)
 	if index < 0 {
 		fsp = 0
 	} else {
-		fsp = len(s) - getFracIndex(s) - 1
+		fsp = len(s) - index - 1
 	}
 
 	if fsp == len(s) {
@@ -414,16 +414,15 @@ func GetFsp(s string) (fsp int) {
 	return
 }
 
-// find the last '.' for get fracStr, index = -1 means fracStr not found.
-// for format like '2019.01.01 00:00:00', the fracStr should be empty
-func getFracIndex(s string) (index int) {
+// GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
+// but for format like '2019.01.01 00:00:00', the index should be -1.
+func GetFracIndex(s string) (index int) {
 	index = -1
 	for i := len(s) - 1; i >= 0; i-- {
 		if unicode.IsPunct(rune(s[i])) {
 			if s[i] == '.' {
 				index = i
 			}
-
 			break
 		}
 	}
@@ -623,7 +622,7 @@ func ParseDateFormat(format string) []string {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 // The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 func splitDateTime(format string) (seps []string, fracStr string) {
-	index := getFracIndex(format)
+	index := GetFracIndex(format)
 	if index > 0 {
 		fracStr = format[index+1:]
 		format = format[:index]

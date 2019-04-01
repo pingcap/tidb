@@ -1308,3 +1308,18 @@ func (s *testTimeSuite) TestGetFormatType(c *C) {
 	c.Assert(isDuration, Equals, true)
 	c.Assert(isDate, Equals, false)
 }
+
+func (s *testTimeSuite) TestgetFracIndex(c *C) {
+	testCases := []struct {
+		str         string
+		expectIndex int
+	}{
+		{"2019.01.01 00:00:00", -1},
+		{"2019.01.01 00:00:00.1", 19},
+		{"12345.6", 5},
+	}
+	for _, testCase := range testCases {
+		index := types.GetFracIndex(testCase.str)
+		c.Assert(index, Equals, testCase.expectIndex)
+	}
+}
