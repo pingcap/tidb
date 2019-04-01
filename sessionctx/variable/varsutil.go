@@ -122,8 +122,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return config.GetGlobalConfig().Plugin.Dir, true, nil
 	case PluginLoad:
 		return config.GetGlobalConfig().Plugin.Load, true, nil
-	case TiDBCheckMb4ValueInUtf8:
-		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8), true, nil
+	case TiDBCheckMb4ValueInUTF8:
+		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -350,7 +350,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
-		CoreFile, EndMakersInJSON, SQLLogBin, TiDBLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
+		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
 		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
@@ -361,7 +361,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBCheckMb4ValueInUtf8:
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
+		TiDBCheckMb4ValueInUTF8:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}
@@ -488,9 +489,20 @@ func parseTimeZone(s string) (*time.Location, error) {
 	}
 
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
+	// The time zone's value should in [-12:59,+14:00].
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
 		d, err := types.ParseDuration(nil, s[1:], 0)
 		if err == nil {
+			if s[0] == '-' {
+				if d.Duration > 12*time.Hour+59*time.Minute {
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+				}
+			} else {
+				if d.Duration > 14*time.Hour {
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+				}
+			}
+
 			ofst := int(d.Duration / time.Second)
 			if s[0] == '-' {
 				ofst = -ofst

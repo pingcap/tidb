@@ -49,7 +49,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
@@ -103,11 +104,15 @@ type clientConn struct {
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 	status       int32             // dispatching/reading/shutdown/waitshutdown
+	peerHost     string            // peer host
+	peerPort     string            // peer port
+	lastCode     uint16            // last error code
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
+		resultSets []ResultSet
 	}
 }
 
@@ -497,18 +502,13 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	host := variable.DefHostname
 	hasPassword := "YES"
 	if len(authData) == 0 {
 		hasPassword = "NO"
 	}
-	if !cc.server.isUnixSocket() {
-		addr := cc.bufReadConn.RemoteAddr().String()
-		// Do Auth.
-		host, _, err = net.SplitHostPort(addr)
-		if err != nil {
-			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword))
-		}
+	host, err := cc.PeerHost(hasPassword)
+	if err != nil {
+		return err
 	}
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
 		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, hasPassword))
@@ -521,6 +521,27 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	}
 	cc.ctx.SetSessionManager(cc.server)
 	return nil
+}
+
+func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
+	if len(cc.peerHost) > 0 {
+		return cc.peerHost, nil
+	}
+	host = variable.DefHostname
+	if cc.server.isUnixSocket() {
+		cc.peerHost = host
+		return
+	}
+	addr := cc.bufReadConn.RemoteAddr().String()
+	var port string
+	host, port, err = net.SplitHostPort(addr)
+	if err != nil {
+		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword)
+		return
+	}
+	cc.peerHost = host
+	cc.peerPort = port
+	return
 }
 
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
@@ -837,6 +858,7 @@ func (cc *clientConn) writeError(e error) error {
 		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
 	}
 
+	cc.lastCode = m.Code
 	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))
 	data = append(data, mysql.ErrHeader)
 	data = append(data, byte(m.Code), byte(m.Code>>8))
@@ -1026,6 +1048,15 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
+	cc.mu.Lock()
+	cc.mu.resultSets = rs
+	status := atomic.LoadInt32(&cc.status)
+	if status == connStatusShutdown || status == connStatusWaitShutdown {
+		cc.mu.Unlock()
+		killConn(cc)
+		return errors.New("killed by another connection")
+	}
+	cc.mu.Unlock()
 	if rs != nil {
 		if len(rs) == 1 {
 			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
@@ -1292,9 +1323,26 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context error", zap.Error(err))
 	}
+
 	err = cc.openSessionAndDoAuth(pass)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			connInfo := cc.connectInfo()
+			err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: connInfo.Host}, plugin.ChangeUser, connInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
 	return cc.writeOK()
 }

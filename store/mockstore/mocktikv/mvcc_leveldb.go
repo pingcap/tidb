@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"sync"
 
@@ -26,8 +27,10 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // MVCCLevelDB implements the MVCCStore interface.
@@ -352,7 +355,7 @@ func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
-	var pairs []Pair
+	pairs := make([]Pair, 0, len(ks))
 	for _, k := range ks {
 		v, err := mvcc.getValue(k, startTS, isoLevel)
 		if v == nil && err == nil {
@@ -375,7 +378,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
-		log.Error("scan new iterator fail:", errors.ErrorStack(err))
+		logutil.Logger(context.Background()).Error("scan new iterator fail", zap.Error(err))
 		return nil
 	}
 
@@ -399,7 +402,7 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 		skip := skipDecoder{currKey}
 		ok, err = skip.Decode(iter)
 		if err != nil {
-			log.Error("seek to next key error:", errors.ErrorStack(err))
+			logutil.Logger(context.Background()).Error("seek to next key error", zap.Error(err))
 			break
 		}
 		currKey = skip.currKey
@@ -454,7 +457,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 			helper.entry.values = append(helper.entry.values, value)
 		}
 		if err != nil {
-			log.Error("Unmarshal fail:", errors.Trace(err))
+			logutil.Logger(context.Background()).Error("unmarshal fail", zap.Error(err))
 			break
 		}
 		succ = iter.Prev()
@@ -569,7 +572,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	}
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if ok && dec1.value.commitTS >= startTS {
-		return ErrRetryable("write conflict")
+		return ErrRetryable(tidbutil.WriteConflictMarker)
 	}
 
 	op := mutation.GetOp()
@@ -592,7 +595,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	// Check assertions.
 	if (ok && mutation.Assertion == kvrpcpb.Assertion_NotExist) ||
 		(!ok && mutation.Assertion == kvrpcpb.Assertion_Exist) {
-		log.Error("ASSERTION FAIL!!!", mutation)
+		logutil.Logger(context.Background()).Error("ASSERTION FAIL!!!", zap.Stringer("mutation", mutation))
 	}
 
 	batch.Put(writeKey, writeValue)
@@ -956,7 +959,7 @@ func (mvcc *MVCCLevelDB) RawBatchGet(keys [][]byte) [][]byte {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
-	var values [][]byte
+	values := make([][]byte, 0, len(keys))
 	for _, key := range keys {
 		value, err := mvcc.db.Get(key, nil)
 		terror.Log(err)

@@ -30,8 +30,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // adjustColumnInfoInAddColumn is used to set the correct position of column info when adding column.
@@ -177,7 +178,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		log.Infof("[ddl] add column, run DDL job %s, column info %#v, offset %d", job, columnInfo, offset)
+		logutil.Logger(ddlLogCtx).Info("[ddl] run add column job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offset))
 		// Set offset arg to job.
 		if offset != 0 {
 			job.Args = []interface{}{columnInfo, pos, offset}
@@ -575,10 +576,6 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	if odValue == strings.ToUpper(ast.CurrentTimestamp) {
 		if col.Tp == mysql.TypeTimestamp {
 			odValue = time.Now().UTC().Format(types.TimeFormat)
-			// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
-			//              This will fix bug in version 0.
-			// TODO: remove this version field after there is no old version 0.
-			col.Version = model.ColumnInfoVersion1
 		} else if col.Tp == mysql.TypeDatetime {
 			odValue = time.Now().Format(types.TimeFormat)
 		}
@@ -593,4 +590,13 @@ func findColumnInIndexCols(c *expression.Column, cols []*ast.IndexColName) bool 
 		}
 	}
 	return false
+}
+
+func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
+	for _, colInfo := range tbInfo.Cols() {
+		if colInfo.Name.L == column {
+			return colInfo
+		}
+	}
+	return nil
 }

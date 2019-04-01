@@ -52,6 +52,10 @@ type Manager interface {
 
 	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
 	UserPrivilegesTable() [][]types.Datum
+
+	// ActiveRoles active roles for current session.
+	// The first illegal role will be returned.
+	ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
 }
 
 const key keyType = 0

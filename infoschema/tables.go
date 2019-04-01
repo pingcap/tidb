@@ -530,7 +530,7 @@ var tableProcesslistCols = []columnInfo{
 	{"COMMAND", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
 	{"TIME", mysql.TypeLong, 7, mysql.NotNullFlag, 0, nil},
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
-	{"Info", mysql.TypeString, 512, 0, nil, nil},
+	{"INFO", mysql.TypeString, 512, 0, nil, nil},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -631,8 +631,8 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 		}
 	}
 
-	var records [][]types.Datum
 	pl := sm.ShowProcessList()
+	records := make([][]types.Datum, 0, len(pl))
 	for _, pi := range pl {
 		// If you have the PROCESS privilege, you can see all threads.
 		// Otherwise, you can see only your own threads.
@@ -640,20 +640,8 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			continue
 		}
 
-		var t uint64
-		if len(pi.Info) != 0 {
-			t = uint64(time.Since(pi.Time) / time.Second)
-		}
-		record := types.MakeDatums(
-			pi.ID,
-			pi.User,
-			pi.Host,
-			pi.DB,
-			pi.Command,
-			t,
-			fmt.Sprintf("%d", pi.State),
-			pi.Info,
-		)
+		rows := pi.ToRow(true)
+		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
 	return records
@@ -716,7 +704,7 @@ var filesCols = []columnInfo{
 
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schema := range schemas {
 
@@ -1099,7 +1087,7 @@ func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.D
 }
 
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(tbl.Columns))
 	for i, col := range tbl.Columns {
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
 		colLen, decimal := col.Flen, col.Decimal

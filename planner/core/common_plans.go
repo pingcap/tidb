@@ -133,6 +133,12 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
+// Change represents a change plan.
+type Change struct {
+	baseSchemaProducer
+	*ast.ChangeStmt
+}
+
 // Prepare represents prepare plan.
 type Prepare struct {
 	baseSchemaProducer
@@ -172,7 +178,9 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		if err != nil {
 			return errors.Trace(err)
 		}
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = val
+		param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		param.Datum = val
+		param.InExecute = true
 		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {

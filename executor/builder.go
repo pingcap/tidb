@@ -67,10 +67,19 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *execu
 	}
 }
 
+// MockPhysicalPlan is used to return a specified executor in when build.
+// It is mainly used for testing.
+type MockPhysicalPlan interface {
+	plannercore.PhysicalPlan
+	GetExecutor() Executor
+}
+
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	switch v := p.(type) {
 	case nil:
 		return nil
+	case *plannercore.Change:
+		return b.buildChange(v)
 	case *plannercore.CheckTable:
 		return b.buildCheckTable(v)
 	case *plannercore.CheckIndex:
@@ -172,6 +181,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
 	default:
+		if mp, ok := p.(MockPhysicalPlan); ok {
+			return mp.GetExecutor()
+		}
+
 		b.err = ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
 	}
@@ -194,6 +207,12 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		return nil
 	}
 	return e
+}
+
+func (b *executorBuilder) buildChange(v *plannercore.Change) Executor {
+	return &ChangeExec{
+		ChangeStmt: v.ChangeStmt,
+	}
 }
 
 func (b *executorBuilder) buildShowNextRowID(v *plannercore.ShowNextRowID) Executor {
@@ -835,6 +854,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			leftExec.retTypes(),
 			rightExec.retTypes(),
 		),
+		isOuterJoin: v.JoinType.IsOuterJoin(),
 	}
 
 	leftKeys := v.LeftKeys
@@ -902,6 +922,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
+		isOuterJoin:  v.JoinType.IsOuterJoin(),
 		innerIdx:     v.InnerChildIdx,
 	}
 
@@ -1536,11 +1557,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			filter:   outerFilter,
 		},
 		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{innerPlan, b},
+			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 			rowTypes:      innerTypes,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 	}
@@ -1777,6 +1799,8 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 type dataReaderBuilder struct {
 	plannercore.Plan
 	*executorBuilder
+
+	selectResultHook // for testing
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, datums [][]types.Datum,
@@ -1796,7 +1820,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 
 func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
 	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
-	childBuilder := &dataReaderBuilder{v.Children()[0], builder.executorBuilder}
+	childBuilder := &dataReaderBuilder{Plan: v.Children()[0], executorBuilder: builder.executorBuilder}
 	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
 		return nil, err
@@ -1841,7 +1865,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	e.resultHandler = &tableResultHandler{}
-	result, err := distsql.SelectWithRuntimeStats(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1870,11 +1894,11 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	kvRanges, err := buildKvRangesForIndexJoin(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, values, indexRanges, keyOff2IdxOff)
+	e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = e.open(ctx, kvRanges)
+	err = e.open(ctx)
 	return e, errors.Trace(err)
 }
 
@@ -1908,7 +1932,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		return nil
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec)
-	var groupByItems []expression.Expression
+	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
 	for _, item := range v.PartitionBy {
 		groupByItems = append(groupByItems, item.Col)
 	}

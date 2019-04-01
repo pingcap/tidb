@@ -71,7 +71,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 		types.NewBytesDatum([]byte("foobar")),
 		types.NewFloat64Datum(-100.25),
 	}
-	var expectIndexValues []string
+	expectIndexValues := make([]string, 0, len(indexValues))
 	for _, v := range indexValues {
 		str, err := v.ToString()
 		if err != nil {
@@ -660,20 +660,20 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, true)
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, true)
 	txn1, err := dbt.db.Begin()
 	c.Assert(err, IsNil)
 	_, err = txn1.Exec("insert t2 values (unhex('F0A48BAE'));")
 	c.Assert(err, NotNil)
 	txn1.Commit()
 
-	// Disable CheckMb4ValueInUtf8.
+	// Disable CheckMb4ValueInUTF8.
 	form = make(url.Values)
 	form.Set("check_mb4_value_in_utf8", "0")
 	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, false)
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
 }
 
@@ -690,7 +690,7 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
-	log.Fatalf("Failed to get profile for %d retries in every 10 ms", retryTime)
+	zaplog.Fatal("failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
 }
 
 func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
