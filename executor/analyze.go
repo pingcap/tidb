@@ -607,12 +607,17 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool,
 			*err = errors.Trace(*err)
 			return
 		}
-		if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
-			if err1 := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err1 != nil {
+		regionErr, err1 := resp.GetRegionError()
+		if err1 != nil {
+			*err = err1
+			return
+		}
+		if regionErr != nil {
+			if err1 := bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String())); err1 != nil {
 				*err = errors.Trace(err1)
 				return
 			}
-			needRebuild = true
+			*needRebuild = true
 			return
 		}
 
