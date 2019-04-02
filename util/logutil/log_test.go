@@ -67,14 +67,9 @@ func (s *testLogSuite) TestStringToLogLevel(c *C) {
 // TestLogging assure log format and log redirection works.
 func (s *testLogSuite) TestLogging(c *C) {
 	var conf *LogConfig
-	if os.Getuid() == 0 {
-		fmt.Fprintln(os.Stderr, "skipping test for ability to open log file while running as root!")
-	} else {
-		conf = NewLogConfig("warn", DefaultLogFormat, "", EmptyFileLogConfig, false)
-		// This is just kind of a shot in the dark, assuming an unprivileged user cannot write to /
-		conf.Config.File.Filename = "/cannot-write-here"
-		c.Assert(InitLogger(conf), ErrorMatches, "can't open new logfile.*")
-	}
+	conf = NewLogConfig("warn", DefaultLogFormat, "", EmptyFileLogConfig, false)
+	conf.Config.File.Filename = "/cannot/write/here"
+	c.Assert(InitLogger(conf), ErrorMatches, "can't open new logfile.*")
 
 	conf = NewLogConfig("warn", DefaultLogFormat, "", EmptyFileLogConfig, false)
 	c.Assert(InitLogger(conf), IsNil)
