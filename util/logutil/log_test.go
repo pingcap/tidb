@@ -67,6 +67,10 @@ func (s *testLogSuite) TestStringToLogLevel(c *C) {
 // TestLogging assure log format and log redirection works.
 func (s *testLogSuite) TestLogging(c *C) {
 	conf := NewLogConfig("warn", DefaultLogFormat, "", EmptyFileLogConfig, false)
+	conf.Config.File.Filename = "/dev/full"
+	c.Assert(InitLogger(conf), ErrorMatches, "can't open new logfile.*")
+
+	conf = NewLogConfig("warn", DefaultLogFormat, "", EmptyFileLogConfig, false)
 	c.Assert(InitLogger(conf), IsNil)
 
 	log.SetOutput(s.buf)

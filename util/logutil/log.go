@@ -264,10 +264,12 @@ func initFileLog(cfg *zaplog.FileLogConfig, logger *log.Logger) error {
 	// Make sure we can open the log file the user has specified. lumberjack is going
 	// to manage this later, but we don't get any feedback about whether it could open
 	// the file or whether individual writes succeed.
-	if f, err := os.OpenFile(cfg.Filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err != nil {
+	f, err := os.OpenFile(cfg.Filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
 		return errors.Errorf("can't open new logfile: %s", err)
-	} else {
-		f.Close()
+	}
+	if err = f.Close(); err != nil {
+		return errors.Errorf("could not close new logfile after opening for testing: %s", err)
 	}
 
 	if cfg.MaxSize == 0 {
