@@ -519,7 +519,7 @@ func (s *testSuite) TestSetDDLReorgBatchSize(c *C) {
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
 }
 
-func (s *testSuite3) TestTimestampMinDefaultValue(c *C) {
+func (s *testSuite) TestTimestampMinDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tdv;")
