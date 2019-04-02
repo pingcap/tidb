@@ -60,8 +60,7 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	decodeColsMap := make(map[int64]Column, len(cols))
 	decodeColsMap2 := make(map[int64]Column, len(cols))
-	for i := range tbl.Cols() {
-		col := tbl.Cols()[i]
+	for _, col := range tbl.Cols() {
 		tpExpr := Column{
 			Col: col,
 		}
@@ -131,7 +130,10 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 
 		r, err := de.DecodeAndEvalRowWithMap(ctx, int64(i), bs, time.UTC, timeZoneIn8, nil)
 		c.Assert(err, IsNil)
-		// last column is pk, pk value won't store, and the pk column value is null after decode. we won't check the pk column.
+		// Last column is primary-key column, and the table primary-key is handle, then the primary-key value won't be
+		// stored in raw data, but store in the raw key.
+		// So when decode, we can't get the primary-key value from raw data, then ignore check the value of the
+		// last primary key column.
 		for i, col := range cols[:len(cols)-1] {
 			v, ok := r[col.ID]
 			if ok {
