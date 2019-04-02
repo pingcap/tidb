@@ -477,14 +477,12 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 			*err = errors.Trace(*err)
 			return
 		}
-		// TODO: duel with not_found
+		// TODO: check the region not_found
 		if ctx.Err() != nil {
 			fmt.Println(ctx.Err().Error())
 			*needRebuild = true
 			return
 		}
-		// ***
-		// ***
 		for _, prop := range resp.DebugGetRegionProperties.Props {
 			if prop.Name == "num_rows" {
 				var cnt uint64
@@ -619,7 +617,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse)
 	}
 	// collect index samples.
 	if hasIdxInfo > 0 {
-
+		// TODO: build index statistic result
 	}
 	return
 }
@@ -630,6 +628,10 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool,
 		task, ok := <-e.tasks
 		if !ok {
 			return
+		}
+
+		if task.isScan {
+			// TODO: handle scan task.
 		}
 
 		var tableID, minRowID, maxRowID int64
