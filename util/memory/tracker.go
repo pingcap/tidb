@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -136,12 +137,9 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 func (t *Tracker) Consume(bytes int64) {
 	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
-		tracker.Lock()
-		tracker.bytesConsumed += bytes
-		if tracker.bytesLimit > 0 && tracker.bytesConsumed >= tracker.bytesLimit {
+		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
 			rootExceed = tracker
 		}
-		tracker.Unlock()
 	}
 	if rootExceed != nil {
 		rootExceed.actionOnExceed.Action(rootExceed)
