@@ -968,6 +968,25 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 }
 
+func (s *testSessionSuite) TestBinaryReadOnly(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (i int key)")
+	id, _, _, err := tk.Se.PrepareStmt("select i from t where i = ?")
+	c.Assert(err, IsNil)
+	id2, _, _, err := tk.Se.PrepareStmt("insert into t values (?)")
+	c.Assert(err, IsNil)
+	tk.MustExec("set autocommit = 0")
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id, 1)
+	c.Assert(err, IsNil)
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+	tk.MustExec("insert into t values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id2, 2)
+	c.Assert(err, IsNil)
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 2)
+	tk.MustExec("commit")
+}
+
 func (s *testSessionSuite) TestPrepare(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(id TEXT)")
@@ -1747,7 +1766,7 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	// The schema version is out of date in the first transaction, but the SQL can be retried.
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t add index idx(c);`)
-	tk.MustExec(`insert into t1 values(2, 2);`)
+	tk.MustExec(`insert into t values(2, 2);`)
 	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
@@ -2348,7 +2367,7 @@ func (s *testSessionSuite) TestCommitRetryCount(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
+func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("create table no_retry (id int)")
@@ -2383,6 +2402,46 @@ func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
 
 	tk1.MustExec("update no_retry set id = 7")
 	tk1.MustExec("commit")
+
+	// test for disable transaction local latch
+	tk1.Se.GetSessionVars().InRestrictedSQL = false
+	config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+	tk1.MustExec("begin")
+	tk1.MustExec("update no_retry set id = 9")
+
+	tk2.MustExec("update no_retry set id = 8")
+
+	_, err = tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(err, NotNil)
+	tk1.MustExec("rollback")
+
+	// other errors could retry
+	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
+	tk1.MustExec("begin")
+	tk2.MustExec("alter table no_retry add index idx(id)")
+	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
+	tk1.MustExec("update no_retry set id = 10")
+	tk1.MustExec("commit")
+	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("10"))
+
+	// set autocommit to begin and commit
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("10"))
+	tk2.MustExec("update no_retry set id = 11")
+	tk1.MustExec("update no_retry set id = 12")
+	_, err = tk1.Se.Execute(context.Background(), "set autocommit = 1")
+	c.Assert(err, NotNil)
+	tk1.MustExec("rollback")
+	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("11"))
+
+	tk1.MustExec("set autocommit = 0")
+	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("11"))
+	tk2.MustExec("update no_retry set id = 13")
+	tk1.MustExec("update no_retry set id = 14")
+	_, err = tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(err, NotNil)
+	tk1.MustExec("rollback")
+	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("13"))
 }
 
 // TestSetGroupConcatMaxLen is for issue #7034

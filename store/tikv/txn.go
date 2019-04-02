@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -268,7 +269,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		err = errors.Errorf("txnStartTS %d is stale", txn.startTS)
+		err = errors.Errorf("%s txnStartTS %d is stale", util.WriteConflictMarker, txn.startTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 	err = committer.executeAndWriteFinishBinlog(ctx)
