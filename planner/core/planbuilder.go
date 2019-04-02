@@ -653,9 +653,6 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	for _, idx := range tn.TableInfo.Indices {
 		if idx.State == model.StatePublic {
 			indicesInfo = append(indicesInfo, idx)
-			if len(idx.Columns) == 1 {
-				idxNames = append(idxNames, idx.Columns[0].Name.L)
-			}
 		}
 	}
 	return
