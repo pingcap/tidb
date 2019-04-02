@@ -333,7 +333,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 		isPrimary, err := checkColumnOptions(colDef.Options)
 		if err != nil {
-			p.err = errors.Trace(err)
+			p.err = err
 			return
 		}
 		countPrimaryKey += isPrimary
