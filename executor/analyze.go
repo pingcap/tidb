@@ -509,15 +509,6 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	}
 	e.wg.Wait()
 
-	atomic.StoreUint64(&e.sampLocRowCount, 0)
-	bo := tikv.NewBackoffer(context.Background(), 500)
-	needRebuildForRoutine := make([]bool, e.concurrency)
-	errs := make([]error, e.concurrency)
-	e.wg.Add(e.concurrency)
-	for i := 0; i < e.concurrency; i++ {
-		go e.getSampRegionsRowCount(bo, &needRebuildForRoutine[i], &errs[i])
-	}
-
 	store, ok := e.ctx.GetStore().(tikv.Storage)
 	if !ok {
 		return false, errors.Errorf("Only support fast analyze in tikv storage.")
@@ -526,6 +517,7 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.table.Meta().ID)
 	var loc *tikv.KeyLocation
 	var err error
+	bo := tikv.NewBackoffer(context.Background(), 500)
 	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, append(loc.EndKey, byte(0))) {
 		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
 			e.tasks <- &AnalyzeFastTask{Location: loc, isScan: true}
@@ -536,7 +528,16 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+
+	// Do get regions row count.
 	close(e.sampLocs)
+	atomic.StoreUint64(&e.sampLocRowCount, 0)
+	needRebuildForRoutine := make([]bool, e.concurrency)
+	errs := make([]error, e.concurrency)
+	e.wg.Add(e.concurrency)
+	for i := 0; i < e.concurrency; i++ {
+		go e.getSampRegionsRowCount(bo, &needRebuildForRoutine[i], &errs[i])
+	}
 	e.wg.Wait()
 	for i := 0; i < e.concurrency; i++ {
 		if errs[i] != nil {
@@ -622,7 +623,14 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse)
 	return
 }
 
-func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool, err *error) (hists []*statistics.Histogram, cms []*statistics.CMSketch) {
+func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool, err *error, hists *[]*statistics.Histogram, cms *[]*statistics.CMSketch) {
+	defer func() {
+		if *err != nil || *needRebuild == true {
+			for _, ok := <-e.tasks; ok; _, ok = <-e.tasks {
+				// Do nothing.
+			}
+		}
+	}()
 	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for {
 		task, ok := <-e.tasks
@@ -639,10 +647,12 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool,
 		tableID, minRowID, *err = tablecodec.DecodeRecordKey(startKey)
 		if *err != nil {
 			*err = errors.Trace(*err)
+			return
 		}
 		_, maxRowID, *err = tablecodec.DecodeRecordKey(endKey)
 		if *err != nil {
 			*err = errors.Trace(*err)
+			return
 		}
 
 		keys := make([][]byte, 0, task.SampSize)
@@ -687,17 +697,17 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool,
 			*err = errors.Trace(err1)
 			return
 		}
-		if len(hists) == 0 {
-			hists = tmpHists
-			cms = tmpCms
+		if len(*hists) == 0 {
+			*hists = tmpHists
+			*cms = tmpCms
 		} else {
-			for i := 0; i < len(hists); i++ {
-				hists[i], *err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hists[i], tmpHists[i], int(e.maxNumBuckets))
+			for i := 0; i < len(*hists); i++ {
+				(*hists)[i], *err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, (*hists)[i], tmpHists[i], int(e.maxNumBuckets))
 				if *err != nil {
 					*err = errors.Trace(*err)
 					return
 				}
-				*err = cms[i].MergeCMSketch(tmpCms[i])
+				*err = (*cms)[i].MergeCMSketch(tmpCms[i])
 				if *err != nil {
 					*err = errors.Trace(*err)
 					return
@@ -707,26 +717,42 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool,
 	}
 }
 
-func (e *AnalyzeFastExec) runSampTasks() (bool, error) {
+func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMSketch, bool, error) {
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
+	hists, cms := make([][]*statistics.Histogram, e.concurrency), make([][]*statistics.CMSketch, e.concurrency)
 	e.wg.Add(e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		bo := tikv.NewBackoffer(context.Background(), 500)
-		go e.handleSampTasks(bo, &needRebuildForRoutine[i], &errs[i])
+		go e.handleSampTasks(bo, &needRebuildForRoutine[i], &errs[i], &hists[i], &cms[i])
 	}
 	e.wg.Wait()
 	for _, err := range errs {
 		if err != nil {
-			return false, errors.Trace(err)
+			return nil, nil, false, errors.Trace(err)
 		}
 	}
 	for _, needRebuild := range needRebuildForRoutine {
 		if needRebuild == true {
-			return true, nil
+			return nil, nil, true, nil
 		}
 	}
-	return false, nil
+	var err error
+	for i := 1; i < e.concurrency; i++ {
+		if len(hists[i]) > 0 {
+			for j := 0; j < len(hists[0]); j++ {
+				hists[0][j], err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hists[0][j], hists[i][j], int(e.maxNumBuckets))
+				if err != nil {
+					return nil, nil, false, errors.Trace(err)
+				}
+				err = cms[0][j].MergeCMSketch(cms[i][j])
+				if err != nil {
+					return nil, nil, false, errors.Trace(err)
+				}
+			}
+		}
+	}
+	return hists[0], cms[0], false, nil
 }
 
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
@@ -760,13 +786,13 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		}
 
 		close(e.tasks)
-		needRebuild, err = e.runSampTasks()
+		hists, cms, needRebuild, err = e.runTasks()
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		if needRebuild {
 			continue
 		}
-
+		return hists, cms, nil
 	}
 }
