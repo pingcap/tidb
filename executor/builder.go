@@ -1432,12 +1432,15 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	for _, task := range v.ColTasks {
 		if v.EnableFastAnalyze {
 			e.tasks = append(e.tasks, &analyzeTask{
-				taskType: colFastTask,
-				colFastExec: &AnalyzeColumnsFastExec{
+				taskType: fastTask,
+				fastExec: &AnalyzeFastExec{
 					ctx:             b.ctx,
 					PhysicalTableID: task.PhysicalTableID,
 					colsInfo:        task.ColsInfo,
+					pkInfo:          task.PKInfo,
 					maxNumBuckets:   v.MaxNumBuckets,
+					table:           task.Table,
+					concurrency:     4,
 				},
 			})
 		} else {
@@ -1454,12 +1457,14 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	for _, task := range v.IdxTasks {
 		if v.EnableFastAnalyze {
 			e.tasks = append(e.tasks, &analyzeTask{
-				taskType: idxFastTask,
-				idxFastExec: &AnalyzeIndexFastExec{
+				taskType: fastTask,
+				fastExec: &AnalyzeFastExec{
 					ctx:             b.ctx,
 					PhysicalTableID: task.PhysicalTableID,
 					idxInfo:         task.IndexInfo,
 					maxNumBuckets:   v.MaxNumBuckets,
+					table:           task.Table,
+					concurrency:     4,
 				},
 			})
 		} else {

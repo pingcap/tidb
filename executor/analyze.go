@@ -430,7 +430,9 @@ type AnalyzeFastTask struct {
 type AnalyzeFastExec struct {
 	ctx             sessionctx.Context
 	PhysicalTableID int64
+	pkInfo          *model.ColumnInfo
 	colsInfo        []*model.ColumnInfo
+	idxInfo         *model.IndexInfo
 	concurrency     int
 	maxNumBuckets   uint64
 	table           table.Table
@@ -483,7 +485,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		}
 		// ***
 		// ***
-		for i, prop := range resp.DebugGetRegionProperties.Props {
+		for _, prop := range resp.DebugGetRegionProperties.Props {
 			if prop.Name == "num_rows" {
 				var cnt uint64
 				cnt, *err = strconv.ParseUint(prop.Value, 10, 64)
@@ -565,7 +567,64 @@ func lowerBound(array []uint64, key uint64) int {
 	return l
 }
 
-func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool, err *error) {
+func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse) (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
+	hasPKInfo := 0
+	if e.pkInfo != nil {
+		hasPKInfo = 1
+	}
+	hasIdxInfo := 0
+	if e.idxInfo != nil {
+		hasIdxInfo = 1
+	}
+	// collect column samples and primary key samples.
+	length := len(e.colsInfo) + hasPKInfo
+	collectors := make([]*statistics.SampleCollector, length)
+	for i := range collectors {
+		collectors[i] = &statistics.SampleCollector{
+			IsMerger:      true,
+			FMSketch:      statistics.NewFMSketch(maxSketchSize),
+			MaxSampleSize: maxSampleSize,
+			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
+		}
+	}
+	timeZone := e.ctx.GetSessionVars().Location()
+	for i, pair := range resp.Pairs {
+		if hasPKInfo > 0 {
+			collectors[0].Samples[i].Ordinal = i
+			collectors[0].Samples[i].Value, err = tablecodec.DecodeColumnValue(pair.Value, &e.pkInfo.FieldType, timeZone)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+		}
+		for j, colInfo := range e.colsInfo {
+			collectors[hasPKInfo+j].Samples[i].Ordinal = i
+			collectors[hasPKInfo+j].Samples[i].Value, err = tablecodec.DecodeColumnValue(pair.Value, &colInfo.FieldType, timeZone)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+		}
+	}
+	for i, collector := range collectors {
+		var hg *statistics.Histogram
+		if i == 0 && hasPKInfo > 0 {
+			hg, err = statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), e.pkInfo.ID, collector, &e.pkInfo.FieldType)
+		} else {
+			hg, err = statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), e.colsInfo[i-hasPKInfo].ID, collector, &e.colsInfo[i-hasPKInfo].FieldType)
+		}
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		hists = append(hists, hg)
+		cms = append(cms, collectors[i].CMSketch)
+	}
+	// collect index samples.
+	if hasIdxInfo > 0 {
+
+	}
+	return
+}
+
+func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool, err *error) (hists []*statistics.Histogram, cms []*statistics.CMSketch) {
 	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for {
 		task, ok := <-e.tasks
@@ -621,6 +680,28 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool,
 			return
 		}
 
+		tmpHists, tmpCms, err1 := e.handleBatchGetResponse(resp.BatchGet)
+		if err1 != nil {
+			*err = errors.Trace(err1)
+			return
+		}
+		if len(hists) == 0 {
+			hists = tmpHists
+			cms = tmpCms
+		} else {
+			for i := 0; i < len(hists); i++ {
+				hists[i], *err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hists[i], tmpHists[i], int(e.maxNumBuckets))
+				if *err != nil {
+					*err = errors.Trace(*err)
+					return
+				}
+				*err = cms[i].MergeCMSketch(tmpCms[i])
+				if *err != nil {
+					*err = errors.Trace(*err)
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -656,7 +737,7 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 			continue
 		}
 
-		if e.sampLocRowCount < maxSampleSize*10 {
+		if e.sampLocRowCount < maxSampleSize*2 {
 			// TODO: return normal Analyze
 		}
 
