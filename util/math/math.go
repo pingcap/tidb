@@ -11,7 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package types
+package math
+
+import "math"
 
 // http://cavaliercoder.com/blog/optimized-abs-for-int64-in-go.html
 func abs(n int64) int64 {
@@ -26,8 +28,8 @@ var uintSizeTable = [21]uint64{
 	999999, 9999999, 99999999, 999999999, 9999999999,
 	99999999999, 999999999999, 9999999999999, 99999999999999, 999999999999999,
 	9999999999999999, 99999999999999999, 999999999999999999, 9999999999999999999,
-	maxUint,
-} // maxUint is 18446744073709551615 and it has 20 digits
+	math.MaxUint64,
+} // math.MaxUint64 is 18446744073709551615 and it has 20 digits
 
 // StrLenOfUint64Fast efficiently calculate the string character lengths of an uint64 as input
 func StrLenOfUint64Fast(x uint64) int {

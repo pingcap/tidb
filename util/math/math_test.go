@@ -11,20 +11,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package types
+package math
 
 import (
 	"math/rand"
 	"strconv"
+	"testing"
 
 	. "github.com/pingcap/check"
 )
 
-var _ = Suite(&UtilTest{})
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
-type UtilTest struct{}
+var _ = Suite(&testMath{})
 
-func (s *UtilTest) TestStrLenOfUint64Fast_RandomTestCases(c *C) {
+type testMath struct{}
+
+func (s *testMath) TestStrLenOfUint64Fast_RandomTestCases(c *C) {
 	for i := 0; i < 1000000; i++ {
 		num := rand.Uint64()
 		expected := len(strconv.FormatUint(num, 10))
@@ -33,7 +38,7 @@ func (s *UtilTest) TestStrLenOfUint64Fast_RandomTestCases(c *C) {
 	}
 }
 
-func (s *UtilTest) TestStrLenOfUint64Fast_ManualTestCases(c *C) {
+func (s *testMath) TestStrLenOfUint64Fast_ManualTestCases(c *C) {
 	nums := [22]uint64{0,
 		1, 12, 123, 1234, 12345,
 		123456, 1234567, 12345678, 123456789, 1234567890,
