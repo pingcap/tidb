@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"math/rand"
 	"runtime"
 	"sort"
@@ -509,10 +508,7 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	}
 	e.wg.Wait()
 
-	store, ok := e.ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return false, errors.Errorf("Only support fast analyze in tikv storage.")
-	}
+	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.table.Meta().ID)
 	var loc *tikv.KeyLocation
@@ -553,20 +549,10 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	return false, nil
 }
 
-func lowerBound(array []uint64, key uint64) int {
-	l, r := 0, len(array)
-	for l < r {
-		mid := (l + r) >> 1
-		if array[mid] < key {
-			l = mid + 1
-		} else {
-			r = mid
-		}
-	}
-	return l
-}
-
-func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse) (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
+func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse, collectors []*statistics.SampleCollector, cursor *int32) (err error) {
+	length := int32(len(resp.Pairs))
+	timeZone := e.ctx.GetSessionVars().Location()
+	newCursor := atomic.AddInt32(cursor, length)
 	hasPKInfo := 0
 	if e.pkInfo != nil {
 		hasPKInfo = 1
@@ -575,57 +561,32 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse)
 	if e.idxInfo != nil {
 		hasIdxInfo = 1
 	}
-	// collect column samples and primary key samples.
-	length := len(e.colsInfo) + hasPKInfo
-	collectors := make([]*statistics.SampleCollector, length)
-	for i := range collectors {
-		collectors[i] = &statistics.SampleCollector{
-			IsMerger:      true,
-			FMSketch:      statistics.NewFMSketch(maxSketchSize),
-			MaxSampleSize: maxSampleSize,
-			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
-		}
-	}
-	timeZone := e.ctx.GetSessionVars().Location()
 	for i, pair := range resp.Pairs {
+		samplePos := newCursor - length + int32(i)
 		if hasPKInfo > 0 {
-			collectors[0].Samples[i].Ordinal = i
-			collectors[0].Samples[i].Value, err = tablecodec.DecodeColumnValue(pair.Value, &e.pkInfo.FieldType, timeZone)
+			collectors[0].Samples[samplePos].Ordinal = int(samplePos)
+			collectors[0].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(pair.Value, &e.pkInfo.FieldType, timeZone)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 		for j, colInfo := range e.colsInfo {
-			collectors[hasPKInfo+j].Samples[i].Ordinal = i
-			collectors[hasPKInfo+j].Samples[i].Value, err = tablecodec.DecodeColumnValue(pair.Value, &colInfo.FieldType, timeZone)
+			collectors[hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
+			collectors[hasPKInfo+j].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(pair.Value, &colInfo.FieldType, timeZone)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 	}
-	for i, collector := range collectors {
-		var hg *statistics.Histogram
-		if i == 0 && hasPKInfo > 0 {
-			hg, err = statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), e.pkInfo.ID, collector, &e.pkInfo.FieldType)
-		} else {
-			hg, err = statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), e.colsInfo[i-hasPKInfo].ID, collector, &e.colsInfo[i-hasPKInfo].FieldType)
-		}
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		hists = append(hists, hg)
-		cms = append(cms, collectors[i].CMSketch)
-	}
-	// collect index samples.
 	if hasIdxInfo > 0 {
-		// TODO: build index statistic result
+		// TODO: index info
 	}
-	return
+	return nil
 }
 
-func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool, err *error, hists *[]*statistics.Histogram, cms *[]*statistics.CMSketch) {
+func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collectors []*statistics.SampleCollector, sampCursor *int32) {
 	defer func() {
-		if *err != nil || *needRebuild == true {
+		if *err != nil {
 			for _, ok := <-e.tasks; ok; _, ok = <-e.tasks {
 				// Do nothing.
 			}
@@ -678,81 +639,63 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, needRebuild *bool,
 			*err = errors.Trace(*err)
 			return
 		}
-		regionErr, err1 := resp.GetRegionError()
-		if err1 != nil {
-			*err = err1
-			return
-		}
-		if regionErr != nil {
-			if err1 := bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String())); err1 != nil {
-				*err = errors.Trace(err1)
-				return
-			}
-			*needRebuild = true
-			return
-		}
 
-		tmpHists, tmpCms, err1 := e.handleBatchGetResponse(resp.BatchGet)
-		if err1 != nil {
-			*err = errors.Trace(err1)
+		*err = e.handleBatchGetResponse(resp.BatchGet, collectors, sampCursor)
+		if *err != nil {
+			*err = errors.Trace(*err)
 			return
-		}
-		if len(*hists) == 0 {
-			*hists = tmpHists
-			*cms = tmpCms
-		} else {
-			for i := 0; i < len(*hists); i++ {
-				(*hists)[i], *err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, (*hists)[i], tmpHists[i], int(e.maxNumBuckets))
-				if *err != nil {
-					*err = errors.Trace(*err)
-					return
-				}
-				*err = (*cms)[i].MergeCMSketch(tmpCms[i])
-				if *err != nil {
-					*err = errors.Trace(*err)
-					return
-				}
-			}
 		}
 	}
 }
 
-func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMSketch, bool, error) {
-	needRebuildForRoutine := make([]bool, e.concurrency)
+func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMSketch, error) {
 	errs := make([]error, e.concurrency)
-	hists, cms := make([][]*statistics.Histogram, e.concurrency), make([][]*statistics.CMSketch, e.concurrency)
+	hasPKInfo := 0
+	if e.pkInfo != nil {
+		hasPKInfo = 1
+	}
+	hasIdxInfo := 0
+	if e.idxInfo != nil {
+		hasIdxInfo = 1
+	}
+	// collect column samples and primary key samples and index samples.
+	length := len(e.colsInfo) + hasPKInfo + hasIdxInfo
+	collectors := make([]*statistics.SampleCollector, length)
+	var sampCursor int32
+	for i := range collectors {
+		collectors[i] = &statistics.SampleCollector{
+			IsMerger:      true,
+			FMSketch:      statistics.NewFMSketch(maxSketchSize),
+			MaxSampleSize: maxSampleSize,
+			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
+		}
+	}
+
 	e.wg.Add(e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		bo := tikv.NewBackoffer(context.Background(), 500)
-		go e.handleSampTasks(bo, &needRebuildForRoutine[i], &errs[i], &hists[i], &cms[i])
+		go e.handleSampTasks(bo, &errs[i], collectors, &sampCursor)
 	}
 	e.wg.Wait()
 	for _, err := range errs {
 		if err != nil {
-			return nil, nil, false, errors.Trace(err)
-		}
-	}
-	for _, needRebuild := range needRebuildForRoutine {
-		if needRebuild == true {
-			return nil, nil, true, nil
+			return nil, nil, errors.Trace(err)
 		}
 	}
 	var err error
-	for i := 1; i < e.concurrency; i++ {
-		if len(hists[i]) > 0 {
-			for j := 0; j < len(hists[0]); j++ {
-				hists[0][j], err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hists[0][j], hists[i][j], int(e.maxNumBuckets))
-				if err != nil {
-					return nil, nil, false, errors.Trace(err)
-				}
-				err = cms[0][j].MergeCMSketch(cms[i][j])
-				if err != nil {
-					return nil, nil, false, errors.Trace(err)
-				}
-			}
+	hists, cms := make([]*statistics.Histogram, e.concurrency), make([]*statistics.CMSketch, e.concurrency)
+	for i := 0; i < length; i++ {
+		if i == 0 && hasPKInfo > 0 {
+			hists[i], err = statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), e.pkInfo.ID, collectors[i], &e.pkInfo.FieldType)
+		} else {
+			hists[i], err = statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), e.colsInfo[i+hasPKInfo].ID, collectors[i], &e.colsInfo[i+hasPKInfo].FieldType)
 		}
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		cms[i] = collectors[i].CMSketch
 	}
-	return hists[0], cms[0], false, nil
+	return hists, cms, nil
 }
 
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
@@ -773,7 +716,6 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		for i := 0; i < maxSampleSize; i++ {
 			randPos = append(randPos, uint64(rand.Int63n(int64(e.sampLocRowCount))))
 		}
-		randPos = append(randPos, math.MaxUint64)
 		sort.Slice(randPos, func(i, j int) bool {
 			return randPos[i] < randPos[j]
 		})
@@ -782,16 +724,13 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 			if task.isScan == true {
 				continue
 			}
-			task.SampSize = uint64(lowerBound(randPos, task.RRowCount) - lowerBound(randPos, task.LRowCount))
+			task.SampSize = uint64(sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.RRowCount }) - sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.LRowCount }))
 		}
 
 		close(e.tasks)
-		hists, cms, needRebuild, err = e.runTasks()
+		hists, cms, err = e.runTasks()
 		if err != nil {
 			return nil, nil, errors.Trace(err)
-		}
-		if needRebuild {
-			continue
 		}
 		return hists, cms, nil
 	}
