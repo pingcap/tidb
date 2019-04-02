@@ -476,12 +476,12 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
+		needWait, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		atomic.AddInt64(&c.detail.ResolveLockTime, int64(time.Since(start)))
-		if !ok {
+		if needWait > 0 {
 			err = bo.Backoff(BoTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
 				return errors.Trace(err)

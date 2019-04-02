@@ -100,6 +100,13 @@ func (o *MockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
 	return oracle.GetPhysical(time.Now().Add(o.offset)) >= oracle.ExtractPhysical(lockTimestamp)+int64(TTL)
 }
 
+// UntilExpired implement oracle.Oracle interface.
+func (o *MockOracle) UntilExpired(lockTimeStamp uint64, TTL uint64) int64 {
+	o.RLock()
+	defer o.RUnlock()
+	return oracle.GetPhysical(time.Now().Add(o.offset)) - oracle.ExtractPhysical(lockTimeStamp) - int64(TTL)
+}
+
 // Close implements oracle.Oracle interface.
 func (o *MockOracle) Close() {
 

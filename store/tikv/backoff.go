@@ -43,6 +43,12 @@ const (
 	DecorrJitter
 )
 
+type BackoffCtxKey int64
+
+const (
+	ForceMaxSleep BackoffCtxKey = 0
+)
+
 // NewBackoffFn creates a backoff func which implements exponential backoff with
 // optional jitters.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html
@@ -67,9 +73,19 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
 		case DecorrJitter:
 			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
 		}
+		fSleep := ctx.Value(ForceMaxSleep)
+		var forceSleep bool
+		if fSleep != nil {
+			fnSleep := fSleep.(int)
+			if fnSleep < sleep {
+				sleep = fnSleep
+				forceSleep = true
+			}
+		}
 		logutil.Logger(context.Background()).Debug("backoff",
 			zap.Int("base", base),
-			zap.Int("sleep", sleep))
+			zap.Int("sleep", sleep),
+			zap.Bool("force", forceSleep))
 		select {
 		case <-time.After(time.Duration(sleep) * time.Millisecond):
 		case <-ctx.Done():
@@ -212,7 +228,7 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *Backoffer) Backoff(typ backoffType, err error) error {
+func (b *Backoffer) Backoff(typ backoffType, err error, forceSleep ...int64) error {
 	if strings.Contains(err.Error(), mismatchClusterID) {
 		logutil.Logger(context.Background()).Fatal("critical error", zap.Error(err))
 	}
@@ -232,8 +248,11 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		f = typ.createFn(b.vars)
 		b.fn[typ] = f
 	}
-
-	b.totalSleep += f(b.ctx)
+	if len(forceSleep) > 0 {
+		b.totalSleep += f(context.WithValue(b.ctx, ForceMaxSleep, forceSleep))
+	} else {
+		b.totalSleep += f(b.ctx)
+	}
 	b.types = append(b.types, typ)
 
 	var startTs interface{}

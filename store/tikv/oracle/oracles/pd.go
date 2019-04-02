@@ -65,6 +65,12 @@ func (o *pdOracle) IsExpired(lockTS, TTL uint64) bool {
 	return oracle.ExtractPhysical(lastTS) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
 }
 
+// UntilExpired implement oracle.Oracle interface.
+func (o *pdOracle) UntilExpired(lockTS uint64, TTL uint64) int64 {
+	lastTS := atomic.LoadUint64(&o.lastTS)
+	return oracle.ExtractPhysical(lastTS) - oracle.ExtractPhysical(lockTS) - int64(TTL)
+}
+
 // GetTimestamp gets a new increasing time.
 func (o *pdOracle) GetTimestamp(ctx context.Context) (uint64, error) {
 	ts, err := o.getTimestamp(ctx)

@@ -254,24 +254,29 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err error) {
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (neeWait int64, err error) {
 	if len(locks) == 0 {
-		return true, nil
+		return 0, nil
 	}
 
 	metrics.TiKVLockResolverCounter.WithLabelValues("resolve").Inc()
 
 	var expiredLocks []*Lock
 	for _, l := range locks {
-		if lr.store.GetOracle().IsExpired(l.TxnID, l.TTL) {
+		waitUntil := lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
+		if waitUntil < 0 {
 			metrics.TiKVLockResolverCounter.WithLabelValues("expired").Inc()
 			expiredLocks = append(expiredLocks, l)
 		} else {
+			if waitUntil > neeWait {
+				neeWait = waitUntil
+			}
 			metrics.TiKVLockResolverCounter.WithLabelValues("not_expired").Inc()
 		}
 	}
 	if len(expiredLocks) == 0 {
-		return false, nil
+		metrics.TiKVLockResolverCounter.WithLabelValues("wait_expired").Inc()
+		return neeWait, nil
 	}
 
 	// TxnID -> []Region, record resolved Regions.
@@ -280,7 +285,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 	for _, l := range expiredLocks {
 		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary)
 		if err != nil {
-			return false, errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 
 		cleanRegions := cleanTxns[l.TxnID]
@@ -291,10 +296,10 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 
 		err = lr.resolveLock(bo, l, status, cleanRegions)
 		if err != nil {
-			return false, errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 	}
-	return len(expiredLocks) == len(locks), nil
+	return neeWait, nil
 }
 
 // GetTxnStatus queries tikv-server for a txn's status (commit/rollback).

@@ -735,12 +735,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.Logger(context.Background()).Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
-		ok, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
+		needWait, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		if !ok {
-			if err := bo.Backoff(boTxnLockFast, errors.New(lockErr.String())); err != nil {
+		if needWait > 0 {
+			if err := bo.Backoff(boTxnLockFast, errors.New(lockErr.String()), needWait); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}

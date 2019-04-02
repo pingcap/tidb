@@ -24,6 +24,7 @@ type Oracle interface {
 	GetTimestampAsync(ctx context.Context) Future
 	IsExpired(lockTimestamp uint64, TTL uint64) bool
 	Close()
+	UntilExpired(lockTimeStamp uint64, TTL uint64) int64
 }
 
 // Future is a future which promises to return a timestamp.
