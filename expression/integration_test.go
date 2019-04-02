@@ -4134,3 +4134,51 @@ func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
 	tk.MustExec("insert t values (20010101100000.123456, 20110707101112.123456)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2001-01-01 10:00:00.123456 2011-07-07 10:11:12"))
 }
+
+func (s *testIntegrationSuite) TestDaynameArithmetic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{`select dayname("1962-03-01")+0;`, "3"},
+		{`select dayname("1962-03-02")+0;`, "4"},
+		{`select dayname("1962-03-03")+0;`, "5"},
+		{`select dayname("1962-03-04")+0;`, "6"},
+		{`select dayname("1962-03-05")+0;`, "0"},
+		{`select dayname("1962-03-06")+0;`, "1"},
+		{`select dayname("1962-03-07")+0;`, "2"},
+		{`select dayname("1962-03-08")+0;`, "3"},
+		{`select dayname("1962-03-01")+1;`, "4"},
+		{`select dayname("1962-03-01")+2;`, "5"},
+		{`select dayname("1962-03-01")+3;`, "6"},
+		{`select dayname("1962-03-01")+4;`, "7"},
+		{`select dayname("1962-03-01")+5;`, "8"},
+		{`select dayname("1962-03-01")+6;`, "9"},
+		{`select dayname("1962-03-01")+7;`, "10"},
+		{`select dayname("1962-03-01")+2333;`, "2336"},
+		{`select dayname("1962-03-01")+2.333;`, "5.333"},
+		{`select dayname("1962-03-01")>2;`, "1"},
+		{`select dayname("1962-03-01")<2;`, "0"},
+		{`select dayname("1962-03-01")=3;`, "1"},
+		{`select dayname("1962-03-01")!=3;`, "0"},
+		{`select dayname("1962-03-01")<4;`, "1"},
+		{`select dayname("1962-03-01")>4;`, "0"},
+		{`select !dayname("1962-03-01");`, "0"},
+		{`select dayname("1962-03-01")&1;`, "1"},
+		{`select dayname("1962-03-01")&3;`, "3"},
+		{`select dayname("1962-03-01")&7;`, "3"},
+		{`select dayname("1962-03-01")|1;`, "3"},
+		{`select dayname("1962-03-01")|3;`, "3"},
+		{`select dayname("1962-03-01")|7;`, "7"},
+		{`select dayname("1962-03-01")^1;`, "2"},
+		{`select dayname("1962-03-01")^3;`, "0"},
+		{`select dayname("1962-03-01")^7;`, "4"},
+	}
+
+	for _, c := range cases {
+		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
+	}
+}
