@@ -15,9 +15,9 @@ package kv
 
 import (
 	"context"
-
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // Transaction options
@@ -206,6 +206,8 @@ type Request struct {
 	// Streaming indicates using streaming API for this request, result in that one Next()
 	// call would not corresponds to a whole region result.
 	Streaming bool
+	// MemTracker is used to trace and control memory usage in co-processor layer
+	MemTracker *memory.Tracker
 }
 
 // ResultSubset represents a result subset from a single storage unit.

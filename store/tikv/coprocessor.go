@@ -23,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -93,6 +95,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		concurrency: req.Concurrency,
 		finishCh:    make(chan struct{}),
 		vars:        vars,
+		memTracker:  req.MemTracker,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -371,6 +374,8 @@ type copIterator struct {
 	wg       sync.WaitGroup
 
 	vars *kv.Variables
+
+	memTracker *memory.Tracker
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -382,6 +387,8 @@ type copIteratorWorker struct {
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *kv.Variables
+
+	memTracker *memory.Tracker
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -398,7 +405,13 @@ type copResponse struct {
 	execdetails.ExecDetails
 	startKey kv.Key
 	err      error
+	respSize int
 }
+
+const (
+	sizeofExecDetails   = int(unsafe.Sizeof(execdetails.ExecDetails{}))
+	sizeofCommitDetails = int(unsafe.Sizeof(execdetails.CommitDetails{}))
+)
 
 // GetData implements the kv.ResultSubset GetData interface.
 func (rs *copResponse) GetData() []byte {
@@ -412,6 +425,24 @@ func (rs *copResponse) GetStartKey() kv.Key {
 
 func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
 	return &rs.ExecDetails
+}
+
+func (rs *copResponse) Size() int {
+	if rs.respSize != 0 {
+		return rs.respSize
+	}
+
+	// ignore rs.err
+	rs.respSize += len(rs.startKey)
+	rs.respSize += sizeofExecDetails
+	if rs.CommitDetail != nil {
+		rs.respSize += sizeofCommitDetails
+	}
+	if rs.pbResp != nil {
+		// using a approximate size since it's hard to get a accurate size
+		rs.respSize += rs.pbResp.Size()
+	}
+	return rs.respSize
 }
 
 const minLogCopTaskTime = 300 * time.Millisecond
@@ -454,6 +485,8 @@ func (it *copIterator) open(ctx context.Context) {
 			respChan: it.respChan,
 			finishCh: it.finishCh,
 			vars:     it.vars,
+
+			memTracker: it.memTracker,
 		}
 		go worker.run(ctx)
 	}
@@ -487,6 +520,7 @@ func (sender *copIteratorTaskSender) run() {
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
 	select {
 	case resp, ok = <-respCh:
+		it.memTracker.Consume(-int64(resp.Size()))
 	case <-it.finishCh:
 		exit = true
 	case <-ctx.Done():
@@ -509,6 +543,7 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 }
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse) (exit bool) {
+	worker.memTracker.Consume(int64(resp.Size()))
 	select {
 	case respCh <- resp:
 	case <-worker.finishCh:

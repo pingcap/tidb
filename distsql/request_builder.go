@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"github.com/pingcap/tidb/util/memory"
 	"math"
 
 	"github.com/pingcap/parser/mysql"
@@ -38,6 +39,13 @@ type RequestBuilder struct {
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	return &builder.Request, builder.err
+}
+
+func (builder *RequestBuilder) SetMemTracker(label string, parentTracker *memory.Tracker) *RequestBuilder {
+	t := memory.NewTracker(label, -1)
+	t.AttachTo(parentTracker)
+	builder.Request.MemTracker = t
+	return builder
 }
 
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
