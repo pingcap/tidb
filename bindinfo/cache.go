@@ -246,13 +246,13 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 			}
 			it := chunk.NewIterator4Chunk(chkBatch.Chunk)
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				rowId := row.GetInt64(0)
+				rowID := row.GetInt64(0)
 				status := row.GetString(1)
 				if status == BindUsing {
 					err = errors.New("origin sql already has binding sql")
 					return err
 				}
-				sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE _tidb_rowid=%d", rowId)
+				sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE _tidb_rowid=%d", rowID)
 				_, err = exec.Execute(ctx, sql)
 				if err != nil {
 					return errors.Trace(err)
