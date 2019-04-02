@@ -16,14 +16,18 @@ package session
 import (
 	"fmt"
 	"math/rand"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/net/context"
 )
 
@@ -33,16 +37,16 @@ var bigCount = 10000
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
-		log.Fatal(err)
+		logutil.Logger(context.Background()).Fatal(err.Error())
 	}
 	domain, err := BootstrapSession(store)
 	if err != nil {
-		log.Fatal(err)
+		logutil.Logger(context.Background()).Fatal(err.Error())
 	}
-	log.SetLevel(log.ErrorLevel)
+	log.SetLevel(zapcore.ErrorLevel)
 	se, err := CreateSession4Test(store)
 	if err != nil {
-		log.Fatal(err)
+		logutil.Logger(context.Background()).Fatal(err.Error())
 	}
 	mustExecute(se, "use test")
 	return se, domain, store
@@ -88,10 +92,10 @@ func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
 	for count > 0 {
 		err := rs.Next(ctx, chk)
 		if err != nil {
-			log.Fatal(err)
+			logutil.Logger(ctx).Fatal("read result failed", zap.Error(err))
 		}
 		if chk.NumRows() == 0 {
-			log.Fatal(count)
+			logutil.Logger(ctx).Fatal(strconv.Itoa(count))
 		}
 		count -= chk.NumRows()
 	}
