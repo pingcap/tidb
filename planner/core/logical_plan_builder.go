@@ -1613,15 +1613,15 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 }
 
 func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
-	var sortMergeTables, INLJTables, hashJoinTables []model.CIStr
+	var sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin:
-			sortMergeTables = append(sortMergeTables, hint.Tables...)
+			sortMergeTables = tableNames2HintTableInfo(hint.Tables)
 		case TiDBIndexNestedLoopJoin:
-			INLJTables = append(INLJTables, hint.Tables...)
+			INLJTables = tableNames2HintTableInfo(hint.Tables)
 		case TiDBHashJoin:
-			hashJoinTables = append(hashJoinTables, hint.Tables...)
+			hashJoinTables = tableNames2HintTableInfo(hint.Tables)
 		default:
 			// ignore hints that not implemented
 		}
@@ -1638,7 +1638,21 @@ func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 }
 
 func (b *planBuilder) popTableHints() {
+	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
+	b.appendUnmatchedJoinHintWarning(TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables)
+	b.appendUnmatchedJoinHintWarning(TiDBMergeJoin, hintInfo.sortMergeJoinTables)
+	b.appendUnmatchedJoinHintWarning(TiDBHashJoin, hintInfo.hashJoinTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
+}
+
+func (b *planBuilder) appendUnmatchedJoinHintWarning(joinType string, hintTables []hintTableInfo) {
+	unMatchedTables := extractUnmatchedTables(hintTables)
+	if len(unMatchedTables) == 0 {
+		return
+	}
+	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s. Maybe you can use the table alias name",
+		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables))
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
 // TableHints returns the *tableHintInfo of PlanBuilder.

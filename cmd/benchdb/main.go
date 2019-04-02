@@ -54,9 +54,7 @@ var (
 func main() {
 	flag.Parse()
 	flag.PrintDefaults()
-	err := logutil.InitLogger(&logutil.LogConfig{
-		Level: *logLevel,
-	})
+	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
 	err = session.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
