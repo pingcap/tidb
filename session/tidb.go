@@ -302,7 +302,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 
 	var s kv.Storage
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
-		log.Infof("new store")
+		logutil.Logger(context.Background()).Info("new store")
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})

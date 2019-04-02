@@ -19,6 +19,7 @@ package session
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -1090,7 +1091,8 @@ func (s *session) Close() {
 	}
 	ctx := context.TODO()
 	if err := s.RollbackTxn(ctx); err != nil {
-		log.Error("session Close error:", errors.ErrorStack(err))
+		logutil.Logger(context.Background()).Error("session Close failed",
+			zap.Error(err))
 	}
 }
 
