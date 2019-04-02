@@ -3651,7 +3651,7 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 type testOOMSuite struct {
 	store kv.Storage
 	do    *domain.Domain
-	hook  *logHook
+	oom   *oomCapturer
 }
 
 func (s *testOOMSuite) SetUpSuite(c *C) {
@@ -3669,8 +3669,8 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 func (s *testOOMSuite) registerHook() {
 	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
-	s.hook = &logHook{r.Core, ""}
-	lg := zap.New(s.hook)
+	s.oom = &oomCapturer{r.Core, ""}
+	lg := zap.New(s.oom)
 	log.ReplaceGlobals(lg, r)
 }
 
@@ -3681,37 +3681,37 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
 
-	s.hook.oomTracker = ""
+	s.oom.tracker = ""
 	tk.MustQuery("select * from t")
-	c.Assert(s.hook.oomTracker, Equals, "")
+	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
 	tk.MustQuery("select * from t")
-	c.Assert(s.hook.oomTracker, Equals, "TableReaderDistSQLTracker")
+	c.Assert(s.oom.tracker, Equals, "TableReaderDistSQLTracker")
 	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
 
-	s.hook.oomTracker = ""
+	s.oom.tracker = ""
 	tk.MustQuery("select a from t")
-	c.Assert(s.hook.oomTracker, Equals, "")
+	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
 	tk.MustQuery("select a from t use index(idx_a)")
-	c.Assert(s.hook.oomTracker, Equals, "IndexReaderDistSQLTracker")
+	c.Assert(s.oom.tracker, Equals, "IndexReaderDistSQLTracker")
 	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
 
-	s.hook.oomTracker = ""
+	s.oom.tracker = ""
 	tk.MustQuery("select * from t")
-	c.Assert(s.hook.oomTracker, Equals, "")
+	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
 	tk.MustQuery("select * from t use index(idx_a)")
-	c.Assert(s.hook.oomTracker, Equals, "IndexLookupDistSQLTracker")
+	c.Assert(s.oom.tracker, Equals, "IndexLookupDistSQLTracker")
 	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
 }
 
-type logHook struct {
+type oomCapturer struct {
 	zapcore.Core
-	oomTracker string
+	tracker string
 }
 
-func (h *logHook) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	if strings.Contains(entry.Message, "memory exceeds quota") {
 		err, _ := fields[0].Interface.(error)
 		str := err.Error()
@@ -3723,12 +3723,12 @@ func (h *logHook) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		if end == -1 {
 			panic("end not found")
 		}
-		h.oomTracker = str[begin+len("8001]") : end]
+		h.tracker = str[begin+len("8001]") : end]
 	}
 	return nil
 }
 
-func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+func (h *oomCapturer) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
 	if h.Enabled(e.Level) {
 		return ce.AddCore(e, h)
 	}
