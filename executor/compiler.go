@@ -71,7 +71,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 			}
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 

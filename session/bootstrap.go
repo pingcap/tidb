@@ -477,7 +477,7 @@ func upgrade(s Session) {
 	}
 
 	if ver == version28 {
-		addPrimaryIndexOfrBindTable(s)
+		addPrimaryIndexOfBindTable(s)
 	}
 
 	updateBootstrapVer(s)
@@ -762,7 +762,7 @@ func upgradeToVer28(s Session) {
 	doReentrantDDL(s, CreateBindInfoTable)
 }
 
-func addPrimaryIndexOfrBindTable(s Session) {
+func addPrimaryIndexOfBindTable(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD INDEX primary_index (original_sql, default_db)", ddl.ErrDupKeyName)
 }
 
