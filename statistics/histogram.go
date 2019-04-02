@@ -465,9 +465,9 @@ func (hg *Histogram) totalRowCount() float64 {
 // notNullCount would return same value as totalRowCount for multi-column index histograms.
 func (hg *Histogram) notNullCount() float64 {
 	if hg.Len() == 0 {
-		return float64(hg.NullCount)
+		return 0
 	}
-	return float64(hg.Buckets[hg.Len()-1].Count + hg.NullCount)
+	return float64(hg.Buckets[hg.Len()-1].Count)
 }
 
 // mergeBuckets is used to merge every two neighbor buckets.

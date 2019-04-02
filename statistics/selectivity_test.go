@@ -377,14 +377,14 @@ func BenchmarkSelectivity(b *testing.B) {
 	pprof.StopCPUProfile()
 }
 
-func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
-	defer cleanEnv(c, s.store, s.do)
+func (s *testSelectivitySuite) TestColumnIndexNullEstimation(c *C) {
+	defer cleanEnv(c, s.store, s.dom)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
 	testKit.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null);")
-	h := s.do.StatsHandle()
+	h := s.dom.StatsHandle()
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery(`explain select b from t where b is null`).Check(testkit.Rows(
