@@ -189,7 +189,7 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			idxColLens:   tt.idxColLens,
 		}
 
-		access, remained := path.splitCorColAccessCondFromFilters()
+		access, remained := path.splitCorColAccessCondFromFilters(path.eqCondCount)
 		c.Assert(fmt.Sprintf("%s", access), Equals, tt.access, comment)
 		c.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
 	}
