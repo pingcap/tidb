@@ -24,11 +24,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
@@ -38,9 +36,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -419,7 +420,6 @@ func analyzeFastExec(exec *AnalyzeFastExec) statistics.AnalyzeResult {
 // AnalyzeFastTask is the task for build stats.
 type AnalyzeFastTask struct {
 	Location  *tikv.KeyLocation
-	isScan    bool
 	SampSize  uint64
 	LRowCount uint64
 	RRowCount uint64
@@ -440,6 +440,7 @@ type AnalyzeFastExec struct {
 	sampLocs        chan *tikv.KeyLocation
 	sampLocRowCount uint64
 	tasks           chan *AnalyzeFastTask
+	scanTasks       []*tikv.KeyLocation
 }
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error) {
@@ -516,7 +517,7 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	bo := tikv.NewBackoffer(context.Background(), 500)
 	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, append(loc.EndKey, byte(0))) {
 		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
-			e.tasks <- &AnalyzeFastTask{Location: loc, isScan: true}
+			e.scanTasks = append(e.scanTasks, loc)
 		} else {
 			e.sampLocs <- loc
 		}
@@ -574,9 +575,23 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse,
 				return errors.Trace(err)
 			}
 		}
-	}
-	if hasIdxInfo > 0 {
-		// TODO: index info
+		for j, idxInfo := range e.idxsInfo {
+			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples[samplePos].Ordinal = int(samplePos)
+			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
+			for _, idxCol := range idxInfo.Columns {
+				val, err := tablecodec.DecodeColumnValue(pair.Value, &e.table.Cols()[idxCol.Offset].FieldType, timeZone)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				idxVals = append(idxVals, val)
+			}
+			var bytes []byte
+			bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
+		}
 	}
 	return nil
 }
@@ -594,10 +609,6 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collec
 		task, ok := <-e.tasks
 		if !ok {
 			return
-		}
-
-		if task.isScan {
-			// TODO: handle scan task.
 		}
 
 		var tableID, minRowID, maxRowID int64
@@ -676,6 +687,13 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 			return nil, nil, errors.Trace(err)
 		}
 	}
+
+	// TODO: here need to run scan tasks
+	//
+	//
+	//
+	//
+
 	var err error
 	hists, cms := make([]*statistics.Histogram, e.concurrency), make([]*statistics.CMSketch, e.concurrency)
 	for i := 0; i < length; i++ {
@@ -715,9 +733,6 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		})
 
 		for task := range e.tasks {
-			if task.isScan == true {
-				continue
-			}
 			task.SampSize = uint64(sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.RRowCount }) - sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.LRowCount }))
 		}
 
@@ -726,6 +741,7 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+
 		return hists, cms, nil
 	}
 }
