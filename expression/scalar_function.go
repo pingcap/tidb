@@ -165,6 +165,16 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 	return false
 }
 
+// ReferTable implements Expression interface.
+func (sf *ScalarFunction) ReferTable() bool {
+	for _, arg := range sf.GetArgs() {
+		if arg.ReferTable() {
+			return true
+		}
+	}
+	return false
+}
+
 // Decorrelate implements Expression interface.
 func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	for i, arg := range sf.GetArgs() {

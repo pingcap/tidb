@@ -123,6 +123,11 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 	return true
 }
 
+// ReferTable implements Expression interface.
+func (col *CorrelatedColumn) ReferTable() bool {
+	return true
+}
+
 // Decorrelate implements Expression interface.
 func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 	if !schema.Contains(&col.Column) {
@@ -295,6 +300,11 @@ func (col *Column) Clone() Expression {
 // IsCorrelated implements Expression interface.
 func (col *Column) IsCorrelated() bool {
 	return false
+}
+
+// ReferTable implements Expression interface.
+func (col *Column) ReferTable() bool {
+	return true
 }
 
 // Decorrelate implements Expression interface.

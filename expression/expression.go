@@ -79,6 +79,9 @@ type Expression interface {
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
 
+	// ReferTable checks if this expression refers to a table.
+	ReferTable() bool
+
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
 

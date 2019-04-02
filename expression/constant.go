@@ -311,6 +311,11 @@ func (c *Constant) IsCorrelated() bool {
 	return false
 }
 
+// ReferTable implements Expression interface.
+func (c *Constant) ReferTable() bool {
+	return false
+}
+
 // Decorrelate implements Expression interface.
 func (c *Constant) Decorrelate(_ *Schema) Expression {
 	return c
