@@ -212,6 +212,7 @@ import (
 	rename         		"RENAME"
 	repeat			"REPEAT"
 	replace			"REPLACE"
+	require			"REQUIRE"
 	restrict		"RESTRICT"
 	revoke			"REVOKE"
 	right			"RIGHT"
@@ -226,6 +227,7 @@ import (
 	smallIntType		"SMALLINT"
 	sql			"SQL"
 	sqlCalcFoundRows	"SQL_CALC_FOUND_ROWS"
+	ssl	            	"SSL"
 	starting		"STARTING"
 	straightJoin		"STRAIGHT_JOIN"
 	tableKwd		"TABLE"
@@ -266,6 +268,7 @@ import (
 	natural			"NATURAL"
 
 	/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */
+	account		"ACCOUNT"
 	action		"ACTION"
 	after		"AFTER"
 	always		"ALWAYS"
@@ -285,6 +288,7 @@ import (
 	cascaded	"CASCADED"
 	charsetKwd	"CHARSET"
 	checksum	"CHECKSUM"
+	cipher		"CIPHER"
 	cleanup		"CLEANUP"
 	client		"CLIENT"
 	coalesce	"COALESCE"
@@ -320,6 +324,7 @@ import (
 	escape 		"ESCAPE"
 	exclusive       "EXCLUSIVE"
 	execute		"EXECUTE"
+	expire		"EXPIRE"
 	fields		"FIELDS"
 	first		"FIRST"
 	fixed		"FIXED"
@@ -333,6 +338,7 @@ import (
 	hour		"HOUR"
 	identified	"IDENTIFIED"
 	isolation	"ISOLATION"
+	issuer		"ISSUER"
 	indexes		"INDEXES"
 	invoker		"INVOKER"
 	jsonType	"JSON"
@@ -356,6 +362,7 @@ import (
 	minRows		"MIN_ROWS"
 	names		"NAMES"
 	national	"NATIONAL"
+	never		"NEVER"
 	no		"NO"
 	none		"NONE"
 	nulls		"NULLS"
@@ -403,6 +410,7 @@ import (
 	start		"START"
 	statsPersistent	"STATS_PERSISTENT"
 	status		"STATUS"
+	subject		"SUBJECT"
 	subpartition	"SUBPARTITION"
 	subpartitions	"SUBPARTITIONS"
 	super		"SUPER"
@@ -434,6 +442,7 @@ import (
 	identSQLErrors	"ERRORS"
 	week		"WEEK"
 	yearType	"YEAR"
+	x509		"X509"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate			"ADDDATE"
@@ -588,6 +597,9 @@ import (
 	BeginTransactionStmt		"BEGIN TRANSACTION statement"
 	BinlogStmt			"Binlog base64 statement"
 	CommitStmt			"COMMIT statement"
+	ConnectionOption		"single connection options"
+	ConnectionOptionList		"connection options for CREATE USER statement"
+	ConnectionOptions		"optional connection options for CREATE USER statement"
 	CreateTableStmt			"CREATE TABLE statement"
 	CreateViewStmt			"CREATE VIEW  stetement"
 	CreateUserStmt			"CREATE User statement"
@@ -654,6 +666,7 @@ import (
 	OptionalBraces			"optional braces"
 	CastType			"Cast function target type"
 	CharsetName			"Character set name"
+	ClearPasswordExpireOptions	"Clear password expire options"
 	ColumnDef			"table column definition"
 	ColumnDefList			"table column definition list"
 	ColumnName			"column name"
@@ -683,6 +696,7 @@ import (
 	DefaultTrueDistinctOpt		"Distinct option which defaults to true"
 	BuggyDefaultFalseDistinctOpt	"Distinct option which accepts DISTINCT ALL and defaults to false"
 	Enclosed			"Enclosed by"
+	RequireClause			"Encrypted connections options"
 	EqOpt				"= or empty"
 	EscapedTableRef 		"escaped table reference"
 	Escaped				"Escaped by"
@@ -760,7 +774,11 @@ import (
 	PartDefOptionsOpt		"PartDefOptionList option"
 	PartDefOptionList		"PartDefOption list"
 	PartDefOption			"COMMENT [=] xxx | TABLESPACE [=] tablespace_name | ENGINE [=] xxx"
+	PasswordExpire			"Single password option for create user statement"
 	PasswordOpt			"Password option"
+	PasswordOrLockOption		"Single password or lock option for create user statement"
+	PasswordOrLockOptionList	"Password or lock options for create user statement"
+	PasswordOrLockOptions		"Optional password or lock options for create user statement"
 	ColumnPosition			"Column position [First|After ColumnName]"
 	PrepareSQL			"Prepare statement sql string"
 	PriorityOpt			"Statement priority option"
@@ -773,6 +791,8 @@ import (
 	OnUpdateOpt			"optional ON UPDATE clause"
 	OptGConcatSeparator		"optional GROUP_CONCAT SEPARATOR"
 	ReferOpt			"reference option"
+	RequireList			"require list"
+	RequireListElement		"require list element"
 	Rolename            "Rolename"
 	RolenameList            "RolenameList"
 	RoleSpec		"Rolename and auth option"
@@ -3082,7 +3102,8 @@ UnReservedKeyword:
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "BINDING" | "BINDINGS" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "NULLS" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "PRECEDING" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "SLOW" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
-| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED" | "RECOVER"
+| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED" | "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT"
+
 
 
 
@@ -7500,7 +7521,7 @@ CommaOpt:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList
+	"CREATE" "USER" IfNotExists UserSpecList RequireClause ConnectionOptions PasswordOrLockOptions
 	{
  		// See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 		$$ = &ast.CreateUserStmt{
@@ -7562,6 +7583,141 @@ UserSpecList:
 |	UserSpecList ',' UserSpec
 	{
 		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
+	}
+
+ConnectionOptions:
+	{
+		$$ = nil
+	}
+|	"WITH" ConnectionOptionList
+	{
+		$$ = nil
+	}
+
+ConnectionOptionList:
+	ConnectionOption
+	{
+		$$ = nil
+	}
+|	ConnectionOptionList ConnectionOption
+	{
+		$$ = nil
+	}
+
+ConnectionOption:
+	"MAX_QUERIES_PER_HOUR" NUM
+	{
+		$$ = nil
+	}
+|	"MAX_UPDATES_PER_HOUR" NUM
+	{
+		$$ = nil
+	}
+|	"MAX_CONNECTIONS_PER_HOUR" NUM
+	{
+		$$ = nil
+	}
+|	"MAX_USER_CONNECTIONS" NUM
+	{
+		$$ = nil
+	}
+
+RequireClause:
+	{
+		$$ = nil
+	}
+|	"REQUIRE" "NONE"
+	{
+		$$ = nil
+	}
+|	"REQUIRE" "SSL"
+	{
+		$$ = nil
+	}
+|	"REQUIRE" "X509"
+	{
+		$$ = nil
+	}
+|	"REQUIRE" RequireList
+	{
+		$$ = nil
+	}
+
+RequireList:
+	RequireListElement
+	{
+		$$ = nil
+	}
+|	RequireListElement "AND" RequireList
+	{
+		$$ = nil
+	}
+
+RequireListElement:
+	"ISSUER" StringLiteral
+	{
+		$$ = nil
+	}
+|	"SUBJECT" StringLiteral
+	{
+		$$ = nil
+	}
+|	"CIPHER" StringLiteral
+	{
+		$$ = nil
+	}
+
+PasswordOrLockOptions:
+	{
+		$$ = nil
+	}
+|	PasswordOrLockOptionList
+	{
+		$$ = nil
+	}
+
+PasswordOrLockOptionList:
+	PasswordOrLockOption
+	{
+		$$ = nil
+	}
+|	PasswordOrLockOptionList PasswordOrLockOption
+	{
+		$$ = nil
+	}
+
+PasswordOrLockOption:
+	"ACCOUNT" "UNLOCK"
+	{
+		$$ = nil
+	}
+|	"ACCOUNT" "LOCK"
+	{
+		$$ = nil
+	}
+|	PasswordExpire
+	{
+		$$ = nil
+	}
+|	PasswordExpire "INTERVAL" NUM "DAY"
+	{
+		$$ = nil
+	}
+|	PasswordExpire "NEVER"
+	{
+		$$ = nil
+	}
+|	PasswordExpire "DEFAULT"
+
+PasswordExpire:
+	"PASSWORD" "EXPIRE" ClearPasswordExpireOptions
+	{
+		$$ = nil
+	}
+
+ClearPasswordExpireOptions:
+	{
+		$$ = nil
 	}
 
 AuthOption:
