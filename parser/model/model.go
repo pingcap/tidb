@@ -212,6 +212,8 @@ type TableInfo struct {
 
 	// ShardRowIDBits specify if the implicit row ID is sharded.
 	ShardRowIDBits uint64
+	// MaxShardRowIDBits uses to record the max ShardRowIDBits be used so far.
+	MaxShardRowIDBits uint64 `json:"max_shard_row_id_bits"`
 
 	Partition *PartitionInfo `json:"partition"`
 
