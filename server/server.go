@@ -29,6 +29,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -50,7 +51,9 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -303,7 +306,8 @@ func (s *Server) Close() {
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
 	conn := s.newConn(c)
-	if err := conn.handshake(); err != nil {
+	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
+	if err := conn.handshake(ctx); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
@@ -311,9 +315,9 @@ func (s *Server) onConn(c net.Conn) {
 		terror.Log(errors.Trace(err))
 		return
 	}
-	log.Infof("con:%d new connection %s", conn.connectionID, c.RemoteAddr().String())
+	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", c.RemoteAddr().String()))
 	defer func() {
-		log.Infof("con:%d close connection", conn.connectionID)
+		logutil.Logger(ctx).Info("close connection")
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
@@ -321,7 +325,7 @@ func (s *Server) onConn(c net.Conn) {
 	s.rwlock.Unlock()
 	metrics.ConnGauge.Set(float64(connections))
 
-	conn.Run()
+	conn.Run(ctx)
 }
 
 // ShowProcessList implements the SessionManager interface.
