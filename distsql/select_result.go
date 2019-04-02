@@ -15,6 +15,7 @@ package distsql
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/memory"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -74,6 +75,8 @@ type selectResult struct {
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
 	copPlanIDs []string
+
+	memTracker *memory.Tracker
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -95,6 +98,10 @@ func (r *selectResult) fetch(ctx context.Context) {
 		}
 		if resultSubset == nil {
 			return
+		}
+
+		if r.memTracker != nil {
+			r.memTracker.Consume(int64(resultSubset.MemSize()))
 		}
 
 		select {
@@ -150,6 +157,9 @@ func (r *selectResult) getSelectResp() error {
 		if re.result == nil {
 			r.selectResp = nil
 			return nil
+		}
+		if r.memTracker != nil {
+			r.memTracker.Consume(-int64(re.result.MemSize()))
 		}
 		r.selectResp = new(tipb.SelectResponse)
 		err := r.selectResp.Unmarshal(re.result.GetData())

@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/memory"
 	"math"
 
@@ -41,9 +42,9 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	return &builder.Request, builder.err
 }
 
-func (builder *RequestBuilder) SetMemTracker(label string, parentTracker *memory.Tracker) *RequestBuilder {
-	t := memory.NewTracker(label, -1)
-	t.AttachTo(parentTracker)
+func (builder *RequestBuilder) SetMemTracker(sctx sessionctx.Context, label string) *RequestBuilder {
+	t := memory.NewTracker(label, sctx.GetSessionVars().MemQuotaDistSQL)
+	t.AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
 	builder.Request.MemTracker = t
 	return builder
 }

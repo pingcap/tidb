@@ -427,7 +427,7 @@ func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
 	return &rs.ExecDetails
 }
 
-func (rs *copResponse) Size() int {
+func (rs *copResponse) MemSize() int {
 	if rs.respSize != 0 {
 		return rs.respSize
 	}
@@ -520,7 +520,9 @@ func (sender *copIteratorTaskSender) run() {
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
 	select {
 	case resp, ok = <-respCh:
-		it.memTracker.Consume(-int64(resp.Size()))
+		if it.memTracker != nil {
+			it.memTracker.Consume(-int64(resp.MemSize()))
+		}
 	case <-it.finishCh:
 		exit = true
 	case <-ctx.Done():
@@ -543,7 +545,9 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 }
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse) (exit bool) {
-	worker.memTracker.Consume(int64(resp.Size()))
+	if worker.memTracker != nil {
+		worker.memTracker.Consume(int64(resp.MemSize()))
+	}
 	select {
 	case respCh <- resp:
 	case <-worker.finishCh:
