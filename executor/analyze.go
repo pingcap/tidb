@@ -431,7 +431,7 @@ type AnalyzeFastExec struct {
 	PhysicalTableID int64
 	pkInfo          *model.ColumnInfo
 	colsInfo        []*model.ColumnInfo
-	idxInfo         *model.IndexInfo
+	idxsInfo        []*model.IndexInfo
 	concurrency     int
 	maxNumBuckets   uint64
 	table           table.Table
@@ -557,10 +557,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse,
 	if e.pkInfo != nil {
 		hasPKInfo = 1
 	}
-	hasIdxInfo := 0
-	if e.idxInfo != nil {
-		hasIdxInfo = 1
-	}
+	hasIdxInfo := len(e.idxsInfo)
 	for i, pair := range resp.Pairs {
 		samplePos := newCursor - length + int32(i)
 		if hasPKInfo > 0 {
@@ -654,10 +651,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	if e.pkInfo != nil {
 		hasPKInfo = 1
 	}
-	hasIdxInfo := 0
-	if e.idxInfo != nil {
-		hasIdxInfo = 1
-	}
+	hasIdxInfo := len(e.idxsInfo)
 	// collect column samples and primary key samples and index samples.
 	length := len(e.colsInfo) + hasPKInfo + hasIdxInfo
 	collectors := make([]*statistics.SampleCollector, length)

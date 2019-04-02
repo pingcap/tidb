@@ -1456,17 +1456,27 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	}
 	for _, task := range v.IdxTasks {
 		if v.EnableFastAnalyze {
-			e.tasks = append(e.tasks, &analyzeTask{
-				taskType: fastTask,
-				fastExec: &AnalyzeFastExec{
-					ctx:             b.ctx,
-					PhysicalTableID: task.PhysicalTableID,
-					idxInfo:         task.IndexInfo,
-					maxNumBuckets:   v.MaxNumBuckets,
-					table:           task.Table,
-					concurrency:     4,
-				},
-			})
+			findTask := false
+			for _, eTask := range e.tasks {
+				if eTask.fastExec.PhysicalTableID == task.PhysicalTableID {
+					eTask.fastExec.idxsInfo = append(eTask.fastExec.idxsInfo, task.IndexInfo)
+					findTask = true
+					break
+				}
+			}
+			if !findTask {
+				e.tasks = append(e.tasks, &analyzeTask{
+					taskType: fastTask,
+					fastExec: &AnalyzeFastExec{
+						ctx:             b.ctx,
+						PhysicalTableID: task.PhysicalTableID,
+						idxsInfo:        []*model.IndexInfo{task.IndexInfo},
+						maxNumBuckets:   v.MaxNumBuckets,
+						table:           task.Table,
+						concurrency:     4,
+					},
+				})
+			}
 		} else {
 			e.tasks = append(e.tasks, &analyzeTask{
 				taskType: idxTask,
