@@ -17,6 +17,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"math"
 	"os"
 	"strconv"
@@ -64,7 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func TestT(t *testing.T) {
@@ -84,6 +87,7 @@ var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
+var _ = Suite(&testOOMSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -2808,7 +2812,7 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id bigint unsigned primary key)")
-	var num1, num2 uint64 = math.MaxInt64 + 1, math.MaxInt64 + 2
+	var num1, num2 uint64 = math.MaxInt64+1, math.MaxInt64+2
 	tk.MustExec(fmt.Sprintf("insert into t values(%v), (%v), (1), (2)", num1, num2))
 	num1Str := strconv.FormatUint(num1, 10)
 	num2Str := strconv.FormatUint(num2, 10)
@@ -3642,4 +3646,91 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select b from pt where b = 3").Check(testkit.Rows("3"))
 	// Index lookup
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
+}
+
+type testOOMSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+	hook  *logHook
+}
+
+func (s *testOOMSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	s.registerHook()
+	var err error
+	s.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	session.SetSchemaLease(0)
+	domain.RunAutoAnalyze = false
+	s.do, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testOOMSuite) registerHook() {
+	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	_, r, _ := log.InitLogger(conf)
+	s.hook = &logHook{r.Core, ""}
+	lg := zap.New(s.hook)
+	log.ReplaceGlobals(lg, r)
+}
+
+func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+
+	s.hook.oomTracker = ""
+	tk.MustQuery("select * from t")
+	c.Assert(s.hook.oomTracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select * from t")
+	c.Assert(s.hook.oomTracker, Equals, "TableReaderDistSQLTracker")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+
+	s.hook.oomTracker = ""
+	tk.MustQuery("select a from t")
+	c.Assert(s.hook.oomTracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select a from t use index(idx_a)")
+	c.Assert(s.hook.oomTracker, Equals, "IndexReaderDistSQLTracker")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+
+	s.hook.oomTracker = ""
+	tk.MustQuery("select * from t")
+	c.Assert(s.hook.oomTracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select * from t use index(idx_a)")
+	c.Assert(s.hook.oomTracker, Equals, "IndexLookupDistSQLTracker")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+}
+
+type logHook struct {
+	zapcore.Core
+	oomTracker string
+}
+
+func (h *logHook) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	if strings.Contains(entry.Message, "memory exceeds quota") {
+		err, _ := fields[0].Interface.(error)
+		str := err.Error()
+		begin := strings.Index(str, "8001]")
+		if begin == -1 {
+			panic("begin not found")
+		}
+		end := strings.Index(str, " holds")
+		if end == -1 {
+			panic("end not found")
+		}
+		h.oomTracker = str[begin+len("8001]") : end]
+	}
+	return nil
+}
+
+func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if h.Enabled(e.Level) {
+		return ce.AddCore(e, h)
+	}
+	return ce
 }

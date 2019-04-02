@@ -521,7 +521,7 @@ func (sender *copIteratorTaskSender) run() {
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
 	select {
 	case resp, ok = <-respCh:
-		if it.memTracker != nil {
+		if it.memTracker != nil && resp != nil {
 			it.memTracker.Consume(-int64(resp.MemSize()))
 		}
 	case <-it.finishCh:
