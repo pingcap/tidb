@@ -228,7 +228,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 		}
 	}()
 
-	sql := fmt.Sprintf("SELECT status FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
+	sql := fmt.Sprintf("SELECT _tidb_rowid,status FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
 		originSQL, defaultDB)
 	rs, err := exec.Execute(ctx, sql)
 	if err != nil {
@@ -246,12 +246,13 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 			}
 			it := chunk.NewIterator4Chunk(chkBatch.Chunk)
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				status := row.GetString(0)
+				rowId := row.GetInt64(0)
+				status := row.GetString(1)
 				if status == BindUsing {
 					err = errors.New("origin sql already has binding sql")
 					return err
 				}
-				sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' and default_db='%s'", originSQL, defaultDB)
+				sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE _tidb_rowid=%d", rowId)
 				_, err = exec.Execute(ctx, sql)
 				if err != nil {
 					return errors.Trace(err)
