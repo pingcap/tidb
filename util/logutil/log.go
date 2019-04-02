@@ -260,6 +260,16 @@ func initFileLog(cfg *zaplog.FileLogConfig, logger *log.Logger) error {
 			return errors.New("can't use directory as log file name")
 		}
 	}
+
+	// Make sure we can open the log file the user has specified. lumberjack is going
+	// to manage this later, but we don't get any feedback about whether it could open
+	// the file or whether individual writes succeed.
+	if f, err := os.OpenFile(cfg.Filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err != nil {
+		return errors.Errorf("can't open new logfile: %s", err)
+	} else {
+		f.Close()
+	}
+
 	if cfg.MaxSize == 0 {
 		cfg.MaxSize = DefaultLogMaxSize
 	}
