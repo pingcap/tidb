@@ -87,16 +87,11 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 		Duration: time.Hour + time.Second,
 	})
 
-	t2 := types.NewTimeDatum(types.Time{
-		Time: types.FromDate(2019, 01, 01, 1, 01, 02, 0),
-		Type: mysql.TypeTimestamp,
-	})
-
 	time2, err := time1.Add(sc, d1.GetMysqlDuration())
 	c.Assert(err, IsNil)
 	err = time2.ConvertTimeZone(timeZoneIn8, time.UTC)
 	c.Assert(err, IsNil)
-	t2 = types.NewTimeDatum(time2)
+	t2 := types.NewTimeDatum(time2)
 
 	time3, err := time1.Add(sc, types.Duration{Duration: time.Hour*2 + time.Second*2})
 	c.Assert(err, IsNil)
