@@ -1580,7 +1580,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
-	var allVersions []domain.ServerVersionInfo
+	allVersions := make([]domain.ServerVersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
 		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
 			continue

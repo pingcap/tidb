@@ -126,7 +126,7 @@ func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 }
 
-// for issue #3848
+// TestInvalidNameWhenCreateTable for issue #3848
 func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -145,7 +145,7 @@ func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
 	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue, Commentf("err %v", err))
 }
 
-// for issue #6879
+// TestCreateTableIfNotExists for issue #6879
 func (s *testIntegrationSuite) TestCreateTableIfNotExists(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -168,6 +168,16 @@ func (s *testIntegrationSuite) TestCreateTableIfNotExists(c *C) {
 	c.Assert(len(warnings), GreaterEqual, 1)
 	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), IsTrue)
+}
+
+// for issue #9910
+func (s *testIntegrationSuite) TestCreateTableWithKeyWord(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test;")
+
+	_, err := tk.Exec("create table t1(pump varchar(20), drainer varchar(20), node_id varchar(20), node_state varchar(20));")
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite) TestUniqueKeyNullValue(c *C) {
@@ -570,7 +580,7 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 	if rs != nil {
 		rs.Close()
 	}
-	c.Assert(err.Error(), Equals, "Unknown charset gbk")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'gbk'")
 	rs, err = tk.Exec("alter table t charset utf8")
 	if rs != nil {
 		rs.Close()
@@ -1228,9 +1238,9 @@ func (s *testIntegrationSuite) TestAlterAlgorithm(c *C) {
 	defer s.tk.MustExec("drop table if exists t")
 
 	s.tk.MustExec(`create table t(
-	a int, 
-	b varchar(100), 
-	c int, 
+	a int,
+	b varchar(100),
+	c int,
 	INDEX idx_c(c)) PARTITION BY RANGE ( a ) (
 	PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
@@ -1301,7 +1311,7 @@ func (s *testIntegrationSuite) TestFulltextIndexIgnore(c *C) {
 	c.Assert(r.Rows(), HasLen, 0)
 }
 
-func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
+func (s *testIntegrationSuite) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists t")
@@ -1435,4 +1445,14 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		"  `a` varchar(20) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
 		"  `b` varchar(50) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func (s *testIntegrationSuite) TestDefaultValueIsString(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	defer s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (a int default b'1');")
+	tbl := testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "1")
 }

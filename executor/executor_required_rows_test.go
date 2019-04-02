@@ -206,6 +206,7 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MemQuotaSort = variable.DefTiDBMemQuotaSort
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker("", ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().SnapshotTS = uint64(1)
 	return ctx
 }
 
