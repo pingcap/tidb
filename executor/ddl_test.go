@@ -518,3 +518,11 @@ func (s *testSuite) TestSetDDLReorgBatchSize(c *C) {
 	// If do not LoadDDLReorgVars, the local variable will be the last loaded value.
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
 }
+
+func (s *testSuite) TestTimestampMinDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tdv;")
+	tk.MustExec("create table tdv(a int);")
+	tk.MustExec("ALTER TABLE tdv ADD COLUMN ts timestamp DEFAULT '1970-01-01 08:00:01';")
+}
