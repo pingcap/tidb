@@ -219,7 +219,7 @@ type ResultSubset interface {
 	GetStartKey() Key
 	// GetExecDetails gets the detail information.
 	GetExecDetails() *execdetails.ExecDetails
-	// MemSize returns how many memory this result use for tracing memory usage
+	// MemSize returns how many bytes of memory this result use for tracing memory usage
 	MemSize() int
 }
 

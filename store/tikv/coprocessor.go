@@ -427,6 +427,7 @@ func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
 	return &rs.ExecDetails
 }
 
+// MemSize returns how many bytes of memory this response use
 func (rs *copResponse) MemSize() int {
 	if rs.respSize != 0 {
 		return rs.respSize
@@ -439,7 +440,7 @@ func (rs *copResponse) MemSize() int {
 		rs.respSize += sizeofCommitDetails
 	}
 	if rs.pbResp != nil {
-		// using a approximate size since it's hard to get a accurate size
+		// using a approximate size since it's hard to get a accurate value
 		rs.respSize += rs.pbResp.Size()
 	}
 	return rs.respSize
