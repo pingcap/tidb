@@ -28,6 +28,10 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
+	DefTxnEntryCountLimit = 300 * 1000
+	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
@@ -164,6 +168,8 @@ type Performance struct {
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
+	TxnEntryCountLimit  uint64  `toml:"txn-entry-count-limit" json:"txn-entry-count-limit"`
+	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -284,12 +290,9 @@ var defaultConf = Config{
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
-		Level:  "info",
-		Format: "text",
-		File: logutil.FileLogConfig{
-			LogRotate: true,
-			MaxSize:   logutil.DefaultLogMaxSize,
-		},
+		Level:              "info",
+		Format:             "text",
+		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
 		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
 		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
@@ -309,6 +312,8 @@ var defaultConf = Config{
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
+		TxnEntryCountLimit:  DefTxnEntryCountLimit,
+		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
 	},
 	XProtocol: XProtocol{
 		XHost: "",
@@ -367,13 +372,7 @@ func (c *Config) Load(confFile string) error {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return &logutil.LogConfig{
-		Level:            l.Level,
-		Format:           l.Format,
-		DisableTimestamp: l.DisableTimestamp,
-		File:             l.File,
-		SlowQueryFile:    l.SlowQueryFile,
-	}
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp)
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.
