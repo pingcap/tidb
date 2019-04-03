@@ -38,8 +38,8 @@ import (
 // 1. Only "BytesConsumed()", "Consume()", "AttachTo()" and "Detach" are thread-safe.
 // 2. Other operations of a Tracker tree is not thread-safe.
 type Tracker struct {
-	sync.Mutex          // It's used to protect children.
-	children []*Tracker // The children memory trackers; protected by the Mutex above.
+	sync.Mutex            // It's used to protect children.
+	children   []*Tracker // The children memory trackers; protected by the Mutex above.
 
 	label          string // Label of this "Tracker".
 	bytesConsumed  int64  // Consumed bytes.
