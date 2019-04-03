@@ -584,6 +584,36 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	se, err := session.CreateSession(ts.store.(kv.Storage))
 	c.Assert(err, IsNil)
 	c.Assert(dbtbl.SchemaVersion, Equals, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion())
+
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	dbt.mustExec("create database if not exists test;")
+	dbt.mustExec("use test;")
+	dbt.mustExec(` create table t1 (id int KEY)
+		partition by range (id) (
+		PARTITION p0 VALUES LESS THAN (3),
+		PARTITION p1 VALUES LESS THAN (5),
+		PARTITION p2 VALUES LESS THAN (7),
+		PARTITION p3 VALUES LESS THAN (9))`)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/test/t1"))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&t)
+	c.Assert(err, IsNil)
+	c.Assert(t.Name.L, Equals, "t1")
+
+	resp, err = http.Get(fmt.Sprintf(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID)))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&dbtbl)
+	c.Assert(err, IsNil)
+	c.Assert(dbtbl.TableInfo.Name.L, Equals, "t1")
+	c.Assert(dbtbl.DBInfo.Name.L, Equals, "test")
+	c.Assert(dbtbl.TableInfo, DeepEquals, t)
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {

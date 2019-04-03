@@ -1685,7 +1685,7 @@ type dbTableInfo struct {
 func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	tableID := params[pTableID]
-	tblID, err := strconv.Atoi(tableID)
+	tableOrPartitionID, err := strconv.Atoi(tableID)
 	if err != nil {
 		writeError(w, errors.Errorf("Wrong tableID: %v", tableID))
 		return
@@ -1700,18 +1700,45 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	dbTblInfo := dbTableInfo{
 		SchemaVersion: schema.SchemaMetaVersion(),
 	}
-	tbl, ok := schema.TableByID(int64(tblID))
-	if !ok {
-		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
-		return
-	}
-	dbTblInfo.TableInfo = tbl.Meta()
-	dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
-	if !ok {
-		log.Warnf("can not find the database of table id: %v, table name: %v", dbTblInfo.TableInfo.ID, dbTblInfo.TableInfo.Name)
+	tbl, ok := schema.TableByID(int64(tableOrPartitionID))
+	if ok {
+		dbTblInfo.TableInfo = tbl.Meta()
+		dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
+		if !ok {
+			log.Warnf("can not find the database of table id: %v, table name: %v", dbTblInfo.TableInfo.ID, dbTblInfo.TableInfo.Name)
+			writeData(w, dbTblInfo)
+			return
+		}
+		dbTblInfo.DBInfo = dbInfo
 		writeData(w, dbTblInfo)
 		return
 	}
-	dbTblInfo.DBInfo = dbInfo
+	dbTblInfo.TableInfo, dbTblInfo.DBInfo = findTableByPartitionID(schema, int64(tableOrPartitionID))
+	if dbTblInfo.TableInfo == nil {
+		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		return
+	}
 	writeData(w, dbTblInfo)
+}
+
+func findTableByPartitionID(schema infoschema.InfoSchema, partitionID int64) (*model.TableInfo, *model.DBInfo) {
+	allDBs := schema.AllSchemas()
+	for _, db := range allDBs {
+		allTables := schema.SchemaTables(db.Name)
+		for _, tbl := range allTables {
+			if tbl.Meta().ID > partitionID || tbl.Meta().GetPartitionInfo() == nil {
+				continue
+			}
+			info := tbl.Meta().GetPartitionInfo()
+			tb := tbl.(table.PartitionedTable)
+			for _, def := range info.Definitions {
+				pid := def.ID
+				partition := tb.GetPartition(pid)
+				if partition.GetPhysicalID() == partitionID {
+					return tbl.Meta(), db
+				}
+			}
+		}
+	}
+	return nil, nil
 }
