@@ -168,7 +168,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	err = sc.HandleTruncate(err)
 	if err != nil {
-		return casted, errors.Trace(err)
+		return casted, err
 	}
 
 	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {

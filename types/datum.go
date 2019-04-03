@@ -1127,7 +1127,7 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 		}
 	}
 	ret.SetValue(dec)
-	return ret, errors.Trace(err)
+	return ret, err
 }
 
 // ProduceDecWithSpecifiedTp produces a new decimal according to `flen` and `decimal`.
@@ -1146,7 +1146,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 			old := *dec
 			err = dec.Round(dec, decimal, ModeHalfEven)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if !dec.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
 				if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
@@ -1169,7 +1169,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 	if unsigned && dec.IsNegative() {
 		dec = dec.FromUint(0)
 	}
-	return dec, errors.Trace(err)
+	return dec, err
 }
 
 func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
