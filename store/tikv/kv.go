@@ -33,7 +33,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -243,7 +244,7 @@ func (s *tikvStore) runSafePointChecker() {
 				d = gcSafePointUpdateInterval
 			} else {
 				metrics.TiKVLoadSafepointCounter.WithLabelValues("fail").Inc()
-				log.Errorf("fail to load safepoint from pd: %v", err)
+				logutil.Logger(context.Background()).Error("fail to load safepoint from pd", zap.Error(err))
 				d = gcSafePointQuickRepeatInterval
 			}
 		case <-s.Closed():
@@ -388,7 +389,7 @@ func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	}
 	if strings.ToLower(u.Scheme) != "tikv" {
 		err = errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
-		log.Error(err)
+		logutil.Logger(context.Background()).Error("parsePath error", zap.Error(err))
 		return
 	}
 	switch strings.ToLower(u.Query().Get("disableGC")) {

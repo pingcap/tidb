@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -281,7 +281,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		if errors.Cause(err) != io.EOF {
 			return nil, errors.Trace(err)
 		}
-		log.Debug("copstream returns nothing for the request.")
+		logutil.Logger(context.Background()).Debug("copstream returns nothing for the request.")
 	}
 	copStream.Response = first
 	return resp, nil
