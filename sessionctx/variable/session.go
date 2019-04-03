@@ -598,10 +598,6 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
 	case TxnIsolationOneShot:
-		switch val {
-		case "SERIALIZABLE", "READ-UNCOMMITTED":
-			return ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
-		}
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val
 	case TimeZone:
