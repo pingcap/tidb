@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"bytes"
-	"context"
 	"math"
 	"sync"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 // MVCCLevelDB implements the MVCCStore interface.

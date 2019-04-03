@@ -15,7 +15,6 @@ package latch
 
 import (
 	"bytes"
-	"context"
 	"math/bits"
 	"sort"
 	"sync"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 type node struct {
