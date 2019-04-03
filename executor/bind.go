@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// CreateBindExec represents a create bind executor.
-type CreateBindExec struct {
+// SQLBindExec represents a bind executor.
+type SQLBindExec struct {
 	baseExecutor
 
 	originSQL string
@@ -36,7 +36,7 @@ type CreateBindExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *CreateBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *SQLBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	req.Reset()
 	handle := domain.GetDomain(e.ctx).BindHandle()
 	if handle == nil {

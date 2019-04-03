@@ -180,8 +180,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
-	case *plannercore.CreateBindPlan:
-		return b.buildCreateBind(v)
+	case *plannercore.SQLBindPlan:
+		return b.buildSQLBindExec(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -1976,12 +1976,12 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	}
 }
 
-func (b *executorBuilder) buildCreateBind(v *plannercore.CreateBindPlan) Executor {
+func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
 
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
-	e := &CreateBindExec{
+	e := &SQLBindExec{
 		baseExecutor: base,
 		originSQL:    v.OriginSQL,
 		bindSQL:      v.BindSQL,

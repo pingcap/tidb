@@ -60,7 +60,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 
 	if needDefaultDB {
 		switch x := finalPlan.(type) {
-		case *plannercore.CreateBindPlan:
+		case *plannercore.SQLBindPlan:
 			if c.Ctx.GetSessionVars().CurrentDB != "" {
 				x.DefaultDB = c.Ctx.GetSessionVars().CurrentDB
 			} else {

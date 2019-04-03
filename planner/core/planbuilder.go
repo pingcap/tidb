@@ -219,7 +219,7 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case ast.DDLNode:
 		return b.buildDDL(x)
 	case *ast.CreateBindingStmt:
-		return b.buildCreateBind(x)
+		return b.buildCreateBindPlan(x)
 	case *ast.ChangeStmt:
 		return b.buildChange(x)
 	}
@@ -309,8 +309,9 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildCreateBind(v *ast.CreateBindingStmt) (Plan, error) {
-	p := &CreateBindPlan{
+func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
+	p := &SQLBindPlan{
+		BindType:  OpSQLBindCreate,
 		OriginSQL: parser.Normalize(v.OriginSel.Text()),
 		BindSQL:   v.HintedSel.Text(),
 		IsGlobal:  v.GlobalScope,
