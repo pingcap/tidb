@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -386,7 +385,7 @@ func (e *InsertValues) filterErr(err error) error {
 		return err
 	}
 	// TODO: should not filter all types of errors here.
-	e.handleWarning(err, fmt.Sprintf("ignore err:%v", errors.ErrorStack(err)))
+	e.handleWarning(err)
 	return nil
 }
 
@@ -522,10 +521,9 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 	return casted, nil
 }
 
-func (e *InsertValues) handleWarning(err error, logInfo string) {
+func (e *InsertValues) handleWarning(err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	sc.AppendWarning(err)
-	logutil.Logger(context.Background()).Warn(logInfo)
 }
 
 // batchCheckAndInsert checks rows with duplicate errors.
