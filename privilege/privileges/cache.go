@@ -700,20 +700,29 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 	return false
 }
 
-func (p *MySQLPrivilege) showGrants(user, host string) []string {
+func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
 	var gs []string
 	var hasGlobalGrant bool = false
-	// Show global grants
+	// Show global grants.
+	var currentPriv mysql.PrivilegeType
+	var g string
 	for _, record := range p.User {
 		if record.User == user && record.Host == host {
 			hasGlobalGrant = true
-			g := userPrivToString(record.Privileges)
-			if len(g) > 0 {
-				s := fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, record.User, record.Host)
-				gs = append(gs, s)
+			currentPriv |= record.Privileges
+		} else {
+			for _, r := range roles {
+				if record.User == r.Username && record.Host == r.Hostname {
+					hasGlobalGrant = true
+					currentPriv |= record.Privileges
+				}
 			}
-			break // it's unique
 		}
+	}
+	g = userPrivToString(currentPriv)
+	if len(g) > 0 {
+		s := fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, user, host)
+		gs = append(gs, s)
 	}
 
 	// This is a mysql convention.
@@ -722,28 +731,81 @@ func (p *MySQLPrivilege) showGrants(user, host string) []string {
 		gs = append(gs, s)
 	}
 
-	// Show db scope grants
+	// Show db scope grants.
+	dbPrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.DB {
 		if record.User == user && record.Host == host {
-			g := dbPrivToString(record.Privileges)
-			if len(g) > 0 {
-				s := fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s'`, g, record.DB, record.User, record.Host)
-				gs = append(gs, s)
+			if _, ok := dbPrivTable[record.DB]; ok {
+				dbPrivTable[record.DB] |= record.Privileges
+			} else {
+				dbPrivTable[record.DB] = record.Privileges
+			}
+		} else {
+			for _, r := range roles {
+				if record.User == r.Username && record.Host == r.Hostname {
+					if _, ok := dbPrivTable[record.DB]; ok {
+						dbPrivTable[record.DB] |= record.Privileges
+					} else {
+						dbPrivTable[record.DB] = record.Privileges
+					}
+				}
 			}
 		}
 	}
+	for dbName, priv := range dbPrivTable {
+		g := dbPrivToString(priv)
+		if len(g) > 0 {
+			s := fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s'`, g, dbName, user, host)
+			gs = append(gs, s)
+		}
+	}
 
-	// Show table scope grants
+	// Show table scope grants.
+	tablePrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.TablesPriv {
+		recordKey := record.DB + "." + record.TableName
 		if record.User == user && record.Host == host {
-			g := tablePrivToString(record.TablePriv)
-			if len(g) > 0 {
-				s := fmt.Sprintf(`GRANT %s ON %s.%s TO '%s'@'%s'`, g, record.DB, record.TableName, record.User, record.Host)
-				gs = append(gs, s)
+			if _, ok := dbPrivTable[record.DB]; ok {
+				tablePrivTable[recordKey] |= record.TablePriv
+			} else {
+				tablePrivTable[recordKey] = record.TablePriv
+			}
+		} else {
+			for _, r := range roles {
+				if record.User == r.Username && record.Host == r.Hostname {
+					if _, ok := dbPrivTable[record.DB]; ok {
+						tablePrivTable[recordKey] |= record.TablePriv
+					} else {
+						tablePrivTable[recordKey] = record.TablePriv
+					}
+				}
 			}
 		}
 	}
+	for k, priv := range tablePrivTable {
+		g := tablePrivToString(priv)
+		if len(g) > 0 {
+			s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, g, k, user, host)
+			gs = append(gs, s)
+		}
+	}
 
+	// Show role grants.
+	graphKey := user + "@" + host
+	edgeTable, ok := p.RoleGraph[graphKey]
+	g = ""
+	if ok {
+		for k := range edgeTable.roleList {
+			role := strings.Split(k, "@")
+			roleName, roleHost := role[0], role[1]
+			if g != "" {
+				g += ", "
+			}
+			g += fmt.Sprintf("'%s'@'%s'", roleName, roleHost)
+		}
+		s := fmt.Sprintf(`GRANT %s TO '%s'@'%s'`, g, user, host)
+		gs = append(gs, s)
+	}
 	return gs
 }
 
