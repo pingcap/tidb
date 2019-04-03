@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -366,7 +367,7 @@ func (a *ExecStmt) logAudit() {
 		return nil
 	})
 	if err != nil {
-		log.Error("log audit log failure %+v", err)
+		logutil.Logger(context.Background()).Error("log audit log failure", zap.Error(err))
 	}
 }
 

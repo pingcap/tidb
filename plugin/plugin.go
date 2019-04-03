@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // pluginGlobal holds all global variables for plugin.
@@ -340,7 +342,8 @@ func Shutdown(ctx context.Context) {
 					p.flushWatcher.cancel()
 				}
 				if err := p.OnShutdown(ctx, p.Manifest); err != nil {
-					log.Error("call OnShutdown %s for failure %v", p.Name, err)
+					logutil.Logger(ctx).Error("call OnShutdown failure",
+						zap.String("pluginName", p.Name), zap.Error(err))
 				}
 			}
 		}
