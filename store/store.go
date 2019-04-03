@@ -62,7 +62,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	name := strings.ToLower(storeURL.Scheme)
 	d, ok := stores[name]
 	if !ok {
-		logutil.Logger(context.Background()).Warn("Invalid url format, storage is not registered", zap.String("storage name", name))
+		logutil.Logger(context.Background()).Warn("invalid url format, storage is not registered", zap.String("storage name", name))
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
 
