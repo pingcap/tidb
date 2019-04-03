@@ -130,7 +130,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	if err != nil {
 		return 0, nil, fullLoad, errors.Trace(err)
 	}
-	logutil.Logger(context.Background()).Info("full load InfoSchema failed", zap.Int64("usedSchemaVersion", usedSchemaVersion),
+	logutil.Logger(context.Background()).Info("full load InfoSchema successful.", zap.Int64("usedSchemaVersion", usedSchemaVersion),
 		zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Duration("start time", time.Since(startTime)))
 	newISBuilder.Build()
 	return latestSchemaVersion, nil, fullLoad, nil
