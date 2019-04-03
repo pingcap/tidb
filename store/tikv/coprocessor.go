@@ -436,11 +436,8 @@ func (rs *copResponse) MemSize() int {
 	// ignore rs.err
 	rs.respSize += len(rs.startKey)
 	rs.respSize += sizeofExecDetails
-	if rs.CommitDetail != nil {
-		rs.respSize += sizeofCommitDetails
-	}
 	if rs.pbResp != nil {
-		// using a approximate size since it's hard to get a accurate value
+		// Using a approximate size since it's hard to get a accurate value.
 		rs.respSize += rs.pbResp.Size()
 	}
 	return rs.respSize
