@@ -38,8 +38,10 @@ import (
 // 1. Only "BytesConsumed()", "Consume()", "AttachTo()" and "Detach" are thread-safe.
 // 2. Other operations of a Tracker tree is not thread-safe.
 type Tracker struct {
-	sync.Mutex            // It's used to protect children.
-	children   []*Tracker // The children memory trackers; protected by the Mutex above.
+	mu struct {
+		sync.Mutex
+		children []*Tracker // The children memory trackers
+	}
 
 	label          string // Label of this "Tracker".
 	bytesConsumed  int64  // Consumed bytes.
@@ -76,9 +78,9 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 	if t.parent != nil {
 		t.parent.remove(t)
 	}
-	parent.Lock()
-	parent.children = append(parent.children, t)
-	parent.Unlock()
+	parent.mu.Lock()
+	parent.mu.children = append(parent.mu.children, t)
+	parent.mu.Unlock()
 
 	t.parent = parent
 	t.parent.Consume(t.BytesConsumed())
@@ -90,16 +92,16 @@ func (t *Tracker) Detach() {
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
-	t.Lock()
-	defer t.Unlock()
-	for i, child := range t.children {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i, child := range t.mu.children {
 		if child != oldChild {
 			continue
 		}
 
 		atomic.AddInt64(&t.bytesConsumed, -oldChild.BytesConsumed())
 		oldChild.parent = nil
-		t.children = append(t.children[:i], t.children[i+1:]...)
+		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
 		break
 	}
 }
@@ -116,18 +118,18 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	newConsumed := newChild.BytesConsumed()
 	newChild.parent = t
 
-	t.Lock()
-	for i, child := range t.children {
+	t.mu.Lock()
+	for i, child := range t.mu.children {
 		if child != oldChild {
 			continue
 		}
 
 		newConsumed -= oldChild.BytesConsumed()
 		oldChild.parent = nil
-		t.children[i] = newChild
+		t.mu.children[i] = newChild
 		break
 	}
-	t.Unlock()
+	t.mu.Unlock()
 
 	t.Consume(newConsumed)
 }
@@ -165,13 +167,13 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.bytesToString(t.BytesConsumed()))
 
-	t.Lock()
-	for i := range t.children {
-		if t.children[i] != nil {
-			t.children[i].toString(indent+"  ", buffer)
+	t.mu.Lock()
+	for i := range t.mu.children {
+		if t.mu.children[i] != nil {
+			t.mu.children[i].toString(indent+"  ", buffer)
 		}
 	}
-	t.Unlock()
+	t.mu.Unlock()
 	buffer.WriteString(indent + "}\n")
 }
 
