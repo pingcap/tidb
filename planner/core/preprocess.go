@@ -129,7 +129,7 @@ func (p *preprocessor) checkBindGrammar(createBindingStmt *ast.CreateBindingStmt
 	hintedSQL := parser.Normalize(createBindingStmt.HintedSel.(*ast.SelectStmt).Text())
 
 	if originSQL != hintedSQL {
-		p.err = errors.New("hinted sql and origin sql don't match when hinted sql erase the hint info")
+		p.err = errors.New(fmt.Sprintf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:", originSQL, ", hintedSQL:", hintedSQL))
 	}
 }
 

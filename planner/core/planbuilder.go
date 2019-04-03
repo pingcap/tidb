@@ -316,6 +316,7 @@ func (b *PlanBuilder) buildCreateBind(v *ast.CreateBindingStmt) (Plan, error) {
 		IsGlobal:  v.GlobalScope,
 		BindStmt:  v.HintedSel,
 	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }
 

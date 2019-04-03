@@ -42,9 +42,9 @@ func (e *CreateBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	if handle == nil {
 		return errors.New("bind manager is nil")
 	}
-	var err error
 	if e.isGlobal {
-		err = handle.AddGlobalBind(e.originSQL, e.bindSQL, e.defaultDB, e.charset, e.collation)
+		return handle.AddGlobalBind(e.originSQL, e.bindSQL, e.defaultDB, e.charset, e.collation)
 	}
-	return err
+
+	return errors.New("non global sql bind not support")
 }

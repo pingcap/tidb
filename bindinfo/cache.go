@@ -32,10 +32,10 @@ import (
 )
 
 const (
-	// BindUsing is the bind info's in use status.
-	BindUsing = "using"
-	// BindDeleted is the bind info's deleted status.
-	BindDeleted = "deleted"
+	// using is the bind info's in use status.
+	using = "using"
+	// deleted is the bind info's deleted status.
+	deleted = "deleted"
 )
 
 // bindMeta stores the basic bind info and bindSql astNode.
@@ -117,7 +117,7 @@ func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
 
 	recordSets, err := bindCacheUpdater.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	rs := recordSets[0]
@@ -126,7 +126,7 @@ func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
 	for {
 		err = rs.Next(context.TODO(), chkBatch)
 		if err != nil || chkBatch.NumRows() == 0 {
-			return errors.Trace(err)
+			return err
 		}
 
 		it := chunk.NewIterator4Chunk(chkBatch.Chunk)
@@ -160,7 +160,7 @@ func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	}
 	err = bindCacheUpdater.loadDiff(sql, newBc)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	bindCacheUpdater.globalHandle.Store(newBc)
@@ -193,12 +193,12 @@ func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) err
 			}
 		}
 	}
-	if newBindRecord.Status == BindDeleted {
+	if newBindRecord.Status == deleted {
 		return nil
 	}
 	stmtNodes, _, err := sparser.Parse(newBindRecord.BindSQL, newBindRecord.Charset, newBindRecord.Collation)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	newNode := &bindMeta{
 		bindRecord: newBindRecord,
@@ -217,14 +217,14 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 	exec, _ := h.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(ctx, "BEGIN")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer func() {
 		if err == nil {
 			_, err = exec.Execute(ctx, "COMMIT")
 		} else {
 			_, rbErr := exec.Execute(ctx, "ROLLBACK")
-			terror.Log(errors.Trace(rbErr))
+			terror.Log(rbErr)
 		}
 	}()
 
@@ -239,7 +239,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 		for {
 			err = rs[0].Next(context.TODO(), chkBatch)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			if chkBatch.NumRows() == 0 {
 				break
@@ -248,14 +248,14 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 			for row := it.Begin(); row != it.End(); row = it.Next() {
 				rowID := row.GetInt64(0)
 				status := row.GetString(1)
-				if status == BindUsing {
+				if status == using {
 					err = errors.New("origin sql already has binding sql")
 					return err
 				}
 				sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE _tidb_rowid=%d", rowID)
 				_, err = exec.Execute(ctx, sql)
 				if err != nil {
-					return errors.Trace(err)
+					return err
 				}
 			}
 		}
@@ -263,14 +263,14 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 
 	txn, err := h.ctx.Txn(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	ts := oracle.GetTimeFromTS(txn.StartTS())
 	bindSQL = getEscapeCharacter(bindSQL)
 	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
-		originSQL, bindSQL, defaultDB, BindUsing, ts, ts, charset, collation)
+		originSQL, bindSQL, defaultDB, using, ts, ts, charset, collation)
 	_, err = exec.Execute(ctx, sql)
-	return errors.Trace(err)
+	return err
 }
 
 func getEscapeCharacter(str string) string {

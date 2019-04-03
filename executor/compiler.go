@@ -42,13 +42,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		defer span1.Finish()
 	}
 
-	var needDefaultDb bool
+	var needDefaultDB bool
 	switch x := stmtNode.(type) {
 	case *ast.CreateBindingStmt:
-		needDefaultDb = checkDefaultDb(x.OriginSel)
-		if !needDefaultDb {
-			needDefaultDb = checkDefaultDb(x.HintedSel)
-		}
+		needDefaultDB = checkDefaultDb(x.OriginSel) || checkDefaultDb(x.HintedSel)
 	}
 
 	infoSchema := GetInfoSchema(c.Ctx)
@@ -61,7 +58,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, errors.Trace(err)
 	}
 
-	if needDefaultDb {
+	if needDefaultDB {
 		switch x := finalPlan.(type) {
 		case *plannercore.CreateBindPlan:
 			if c.Ctx.GetSessionVars().CurrentDB != "" {
@@ -212,6 +209,22 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
+	case *ast.CreateBindingStmt:
+		if x.OriginSel != nil {
+			originSelect := x.OriginSel.(*ast.SelectStmt)
+			dbLabels := getDbFromResultNode(originSelect.From.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+
+		if len(dbLabelSet) == 0 && x.HintedSel != nil {
+			hintedSelect := x.HintedSel.(*ast.SelectStmt)
+			dbLabels := getDbFromResultNode(hintedSelect.From.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
 	}
 
 	return dbLabelSet
@@ -320,6 +333,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Prepare"
 	case *ast.UseStmt:
 		return "Use"
+	case *ast.CreateBindingStmt:
+		return "CreateBinding"
 	}
 	return "other"
 }
