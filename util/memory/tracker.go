@@ -97,7 +97,7 @@ func (t *Tracker) remove(oldChild *Tracker) {
 			continue
 		}
 
-		t.bytesConsumed -= oldChild.BytesConsumed()
+		atomic.AddInt64(&t.bytesConsumed, -oldChild.BytesConsumed())
 		oldChild.parent = nil
 		t.children = append(t.children[:i], t.children[i+1:]...)
 		break
@@ -148,9 +148,7 @@ func (t *Tracker) Consume(bytes int64) {
 
 // BytesConsumed returns the consumed memory usage value in bytes.
 func (t *Tracker) BytesConsumed() int64 {
-	t.Lock()
-	defer t.Unlock()
-	return t.bytesConsumed
+	return atomic.LoadInt64(&t.bytesConsumed)
 }
 
 // String returns the string representation of this Tracker tree.
