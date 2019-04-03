@@ -140,7 +140,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	if len(keys) > logEntryCount || size > logSize {
 		tableID := tablecodec.DecodeTableID(keys[0])
 		logutil.Logger(context.Background()).Info("[BIG_TXN]",
-			zap.Uint64("con", connID),
+			zap.Uint64("conn", connID),
 			zap.Int64("table ID", tableID),
 			zap.Int("size", size),
 			zap.Int("keys", len(keys)),
