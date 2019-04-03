@@ -112,7 +112,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		logutil.Logger(context.Background()).Error("failed to load schema diff", zap.Error(err))
 	}
 	if ok {
-		logutil.Logger(context.Background()).Info("diff load InfoSchema from version failed",
+		logutil.Logger(context.Background()).Info("diff load InfoSchema success",
 			zap.Int64("usedSchemaVersion", usedSchemaVersion),
 			zap.Int64("latestSchemaVersion", latestSchemaVersion),
 			zap.Duration("start time", time.Since(startTime)),
@@ -130,7 +130,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	if err != nil {
 		return 0, nil, fullLoad, errors.Trace(err)
 	}
-	logutil.Logger(context.Background()).Info("full load InfoSchema failed", zap.Int64("usedSchemaVersion", usedSchemaVersion),
+	logutil.Logger(context.Background()).Info("full load InfoSchema success", zap.Int64("usedSchemaVersion", usedSchemaVersion),
 		zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Duration("start time", time.Since(startTime)))
 	newISBuilder.Build()
 	return latestSchemaVersion, nil, fullLoad, nil
