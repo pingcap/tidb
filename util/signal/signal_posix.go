@@ -21,9 +21,9 @@ import (
 	"runtime"
 	"syscall"
 
-	"golang.org/x/net/context"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 // SetupSignalHandler setup signal handler for TiDB Server

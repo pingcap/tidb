@@ -16,9 +16,9 @@ package systimemon
 import (
 	"time"
 
-	"golang.org/x/net/context"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 // StartMonitor calls systimeErrHandler if system time jump backward.
