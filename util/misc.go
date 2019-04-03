@@ -14,13 +14,13 @@
 package util
 
 import (
-	"context"
 	"runtime"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 const (

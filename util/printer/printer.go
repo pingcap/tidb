@@ -15,7 +15,6 @@ package printer
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 // Version information.

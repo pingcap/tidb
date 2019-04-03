@@ -14,9 +14,9 @@
 package systimemon
 
 import (
-	"context"
 	"time"
 
+	"golang.org/x/net/context"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )

@@ -14,13 +14,13 @@
 package memory
 
 import (
-	"context"
 	"sync"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 // ActionOnExceed is the action taken when memory usage exceeds memory quota.

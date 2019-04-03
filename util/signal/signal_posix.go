@@ -15,13 +15,13 @@
 package signal
 
 import (
-	"context"
 	"log"
 	"os"
 	"os/signal"
 	"runtime"
 	"syscall"
 
+	"golang.org/x/net/context"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )

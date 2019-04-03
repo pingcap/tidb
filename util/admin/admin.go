@@ -14,7 +14,6 @@
 package admin
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"sort"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 // DDLInfo is for DDL information.
