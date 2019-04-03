@@ -961,6 +961,8 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 		t, err = ParseTime(sc, d.GetString(), mysql.TypeTimestamp, fsp)
 	case KindInt64:
 		t, err = ParseTimeFromNum(sc, d.GetInt64(), mysql.TypeTimestamp, fsp)
+	case KindMysqlDecimal:
+		t, err = ParseTimeFromFloatString(sc, d.GetMysqlDecimal().String(), mysql.TypeTimestamp, fsp)
 	default:
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
@@ -998,6 +1000,8 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 			return ret, errors.Trace(err)
 		}
 		t, err = t.RoundFrac(sc, fsp)
+	case KindMysqlDecimal:
+		t, err = ParseTimeFromFloatString(sc, d.GetMysqlDecimal().String(), tp, fsp)
 	case KindString, KindBytes:
 		t, err = ParseTime(sc, d.GetString(), tp, fsp)
 	case KindInt64:
@@ -1186,7 +1190,9 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		adjust = len(s) < 4
+		if len(s) != 4 && len(s) > 0 && s[0:1] == "0" {
+			adjust = true
+		}
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Time.Year())
 	case KindMysqlDuration:
@@ -1792,7 +1798,7 @@ func handleTruncateError(sc *stmtctx.StatementContext) error {
 
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
-	var strs []string
+	strs := make([]string, 0, len(datums))
 	for _, datum := range datums {
 		if handleSpecialValue {
 			switch datum.Kind() {
