@@ -247,7 +247,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// When bypassLatch flag is true, commit directly.
 	if bypassLatch {
 		err = committer.executeAndWriteFinishBinlog(ctx)
-		log.Debug("[kv]", connID, " txnLatches enabled while txn not retryable, 2pc directly:", err)
+		logutil.Logger(ctx).Debug("[kv] txnLatches enabled while txn not retryable, 2pc directly",
+			zap.Error(err))
 		return errors.Trace(err)
 	}
 
