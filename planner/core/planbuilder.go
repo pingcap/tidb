@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -238,6 +238,8 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
+	case *ast.ExplainForStmt:
+		return b.buildExplainFor(x)
 	case *ast.TraceStmt:
 		return b.buildTrace(x)
 	case *ast.InsertStmt:
@@ -1680,6 +1682,41 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 		p.SetSchema(schema)
 	default:
 		return nil, errors.New("trace format should be one of 'row' or 'json'")
+	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, error) {
+	processInfo, ok := b.ctx.GetSessionManager().GetProcessInfo(explainFor.ConnectionID)
+	if !ok {
+		return nil, ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
+	}
+	targetPlan, ok := processInfo.Plan.(Plan)
+	if !ok || targetPlan == nil {
+		return &Explain{StmtPlan: nil, Analyze: false, Format: explainFor.Format, ExecStmt: nil, ExecPlan: nil}, nil
+	}
+
+	pp, ok := targetPlan.(PhysicalPlan)
+	if !ok {
+		switch x := targetPlan.(type) {
+		case *Delete:
+			pp = x.SelectPlan
+		case *Update:
+			pp = x.SelectPlan
+		case *Insert:
+			if x.SelectPlan != nil {
+				pp = x.SelectPlan
+			}
+		}
+		if pp == nil {
+			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
+		}
+	}
+	p := &Explain{StmtPlan: pp, Analyze: false, Format: explainFor.Format, ExecStmt: nil, ExecPlan: targetPlan}
+	p.ctx = b.ctx
+	err := p.prepareSchema()
+	if err != nil {
+		return nil, err
 	}
 	return p, nil
 }

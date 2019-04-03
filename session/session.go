@@ -141,6 +141,8 @@ type session struct {
 		values map[fmt.Stringer]interface{}
 	}
 
+	currentPlan plannercore.Plan
+
 	store kv.Storage
 
 	parser *parser.Parser
@@ -884,6 +886,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
 		Command: command,
+		Plan:    s.currentPlan,
 		Time:    t,
 		State:   s.Status(),
 		Info:    sql,
@@ -976,6 +979,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			return nil, errors.Trace(err)
 		}
 		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
+		s.currentPlan = stmt.Plan
 
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {

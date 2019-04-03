@@ -36,6 +36,14 @@ github.com/dustin/go-humanize v1.0.0 h1:VSnTsYCnlFHaM2/igO1h6X3HA71jcobQuxemgkq4
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385 h1:clC1lXBpe2kTj2VHdaIu9ajZQe4kcEY9j0NsnDDBZ3o=
 github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385/go.mod h1:0vRUJqYpeSZifjYj7uP3BG/gKcuzL9xWVV/Y+cK33KM=
+github.com/erjiaqing/parser v0.0.0-20190402091237-a002822be6f0 h1:JaUjo44QiT9a04ayr6IFTsBw1S1K4xW6+Nf/uRaujio=
+github.com/erjiaqing/parser v0.0.0-20190402091237-a002822be6f0/go.mod h1:aUFyqfo1hZxGAgyZQTrlH6uP860dvrWq/Wg8vpfECb4=
+github.com/erjiaqing/parser v0.0.0-20190403021938-73269670ae82 h1:lpK4YKyigC8jbY903jAUot/xp/QNZh4+7SvD5ZqxrRg=
+github.com/erjiaqing/parser v0.0.0-20190403021938-73269670ae82/go.mod h1:aUFyqfo1hZxGAgyZQTrlH6uP860dvrWq/Wg8vpfECb4=
+github.com/erjiaqing/parser v0.0.0-20190403022648-55d876dc571a h1:DTT49HKhuiEiL5St/Qln1mGR/LDNi8l5EMU2T4+407E=
+github.com/erjiaqing/parser v0.0.0-20190403022648-55d876dc571a/go.mod h1:aUFyqfo1hZxGAgyZQTrlH6uP860dvrWq/Wg8vpfECb4=
+github.com/erjiaqing/parser v0.0.0-20190403024527-597aca19ba6b h1:ieWdAJfh2eIgM2J6RfBMz7EE/X7k/sjYUXEdNHVck/k=
+github.com/erjiaqing/parser v0.0.0-20190403024527-597aca19ba6b/go.mod h1:aUFyqfo1hZxGAgyZQTrlH6uP860dvrWq/Wg8vpfECb4=
 github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a h1:QNEenQIsGDEEfFNSnN+h6hE1OwnHqTg7Dl9gEk1Cko4=
 github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a/go.mod h1:49H/RkXP8pKaZy4h0d+NW16rSLhyVBt4o6VLJbmOqDE=
 github.com/fsnotify/fsnotify v1.4.7 h1:IXs+QLmnXW2CcXuY+8Mzv/fWEsPGWxqefPtCP5CnV9I=

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
@@ -492,6 +492,9 @@ func (e *Explain) prepareSchema() error {
 
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
+	if e.StmtPlan == nil {
+		return nil
+	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
