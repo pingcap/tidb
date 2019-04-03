@@ -222,6 +222,7 @@ func (s *testSuite) TestCancelJobs(c *C) {
 
 	errs, err = CancelJobs(txn, []int64{})
 	c.Assert(err, IsNil)
+	c.Assert(errs, IsNil)
 	errs, err = CancelJobs(txn, []int64{-1})
 	c.Assert(err, IsNil)
 	c.Assert(errs[0], NotNil)
