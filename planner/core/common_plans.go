@@ -366,6 +366,8 @@ type SQLBindPlan struct {
 	DefaultDB string
 	IsGlobal  bool
 	BindStmt  ast.StmtNode
+	Charset   string
+	Collation string
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.

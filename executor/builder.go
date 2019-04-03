@@ -1980,14 +1980,13 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
 
-	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	e := &SQLBindExec{
 		baseExecutor: base,
 		originSQL:    v.OriginSQL,
 		bindSQL:      v.BindSQL,
 		defaultDB:    v.DefaultDB,
-		charset:      charset,
-		collation:    collation,
+		charset:      v.Charset,
+		collation:    v.Collation,
 		isGlobal:     v.IsGlobal,
 		bindAst:      v.BindStmt,
 	}

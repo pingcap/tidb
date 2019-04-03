@@ -234,7 +234,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 	if err != nil {
 		return err
 	}
-	if len(rs) == 1 {
+	if len(rs) > 1 {
 		chkBatch := rs[0].NewRecordBatch()
 		for {
 			err = rs[0].Next(context.TODO(), chkBatch)
@@ -249,8 +249,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 				rowID := row.GetInt64(0)
 				status := row.GetString(1)
 				if status == using {
-					err = errors.New("origin sql already has binding sql")
-					return err
+					return errors.New("origin sql already has binding sql")
 				}
 				sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE _tidb_rowid=%d", rowID)
 				_, err = exec.Execute(ctx, sql)
