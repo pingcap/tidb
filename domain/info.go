@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -80,7 +81,7 @@ func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
 
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) Init(ctx context.Context) error {
-	return errors.Trace(is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt))
+	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
 // GetServerInfo gets self server static information.
@@ -96,7 +97,7 @@ func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*Server
 	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
 	infoMap, err := getInfo(ctx, is.etcdCli, key, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	info, ok := infoMap[id]
 	if !ok {
@@ -114,7 +115,7 @@ func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerI
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return allInfo, nil
 }
@@ -130,7 +131,7 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	}
 	str := string(hack.String(infoBuf))
 	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
-	return errors.Trace(err)
+	return err
 }
 
 // RemoveServerInfo remove self server static information from etcd.
@@ -154,7 +155,7 @@ func (is InfoSyncer) Done() <-chan struct{} {
 
 // Restart restart the info syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) Restart(ctx context.Context) error {
-	return errors.Trace(is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt))
+	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
 // newSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
@@ -165,12 +166,12 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", is.serverInfoPath)
 	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	is.session = session
 
 	err = is.storeServerInfo(ctx)
-	return errors.Trace(err)
+	return err
 }
 
 // getInfo gets server information from etcd according to the key and opts.

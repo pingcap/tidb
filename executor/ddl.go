@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -50,7 +51,7 @@ type DDLExec struct {
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
 func (e *DDLExec) toErr(err error) error {
 	if e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
-		return errors.Trace(err)
+		return err
 	}
 
 	// Before the DDL job is ready, it encouters an error that may be due to the outdated schema information.
@@ -62,13 +63,13 @@ func (e *DDLExec) toErr(err error) error {
 	txn, err1 := e.ctx.Txn(true)
 	if err1 != nil {
 		logutil.Logger(context.Background()).Error("active txn failed", zap.Error(err))
-		return errors.Trace(err1)
+		return err1
 	}
 	schemaInfoErr := checker.Check(txn.StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -80,7 +81,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
 	if err = e.ctx.NewTxn(ctx); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
@@ -107,7 +108,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 		err = e.executeRenameTable(x)
 	}
 	if err != nil {
-		return errors.Trace(e.toErr(err))
+		return e.toErr(err)
 	}
 
 	dom := domain.GetDomain(e.ctx)
@@ -124,7 +125,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := domain.GetDomain(e.ctx).DDL().TruncateTable(e.ctx, ident)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
@@ -136,7 +137,7 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	newIdent := ast.Ident{Schema: s.NewTable.Schema, Name: s.NewTable.Name}
 	isAlterTable := false
 	err := domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
@@ -158,23 +159,23 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 			err = nil
 		}
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.Unique, model.NewCIStr(s.IndexName), s.IndexColNames, s.IndexOption)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
@@ -199,14 +200,14 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 		sessionVars.CurrentDB = ""
 		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum("utf8"))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = variable.SetSessionSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum("utf8_unicode_ci"))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // If one drop those tables by mistake, it's difficult to recover.
@@ -243,7 +244,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 			notExistTables = append(notExistTables, fullti.String())
 			continue
 		} else if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		// Protect important system table from been dropped by a mistake.
@@ -260,7 +261,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 
@@ -272,7 +273,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 		} else if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	if len(notExistTables) > 0 && !s.IfExists {
@@ -287,13 +288,13 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && s.IfExists {
 		err = nil
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := domain.GetDomain(e.ctx).DDL().AlterTable(e.ctx, ti, s.Specs)
-	return errors.Trace(err)
+	return err
 }
 
 // RestoreTableExec represents a recover table executor.
@@ -308,23 +309,20 @@ type RestoreTableExec struct {
 
 // Open implements the Executor Open interface.
 func (e *RestoreTableExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return e.baseExecutor.Open(ctx)
 }
 
 // Next implements the Executor Open interface.
 func (e *RestoreTableExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	// Should commit the previous transaction and create a new transaction.
 	if err = e.ctx.NewTxn(ctx); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	err = e.executeRestoreTable()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	dom := domain.GetDomain(e.ctx)
@@ -341,7 +339,7 @@ func (e *RestoreTableExec) Next(ctx context.Context, req *chunk.RecordBatch) (er
 func (e *RestoreTableExec) executeRestoreTable() error {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	t := meta.NewMeta(txn)
 	dom := domain.GetDomain(e.ctx)
@@ -353,12 +351,12 @@ func (e *RestoreTableExec) executeRestoreTable() error {
 		job, tblInfo, err = getRestoreTableByTableName(e, t, dom)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	// Get table original autoID before table drop.
 	m, err := dom.GetSnapshotMeta(job.StartTS)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	autoID, err := m.GetAutoTableID(job.SchemaID, job.TableID)
 	if err != nil {
@@ -366,13 +364,13 @@ func (e *RestoreTableExec) executeRestoreTable() error {
 	}
 	// Call DDL RestoreTable
 	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, tblInfo, job.SchemaID, autoID, job.ID, job.StartTS)
-	return errors.Trace(err)
+	return err
 }
 
 func getRestoreTableByJobID(e *RestoreTableExec, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
 	job, err := t.GetHistoryDDLJob(e.jobID)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	if job == nil {
 		return nil, nil, admin.ErrDDLJobNotFound.GenWithStackByArgs(e.jobID)
@@ -384,13 +382,13 @@ func getRestoreTableByJobID(e *RestoreTableExec, t *meta.Meta, dom *domain.Domai
 	// Check GC safe point for getting snapshot infoSchema.
 	err = gcutil.ValidateSnapshot(e.ctx, job.StartTS)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 
 	// Get the snapshot infoSchema before drop table.
 	snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	// Get table meta from snapshot infoSchema.
 	table, ok := snapInfo.TableByID(job.TableID)
@@ -406,13 +404,13 @@ func getRestoreTableByJobID(e *RestoreTableExec, t *meta.Meta, dom *domain.Domai
 func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
 	jobs, err := t.GetAllHistoryDDLJobs()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	var job *model.Job
 	var tblInfo *model.TableInfo
 	gcSafePoint, err := gcutil.GetGCSafePoint(e.ctx)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	schemaName := e.Table.Schema.L
 	if schemaName == "" {
@@ -430,12 +428,12 @@ func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.D
 		// Check GC safe point for getting snapshot infoSchema.
 		err = gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		// Get the snapshot infoSchema before drop table.
 		snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		// Get table meta from snapshot infoSchema.
 		table, ok := snapInfo.TableByID(job.TableID)
@@ -448,9 +446,9 @@ func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.D
 		if table.Meta().Name.L == e.Table.Name.L {
 			schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
 			if !ok {
-				return nil, nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
+				return nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
 					fmt.Sprintf("(Schema ID %d)", job.SchemaID),
-				))
+				)
 			}
 			if schema.Name.L == schemaName {
 				tblInfo = table.Meta()

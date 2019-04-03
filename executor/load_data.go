@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -242,7 +243,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		}
 		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, false, err
 		}
 		rows = append(rows, e.colsToRow(cols))
 		e.rowCount++
@@ -256,7 +257,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(rows)))
 	err := e.batchCheckAndInsert(rows, e.addRecordLD)
 	if err != nil {
-		return nil, reachLimit, errors.Trace(err)
+		return nil, reachLimit, err
 	}
 	return curData, reachLimit, nil
 }

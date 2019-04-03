@@ -15,13 +15,13 @@ package distsql
 
 import (
 	"context"
+
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -369,7 +369,7 @@ func mockReadRowsData(buffer []byte, colTypes []*types.FieldType, chk *chunk.Chu
 		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
 			buffer, err = decoder.DecodeOne(buffer, colOrdinal, colTypes[colOrdinal])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}

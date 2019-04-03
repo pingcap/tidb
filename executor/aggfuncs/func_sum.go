@@ -14,7 +14,6 @@
 package aggfuncs
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -77,7 +76,7 @@ func (e *sum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -132,7 +131,7 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -146,7 +145,7 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.val, input, newSum)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.val = *newSum
 	}
@@ -161,7 +160,7 @@ func (e *sum4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	newSum := new(types.MyDecimal)
 	err := types.DecimalAdd(&p1.val, &p2.val, newSum)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	p2.val = *newSum
 	p2.isNull = false
@@ -190,7 +189,7 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
@@ -238,7 +237,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -259,7 +258,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&p.val, input, newSum); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.val = *newSum
 	}
