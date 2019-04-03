@@ -45,6 +45,8 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
