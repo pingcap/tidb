@@ -33,9 +33,11 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 // DDLInfo is for DDL information.
@@ -131,7 +133,9 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		found := false
 		for j, job := range jobs {
 			if id != job.ID {
-				log.Debugf("the job ID %d that needs to be canceled isn't equal to current job ID %d", id, job.ID)
+				logutil.Logger(context.Background()).Debug("the job that needs to be canceled isn't equal to current job",
+					zap.Int64("need to canceled job ID", id),
+					zap.Int64("current job ID", job.ID))
 				continue
 			}
 			found = true
@@ -688,7 +692,10 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		return nil
 	}
 
-	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
+	logutil.Logger(context.Background()).Debug("record",
+		zap.Binary("startKey", startKey),
+		zap.Binary("key", it.Key()),
+		zap.Binary("value", it.Value()))
 	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.

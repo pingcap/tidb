@@ -23,7 +23,9 @@ import (
 	"syscall"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 // init initializes `locCache`.
@@ -75,9 +77,9 @@ func InferSystemTZ() string {
 			if err2 == nil {
 				return name
 			}
-			log.Errorln(err2)
+			logutil.Logger(context.Background()).Error("infer timezone failed", zap.Error(err2))
 		}
-		log.Errorln(err1)
+		logutil.Logger(context.Background()).Error("locate timezone files failed", zap.Error(err1))
 	case tz != "" && tz != "UTC":
 		for _, source := range zoneSources {
 			if _, err := os.Stat(source + tz); err == nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -64,6 +65,7 @@ func (sg *sessionPool) close() {
 		return
 	}
 
+	logutil.Logger(ddlLogCtx).Info("[ddl] closing sessionPool")
 	sg.resPool.Close()
 	sg.resPool = nil
 }

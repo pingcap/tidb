@@ -124,16 +124,26 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		expect       string
 		compareValue bool
 		diff         time.Duration
+		err          error
 	}{
-		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour},
-		{"US/Eastern", "US/Eastern", true, 5 * time.Hour},
+		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
+		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
 		//TODO: Check it out and reopen this case.
 		//{"SYSTEM", "Local", false, 0},
-		{"+10:00", "", true, -10 * time.Hour},
-		{"-6:00", "", true, 6 * time.Hour},
+		{"+10:00", "", true, -10 * time.Hour, nil},
+		{"-6:00", "", true, 6 * time.Hour, nil},
+		{"+14:00", "", true, -14 * time.Hour, nil},
+		{"-12:59", "", true, 12*time.Hour + 59*time.Minute, nil},
+		{"+14:01", "", false, -14 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("+14:01")},
+		{"-13:00", "", false, 13 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("-13:00")},
 	}
 	for _, tt := range tests {
 		err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
+		if tt.err != nil {
+			c.Assert(err, NotNil)
+			continue
+		}
+
 		c.Assert(err, IsNil)
 		c.Assert(v.TimeZone.String(), Equals, tt.expect)
 		if tt.compareValue {

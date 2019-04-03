@@ -150,8 +150,9 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 		Cms:             []*statistics.CMSketch{cms},
 		IsIndex:         1,
 	}
+	result.Count = hist.NullCount
 	if hist.Len() > 0 {
-		result.Count = hist.Buckets[hist.Len()-1].Count
+		result.Count += hist.Buckets[hist.Len()-1].Count
 	}
 	return result
 }
@@ -165,12 +166,16 @@ type AnalyzeIndexExec struct {
 	priority        int
 	analyzePB       *tipb.AnalyzeReq
 	result          distsql.SelectResult
+	countNullRes    distsql.SelectResult
 	maxNumBuckets   uint64
 }
 
-func (e *AnalyzeIndexExec) open() error {
+// fetchAnalyzeResult builds and dispatches the `kv.Request` from given ranges, and stores the `SelectResult`
+// in corresponding fields based on the input `isNullRange` argument, which indicates if the range is the
+// special null range for single-column index to get the null count.
+func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRange bool) error {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranger.FullRange()).
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranges).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
@@ -179,29 +184,51 @@ func (e *AnalyzeIndexExec) open() error {
 		return errors.Trace(err)
 	}
 	ctx := context.TODO()
-	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(ctx)
+	result.Fetch(ctx)
+	if isNullRange {
+		e.countNullRes = result
+	} else {
+		e.result = result
+	}
 	return nil
 }
 
-func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
-	if err = e.open(); err != nil {
-		return nil, nil, errors.Trace(err)
+func (e *AnalyzeIndexExec) open() error {
+	ranges := ranger.FullRange()
+	// For single-column index, we do not load null rows from TiKV, so the built histogram would not include
+	// null values, and its `NullCount` would be set by result of another distsql call to get null rows.
+	// For multi-column index, we cannot define null for the rows, so we still use full range, and the rows
+	// containing null fields would exist in built histograms. Note that, the `NullCount` of histograms for
+	// multi-column index is always 0 then.
+	if len(e.idxInfo.Columns) == 1 {
+		ranges = ranger.FullNotNullRange()
 	}
-	defer func() {
-		if err1 := e.result.Close(); err1 != nil {
-			hist = nil
-			cms = nil
-			err = errors.Trace(err1)
+	err := e.fetchAnalyzeResult(ranges, false)
+	if err != nil {
+		return err
+	}
+	if len(e.idxInfo.Columns) == 1 {
+		ranges = ranger.NullRange()
+		err = e.fetchAnalyzeResult(ranges, true)
+		if err != nil {
+			return err
 		}
-	}()
-	hist = &statistics.Histogram{}
-	cms = statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth)
+	}
+	return nil
+}
+
+func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, error) {
+	hist := &statistics.Histogram{}
+	var cms *statistics.CMSketch
+	if needCMS {
+		cms = statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth)
+	}
 	for {
-		data, err := e.result.NextRaw(context.TODO())
+		data, err := result.NextRaw(context.TODO())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -215,13 +242,40 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		}
 		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(e.maxNumBuckets))
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
-		if resp.Cms != nil {
-			err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms))
-			if err != nil {
-				return nil, nil, errors.Trace(err)
+		if needCMS {
+			if resp.Cms == nil {
+				log.Warnf("nil CMS in response, table is %s, index is %s", e.idxInfo.Table.O, e.idxInfo.Name.O)
+			} else {
+				err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms))
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+				}
 			}
+		}
+	}
+	return hist, cms, nil
+}
+
+func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
+	if err = e.open(); err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		err = closeAll(e.result, e.countNullRes)
+	}()
+	hist, cms, err = e.buildStatsFromResult(e.result, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	if e.countNullRes != nil {
+		nullHist, _, err := e.buildStatsFromResult(e.countNullRes, false)
+		if err != nil {
+			return nil, nil, err
+		}
+		if l := nullHist.Len(); l > 0 {
+			hist.NullCount = nullHist.Buckets[l-1].Count
 		}
 	}
 	hist.ID = e.idxInfo.ID
