@@ -130,7 +130,7 @@ func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affecte
 	defer func() {
 		err1 := e.se.RollbackTxn(context.Background())
 		if err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
 		}
 	}()
 
@@ -173,7 +173,7 @@ func (e *kvEncoder) EncodePrepareStmt(tableID int64, stmtID uint32, param ...int
 	defer func() {
 		err1 := e.se.RollbackTxn(context.Background())
 		if err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
 		}
 	}()
 
