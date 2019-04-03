@@ -135,6 +135,7 @@ var (
 	ErrWindowRowsIntervalUse           = terror.ClassOptimizer.New(codeWindowRowsIntervalUse, mysql.MySQLErrName[mysql.ErrWindowRowsIntervalUse])
 	ErrWindowFunctionIgnoresFrame      = terror.ClassOptimizer.New(codeWindowFunctionIgnoresFrame, mysql.MySQLErrName[mysql.ErrWindowFunctionIgnoresFrame])
 	ErrNoSuchThread                    = terror.ClassOptimizer.New(mysql.ErrNoSuchThread, mysql.MySQLErrName[mysql.ErrNoSuchThread])
+	ErrAccessDenied                    = terror.ClassOptimizer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
 func init() {
@@ -187,6 +188,7 @@ func init() {
 		codeWindowFunctionIgnoresFrame:      mysql.ErrWindowFunctionIgnoresFrame,
 
 		mysql.ErrNoSuchThread: mysql.ErrNoSuchThread,
+		mysql.ErrAccessDenied: mysql.ErrAccessDenied,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }
