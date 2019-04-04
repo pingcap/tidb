@@ -107,7 +107,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	err := a.executor.Next(ctx, req)
 	if err != nil {
 		a.lastErr = err
-		return errors.Trace(err)
+		return err
 	}
 	numRows := req.NumRows()
 	if numRows == 0 {
@@ -131,7 +131,7 @@ func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.logAudit()
-	return errors.Trace(err)
+	return err
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -186,11 +186,11 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
@@ -207,26 +207,26 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency
 		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
-		terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
+		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
 		sctx.GetSessionVars().DistSQLScanConcurrency = 1
 		sctx.GetSessionVars().IndexSerialScanConcurrency = 1
-		terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
+		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
-			terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
 			sctx.GetSessionVars().DistSQLScanConcurrency = oriScan
 			sctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
-			terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
 		}()
 	}
 
 	e, err := a.buildExecutor(sctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
@@ -259,7 +259,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	var txnStartTS uint64
 	txn, err1 := sctx.Txn(false)
 	if err1 != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if txn.Valid() {
 		txnStartTS = txn.StartTS()
@@ -289,7 +289,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 	var err error
 	defer func() {
-		terror.Log(errors.Trace(e.Close()))
+		terror.Log(e.Close())
 		txnTS := uint64(0)
 		// Don't active pending txn here.
 		if txn, err1 := sctx.Txn(false); err1 != nil {
@@ -305,7 +305,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 	err = e.Next(ctx, chunk.NewRecordBatch(e.newFirstChunk()))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return nil, nil
@@ -318,7 +318,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		// "ExecuteExec.Build".
 		isPointGet, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if isPointGet {
 			logutil.Logger(context.Background()).Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
@@ -329,7 +329,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			}
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		stmtCtx := ctx.GetSessionVars().StmtCtx
@@ -356,7 +356,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	if executorExec, ok := e.(*ExecuteExec); ok {
 		err := executorExec.Build()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
@@ -457,7 +457,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	// check txn
 	txn, err := ctx.Txn(false)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	if txn.Valid() {
 		return false, nil
