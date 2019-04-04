@@ -461,22 +461,15 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 	}.Init(ds.ctx)
 	ts.SetSchema(ds.schema)
 
-	var rowCount float64
-	pkHist, ok := ds.statisticTable.Columns[pk.ID]
-	if ok && !ds.statisticTable.Pseudo {
-		rowCount = pkHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
-	} else {
-		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
-	}
-
-	ts.stats = property.NewSimpleStats(rowCount)
+	ts.stats = property.NewSimpleStats(1)
 	ts.stats.UsePseudoStats = ds.statisticTable.Pseudo
 
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 	}
-	ts.addPushedDownSelection(copTask, ds.stats)
+	selStats := ts.stats.Scale(selectionFactor)
+	ts.addPushedDownSelection(copTask, selStats)
 	t := finishCopTask(ds.ctx, copTask)
 	reader := t.plan()
 	return p.constructInnerUnionScan(us, reader)
@@ -637,7 +630,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			// Construct warning message prefix.
 			errMsg := "Optimizer Hint TIDB_INLJ is inapplicable"
 			if p.hintInfo != nil {
-				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", p.hintInfo.restore2IndexJoinHint())
+				errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(TiDBIndexNestedLoopJoin, p.hintInfo.indexNestedLoopJoinTables))
 			}
 
 			// Append inapplicable reason.
