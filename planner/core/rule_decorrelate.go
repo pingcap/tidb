@@ -16,7 +16,6 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -138,7 +137,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				np, err := s.optimize(p)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				proj.SetChildren(np)
 				return proj, nil
@@ -167,7 +166,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
 				np, err := s.optimize(p)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				agg.SetChildren(np)
 				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
@@ -243,7 +242,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	for _, child := range p.Children() {
 		np, err := s.optimize(child)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		newChildren = append(newChildren, np)
 	}
