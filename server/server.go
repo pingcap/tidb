@@ -55,9 +55,9 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	log "github.com/sirupsen/logrus"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
