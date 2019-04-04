@@ -15,6 +15,7 @@ package expression
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -106,7 +107,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 		logutil.Logger(context.Background()).Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
 		return nil
 	}
-	tp, val, ok := pc.encodeDatum(d)
+	tp, val, ok := pc.encodeDatum(d, ft)
 	if !ok {
 		return nil
 	}
@@ -117,7 +118,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	return &tipb.Expr{Tp: tp, Val: val, FieldType: ToPBFieldType(ft)}
 }
 
-func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) {
+func (pc *PbConverter) encodeDatum(d types.Datum, ft *types.FieldType) (tipb.ExprType, []byte, bool) {
 	var (
 		tp  tipb.ExprType
 		val []byte
@@ -158,6 +159,14 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
 			t := d.GetMysqlTime()
+			// To be compatible with `encode` and `PBToExpr`, convert timestamp to UTC timezone.
+			if ft.Tp == mysql.TypeTimestamp && pc.sc.TimeZone != time.UTC {
+				err := t.ConvertTimeZone(pc.sc.TimeZone, time.UTC)
+				if err != nil {
+					logutil.Logger(context.Background()).Error("encode mysql time", zap.Error(err))
+					return tp, nil, false
+				}
+			}
 			v, err := t.ToPackedUint()
 			if err != nil {
 				logutil.Logger(context.Background()).Error("encode mysql time", zap.Error(err))
