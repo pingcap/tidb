@@ -173,7 +173,7 @@ func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 	tk.MustExec("DROP DATABASE IF EXISTS charset_collate_test")
 	tk.MustExec("CREATE DATABASE charset_collate_test; USE charset_collate_test")
 
-	// TODO & FIXME: specifying charset for national char/varchar should not be supported
+	// TODO: specifying charset for national char/varchar should not be supported
 	tk.MustExec(`CREATE TABLE charset_collate_col_test(
 		c_int int,
 		c_float float,
