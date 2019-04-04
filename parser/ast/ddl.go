@@ -351,6 +351,7 @@ const (
 	ColumnOptionComment
 	ColumnOptionGenerated
 	ColumnOptionReference
+	ColumnOptionCollate
 )
 
 // ColumnOption is used for parsing column constraint info from SQL.
@@ -365,7 +366,8 @@ type ColumnOption struct {
 	// Stored is only for ColumnOptionGenerated, default is false.
 	Stored bool
 	// Refer is used for foreign key.
-	Refer *ReferenceDef
+	Refer    *ReferenceDef
+	StrValue string
 }
 
 // Restore implements Node interface.
@@ -416,6 +418,12 @@ func (n *ColumnOption) Restore(ctx *RestoreCtx) error {
 		if err := n.Refer.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing ColumnOption ReferenceDef")
 		}
+	case ColumnOptionCollate:
+		if n.StrValue == "" {
+			return errors.New("Empty ColumnOption COLLATE")
+		}
+		ctx.WriteKeyWord("COLLATE ")
+		ctx.WritePlain(n.StrValue)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
