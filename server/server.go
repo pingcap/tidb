@@ -414,7 +414,7 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
-		logutil.Logger(ctx).Info("close connection")
+		logutil.Logger(ctx).Info("connection closed")
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn

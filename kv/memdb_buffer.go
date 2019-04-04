@@ -56,7 +56,7 @@ func (m *memDbBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
 
 	err := i.Next()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return i, nil
 }
