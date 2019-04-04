@@ -219,9 +219,10 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 	return leftCond, rightCond
 }
 
-func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan, filterCond bool) (
+func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, filterCond bool) (
 	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {
+	left, right := p.children[0], p.children[1]
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && binop.FuncName.L == ast.EQ {
