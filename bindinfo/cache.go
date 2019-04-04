@@ -64,7 +64,6 @@ type BindCacheUpdater struct {
 	parser         *parser.Parser
 	lastUpdateTime types.Time
 	globalHandle   *Handle
-	lock           *sync.Mutex
 }
 
 type bindRecord struct {
@@ -82,20 +81,19 @@ type bindRecord struct {
 }
 
 // NewBindCacheUpdater creates a new BindCacheUpdater.
-func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.Parser, lock *sync.Mutex) *BindCacheUpdater {
+func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.Parser) *BindCacheUpdater {
 	return &BindCacheUpdater{
 		ctx:          ctx,
 		parser:       parser,
 		globalHandle: handle,
-		lock:         lock,
 	}
 }
 
 // NewHandle creates a Handle with a cache.
-func NewHandle(ctx sessionctx.Context, lock *sync.Mutex) *Handle {
+func NewHandle(ctx sessionctx.Context) *Handle {
 	handle := &Handle{
 		ctx:  ctx,
-		lock: lock,
+		lock: &sync.Mutex{},
 	}
 
 	return handle
@@ -112,35 +110,21 @@ func (h *Handle) Get() cache {
 
 // LoadDiff is used to load new bind info to cache bc.
 func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
-	bindCacheUpdater.lock.Lock()
-	defer bindCacheUpdater.lock.Unlock()
-
-	recordSets, err := bindCacheUpdater.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	rows, _, err := bindCacheUpdater.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(nil, sql)
 	if err != nil {
 		return err
 	}
-
-	rs := recordSets[0]
-	defer terror.Call(rs.Close)
-	chkBatch := rs.NewRecordBatch()
-	for {
-		err = rs.Next(context.TODO(), chkBatch)
-		if err != nil || chkBatch.NumRows() == 0 {
+	for _, row := range rows {
+		record := newBindMeta(row)
+		err = bc.appendNode(record, bindCacheUpdater.parser)
+		if err != nil {
 			return err
 		}
-
-		it := chunk.NewIterator4Chunk(chkBatch.Chunk)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			record := newBindMeta(row)
-			err = bc.appendNode(record, bindCacheUpdater.parser)
-			if err != nil {
-				return err
-			}
-			if record.UpdateTime.Compare(bindCacheUpdater.lastUpdateTime) == 1 {
-				bindCacheUpdater.lastUpdateTime = record.UpdateTime
-			}
+		if record.UpdateTime.Compare(bindCacheUpdater.lastUpdateTime) == 1 {
+			bindCacheUpdater.lastUpdateTime = record.UpdateTime
 		}
 	}
+	return nil
 }
 
 // Update updates the BindCacheUpdater's cache.
@@ -234,7 +218,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 	if err != nil {
 		return err
 	}
-	if len(rs) > 1 {
+	if len(rs) >= 1 {
 		chkBatch := rs[0].NewRecordBatch()
 		for {
 			err = rs[0].Next(context.TODO(), chkBatch)
