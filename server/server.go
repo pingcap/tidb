@@ -351,7 +351,7 @@ func (s *Server) Run() error {
 			return nil
 		})
 		if err != nil {
-			return err
+			continue
 		}
 
 		go s.onConn(clientConn)
@@ -413,7 +413,7 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
-		logutil.Logger(ctx).Info("close connection")
+		logutil.Logger(ctx).Info("connection closed")
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
@@ -508,19 +508,25 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
-	killConn(conn, query)
-}
-
-func killConn(conn *clientConn, query bool) {
 	if !query {
 		// Mark the client connection status as WaitShutdown, when the goroutine detect
 		// this, it will end the dispatch loop and exit.
 		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}
+	killConn(conn)
+}
 
+func killConn(conn *clientConn) {
 	conn.mu.RLock()
+	resultSets := conn.mu.resultSets
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
+	for _, resultSet := range resultSets {
+		// resultSet.Close() is reentrant so it's safe to kill a same connID multiple times
+		if err := resultSet.Close(); err != nil {
+			logutil.Logger(context.Background()).Error("close result set error", zap.Uint32("connID", conn.connectionID), zap.Error(err))
+		}
+	}
 	if cancelFunc != nil {
 		cancelFunc()
 	}
@@ -535,12 +541,7 @@ func (s *Server) KillAllConnections() {
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
 		terror.Log(errors.Trace(conn.closeWithoutLock()))
-		conn.mu.RLock()
-		cancelFunc := conn.mu.cancelFunc
-		conn.mu.RUnlock()
-		if cancelFunc != nil {
-			cancelFunc()
-		}
+		killConn(conn)
 	}
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,25 +17,15 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
 )
 
-func (s *testSuite) TestMergePartialResult4Sum(c *C) {
+func (s *testSuite) TestMergePartialResult4BitFuncs(c *C) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, types.NewDecFromInt(10), types.NewDecFromInt(9), types.NewDecFromInt(19)),
-		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, 10.0, 9.0, 19.0),
+		buildAggTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5, 0, 0, 0),
+		buildAggTester(ast.AggFuncBitOr, mysql.TypeLonglong, 5, 7, 7, 7),
+		buildAggTester(ast.AggFuncBitXor, mysql.TypeLonglong, 5, 4, 5, 1),
 	}
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)
-	}
-}
-
-func (s *testSuite) TestSum(c *C) {
-	tests := []aggTest{
-		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, nil, types.NewDecFromInt(10)),
-		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, nil, 10.0),
-	}
-	for _, test := range tests {
-		s.testAggFunc(c, test)
 	}
 }

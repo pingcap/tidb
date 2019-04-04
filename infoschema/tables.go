@@ -631,8 +631,8 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 		}
 	}
 
-	var records [][]types.Datum
 	pl := sm.ShowProcessList()
+	records := make([][]types.Datum, 0, len(pl))
 	for _, pi := range pl {
 		// If you have the PROCESS privilege, you can see all threads.
 		// Otherwise, you can see only your own threads.
@@ -704,7 +704,7 @@ var filesCols = []columnInfo{
 
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schema := range schemas {
 
@@ -1087,7 +1087,7 @@ func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.D
 }
 
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(tbl.Columns))
 	for i, col := range tbl.Columns {
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
 		colLen, decimal := col.Flen, col.Decimal

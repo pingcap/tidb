@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -563,6 +565,7 @@ func (b *builtinJSONContainsPathSig) evalInt(row chunk.Row) (res int64, isNull b
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	containType = strings.ToLower(containType)
 	if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
 		return res, true, json.ErrInvalidJSONContainsPathType
 	}
