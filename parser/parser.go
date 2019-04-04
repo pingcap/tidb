@@ -13444,6 +13444,13 @@ yynewstate:
 				Users:      yyS[yypt-0].item.([]*ast.UserSpec),
 			}
 		}
+	case 1520:
+		{
+			parser.yyVAL.statement = &ast.RevokeRoleStmt{
+				Roles: yyS[yypt-2].item.([]*auth.RoleIdentity),
+				Users: yyS[yypt-0].item.([]*auth.UserIdentity),
+			}
+		}
 	case 1521:
 		{
 			x := &ast.LoadDataStmt{

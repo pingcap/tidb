@@ -8108,6 +8108,10 @@ RevokeStmt:
 RevokeRoleStmt:
 	 "REVOKE" RolenameList "FROM" UsernameList
 	 {
+		$$ = &ast.RevokeRoleStmt {
+			Roles: $2.([]*auth.RoleIdentity),
+			Users: $4.([]*auth.UserIdentity),
+		}
 	 }
 
 /**************************************LoadDataStmt*****************************************
