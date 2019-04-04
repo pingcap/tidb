@@ -222,10 +222,10 @@ const defaultPrivileges = "select,insert,update,references"
 func (c *Column) GetTypeDesc() string {
 	desc := c.FieldType.CompactStr()
 	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
-		desc += " UNSIGNED"
+		desc += " unsigned"
 	}
 	if mysql.HasZerofillFlag(c.Flag) && c.Tp != mysql.TypeYear {
-		desc += " ZEROFILL"
+		desc += " zerofill"
 	}
 	return desc
 }
