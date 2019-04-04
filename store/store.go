@@ -71,11 +71,10 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 		return kv.IsRetryableError(err), err
 	})
 
-  if err == nil {
+	if err == nil {
 		logutil.Logger(context.Background()).Info("new store with retry success")
 	} else {
 		logutil.Logger(context.Background()).Warn("new store with retry failed", zap.Error(err))
 	}
 	return s, errors.Trace(err)
-
 }
