@@ -170,6 +170,20 @@ func (s *testSuite2) TestShow2(c *C) {
 	// TODO: In MySQL, the result is "autocommit ON".
 	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
 
+	tk.MustExec("drop table if exists test_full_column")
+	tk.MustExec(`create table test_full_column( a date , b datetime , c year(4), d timestamp,e time ,f year, h datetime(2) );`)
+
+	tk.MustQuery(`show full columns from test_full_column`).Check(testkit.Rows(
+		"" +
+			"a date NULL YES  <nil>  select,insert,update,references ]\n" +
+			"[b datetime NULL YES  <nil>  select,insert,update,references ]\n" +
+			"[c year(4) NULL YES  <nil>  select,insert,update,references ]\n" +
+			"[d timestamp NULL YES  <nil>  select,insert,update,references ]\n" +
+			"[e time NULL YES  <nil>  select,insert,update,references ]\n" +
+			"[f year(4) NULL YES  <nil>  select,insert,update,references ]\n" +
+			"[h datetime(2) NULL YES  <nil>  select,insert,update,references "))
+	tk.MustExec("drop table if exists test_full_column")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
 	tk.MustExec("create or replace definer='root'@'localhost' view v as select * from t")
@@ -178,7 +192,6 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
-
 	tk.MustQuery("show tables").Check(testkit.Rows("t", "v"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE", "v VIEW"))
 	ctx := tk.Se.(sessionctx.Context)

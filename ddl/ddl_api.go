@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
@@ -174,7 +174,6 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 
 func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef,
 	constraints []*ast.Constraint, tblCharset, dbCharset string) ([]*table.Column, []*ast.Constraint, error) {
-	var cols []*table.Column
 	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
@@ -184,6 +183,7 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 			break
 		}
 	}
+	cols := make([]*table.Column, 0, len(colDefs))
 	for i, colDef := range colDefs {
 		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, dbCharset)
 		if err != nil {
@@ -533,8 +533,12 @@ func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption
 			// its raw string content here.
 			return v.GetBinaryLiteral().ToString(), nil
 		}
-		// For other kind of fields (e.g. INT), we supply its integer value so that it acts as integers.
-		return v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		// For other kind of fields (e.g. INT), we supply its integer as string value.
+		value, err := v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return nil, err
+		}
+		return strconv.FormatUint(value, 10), nil
 	}
 
 	if tp == mysql.TypeDuration {
@@ -1062,7 +1066,7 @@ func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
 func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, dbCharset string) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	colDefs := s.Cols
-	var colObjects []interface{}
+	colObjects := make([]interface{}, 0, len(colDefs))
 	for _, col := range colDefs {
 		colObjects = append(colObjects, col)
 	}
@@ -1246,7 +1250,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	}
 	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
 
-	var colObjects []interface{}
+	colObjects := make([]interface{}, 0, len(viewInfo.Cols))
 	for _, col := range viewInfo.Cols {
 		colObjects = append(colObjects, col)
 	}
@@ -2753,7 +2757,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
 	}
 
-	if indexInfo := schemautil.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
 		return ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
@@ -2894,7 +2898,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	if indexInfo := schemautil.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo == nil {
 		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 

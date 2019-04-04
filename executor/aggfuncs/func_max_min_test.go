@@ -14,211 +14,69 @@
 package aggfuncs_test
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/types/json"
 )
 
-func (s *testSuite) TestMergePartialResult4MaxDecimal(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 5)
-	for i := int64(0); i < 5; i++ {
-		srcChk.AppendMyDecimal(0, types.NewDecFromInt(i))
+func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
+	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType.Flag |= mysql.UnsignedFlag
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, 4, 4, 4),
+		buildAggTesterWithFieldType(ast.AggFuncMax, unsignedType, 5, 4, 4, 4),
+		buildAggTester(ast.AggFuncMax, mysql.TypeFloat, 5, 4.0, 4.0, 4.0),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDouble, 5, 4.0, 4.0, 4.0),
+		buildAggTester(ast.AggFuncMax, mysql.TypeNewDecimal, 5, types.NewDecFromInt(4), types.NewDecFromInt(4), types.NewDecFromInt(4)),
+		buildAggTester(ast.AggFuncMax, mysql.TypeString, 5, "4", "4", "4"),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDate, 5, types.TimeFromDays(369), types.TimeFromDays(369), types.TimeFromDays(369)),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}),
+		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, json.CreateBinary(int64(4)), json.CreateBinary(int64(4)), json.CreateBinary(int64(4))),
+
+		buildAggTester(ast.AggFuncMin, mysql.TypeLonglong, 5, 0, 2, 0),
+		buildAggTesterWithFieldType(ast.AggFuncMin, unsignedType, 5, 0, 2, 0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeFloat, 5, 0.0, 2.0, 0.0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDouble, 5, 0.0, 2.0, 0.0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeNewDecimal, 5, types.NewDecFromInt(0), types.NewDecFromInt(2), types.NewDecFromInt(0)),
+		buildAggTester(ast.AggFuncMin, mysql.TypeString, 5, "0", "2", "0"),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDate, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
+		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, json.CreateBinary(int64(0)), json.CreateBinary(int64(2)), json.CreateBinary(int64(0))),
 	}
-	iter := chunk.NewIterator4Chunk(srcChk)
-	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0}}
-	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncMax, args, false)
-	partialDesc, finalDesc := desc.Split([]int{0})
-
-	// build max func for partial phase.
-	partialMaxFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
-	partialPr1 := partialMaxFunc.AllocPartialResult()
-	partialPr2 := partialMaxFunc.AllocPartialResult()
-
-	// build final func for final phase.
-	finalMaxFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
-	finalPr := finalMaxFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1)
-
-	// update partial result.
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		partialMaxFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr1)
+	for _, test := range tests {
+		s.testMergePartialResult(c, test)
 	}
-	partialMaxFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
-	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(4)) == 0, IsTrue)
-
-	iter.Begin()
-	iter.Next()
-	for row := iter.Next(); row != iter.End(); row = iter.Next() {
-		partialMaxFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
-	}
-	resultChk.Reset()
-	partialMaxFunc.AppendFinalResult2Chunk(s.ctx, partialPr2, resultChk)
-	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(4)) == 0, IsTrue)
-
-	// merge two partial results.
-	err := finalMaxFunc.MergePartialResult(s.ctx, partialPr1, finalPr)
-	c.Assert(err, IsNil)
-	err = finalMaxFunc.MergePartialResult(s.ctx, partialPr2, finalPr)
-	c.Assert(err, IsNil)
-
-	resultChk.Reset()
-	err = finalMaxFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
-	c.Assert(err, IsNil)
-	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(4)) == 0, IsTrue)
 }
 
-func (s *testSuite) TestMergePartialResult4MaxFloat(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 5)
-	for i := int64(0); i < 5; i++ {
-		srcChk.AppendFloat64(0, float64(i))
+func (s *testSuite) TestMaxMin(c *C) {
+	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType.Flag |= mysql.UnsignedFlag
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, nil, 4),
+		buildAggTesterWithFieldType(ast.AggFuncMax, unsignedType, 5, nil, 4),
+		buildAggTester(ast.AggFuncMax, mysql.TypeFloat, 5, nil, 4.0),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDouble, 5, nil, 4.0),
+		buildAggTester(ast.AggFuncMax, mysql.TypeNewDecimal, 5, nil, types.NewDecFromInt(4)),
+		buildAggTester(ast.AggFuncMax, mysql.TypeString, 5, nil, "4", "4"),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDate, 5, nil, types.TimeFromDays(369)),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 5, nil, types.Duration{Duration: time.Duration(4)}),
+		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, nil, json.CreateBinary(int64(4))),
+
+		buildAggTester(ast.AggFuncMin, mysql.TypeLonglong, 5, nil, 0),
+		buildAggTesterWithFieldType(ast.AggFuncMin, unsignedType, 5, nil, 0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeFloat, 5, nil, 0.0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDouble, 5, nil, 0.0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeNewDecimal, 5, nil, types.NewDecFromInt(0)),
+		buildAggTester(ast.AggFuncMin, mysql.TypeString, 5, nil, "0"),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDate, 5, nil, types.TimeFromDays(365)),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDuration, 5, nil, types.Duration{Duration: time.Duration(0)}),
+		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, nil, json.CreateBinary(int64(0))),
 	}
-	iter := chunk.NewIterator4Chunk(srcChk)
-
-	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
-	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncMax, args, false)
-	partialDesc, finalDesc := desc.Split([]int{0})
-
-	// build max func for partial phase.
-	partialMaxFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
-	partialPr1 := partialMaxFunc.AllocPartialResult()
-	partialPr2 := partialMaxFunc.AllocPartialResult()
-
-	// build final func for final phase.
-	finalMaxFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
-	finalPr := finalMaxFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1)
-
-	// update partial result.
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		partialMaxFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr1)
+	for _, test := range tests {
+		s.testAggFunc(c, test)
 	}
-	partialMaxFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
-	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(4), IsTrue)
-
-	iter.Begin()
-	iter.Next()
-	for row := iter.Next(); row != iter.End(); row = iter.Next() {
-		partialMaxFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
-	}
-	resultChk.Reset()
-	partialMaxFunc.AppendFinalResult2Chunk(s.ctx, partialPr2, resultChk)
-	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(4), IsTrue)
-
-	// merge two partial results.
-	err := finalMaxFunc.MergePartialResult(s.ctx, partialPr1, finalPr)
-	c.Assert(err, IsNil)
-	err = finalMaxFunc.MergePartialResult(s.ctx, partialPr2, finalPr)
-	c.Assert(err, IsNil)
-
-	resultChk.Reset()
-	err = finalMaxFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
-	c.Assert(err, IsNil)
-	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(4), IsTrue)
-}
-
-func (s *testSuite) TestMergePartialResult4MinDecimal(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 5)
-	for i := int64(0); i < 5; i++ {
-		srcChk.AppendMyDecimal(0, types.NewDecFromInt(i))
-	}
-	iter := chunk.NewIterator4Chunk(srcChk)
-
-	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0}}
-	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncMin, args, false)
-	partialDesc, finalDesc := desc.Split([]int{0})
-
-	// build min func for partial phase.
-	partialMinFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
-	partialPr1 := partialMinFunc.AllocPartialResult()
-	partialPr2 := partialMinFunc.AllocPartialResult()
-
-	// build final func for final phase.
-	finalMinFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
-	finalPr := finalMinFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1)
-
-	// update partial result.
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		partialMinFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr1)
-	}
-	partialMinFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
-	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(0)) == 0, IsTrue)
-
-	iter.Begin()
-	iter.Next()
-	for row := iter.Next(); row != iter.End(); row = iter.Next() {
-		partialMinFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
-	}
-	resultChk.Reset()
-	partialMinFunc.AppendFinalResult2Chunk(s.ctx, partialPr2, resultChk)
-	// Min in [2,3,4] -> 2
-	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(2)) == 0, IsTrue)
-
-	// merge two partial results.
-	err := finalMinFunc.MergePartialResult(s.ctx, partialPr1, finalPr)
-	c.Assert(err, IsNil)
-	err = finalMinFunc.MergePartialResult(s.ctx, partialPr2, finalPr)
-	c.Assert(err, IsNil)
-
-	resultChk.Reset()
-	err = finalMinFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
-	c.Assert(err, IsNil)
-	// Min in [0,1,2,3,4] -> 0
-	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(0)) == 0, IsTrue)
-}
-
-func (s *testSuite) TestMergePartialResult4MinFloat(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 5)
-	for i := int64(0); i < 5; i++ {
-		srcChk.AppendFloat64(0, float64(i))
-	}
-	iter := chunk.NewIterator4Chunk(srcChk)
-
-	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
-	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncMin, args, false)
-	partialDesc, finalDesc := desc.Split([]int{0})
-
-	// build min func for partial phase.
-	partialMinFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
-	partialPr1 := partialMinFunc.AllocPartialResult()
-	partialPr2 := partialMinFunc.AllocPartialResult()
-
-	// build final func for final phase.
-	finalMinFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
-	finalPr := finalMinFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1)
-
-	// update partial result.
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		partialMinFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr1)
-	}
-	partialMinFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
-	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(0), IsTrue)
-
-	iter.Begin()
-	iter.Next()
-	for row := iter.Next(); row != iter.End(); row = iter.Next() {
-		partialMinFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
-	}
-	resultChk.Reset()
-	partialMinFunc.AppendFinalResult2Chunk(s.ctx, partialPr2, resultChk)
-	// Min in [2.0,3.0,4.0] -> 0
-	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(2), IsTrue)
-
-	// merge two partial results.
-	err := finalMinFunc.MergePartialResult(s.ctx, partialPr1, finalPr)
-	c.Assert(err, IsNil)
-	err = finalMinFunc.MergePartialResult(s.ctx, partialPr2, finalPr)
-	c.Assert(err, IsNil)
-
-	resultChk.Reset()
-	err = finalMinFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
-	c.Assert(err, IsNil)
-	// Min in [0.0,1.0,2.0,3.0,4.0] -> 0
-	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(0), IsTrue)
 }
