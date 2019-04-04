@@ -2687,7 +2687,7 @@ func (s *testDBSuite) TestAlterShardRowIDBits(c *C) {
 	// Test increase shard_row_id_bits failed by overflow global auto ID.
 	_, err := tk.Exec(" alter table t1 SHARD_ROW_ID_BITS = 10;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID will overflow")
+	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID overflow")
 
 	// Test reduce shard_row_id_bits will be ok.
 	tk.MustExec(" alter table t1 SHARD_ROW_ID_BITS = 3;")
