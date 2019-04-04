@@ -39,6 +39,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/plugin"
 	"io"
 	"net"
 	"runtime"
@@ -103,6 +104,9 @@ type clientConn struct {
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 	status       int32             // dispatching/reading/shutdown/waitshutdown
+	peerHost     string            // peer host
+	peerPort     string            // peer port
+	lastCode     uint16            // last error code
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -403,14 +407,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	host := variable.DefHostname
-	if !cc.server.isUnixSocket() {
-		addr := cc.bufReadConn.RemoteAddr().String()
-		// Do Auth.
-		host, _, err = net.SplitHostPort(addr)
-		if err != nil {
-			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES"))
-		}
+	host, err := cc.PeerHost()
+	if err != nil {
+		return err
 	}
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
 		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
@@ -423,6 +422,27 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	}
 	cc.ctx.SetSessionManager(cc.server)
 	return nil
+}
+
+func (cc *clientConn) PeerHost() (host string, err error) {
+	if len(cc.peerHost) > 0 {
+		return cc.peerHost, nil
+	}
+	host = variable.DefHostname
+	if cc.server.isUnixSocket() {
+		cc.peerHost = host
+		return
+	}
+	addr := cc.bufReadConn.RemoteAddr().String()
+	var port string
+	host, port, err = net.SplitHostPort(addr)
+	if err != nil {
+		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, "")
+		return
+	}
+	cc.peerHost = host
+	cc.peerPort = port
+	return
 }
 
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
@@ -615,6 +635,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		span.Finish()
 	}()
 
+	if cmd < mysql.ComEnd {
+		cc.ctx.SetCommandValue(cmd)
+	}
+
 	switch cmd {
 	case mysql.ComSleep:
 		// TODO: According to mysql document, this command is supposed to be used only internally.
@@ -708,6 +732,7 @@ func (cc *clientConn) writeError(e error) error {
 		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
 	}
 
+	cc.lastCode = m.Code
 	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))
 	data = append(data, mysql.ErrHeader)
 	data = append(data, byte(m.Code), byte(m.Code>>8))
@@ -1168,5 +1193,21 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			connInfo := cc.connectInfo()
+			err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: connInfo.Host}, plugin.ChangeUser, connInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
 	return cc.writeOK()
 }

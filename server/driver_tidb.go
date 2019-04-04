@@ -333,6 +333,11 @@ func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
 	return tc.session.GetSessionVars()
 }
 
+// SetCommandValue implements QueryCtx SetCommandValue method.
+func (tc *TiDBContext) SetCommandValue(command byte) {
+	tc.session.SetCommandValue(command)
+}
+
 type tidbResultSet struct {
 	recordSet sqlexec.RecordSet
 	columns   []*ColumnInfo
