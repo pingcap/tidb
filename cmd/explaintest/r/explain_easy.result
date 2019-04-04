@@ -60,8 +60,8 @@ explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	10000.00	root	cast(join_agg_0)
 └─IndexJoin_14	10000.00	root	inner join, inner:TableReader_13, outer key:b.c2, inner key:a.c1
-  ├─TableReader_13	10.00	root	data:TableScan_12
-  │ └─TableScan_12	10.00	cop	table:a, range: decided by [b.c2], keep order:false, stats:pseudo
+  ├─TableReader_13	1.00	root	data:TableScan_12
+  │ └─TableScan_12	1.00	cop	table:a, range: decided by [b.c2], keep order:false, stats:pseudo
   └─HashAgg_21	8000.00	root	group by:col_2, funcs:count(col_0), firstrow(col_1)
     └─TableReader_22	8000.00	root	data:HashAgg_17
       └─HashAgg_17	8000.00	cop	group by:b.c2, funcs:count(b.c2), firstrow(b.c2)
@@ -279,9 +279,9 @@ Projection_11	10000.00	root	9_aux_0
     └─IndexJoin_44	10000.00	root	inner join, inner:TableReader_43, outer key:s.a, inner key:t1.a
       ├─TableReader_37	1.00	root	data:TableScan_36
       │ └─TableScan_36	1.00	cop	table:s, range: decided by [eq(s.a, test.t.a)], keep order:false, stats:pseudo
-      └─TableReader_43	8000.00	root	data:Selection_42
-        └─Selection_42	8000.00	cop	eq(t1.a, test.t.a)
-          └─TableScan_41	10.00	cop	table:t1, range: decided by [s.a], keep order:false, stats:pseudo
+      └─TableReader_43	0.80	root	data:Selection_42
+        └─Selection_42	0.80	cop	eq(t1.a, test.t.a)
+          └─TableScan_41	1.00	cop	table:t1, range: decided by [s.a], keep order:false, stats:pseudo
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
@@ -292,8 +292,8 @@ Projection_11	10000.00	root	9_aux_0
     └─IndexJoin_32	10000.00	root	inner join, inner:TableReader_31, outer key:s.a, inner key:t1.a
       ├─IndexReader_27	10000.00	root	index:IndexScan_26
       │ └─IndexScan_26	10000.00	cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false, stats:pseudo
-      └─TableReader_31	10.00	root	data:TableScan_30
-        └─TableScan_30	10.00	cop	table:t1, range: decided by [s.a], keep order:false, stats:pseudo
+      └─TableReader_31	1.00	root	data:TableScan_30
+        └─TableScan_30	1.00	cop	table:t1, range: decided by [s.a], keep order:false, stats:pseudo
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
@@ -305,8 +305,8 @@ Projection_11	10000.00	root	9_aux_0
       ├─IndexLookUp_28	10000.00	root	
       │ ├─IndexScan_26	10000.00	cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false, stats:pseudo
       │ └─TableScan_27	10000.00	cop	table:t, keep order:false, stats:pseudo
-      └─TableReader_32	10.00	root	data:TableScan_31
-        └─TableScan_31	10.00	cop	table:t1, range: decided by [s.c], keep order:false, stats:pseudo
+      └─TableReader_32	1.00	root	data:TableScan_31
+        └─TableScan_31	1.00	cop	table:t1, range: decided by [s.c], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int unsigned);
 explain select t.a = '123455' from t;
