@@ -417,7 +417,7 @@ func (c *Cluster) firstStoreID() uint64 {
 
 // getRegionsCoverRange gets regions in the cluster that has intersection with [start, end).
 func (c *Cluster) getRegionsCoverRange(start, end MvccKey) []*Region {
-	var regions []*Region
+	regions := make([]*Region, 0, len(c.regions))
 	for _, region := range c.regions {
 		onRight := bytes.Compare(end, region.Meta.StartKey) <= 0
 		onLeft := bytes.Compare(region.Meta.EndKey, start) <= 0
