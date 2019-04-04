@@ -16,6 +16,7 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -341,7 +342,7 @@ type tidbResultSet struct {
 	recordSet sqlexec.RecordSet
 	columns   []*ColumnInfo
 	rows      []chunk.Row
-	closed    bool
+	closed    int32
 }
 
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
@@ -364,10 +365,9 @@ func (trs *tidbResultSet) GetFetchedRows() []chunk.Row {
 }
 
 func (trs *tidbResultSet) Close() error {
-	if trs.closed {
+	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
 		return nil
 	}
-	trs.closed = true
 	return trs.recordSet.Close()
 }
 
