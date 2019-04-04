@@ -58,7 +58,7 @@ const (
 func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultCh := make(chan statistics.AnalyzeResult, len(e.tasks))
@@ -74,7 +74,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		result := <-resultCh
 		if result.Err != nil {
 			err = result.Err
-			if errors.Trace(err) == errAnalyzeWorkerPanic {
+			if err == errAnalyzeWorkerPanic {
 				panicCnt++
 			} else {
 				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
@@ -91,19 +91,19 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		}
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	return errors.Trace(statsHandle.Update(GetInfoSchema(e.ctx)))
+	return statsHandle.Update(GetInfoSchema(e.ctx))
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
 	concurrency, err := variable.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	c, err := strconv.ParseInt(concurrency, 10, 64)
-	return int(c), errors.Trace(err)
+	return int(c), err
 }
 
 type taskType int
@@ -190,12 +190,12 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 		SetConcurrency(e.concurrency).
 		Build()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	ctx := context.TODO()
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	result.Fetch(ctx)
 	if isNullRange {
@@ -239,7 +239,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 	for {
 		data, err := result.NextRaw(context.TODO())
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		if data == nil {
 			break
@@ -247,7 +247,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		resp := &tipb.AnalyzeIndexResp{}
 		err = resp.Unmarshal(data)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(e.maxNumBuckets))
 		if err != nil {
@@ -259,7 +259,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 			} else {
 				err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms))
 				if err != nil {
-					return nil, nil, errors.Trace(err)
+					return nil, nil, err
 				}
 			}
 		}
@@ -333,7 +333,7 @@ func (e *AnalyzeColumnsExec) open() error {
 	firstPartRanges, secondPartRanges := splitRanges(ranges, true)
 	firstResult, err := e.buildResp(firstPartRanges)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if len(secondPartRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
@@ -342,7 +342,7 @@ func (e *AnalyzeColumnsExec) open() error {
 	var secondResult distsql.SelectResult
 	secondResult, err = e.buildResp(secondPartRanges)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	e.resultHandler.open(firstResult, secondResult)
 
@@ -359,12 +359,12 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		SetConcurrency(e.concurrency).
 		Build()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	ctx := context.TODO()
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	result.Fetch(ctx)
 	return result, nil
@@ -372,13 +372,13 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 
 func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
 	if err = e.open(); err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	defer func() {
 		if err1 := e.resultHandler.Close(); err1 != nil {
 			hists = nil
 			cms = nil
-			err = errors.Trace(err1)
+			err = err1
 		}
 	}()
 	pkHist := &statistics.Histogram{}
@@ -394,7 +394,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 	for {
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
-			return nil, nil, errors.Trace(err1)
+			return nil, nil, err1
 		}
 		if data == nil {
 			break
@@ -402,13 +402,13 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		resp := &tipb.AnalyzeColumnsResp{}
 		err = resp.Unmarshal(data)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
 			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(e.maxNumBuckets))
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, err
 			}
 		}
 		for i, rc := range resp.Collectors {
@@ -420,7 +420,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		pkHist.ID = e.pkInfo.ID
 		err = pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		hists = append(hists, pkHist)
 		cms = append(cms, nil)
@@ -430,12 +430,12 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 			collectors[i].Samples[j].Ordinal = j
 			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, err
 			}
 		}
 		hg, err := statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), col.ID, collectors[i], &col.FieldType)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		hists = append(hists, hg)
 		cms = append(cms, collectors[i].CMSketch)

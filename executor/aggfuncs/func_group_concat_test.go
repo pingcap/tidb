@@ -20,6 +20,11 @@ import (
 )
 
 func (s *testSuite) TestMergePartialResult4GroupConcat(c *C) {
-	test := buildAggMergeTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, "0 1 2 3 4", "2 3 4", "0 1 2 3 4 2 3 4")
+	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, "0 1 2 3 4", "2 3 4", "0 1 2 3 4 2 3 4")
 	s.testMergePartialResult(c, test)
+}
+
+func (s *testSuite) TestGroupConcat(c *C) {
+	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, nil, "0 1 2 3 4", "0 1 2 3 4 2 3 4")
+	s.testAggFunc(c, test)
 }
