@@ -26,8 +26,9 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -138,7 +139,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 	err := ddl.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		log.Errorf("[info-syncer] remove server info failed %v", err)
+		logutil.Logger(context.Background()).Error("remove server info failed", zap.Error(err))
 	}
 }
 
@@ -187,7 +188,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 		resp, err = etcdCli.Get(childCtx, key, opts...)
 		cancel()
 		if err != nil {
-			log.Infof("[info-syncer] get %s failed %v, continue checking.", key, err)
+			logutil.Logger(context.Background()).Info("get key failed", zap.String("key", key), zap.Error(err))
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -195,7 +196,8 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			info := &ServerInfo{}
 			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
-				log.Infof("[info-syncer] get %s, json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
+				logutil.Logger(context.Background()).Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
+					zap.Error(err))
 				return nil, errors.Trace(err)
 			}
 			allInfo[info.ID] = info

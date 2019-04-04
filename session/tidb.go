@@ -36,8 +36,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -60,7 +61,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	ddlLease = schemaLease
 	statisticLease = statsLease
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
-		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
+		logutil.Logger(context.Background()).Info("new domain",
+			zap.String("store", store.UUID()),
+			zap.Stringer("ddl lease", ddlLease),
+			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
 		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
@@ -68,7 +72,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
-			log.Errorf("[ddl] init domain failed %v", errors.ErrorStack(errors.Trace(err1)))
+			logutil.Logger(context.Background()).Error("[ddl] init domain failed",
+				zap.Error(err1))
 		}
 		return true, errors.Trace(err1)
 	})
@@ -121,7 +126,7 @@ func SetStatsLease(lease time.Duration) {
 
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
-	log.Debug("compiling", src)
+	logutil.Logger(context.Background()).Debug("compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
@@ -130,7 +135,9 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
-		log.Warnf("compiling %s, error: %v", src, err)
+		logutil.Logger(context.Background()).Warn("compiling",
+			zap.String("source", src),
+			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return stmts, nil
@@ -146,7 +153,7 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			log.Info("RollbackTxn for ddl/autocommit error.")
+			logutil.Logger(context.Background()).Info("rollbackTxn for ddl/autocommit error.")
 			terror.Log(se.RollbackTxn(ctx))
 		}
 		return meetsErr
@@ -199,7 +206,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				}
 			}
 		} else {
-			log.Error(err1)
+			logutil.Logger(context.Background()).Error("get txn error", zap.Error(err1))
 		}
 	}
 
@@ -295,7 +302,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 
 	var s kv.Storage
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
-		log.Infof("new store")
+		logutil.Logger(context.Background()).Info("new store")
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})

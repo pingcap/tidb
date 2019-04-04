@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -49,8 +50,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"go.uber.org/zap"
 )
 
 const (
@@ -95,7 +97,7 @@ func writeData(w http.ResponseWriter, data interface{}) {
 		writeError(w, err)
 		return
 	}
-	log.Info(string(js))
+	logutil.Logger(context.Background()).Info(string(js))
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
@@ -142,9 +144,14 @@ func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 		},
 	}
 	kvResp, err := t.store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
-	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
-
 	if err != nil {
+		logutil.Logger(context.Background()).Info("get MVCC by encoded key failed",
+			zap.Binary("encodeKey", encodedKey),
+			zap.Reflect("region", keyLocation.Region),
+			zap.Binary("startKey", keyLocation.StartKey),
+			zap.Binary("endKey", keyLocation.EndKey),
+			zap.Reflect("kvResp", kvResp),
+			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return kvResp.MvccGetByKey, nil
@@ -160,7 +167,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	for {
 		curRegion, err := t.regionCache.LocateKey(bo, startKey)
 		if err != nil {
-			log.Error(startTS, startKey, err)
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS), zap.Binary("startKey", startKey), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 
@@ -172,19 +179,39 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
-		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
 		if err != nil {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		data := kvResp.MvccGetByStartTS
 		if err := data.GetRegionError(); err != nil {
-			log.Warn(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			logutil.Logger(context.Background()).Warn("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.Stringer("error", err))
 			continue
 		}
 
 		if len(data.GetError()) > 0 {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), data.GetError())
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", data.GetError()))
 			return nil, errors.New(data.GetError())
 		}
 
@@ -549,12 +576,19 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if levelStr := req.Form.Get("log_level"); levelStr != "" {
+			err1 := logutil.SetLevel(levelStr)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+
 			l, err1 := log.ParseLevel(levelStr)
 			if err1 != nil {
 				writeError(w, err1)
 				return
 			}
 			log.SetLevel(l)
+
 			config.GetGlobalConfig().Log.Level = levelStr
 		}
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
