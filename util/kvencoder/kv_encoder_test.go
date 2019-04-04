@@ -453,20 +453,26 @@ func (s *testKvEncoderSuite) TestError(c *C) {
 	defer encoder.Close()
 	_, err = New("", alloc)
 	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "*Incorrect database name ''")
 
 	err = encoder.ExecDDLSQL("x")
 	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "*You have an error in your SQL syntax.*")
 
 	_, err = encoder.PrepareStmt("")
 	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "*Can not prepare multiple statements")
 	_, _, err = encoder.EncodePrepareStmt(0, 0, 0)
 	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "*Prepared statement not found")
 
 	encoder = &kvEncoder{}
 	err = encoder.SetSystemVariable("", "")
 	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*please new KvEncoder by kvencoder.New.*")
 	_, ok := encoder.GetSystemVariable("")
 	c.Assert(ok, IsFalse)
+	c.Assert(err, ErrorMatches, ".*please new KvEncoder by kvencoder.New.*")
 }
 
 func (s *testKvEncoderSuite) TestAllocatorRebaseSmaller(c *C) {
