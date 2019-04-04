@@ -612,7 +612,7 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 
 // CallDebugRPC launches a debug rpc call.
 func CallDebugRPC(ctx context.Context, client debugpb.DebugClient, req *Request) (*Response, error) {
-	resp := &Response{}
+	resp := &Response{Type: req.Type}
 	resp.Type = req.Type
 	var err error
 	switch req.Type {

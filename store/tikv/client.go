@@ -586,7 +586,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		defer cancel()
 		resp, err := tikvrpc.CallDebugRPC(ctx1, client, req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		return resp, nil
 	}
