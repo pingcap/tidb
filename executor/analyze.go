@@ -469,7 +469,7 @@ type AnalyzeFastTask struct {
 	RRowCount uint64
 }
 
-// AnalyzeFastExec represents Fast Analyze Columns executor.
+// AnalyzeFastExec represents Fast Analyze executor.
 type AnalyzeFastExec struct {
 	ctx             sessionctx.Context
 	PhysicalTableID int64
