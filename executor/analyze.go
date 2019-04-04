@@ -596,6 +596,30 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse,
 	return nil
 }
 
+func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*statistics.SampleCollector) error {
+	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
+	for i, t := range e.scanTasks {
+		req := &tikvrpc.Request{
+			Type: tikvrpc.CmdScan,
+			Scan: &kvrpcpb.ScanRequest{
+				StartKey: t.StartKey,
+				EndKey:   t.EndKey,
+			},
+		}
+		rpcCtx, err := e.cache.GetRPCContext(bo, t.Region)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ctx := context.Background()
+		resp, err := client.SendRequest(ctx, rpcCtx.Addr, req, tikv.ReadTimeoutMedium)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+	}
+	return nil
+}
+
 func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collectors []*statistics.SampleCollector, sampCursor *int32) {
 	defer func() {
 		if *err != nil {
@@ -604,7 +628,6 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collec
 			}
 		}
 	}()
-	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for {
 		task, ok := <-e.tasks
 		if !ok {
@@ -689,15 +712,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	// TODO: here need to run scan tasks
-	for i, t := range e.scanTasks {
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdScan,
-			Scan: &kvrpcpb.ScanRequest{
-				StartKey: t.StartKey,
-				EndKey:   t.EndKey,
-			},
-		}
-	}
+	err := e.handleScanTasks(bo, collectors)
 	// ************
 
 	var err error
