@@ -16,7 +16,6 @@ package distsql
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -38,10 +37,7 @@ type RequestBuilder struct {
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
-	if builder.err != nil {
-		return &builder.Request, errors.Trace(builder.err)
-	}
-	return &builder.Request, nil
+	return &builder.Request, builder.err
 }
 
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
