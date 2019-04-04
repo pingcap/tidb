@@ -15,7 +15,6 @@ package executor
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/plugin"
 	"strings"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"

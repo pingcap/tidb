@@ -16,7 +16,6 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"strings"
 
 	"github.com/cznic/mathutil"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
