@@ -32,12 +32,14 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -124,6 +126,7 @@ func (a *recordSet) Close() error {
 	if a.processinfo != nil {
 		a.processinfo.SetProcessInfo("")
 	}
+	a.stmt.logAudit()
 	return errors.Trace(err)
 }
 
@@ -286,6 +289,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 			}
 		}
 		a.LogSlowQuery(txnTS, err == nil)
+		a.logAudit()
 	}()
 
 	err = e.Next(ctx, e.newFirstChunk())
@@ -348,6 +352,24 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 
 // QueryReplacer replaces new line and tab for grep result including query string.
 var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
+
+func (a *ExecStmt) logAudit() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.InRestrictedSQL {
+		return
+	}
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		audit := plugin.DeclareAuditManifest(p.Manifest)
+		if audit.OnGeneralEvent != nil {
+			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
+			audit.OnGeneralEvent(context.Background(), sessVars, plugin.Log, cmd)
+		}
+		return nil
+	})
+	if err != nil {
+		logutil.Logger(context.Background()).Error("log audit log failure", zap.Error(err))
+	}
+}
 
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
