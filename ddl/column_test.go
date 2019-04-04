@@ -960,7 +960,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 func (s *testColumnSuite) TestFieldCase(c *C) {
 	var fields = []string{"field", "Field"}
 	var colDefs = make([]*ast.ColumnDef, len(fields))
-	var colObjects []interface{}
+	colObjects := make([]interface{}, 0, len(fields))
 	for i, name := range fields {
 		colDefs[i] = &ast.ColumnDef{
 			Name: &ast.ColumnName{

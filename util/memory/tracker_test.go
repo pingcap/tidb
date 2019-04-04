@@ -42,16 +42,16 @@ func (s *testSuite) TearDownTest(c *C)  { testleak.AfterTest(c)() }
 func (s *testSuite) TestSetLabel(c *C) {
 	tracker := NewTracker("old label", -1)
 	c.Assert(tracker.label, Equals, "old label")
-	c.Assert(tracker.bytesConsumed, Equals, int64(0))
+	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
 	c.Assert(tracker.parent, IsNil)
-	c.Assert(len(tracker.children), Equals, 0)
+	c.Assert(len(tracker.mu.children), Equals, 0)
 	tracker.SetLabel("new label")
 	c.Assert(tracker.label, Equals, "new label")
-	c.Assert(tracker.bytesConsumed, Equals, int64(0))
+	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
 	c.Assert(tracker.parent, IsNil)
-	c.Assert(len(tracker.children), Equals, 0)
+	c.Assert(len(tracker.mu.children), Equals, 0)
 }
 
 func (s *testSuite) TestConsume(c *C) {
@@ -108,17 +108,17 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(100))
 	c.Assert(child.parent, DeepEquals, oldParent)
-	c.Assert(len(oldParent.children), Equals, 1)
-	c.Assert(oldParent.children[0], DeepEquals, child)
+	c.Assert(len(oldParent.mu.children), Equals, 1)
+	c.Assert(oldParent.mu.children[0], DeepEquals, child)
 
 	child.AttachTo(newParent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(0))
 	c.Assert(newParent.BytesConsumed(), Equals, int64(100))
 	c.Assert(child.parent, DeepEquals, newParent)
-	c.Assert(len(newParent.children), Equals, 1)
-	c.Assert(newParent.children[0], DeepEquals, child)
-	c.Assert(len(oldParent.children), Equals, 0)
+	c.Assert(len(newParent.mu.children), Equals, 1)
+	c.Assert(newParent.mu.children[0], DeepEquals, child)
+	c.Assert(len(oldParent.mu.children), Equals, 0)
 }
 
 func (s *testSuite) TestReplaceChild(c *C) {
@@ -133,21 +133,21 @@ func (s *testSuite) TestReplaceChild(c *C) {
 
 	parent.ReplaceChild(oldChild, newChild)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
-	c.Assert(len(parent.children), Equals, 1)
-	c.Assert(parent.children[0], DeepEquals, newChild)
+	c.Assert(len(parent.mu.children), Equals, 1)
+	c.Assert(parent.mu.children[0], DeepEquals, newChild)
 	c.Assert(newChild.parent, DeepEquals, parent)
 	c.Assert(oldChild.parent, IsNil)
 
 	parent.ReplaceChild(oldChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
-	c.Assert(len(parent.children), Equals, 1)
-	c.Assert(parent.children[0], DeepEquals, newChild)
+	c.Assert(len(parent.mu.children), Equals, 1)
+	c.Assert(parent.mu.children[0], DeepEquals, newChild)
 	c.Assert(newChild.parent, DeepEquals, parent)
 	c.Assert(oldChild.parent, IsNil)
 
 	parent.ReplaceChild(newChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(0))
-	c.Assert(len(parent.children), Equals, 0)
+	c.Assert(len(parent.mu.children), Equals, 0)
 	c.Assert(newChild.parent, IsNil)
 	c.Assert(oldChild.parent, IsNil)
 }

@@ -1640,6 +1640,37 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.AllPrivMask, "test", "ttt", "", nil},
 			},
 		},
+		{
+			sql: "alter table t add column a int(4)",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t", "", nil},
+			},
+		},
+		{
+			sql: "rename table t_old to t_new",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t_old", "", nil},
+				{mysql.DropPriv, "test", "t_old", "", nil},
+				{mysql.CreatePriv, "test", "t_new", "", nil},
+				{mysql.InsertPriv, "test", "t_new", "", nil},
+			},
+		},
+		{
+			sql: "alter table t_old rename to t_new",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t_old", "", nil},
+				{mysql.DropPriv, "test", "t_old", "", nil},
+				{mysql.CreatePriv, "test", "t_new", "", nil},
+				{mysql.InsertPriv, "test", "t_new", "", nil},
+			},
+		},
+		{
+			sql: "alter table t drop partition p0;",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil},
+			},
+		},
 	}
 
 	for _, tt := range tests {

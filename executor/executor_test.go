@@ -1139,7 +1139,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b decimal(6, 3))")
 	tk.MustExec("insert into t values(1, 1.000)")
-	tk.MustQuery("select count(distinct a) from (select a from t union select b from t) tmp;").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(distinct a), sum(distinct a), avg(distinct a) from (select a from t union all select b from t) tmp;").Check(testkit.Rows("1 1.000 1.0000000"))
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {
@@ -3371,7 +3371,7 @@ func (s *testSuite3) TestCurrentTimestampValueSelection(c *C) {
 	tk.MustQuery("select id from t where t0 = ?", t0).Check(testkit.Rows("1"))
 	tk.MustQuery("select id from t where t1 = ?", t1).Check(testkit.Rows("1"))
 	tk.MustQuery("select id from t where t2 = ?", t2).Check(testkit.Rows("1"))
-	time.Sleep(time.Second / 2)
+	time.Sleep(time.Second)
 	tk.MustExec("update t set t0 = now() where id = 1")
 	rs = tk.MustQuery("select t2 from t where id = 1")
 	newT2 := rs.Rows()[0][0].(string)

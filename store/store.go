@@ -54,7 +54,7 @@ func New(path string) (kv.Storage, error) {
 func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	storeURL, err := url.Parse(path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	name := strings.ToLower(storeURL.Scheme)
@@ -69,5 +69,5 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})
-	return s, errors.Trace(err)
+	return s, err
 }

@@ -198,7 +198,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		zap.Duration("cost time", time.Since(startTime)),
 		zap.Int("num of txn", len(txnInfos)))
 
-	var listTxnInfos []*kvrpcpb.TxnInfo
+	listTxnInfos := make([]*kvrpcpb.TxnInfo, 0, len(txnInfos))
 	for txnID, status := range txnInfos {
 		listTxnInfos = append(listTxnInfos, &kvrpcpb.TxnInfo{
 			Txn:    txnID,
