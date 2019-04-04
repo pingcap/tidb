@@ -289,8 +289,7 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 	}
 	row, err := e.getRow(e.row)
 	if err != nil {
-		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+		e.handleWarning(err)
 		return nil
 	}
 	return row
@@ -302,8 +301,7 @@ func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
 	}
 	h, err := e.addRecord(row)
 	if err != nil {
-		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+		e.handleWarning(err)
 	}
 	return h, nil
 }
