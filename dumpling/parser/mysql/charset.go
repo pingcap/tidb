@@ -15,6 +15,25 @@ package mysql
 
 import "unicode"
 
+// CharsetNameToID maps charset name to its default collation ID.
+func CharsetNameToID(charset string) uint8 {
+	// Use quick path for TiDB to avoid access CharsetIDs map
+	// "SHOW CHARACTER SET;" to see all the supported character sets.
+	if charset == "utf8mb4" {
+		return UTF8MB4CollationID
+	} else if charset == "binary" {
+		return BinaryCollationID
+	} else if charset == "utf8" {
+		return UTF8CollationID
+	} else if charset == "ascii" {
+		return ASCIICollationID
+	} else if charset == "latin1" {
+		return Latin1CollationID
+	} else {
+		return CharsetIDs[charset]
+	}
+}
+
 // CharsetIDs maps charset name to its default collation ID.
 var CharsetIDs = map[string]uint8{
 	"big5":     1,
@@ -22,10 +41,10 @@ var CharsetIDs = map[string]uint8{
 	"cp850":    4,
 	"hp8":      6,
 	"koi8r":    7,
-	"latin1":   8,
+	"latin1":   Latin1CollationID,
 	"latin2":   9,
 	"swe7":     10,
-	"ascii":    11,
+	"ascii":    ASCIICollationID,
 	"ujis":     12,
 	"sjis":     13,
 	"hebrew":   16,
@@ -38,7 +57,7 @@ var CharsetIDs = map[string]uint8{
 	"gbk":      28,
 	"latin5":   30,
 	"armscii8": 32,
-	"utf8":     33,
+	"utf8":     UTF8CollationID,
 	"ucs2":     35,
 	"cp866":    36,
 	"keybcs2":  37,
@@ -46,14 +65,14 @@ var CharsetIDs = map[string]uint8{
 	"macroman": 39,
 	"cp852":    40,
 	"latin7":   41,
-	"utf8mb4":  45,
+	"utf8mb4":  UTF8MB4CollationID,
 	"cp1251":   51,
 	"utf16":    54,
 	"utf16le":  56,
 	"cp1256":   57,
 	"cp1257":   59,
 	"utf32":    60,
-	"binary":   63,
+	"binary":   BinaryCollationID,
 	"geostd8":  92,
 	"cp932":    95,
 	"eucjpms":  97,
@@ -556,6 +575,10 @@ const (
 	DefaultCharset = UTF8MB4Charset
 	// DefaultCollationID is utf8mb4_bin(46)
 	DefaultCollationID      = 46
+	Latin1CollationID       = 8
+	ASCIICollationID        = 11
+	UTF8CollationID         = 33
+	UTF8MB4CollationID      = 45
 	BinaryCollationID       = 63
 	UTF8DefaultCollation    = "utf8_bin"
 	UTF8MB4DefaultCollation = "utf8mb4_bin"
