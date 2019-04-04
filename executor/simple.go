@@ -56,6 +56,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err erro
 		return nil
 	}
 	switch x := e.Statement.(type) {
+	case *ast.GrantRoleStmt:
+		err = e.executeGrantRole(x)
 	case *ast.UseStmt:
 		err = e.executeUse(x)
 	case *ast.FlushStmt:
@@ -85,7 +87,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err erro
 		err = e.executeSetRole(x)
 	}
 	e.done = true
-	return errors.Trace(err)
+	return err
 }
 
 func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
@@ -137,8 +139,8 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// The server sets this variable whenever the default database changes.
 	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := e.ctx.GetSessionVars()
-	terror.Log(errors.Trace(sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset)))
-	terror.Log(errors.Trace(sessionVars.SetSystemVar(variable.CollationDatabase, dbinfo.Collate)))
+	terror.Log(sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset))
+	terror.Log(sessionVars.SetSystemVar(variable.CollationDatabase, dbinfo.Collate))
 	return nil
 }
 
@@ -149,7 +151,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if txnCtx.History != nil {
 		err := e.ctx.NewTxn(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	// With START TRANSACTION, autocommit remains disabled until you end
@@ -173,7 +175,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if txn.Valid() {
 		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
@@ -187,7 +189,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	for _, spec := range s.Specs {
 		exists, err1 := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 		if exists {
 			if !s.IfNotExists {
@@ -214,10 +216,10 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	}
 	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
@@ -237,7 +239,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	for _, spec := range s.Specs {
 		exists, err := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !exists {
 			failedUsers = append(failedUsers, spec.User.String())
@@ -265,11 +267,11 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		// Commit the transaction even if we returns error
 		txn, err := e.ctx.Txn(true)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = txn.Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
 	}
@@ -277,12 +279,58 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
+	failedUsers := make([]string, 0, len(s.Users))
+	for _, role := range s.Roles {
+		exists, err := userExists(e.ctx, role.Username, role.Hostname)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", role.String())
+		}
+	}
+	for _, user := range s.Users {
+		exists, err := userExists(e.ctx, user.Username, user.Hostname)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
+		}
+	}
+
+	// begin a transaction to insert role graph edges.
+	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
+		return err
+	}
+
+	for _, user := range s.Users {
+		for _, role := range s.Roles {
+			sql := fmt.Sprintf(`INSERT IGNORE INTO %s.%s (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ('%s','%s','%s','%s')`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+				failedUsers = append(failedUsers, user.String())
+				logutil.Logger(context.Background()).Error(fmt.Sprintf("Error occur when executing %s", sql))
+				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+					return err
+				}
+				return ErrCannotUser.GenWithStackByArgs("GRANT ROLE", user.String())
+			}
+		}
+	}
+	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
+		return err
+	}
+	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
+	return err
+}
+
 func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	failedUsers := make([]string, 0, len(s.UserList))
 	for _, user := range s.UserList {
 		exists, err := userExists(e.ctx, user.Username, user.Hostname)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !exists {
 			if !s.IfExists {
@@ -293,13 +341,13 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 		// begin a transaction to delete a user.
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			continue
 		}
@@ -309,7 +357,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			continue
 		}
@@ -319,7 +367,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			continue
 		}
@@ -329,7 +377,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			continue
 		}
@@ -338,7 +386,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			continue
 		}
@@ -348,7 +396,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			continue
 		}
@@ -357,7 +405,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			continue
 		}
@@ -378,7 +426,7 @@ func userExists(ctx sessionctx.Context, name string, host string) (bool, error) 
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.UserTable, name, host)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	return len(rows) > 0, nil
 }
@@ -401,7 +449,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	}
 	exists, err := userExists(e.ctx, u, h)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if !exists {
 		return errors.Trace(ErrPasswordNoMatch)
@@ -411,7 +459,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password='%s' WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), u, h)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
@@ -440,17 +488,17 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		sysSessionPool := dom.SysSessionPool()
 		ctx, err := sysSessionPool.Get()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		defer sysSessionPool.Put(ctx)
 		err = dom.PrivilegeHandle().Update(ctx.(sessionctx.Context))
-		return errors.Trace(err)
+		return err
 	case ast.FlushTiDBPlugin:
 		dom := domain.GetDomain(e.ctx)
 		for _, pluginName := range s.Plugins {
 			err := plugin.NotifyFlush(dom, pluginName)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
@@ -461,7 +509,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 	h := domain.GetDomain(e.ctx).StatsHandle()
 	err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	return errors.Trace(h.Update(GetInfoSchema(e.ctx)))
+	return h.Update(GetInfoSchema(e.ctx))
 }
