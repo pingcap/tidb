@@ -55,7 +55,7 @@ func New(path string) (kv.Storage, error) {
 func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	storeURL, err := url.Parse(path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	name := strings.ToLower(storeURL.Scheme)
@@ -70,10 +70,12 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})
-	if err == nil {
+
+  if err == nil {
 		logutil.Logger(context.Background()).Info("new store with retry success")
 	} else {
 		logutil.Logger(context.Background()).Warn("new store with retry failed", zap.Error(err))
 	}
 	return s, errors.Trace(err)
+
 }

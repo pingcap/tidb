@@ -15,7 +15,6 @@ package aggfuncs
 
 import (
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -86,7 +85,7 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -95,7 +94,7 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.sum = *newSum
 		p.count++
@@ -112,7 +111,7 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -120,7 +119,7 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -129,7 +128,7 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, inputSum, newSum)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.sum = *newSum
 		p.count += inputCount
@@ -145,7 +144,7 @@ func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src Par
 	newSum := new(types.MyDecimal)
 	err := types.DecimalAdd(&p1.sum, &p2.sum, newSum)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	p2.sum = *newSum
 	p2.count += p1.count
@@ -180,7 +179,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -197,7 +196,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.sum = *newSum
 		p.count++
@@ -215,7 +214,7 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	finalResult := new(types.MyDecimal)
 	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, types.DivFracIncr)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	// Make the decimal be the result of type inferring.
 	frac := e.args[0].GetType().Decimal
@@ -274,7 +273,7 @@ func (e *avgOriginal4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -295,7 +294,7 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		inputSum, isNull, err := e.args[1].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -303,7 +302,7 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -349,7 +348,7 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
