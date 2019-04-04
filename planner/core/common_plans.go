@@ -16,7 +16,6 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/parser/opcode"
 	"strconv"
 	"strings"
 
@@ -345,16 +344,6 @@ const (
 	// OpSQLBindCreate represents create a bind info.
 	OpSQLBindCreate = 0
 )
-
-var symmetricOp = map[opcode.Op]opcode.Op{
-	opcode.LT:     opcode.GT,
-	opcode.GE:     opcode.LE,
-	opcode.GT:     opcode.LT,
-	opcode.LE:     opcode.GE,
-	opcode.EQ:     opcode.EQ,
-	opcode.NE:     opcode.NE,
-	opcode.NullEQ: opcode.NullEQ,
-}
 
 // SQLBindPlan represents a plan for SQL bind.
 type SQLBindPlan struct {

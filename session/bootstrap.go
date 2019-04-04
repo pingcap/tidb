@@ -764,7 +764,7 @@ func upgradeToVer28(s Session) {
 }
 
 func upgradeToVer29(s Session) {
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD INDEX primary_index (original_sql, default_db)", ddl.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD INDEX primary_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
