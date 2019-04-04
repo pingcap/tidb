@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
