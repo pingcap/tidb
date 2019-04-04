@@ -672,6 +672,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBConstraintCheckInPlace, BoolToIntStr(DefTiDBConstraintCheckInPlace)},
 	{ScopeSession, TiDBOptimizerSelectivityLevel, strconv.Itoa(DefTiDBOptimizerSelectivityLevel)},
 	{ScopeGlobal | ScopeSession, TiDBEnableWindowFunction, BoolToIntStr(DefEnableWindowFunction)},
+	{ScopeGlobal | ScopeSession, TiDBEnableFastAnalyze, BoolToIntStr(DefTiDBUseFastAnalyze)},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
@@ -686,7 +687,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
 	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
 	{ScopeSession, TiDBSlowQueryFile, ""},
-	{ScopeSession, TiDBEnableFastAnalyze, BoolToIntStr(DefTiDBUseFastAnalyze)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
