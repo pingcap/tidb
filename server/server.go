@@ -499,18 +499,8 @@ func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
 
 // GetProcessInfo implements the SessionManager interface.
 func (s *Server) GetProcessInfo(conn uint64) (ret util.ProcessInfo, ok bool) {
-	defer s.rwlock.RUnlock()
-	s.rwlock.RLock()
-	for _, client := range s.clients {
-		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
-			continue
-		}
-		pi := client.ctx.ShowProcess()
-		if pi.ID == conn {
-			return pi, true
-		}
-	}
-	return
+	ret, ok = s.ShowProcessList()[conn]
+	return ret, ok
 }
 
 // Kill implements the SessionManager interface.
