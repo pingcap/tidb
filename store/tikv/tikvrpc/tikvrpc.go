@@ -63,19 +63,7 @@ const (
 	CmdMvccGetByStartTs
 	CmdSplitRegion
 
-	CmdDebugGet CmdType = 2048 + iota
-	CmdDebugRaftLog
-	CmdDebugRegionInfo
-	CmdDebugRegionSize
-	CmdDebugScanMvcc
-	CmdDebugCompact
-	CmdDebugInjectFailPoint
-	CmdDebugRecoverFailPoint
-	CmdDebugListFailPoints
-	CmdDebugGetMetrics
-	CmdDebugCheckRegionConsistency
-	CmdDebugModifyTikvConfig
-	CmdDebugGetRegionProperties
+	CmdDebugGetRegionProperties CmdType = 2048 + iota
 )
 
 func (t CmdType) String() string {
@@ -130,30 +118,6 @@ func (t CmdType) String() string {
 		return "MvccGetByStartTS"
 	case CmdSplitRegion:
 		return "SplitRegion"
-	case CmdDebugGet:
-		return "DebugGet"
-	case CmdDebugRaftLog:
-		return "DebugRaftLog"
-	case CmdDebugRegionInfo:
-		return "DebugRegionInfo"
-	case CmdDebugRegionSize:
-		return "DebugRegionSize"
-	case CmdDebugScanMvcc:
-		return "DebugScanMvcc"
-	case CmdDebugCompact:
-		return "DebugCompact"
-	case CmdDebugInjectFailPoint:
-		return "DebugInjectFailPoint"
-	case CmdDebugRecoverFailPoint:
-		return "DebugRecoverFailPoint"
-	case CmdDebugListFailPoints:
-		return "DebugListFailPoints"
-	case CmdDebugGetMetrics:
-		return "DebugGetMetics"
-	case CmdDebugCheckRegionConsistency:
-		return "DebugCheckRegionConsistency"
-	case CmdDebugModifyTikvConfig:
-		return "DebugModifyTikvConfig"
 	case CmdDebugGetRegionProperties:
 		return "DebugGetRegionProperties"
 	}
@@ -242,12 +206,7 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 // IsDebugReq check whether the req is debug req.
 func (req *Request) IsDebugReq() bool {
 	switch req.Type {
-	case CmdDebugGet, CmdDebugRaftLog, CmdDebugRegionInfo,
-		CmdDebugRegionSize, CmdDebugScanMvcc, CmdDebugCompact,
-		CmdDebugInjectFailPoint, CmdDebugRecoverFailPoint,
-		CmdDebugListFailPoints, CmdDebugGetMetrics,
-		CmdDebugCheckRegionConsistency, CmdDebugModifyTikvConfig,
-		CmdDebugGetRegionProperties:
+	case CmdDebugGetRegionProperties:
 		return true
 	}
 	return false
