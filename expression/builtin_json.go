@@ -854,7 +854,7 @@ func (b *builtinJSONQuoteSig) Clone() builtinFunc {
 
 func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
 	DisableParseJSONFlag4Expr(args[0])
@@ -867,7 +867,7 @@ func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (res string, isNull bool
 	var j json.BinaryJSON
 	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return "", isNull, err
 	}
 	return j.Quote(), false, nil
 }
