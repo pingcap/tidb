@@ -689,10 +689,16 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	// TODO: here need to run scan tasks
-	//
-	//
-	//
-	//
+	for i, t := range e.scanTasks {
+		req := &tikvrpc.Request{
+			Type: tikvrpc.CmdScan,
+			Scan: &kvrpcpb.ScanRequest{
+				StartKey: t.StartKey,
+				EndKey:   t.EndKey,
+			},
+		}
+	}
+	// ************
 
 	var err error
 	hists, cms := make([]*statistics.Histogram, e.concurrency), make([]*statistics.CMSketch, e.concurrency)
