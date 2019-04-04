@@ -2679,6 +2679,7 @@ func (s *testDBSuite) TestAlterShardRowIDBits(c *C) {
 	tk.MustExec("use test")
 	// Test alter shard_row_id_bits
 	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int) shard_row_id_bits = 5")
 	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
 	tk.MustExec("insert into t1 set a=1;")
