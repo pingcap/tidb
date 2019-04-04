@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
@@ -767,7 +768,10 @@ func getPhysicalIDs(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]i
 }
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
+	p := &Analyze{
+		MaxNumBuckets:     as.MaxNumBuckets,
+		EnableFastAnalyze: b.ctx.GetSessionVars().EnableFastAnalyze,
+	}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
 			return nil, errors.Errorf("analyze %s is not supported now.", tbl.Name.O)
@@ -777,14 +781,27 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 		if err != nil {
 			return nil, err
 		}
+		table, ok := b.is.TableByID(tbl.TableInfo.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tbl.TableInfo.Name.O)
+		}
 		for _, idx := range idxInfo {
 			for _, id := range physicalIDs {
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
+					PhysicalTableID: id,
+					IndexInfo:       idx,
+					Table:           table,
+				})
 			}
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
 			for _, id := range physicalIDs {
-				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PhysicalTableID: id, PKInfo: pkInfo, ColsInfo: colInfo})
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
+					PhysicalTableID: id,
+					PKInfo:          pkInfo,
+					ColsInfo:        colInfo,
+					Table:           table,
+				})
 			}
 		}
 	}
@@ -792,7 +809,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
+	p := &Analyze{
+		MaxNumBuckets:     as.MaxNumBuckets,
+		EnableFastAnalyze: b.ctx.GetSessionVars().EnableFastAnalyze,
+	}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, err := getPhysicalIDs(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -811,7 +831,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
+	p := &Analyze{
+		MaxNumBuckets:     as.MaxNumBuckets,
+		EnableFastAnalyze: b.ctx.GetSessionVars().EnableFastAnalyze,
+	}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, err := getPhysicalIDs(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -833,6 +856,10 @@ const (
 )
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	// If enable fast analyze, the storage must be tikv.
+	if _, isTikvStorage := b.ctx.GetStore().(tikv.Storage); !isTikvStorage && b.ctx.GetSessionVars().EnableFastAnalyze {
+		return nil, errors.Errorf("Only support fast analyze in tikv storage.")
+	}
 	for _, tbl := range as.TableNames {
 		user := b.ctx.GetSessionVars().User
 		var insertErr, selectErr error
