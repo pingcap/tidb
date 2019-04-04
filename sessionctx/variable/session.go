@@ -340,6 +340,9 @@ type SessionVars struct {
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
+
+	// EnableFastAnalyze indicates whether to take fast analyze.
+	EnableFastAnalyze bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -725,6 +728,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
+	case TiDBEnableFastAnalyze:
+		s.EnableFastAnalyze = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
