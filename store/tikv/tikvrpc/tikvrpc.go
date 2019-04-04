@@ -189,19 +189,7 @@ type Request struct {
 	MvccGetByStartTs   *kvrpcpb.MvccGetByStartTsRequest
 	SplitRegion        *kvrpcpb.SplitRegionRequest
 
-	DebugGet                    *debugpb.GetRequest
-	DebugRaftLog                *debugpb.RaftLogRequest
-	DebugRegionInfo             *debugpb.RegionInfoRequest
-	DebugRegionSize             *debugpb.RegionSizeRequest
-	DebugScanMvcc               *debugpb.ScanMvccRequest
-	DebugCompact                *debugpb.CompactRequest
-	DebugInjectFailPoint        *debugpb.InjectFailPointRequest
-	DebugRecoverFailPoint       *debugpb.RecoverFailPointRequest
-	DebugListFailPoints         *debugpb.ListFailPointsRequest
-	DebugGetMetrics             *debugpb.GetMetricsRequest
-	DebugCheckRegionConsistency *debugpb.RegionConsistencyCheckRequest
-	DebugModifyTikvConfig       *debugpb.ModifyTikvConfigRequest
-	DebugGetRegionProperties    *debugpb.GetRegionPropertiesRequest
+	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -294,19 +282,7 @@ type Response struct {
 	MvccGetByStartTS   *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion        *kvrpcpb.SplitRegionResponse
 
-	DebugGet                    *debugpb.GetResponse
-	DebugRaftLog                *debugpb.RaftLogResponse
-	DebugRegionInfo             *debugpb.RegionInfoResponse
-	DebugRegionSize             *debugpb.RegionSizeResponse
-	DebugScanMvcc               debugpb.Debug_ScanMvccClient
-	DebugCompact                *debugpb.CompactResponse
-	DebugInjectFailPoint        *debugpb.InjectFailPointResponse
-	DebugRecoverFailPoint       *debugpb.RecoverFailPointResponse
-	DebugListFailPoints         *debugpb.ListFailPointsResponse
-	DebugGetMetrics             *debugpb.GetMetricsResponse
-	DebugCheckRegionConsistency *debugpb.RegionConsistencyCheckResponse
-	DebugModifyTikvConfig       *debugpb.ModifyTikvConfigResponse
-	DebugGetRegionProperties    *debugpb.GetRegionPropertiesResponse
+	DebugGetRegionProperties *debugpb.GetRegionPropertiesResponse
 }
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
@@ -681,30 +657,6 @@ func CallDebugRPC(ctx context.Context, client debugpb.DebugClient, req *Request)
 	resp.Type = req.Type
 	var err error
 	switch req.Type {
-	case CmdDebugGet:
-		resp.DebugGet, err = client.Get(ctx, req.DebugGet)
-	case CmdDebugRaftLog:
-		resp.DebugRaftLog, err = client.RaftLog(ctx, req.DebugRaftLog)
-	case CmdDebugRegionInfo:
-		resp.DebugRegionInfo, err = client.RegionInfo(ctx, req.DebugRegionInfo)
-	case CmdDebugRegionSize:
-		resp.DebugRegionSize, err = client.RegionSize(ctx, req.DebugRegionSize)
-	case CmdDebugScanMvcc:
-		resp.DebugScanMvcc, err = client.ScanMvcc(ctx, req.DebugScanMvcc)
-	case CmdDebugCompact:
-		resp.DebugCompact, err = client.Compact(ctx, req.DebugCompact)
-	case CmdDebugInjectFailPoint:
-		resp.DebugInjectFailPoint, err = client.InjectFailPoint(ctx, req.DebugInjectFailPoint)
-	case CmdDebugRecoverFailPoint:
-		resp.DebugRecoverFailPoint, err = client.RecoverFailPoint(ctx, req.DebugRecoverFailPoint)
-	case CmdDebugListFailPoints:
-		resp.DebugListFailPoints, err = client.ListFailPoints(ctx, req.DebugListFailPoints)
-	case CmdDebugGetMetrics:
-		resp.DebugGetMetrics, err = client.GetMetrics(ctx, req.DebugGetMetrics)
-	case CmdDebugCheckRegionConsistency:
-		resp.DebugCheckRegionConsistency, err = client.CheckRegionConsistency(ctx, req.DebugCheckRegionConsistency)
-	case CmdDebugModifyTikvConfig:
-		resp.DebugModifyTikvConfig, err = client.ModifyTikvConfig(ctx, req.DebugModifyTikvConfig)
 	case CmdDebugGetRegionProperties:
 		resp.DebugGetRegionProperties, err = client.GetRegionProperties(ctx, req.DebugGetRegionProperties)
 	default:
