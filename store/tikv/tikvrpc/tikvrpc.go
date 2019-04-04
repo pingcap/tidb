@@ -621,10 +621,7 @@ func CallDebugRPC(ctx context.Context, client debugpb.DebugClient, req *Request)
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return resp, nil
+	return resp, err
 }
 
 // Lease is used to implement grpc stream timeout.
