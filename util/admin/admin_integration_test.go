@@ -52,6 +52,7 @@ func (s *testAdminSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec("insert into t values(1, 1, 1)")
 	tk.MustExec("admin check table t")
 
+	// test for add index on the later added columns.
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (c1 int);")
 	tk.MustExec("INSERT INTO t1 SET c1 = 1;")
