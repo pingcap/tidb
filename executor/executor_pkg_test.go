@@ -50,16 +50,6 @@ func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
 	return ret
 }
 
-// GetProcessInfo implements the SessionManager.GetProcessInfo interface.
-func (msm *mockSessionManager) GetProcessInfo(id uint64) (pi util.ProcessInfo, ok bool) {
-	for _, item := range msm.PS {
-		if id == item.ID {
-			return item, true
-		}
-	}
-	return
-}
-
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 

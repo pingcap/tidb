@@ -110,19 +110,6 @@ func (m mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
 	}
 }
 
-// GetProcessInfo implements the SessionManager.GetProcessInfo interface.
-func (m mockSessionManager) GetProcessInfo(id uint64) (pi util.ProcessInfo, ok bool) {
-	if id == 1 {
-		return util.ProcessInfo{
-			ID:      1,
-			User:    "root",
-			Host:    "127.0.0.1",
-			Command: mysql.ComQuery,
-		}, true
-	}
-	return
-}
-
 func (m mockSessionManager) Kill(connectionID uint64, query bool) {}
 
 func (s *testSuite) TestDataForTableStatsField(c *C) {

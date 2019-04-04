@@ -1689,16 +1689,18 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 // buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.
 // See https://dev.mysql.com/doc/refman/8.0/en/explain-for-connection.html.
 func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, error) {
-	processInfo, ok := b.ctx.GetSessionManager().GetProcessInfo(explainFor.ConnectionID)
+	processInfo, ok := b.ctx.GetSessionManager().ShowProcessList()[explainFor.ConnectionID]
 	if !ok {
 		return nil, ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
 	}
 	// Viewing query plan for another user requires ProcessPriv, see url above.
 	if b.ctx.GetSessionVars() != nil && b.ctx.GetSessionVars().User != nil {
 		if b.ctx.GetSessionVars().User.Username != processInfo.User {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ProcessPriv, "", "", "", nil)
+			err := ErrAccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ProcessPriv, "", "", "", err)
 		}
 	}
+
 	targetPlan, ok := processInfo.Plan.(Plan)
 	if !ok || targetPlan == nil {
 		return &Explain{StmtPlan: nil, Analyze: false, Format: explainFor.Format, ExecStmt: nil, ExecPlan: nil}, nil

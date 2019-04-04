@@ -59,6 +59,5 @@ func (pi *ProcessInfo) ToRow(full bool) []interface{} {
 type SessionManager interface {
 	// ShowProcessList returns map[connectionID]ProcessInfo
 	ShowProcessList() map[uint64]ProcessInfo
-	GetProcessInfo(connectionID uint64) (ProcessInfo, bool)
 	Kill(connectionID uint64, query bool)
 }

@@ -497,12 +497,6 @@ func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
 	return rs
 }
 
-// GetProcessInfo implements the SessionManager interface.
-func (s *Server) GetProcessInfo(conn uint64) (ret util.ProcessInfo, ok bool) {
-	ret, ok = s.ShowProcessList()[conn]
-	return ret, ok
-}
-
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.Lock()
