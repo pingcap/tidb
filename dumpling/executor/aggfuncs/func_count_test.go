@@ -20,6 +20,22 @@ import (
 )
 
 func (s *testSuite) TestMergePartialResult4Count(c *C) {
-	tester := buildAggMergeTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 5, 3, 8)
+	tester := buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 5, 3, 8)
 	s.testMergePartialResult(c, tester)
+}
+
+func (s *testSuite) TestCount(c *C) {
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeFloat, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDouble, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeNewDecimal, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeString, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDate, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDuration, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, 5, 0, 5),
+	}
+	for _, test := range tests {
+		s.testAggFunc(c, test)
+	}
 }
