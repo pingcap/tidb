@@ -663,7 +663,7 @@ func CallDebugRPC(ctx context.Context, client debugpb.DebugClient, req *Request)
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return resp, nil
 }
