@@ -80,11 +80,11 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	gVal, ok, err := GetSessionOnlySysVars(s, key)
 	if err != nil || ok {
-		return gVal, errors.Trace(err)
+		return gVal, err
 	}
 	gVal, err = s.GlobalVarsAccessor.GetGlobalSysVar(key)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	s.systems[key] = gVal
 	return gVal, nil
@@ -107,7 +107,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		conf := config.GetGlobalConfig()
 		j, err := json.MarshalIndent(conf, "", "\t")
 		if err != nil {
-			return "", false, errors.Trace(err)
+			return "", false, err
 		}
 		return string(j), true, nil
 	case TiDBForcePriority:
@@ -122,8 +122,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return config.GetGlobalConfig().Plugin.Dir, true, nil
 	case PluginLoad:
 		return config.GetGlobalConfig().Plugin.Load, true, nil
-	case TiDBCheckMb4ValueInUtf8:
-		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8), true, nil
+	case TiDBCheckMb4ValueInUTF8:
+		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -141,11 +141,11 @@ func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	gVal, ok, err := GetScopeNoneSystemVar(key)
 	if err != nil || ok {
-		return gVal, errors.Trace(err)
+		return gVal, err
 	}
 	gVal, err = s.GlobalVarsAccessor.GetGlobalSysVar(key)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	return gVal, nil
 }
@@ -179,11 +179,11 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 		sVal, err = value.ToString()
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	sVal, err = ValidateSetSystemVar(vars, name, sVal)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return vars.SetSystemVar(name, sVal)
 }
@@ -359,9 +359,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
-		TiDBOptInSubqToJoinAndAgg,
+		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBCheckMb4ValueInUtf8:
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
+		TiDBCheckMb4ValueInUTF8:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}
@@ -417,7 +418,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime:
 		v, err := setAnalyzeTime(vars, value)
 		if err != nil {
-			return "", errors.Trace(err)
+			return "", err
 		}
 		return v, nil
 	case TxnIsolation, TransactionIsolation:
@@ -488,9 +489,20 @@ func parseTimeZone(s string) (*time.Location, error) {
 	}
 
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
+	// The time zone's value should in [-12:59,+14:00].
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
 		d, err := types.ParseDuration(nil, s[1:], 0)
 		if err == nil {
+			if s[0] == '-' {
+				if d.Duration > 12*time.Hour+59*time.Minute {
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+				}
+			} else {
+				if d.Duration > 14*time.Hour {
+					return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+				}
+			}
+
 			ofst := int(d.Duration / time.Second)
 			if s[0] == '-' {
 				ofst = -ofst
@@ -515,13 +527,13 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// TODO: Consider time_zone variable.
 	t1, err := t.Time.GoTime(time.Local)
 	s.SnapshotTS = GoTimeToTS(t1)
-	return errors.Trace(err)
+	return err
 }
 
 // GoTimeToTS converts a Go time to uint64 timestamp.
@@ -545,7 +557,7 @@ func setAnalyzeTime(s *SessionVars, val string) (string, error) {
 		t, err = time.ParseInLocation(AnalyzeFullTimeFormat, val, s.TimeZone)
 	}
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	return t.Format(AnalyzeFullTimeFormat), nil
 }

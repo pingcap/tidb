@@ -129,8 +129,8 @@ const (
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
-	// TiDBCheckMb4ValueInUtf8 is used to control whether to enable the check wrong utf8 value.
-	TiDBCheckMb4ValueInUtf8 = "tidb_check_mb4_value_in_utf8"
+	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
+	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -239,6 +239,9 @@ const (
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	TiDBSlowQueryFile = "tidb_slow_query_file"
+
+	// TiDBEnableFastAnalyze indicates to use fast analyze.
+	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
 )
 
 // Default TiDB system variable values.
@@ -291,6 +294,7 @@ const (
 	DefTiDBUseRadixJoin              = false
 	DefEnableWindowFunction          = false
 	DefTiDBDDLSlowOprThreshold       = 300
+	DefTiDBUseFastAnalyze            = false
 )
 
 // Process global variables.

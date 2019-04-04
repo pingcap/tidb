@@ -235,8 +235,14 @@ var (
 	_ builtinFunc = &builtinSubDateDatetimeDecimalSig{}
 )
 
-func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
-	tr, err := types.RoundFrac(t, fsp)
+func convertTimeToMysqlTime(t time.Time, fsp int, roundMode types.RoundMode) (types.Time, error) {
+	var tr time.Time
+	var err error
+	if roundMode == types.ModeTruncate {
+		tr, err = types.TruncateFrac(t, fsp)
+	} else {
+		tr, err = types.RoundFrac(t, fsp)
+	}
 	if err != nil {
 		return types.Time{}, err
 	}
@@ -1073,21 +1079,45 @@ func (b *builtinDayNameSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinDayNameSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
-func (b *builtinDayNameSig) evalString(row chunk.Row) (string, bool, error) {
+func (b *builtinDayNameSig) evalIndex(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return "", isNull, err
+		return 0, isNull, err
 	}
 	if arg.InvalidZero() {
-		return "", true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
 	}
 	// Monday is 0, ... Sunday = 6 in MySQL
 	// but in go, Sunday is 0, ... Saturday is 6
 	// w will do a conversion.
 	res := (int64(arg.Time.Weekday()) + 6) % 7
-	return types.WeekdayNames[res], false, nil
+	return res, false, nil
+}
+
+// evalString evals a builtinDayNameSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
+func (b *builtinDayNameSig) evalString(row chunk.Row) (string, bool, error) {
+	idx, isNull, err := b.evalIndex(row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return types.WeekdayNames[idx], false, nil
+}
+
+func (b *builtinDayNameSig) evalReal(row chunk.Row) (float64, bool, error) {
+	idx, isNull, err := b.evalIndex(row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	return float64(idx), false, nil
+}
+
+func (b *builtinDayNameSig) evalInt(row chunk.Row) (int64, bool, error) {
+	idx, isNull, err := b.evalIndex(row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	return idx, false, nil
 }
 
 type dayOfMonthFunctionClass struct {
@@ -1605,7 +1635,7 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, row chunk.Row, arg Expres
 
 	sc := ctx.GetSessionVars().StmtCtx
 	tmp := time.Unix(integralPart, fractionalPart).In(sc.TimeZone)
-	t, err := convertTimeToMysqlTime(tmp, fsp)
+	t, err := convertTimeToMysqlTime(tmp, fsp, types.ModeHalfEven)
 	if err != nil {
 		return res, true, err
 	}
@@ -1927,7 +1957,7 @@ func (b *builtinSysDateWithFspSig) evalTime(row chunk.Row) (d types.Time, isNull
 
 	loc := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(loc)
-	result, err := convertTimeToMysqlTime(now, int(fsp))
+	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeHalfEven)
 	if err != nil {
 		return types.Time{}, true, err
 	}
@@ -1949,7 +1979,7 @@ func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
 func (b *builtinSysDateWithoutFspSig) evalTime(row chunk.Row) (d types.Time, isNull bool, err error) {
 	tz := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(tz)
-	result, err := convertTimeToMysqlTime(now, 0)
+	result, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)
 	if err != nil {
 		return types.Time{}, true, err
 	}
@@ -2278,7 +2308,7 @@ func evalUTCTimestampWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool,
 	if nowTs.Equal(time.Time{}) {
 		*nowTs = time.Now()
 	}
-	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp)
+	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeHalfEven)
 	if err != nil {
 		return types.Time{}, true, err
 	}
@@ -2370,7 +2400,15 @@ func evalNowWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool, error) {
 		}
 	}
 
-	result, err := convertTimeToMysqlTime(*sysTs, fsp)
+	// In MySQL's implementation, now() will truncate the result instead of rounding it.
+	// Results below are from MySQL 5.7, which can prove it.
+	// mysql> select now(6), now(3), now();
+	//	+----------------------------+-------------------------+---------------------+
+	//	| now(6)                     | now(3)                  | now()               |
+	//	+----------------------------+-------------------------+---------------------+
+	//	| 2019-03-25 15:57:56.612966 | 2019-03-25 15:57:56.612 | 2019-03-25 15:57:56 |
+	//	+----------------------------+-------------------------+---------------------+
+	result, err := convertTimeToMysqlTime(*sysTs, fsp, types.ModeTruncate)
 	if err != nil {
 		return types.Time{}, true, err
 	}
@@ -2678,6 +2716,13 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 	}
 
 	date.Time = types.FromGoTime(goTime)
+	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
+	if err != nil {
+		return types.Time{}, true, err
+	}
+	if overflow {
+		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
 	return date, false, nil
 }
 
@@ -2704,6 +2749,13 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 	}
 
 	date.Time = types.FromGoTime(goTime)
+	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
+	if err != nil {
+		return types.Time{}, true, err
+	}
+	if overflow {
+		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
 	return date, false, nil
 }
 
@@ -3577,7 +3629,16 @@ func goTimeToMysqlUnixTimestamp(t time.Time, decimal int) (*types.MyDecimal, err
 	if err != nil {
 		return nil, err
 	}
-	err = dec.Round(dec, decimal, types.ModeHalfEven)
+
+	// In MySQL's implementation, unix_timestamp() will truncate the result instead of rounding it.
+	// Results below are from MySQL 5.7, which can prove it.
+	//	mysql> select unix_timestamp(), unix_timestamp(now(0)), now(0), unix_timestamp(now(3)), now(3), now(6);
+	//	+------------------+------------------------+---------------------+------------------------+-------------------------+----------------------------+
+	//	| unix_timestamp() | unix_timestamp(now(0)) | now(0)              | unix_timestamp(now(3)) | now(3)                  | now(6)                     |
+	//	+------------------+------------------------+---------------------+------------------------+-------------------------+----------------------------+
+	//	|       1553503194 |             1553503194 | 2019-03-25 16:39:54 |         1553503194.992 | 2019-03-25 16:39:54.992 | 2019-03-25 16:39:54.992969 |
+	//	+------------------+------------------------+---------------------+------------------------+-------------------------+----------------------------+
+	err = dec.Round(dec, decimal, types.ModeTruncate)
 	return dec, err
 }
 

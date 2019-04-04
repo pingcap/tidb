@@ -621,13 +621,18 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedDeny(c, mysql.TypeYear, 123, "<nil>")
 	signedDeny(c, mysql.TypeYear, 3000, "<nil>")
 	signedAccept(c, mysql.TypeYear, "2000", "2000")
+	signedAccept(c, mysql.TypeYear, "abc", "0")
+	signedAccept(c, mysql.TypeYear, "00abc", "2000")
+	signedAccept(c, mysql.TypeYear, "0019", "2019")
 
 	// time from string
 	signedAccept(c, mysql.TypeDate, "2012-08-23", "2012-08-23")
 	signedAccept(c, mysql.TypeDatetime, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
 	signedAccept(c, mysql.TypeDatetime, ZeroDatetime, "0000-00-00 00:00:00")
 	signedAccept(c, mysql.TypeDatetime, int64(0), "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeDatetime, NewDecFromFloatForTest(20010101100000.123456), "2001-01-01 10:00:00")
 	signedAccept(c, mysql.TypeTimestamp, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
+	signedAccept(c, mysql.TypeTimestamp, NewDecFromFloatForTest(20010101100000.123456), "2001-01-01 10:00:00")
 	signedAccept(c, mysql.TypeDuration, "10:11:12", "10:11:12")
 	signedAccept(c, mysql.TypeDuration, ZeroDatetime, "00:00:00")
 	signedAccept(c, mysql.TypeDuration, ZeroDuration, "00:00:00")

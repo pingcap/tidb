@@ -83,10 +83,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			logutil.Logger(context.Background()).Error("[ddl] init domain failed",
 				zap.Error(err1))
 		}
-		return true, errors.Trace(err1)
+		return true, err1
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	dm.domains[key] = d
 
@@ -146,7 +146,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 		logutil.Logger(context.Background()).Warn("compiling",
 			zap.String("source", src),
 			zap.Error(err))
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return stmts, nil
 }
@@ -155,7 +155,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) (sqlexec.Statement, error) {
 	compiler := executor.Compiler{Ctx: sctx}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	return stmt, errors.Trace(err)
+	return stmt, err
 }
 
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
@@ -214,7 +214,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	sessVars := se.GetSessionVars()
 	// All the history should be added here.
 	sessVars.TxnCtx.StatementCount++
-	if !s.IsReadOnly() {
+	if !s.IsReadOnly(sessVars) {
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
@@ -243,7 +243,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// Reset txn state to invalid to dispose the pending start ts.
 		se.txn.changeToInvalid()
 	}
-	return rs, errors.Trace(err)
+	return rs, err
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
@@ -270,7 +270,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 
 		err := rs.Next(ctx, req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if req.NumRows() == 0 {
 			break

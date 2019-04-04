@@ -51,8 +51,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	logutil "github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -100,7 +101,7 @@ func writeData(w http.ResponseWriter, data interface{}) {
 		writeError(w, err)
 		return
 	}
-	log.Info(string(js))
+	logutil.Logger(context.Background()).Info(string(js))
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
@@ -147,17 +148,28 @@ func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 		},
 	}
 	kvResp, err := t.store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
-	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
-
 	if err != nil {
+		logutil.Logger(context.Background()).Info("get MVCC by encoded key failed",
+			zap.Binary("encodeKey", encodedKey),
+			zap.Reflect("region", keyLocation.Region),
+			zap.Binary("startKey", keyLocation.StartKey),
+			zap.Binary("endKey", keyLocation.EndKey),
+			zap.Reflect("kvResp", kvResp),
+			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return kvResp.MvccGetByKey, nil
 }
 
-func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+type mvccKV struct {
+	Key   string                        `json:"key"`
+	Value *kvrpcpb.MvccGetByKeyResponse `json:"value"`
+}
+
+func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
-	return t.getMvccByEncodedKey(encodedKey)
+	data, err := t.getMvccByEncodedKey(encodedKey)
+	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), data}, err
 }
 
 func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
@@ -165,7 +177,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	for {
 		curRegion, err := t.regionCache.LocateKey(bo, startKey)
 		if err != nil {
-			log.Error(startTS, startKey, err)
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS), zap.Binary("startKey", startKey), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 
@@ -177,19 +189,39 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		}
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := t.store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
-		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
 		if err != nil {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		data := kvResp.MvccGetByStartTS
 		if err := data.GetRegionError(); err != nil {
-			log.Warn(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			logutil.Logger(context.Background()).Warn("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.Stringer("error", err))
 			continue
 		}
 
 		if len(data.GetError()) > 0 {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), data.GetError())
+			logutil.Logger(context.Background()).Error("get MVCC by startTS failed",
+				zap.Uint64("txnStartTS", startTS),
+				zap.Binary("startKey", startKey),
+				zap.Reflect("region", curRegion.Region),
+				zap.Binary("curRegion startKey", curRegion.StartKey),
+				zap.Binary("curRegion endKey", curRegion.EndKey),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", data.GetError()))
 			return nil, errors.New(data.GetError())
 		}
 
@@ -208,7 +240,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	}
 }
 
-func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
+func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*mvccKV, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
@@ -225,7 +257,8 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return t.getMvccByEncodedKey(encodedKey)
+	data, err := t.getMvccByEncodedKey(encodedKey)
+	return &mvccKV{strings.ToUpper(hex.EncodeToString(encodedKey)), data}, err
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
@@ -257,15 +290,23 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 }
 
 func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
-	schema, err := t.schema()
+	tbInfo, err := t.getTable(dbName, tableName)
 	if err != nil {
 		return 0, errors.Trace(err)
+	}
+	return tbInfo.ID, nil
+}
+
+func (t *tikvHandlerTool) getTable(dbName, tableName string) (*model.TableInfo, error) {
+	schema, err := t.schema()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
-		return 0, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return tableVal.Meta().ID, nil
+	return tableVal.Meta(), nil
 }
 
 func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
@@ -379,7 +420,7 @@ func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, er
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			log.Error(err)
+			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
 		}
 	}()
 	var regionResp storeHotRegionInfos
@@ -406,7 +447,7 @@ func (t *tikvHandlerTool) fetchRegionTableIndex(metrics map[uint64]regionMetric)
 	for regionID, regionMetric := range metrics {
 		region, err := t.regionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
 		if err != nil {
-			log.Error(err)
+			logutil.Logger(context.Background()).Error("locate region failed", zap.Error(err))
 			continue
 		}
 
@@ -735,9 +776,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
 			switch checkMb4ValueInUtf8 {
 			case "0":
-				config.GetGlobalConfig().CheckMb4ValueInUtf8 = false
+				config.GetGlobalConfig().CheckMb4ValueInUTF8 = false
 			case "1":
-				config.GetGlobalConfig().CheckMb4ValueInUtf8 = true
+				config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -1430,7 +1471,8 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			data, err = h.handleMvccGetByIdx(params, values)
 		}
 	case opMvccGetByKey:
-		data, err = h.handleMvccGetByKey(params)
+		decode := len(req.URL.Query().Get("decode")) > 0
+		data, err = h.handleMvccGetByKey(params, decode)
 	case opMvccGetByTxn:
 		data, err = h.handleMvccGetByTxn(params)
 	default:
@@ -1474,17 +1516,73 @@ func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 	return h.getMvccByIdxValue(idx, values, idxCols, handleStr)
 }
 
-func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {
+func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData bool) (interface{}, error) {
 	handle, err := strconv.ParseInt(params[pHandle], 0, 64)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	tableID, err := h.getTableID(params[pDBName], params[pTableName])
+	tb, err := h.getTable(params[pDBName], params[pTableName])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return h.getMvccByHandle(tableID, handle)
+	resp, err := h.getMvccByHandle(tb.ID, handle)
+	if err != nil {
+		return nil, err
+	}
+	if !decodeData {
+		return resp, nil
+	}
+	colMap := make(map[int64]*types.FieldType, 3)
+	for _, col := range tb.Columns {
+		colMap[col.ID] = &col.FieldType
+	}
+
+	respValue := resp.Value
+	var result interface{} = resp
+	if respValue.Info != nil {
+		datas := make(map[string][]map[string]string)
+		for _, w := range respValue.Info.Writes {
+			if len(w.ShortValue) > 0 {
+				datas[strconv.FormatUint(w.StartTs, 10)], err = h.decodeMvccData(w.ShortValue, colMap, tb)
+			}
+		}
+
+		for _, v := range respValue.Info.Values {
+			if len(v.Value) > 0 {
+				datas[strconv.FormatUint(v.StartTs, 10)], err = h.decodeMvccData(v.Value, colMap, tb)
+			}
+		}
+
+		if len(datas) > 0 {
+			re := map[string]interface{}{
+				"key":  resp.Key,
+				"info": respValue.Info,
+				"data": datas,
+			}
+			if err != nil {
+				re["decode_error"] = err.Error()
+			}
+			result = re
+		}
+	}
+
+	return result, nil
+}
+
+func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) ([]map[string]string, error) {
+	rs, err := tablecodec.DecodeRow(bs, colMap, time.UTC)
+	var record []map[string]string
+	for _, col := range tb.Columns {
+		if c, ok := rs[col.ID]; ok {
+			data := "nil"
+			if !c.IsNull() {
+				data, err = c.ToString()
+			}
+			record = append(record, map[string]string{col.Name.O: data})
+		}
+	}
+	return record, err
 }
 
 func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface{}, error) {
@@ -1554,7 +1652,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
-	var allVersions []domain.ServerVersionInfo
+	allVersions := make([]domain.ServerVersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
 		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
 			continue

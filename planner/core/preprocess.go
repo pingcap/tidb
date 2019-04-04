@@ -339,7 +339,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
-			p.err = errors.Trace(err)
+			p.err = err
 			return
 		}
 		countPrimaryKey += isPrimary(colDef.Options)
@@ -570,7 +570,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		}
 		err := ddl.IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, tp.Charset)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		if tp.Decimal > mysql.MaxFloatingTypeScale {
@@ -677,7 +677,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
-		p.err = errors.Trace(err)
+		p.err = err
 		return
 	}
 	tn.TableInfo = table.Meta()
