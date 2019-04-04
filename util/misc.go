@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -66,8 +68,9 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 			recoverFn(r)
 		}
 		if r != nil {
-			buf := GetStack()
-			log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
+			logutil.Logger(context.Background()).Error("panic in the recoverable goroutine",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
 		}
 	}()
 	exec()

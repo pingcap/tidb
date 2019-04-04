@@ -27,17 +27,18 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -841,7 +842,7 @@ func waitUntilServerOnline(statusPort uint) {
 		}
 	}
 	if retry == retryTime {
-		log.Fatalf("Failed to connect db for %d retries in every 10 ms", retryTime)
+		log.Fatal("failed to connect DB in every 10 ms", zap.Int("retryTime", retryTime))
 	}
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
@@ -855,6 +856,6 @@ func waitUntilServerOnline(statusPort uint) {
 		time.Sleep(time.Millisecond * 10)
 	}
 	if retry == retryTime {
-		log.Fatalf("Failed to connect http status for %d retries in every 10 ms", retryTime)
+		log.Fatal("failed to connect HTTP status in every 10 ms", zap.Int("retryTime", retryTime))
 	}
 }

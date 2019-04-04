@@ -20,14 +20,16 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
 // SplitRegion splits the region contains splitKey into 2 regions: [start,
 // splitKey) and [splitKey, end).
 func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
-	log.Infof("start split_region at %q", splitKey)
+	logutil.Logger(context.Background()).Info("start split region",
+		zap.Binary("at", splitKey))
 	bo := NewBackoffer(context.Background(), splitRegionBackoff)
 	sender := NewRegionRequestSender(s.regionCache, s.client)
 	req := &tikvrpc.Request{
@@ -43,7 +45,8 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 			return errors.Trace(err)
 		}
 		if bytes.Equal(splitKey, loc.StartKey) {
-			log.Infof("skip split_region region at %q", splitKey)
+			logutil.Logger(context.Background()).Info("skip split region",
+				zap.Binary("at", splitKey))
 			return nil
 		}
 		res, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
@@ -61,7 +64,10 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 			}
 			continue
 		}
-		log.Infof("split_region at %q complete, new regions: %v, %v", splitKey, res.SplitRegion.GetLeft(), res.SplitRegion.GetRight())
+		logutil.Logger(context.Background()).Info("split region complete",
+			zap.Binary("at", splitKey),
+			zap.Stringer("new region left", res.SplitRegion.GetLeft()),
+			zap.Stringer("new region right", res.SplitRegion.GetRight()))
 		return nil
 	}
 }
