@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
@@ -75,7 +74,7 @@ func (ts *TiDBStatement) ID() int {
 func (ts *TiDBStatement) Execute(ctx context.Context, args ...interface{}) (rs ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ctx, ts.id, args...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if tidbRecordset == nil {
 		return
@@ -155,7 +154,7 @@ func (ts *TiDBStatement) Close() error {
 	//TODO close at tidb level
 	err := ts.ctx.session.DropPreparedStmt(ts.id)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 
@@ -170,12 +169,12 @@ func (ts *TiDBStatement) Close() error {
 func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (QueryCtx, error) {
 	se, err := session.CreateSession(qd.store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	se.SetTLSState(tlsState)
 	err = se.SetCollation(int(collation))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	se.SetClientCapability(capability)
 	se.SetConnectionID(connID)
@@ -290,7 +289,7 @@ func (tc *TiDBContext) Auth(user *auth.UserIdentity, auth []byte, salt []byte) b
 func (tc *TiDBContext) FieldList(table string) (columns []*ColumnInfo, err error) {
 	fields, err := tc.session.FieldList(table)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	columns = make([]*ColumnInfo, 0, len(fields))
 	for _, f := range fields {

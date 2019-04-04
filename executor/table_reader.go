@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -82,7 +81,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	if e.runtimeStats != nil {
@@ -95,7 +94,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		pkTP := ts.Table.GetPkColInfo().FieldType
 		e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
@@ -108,7 +107,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
-		return errors.Trace(err)
+		return err
 	}
 	if len(secondPartRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
@@ -118,7 +117,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
-		return errors.Trace(err)
+		return err
 	}
 	e.resultHandler.open(firstResult, secondResult)
 	return nil
@@ -139,7 +138,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 		e.feedback.Invalidate()
 		return err
 	}
-	return errors.Trace(nil)
+	return nil
 }
 
 // Close implements the Executor Close interface.
@@ -150,7 +149,7 @@ func (e *TableReaderExecutor) Close() error {
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)
-	return errors.Trace(err)
+	return err
 }
 
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
@@ -165,11 +164,11 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	result.Fetch(ctx)
 	return result, nil
@@ -201,7 +200,7 @@ func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) e
 	if !tr.optionalFinished {
 		err := tr.optionalResult.Next(ctx, chk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if chk.NumRows() > 0 {
 			return nil
@@ -215,7 +214,7 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 	if !tr.optionalFinished {
 		data, err = tr.optionalResult.NextRaw(ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if data != nil {
 			return data, nil
@@ -224,7 +223,7 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 	}
 	data, err = tr.result.NextRaw(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return data, nil
 }
@@ -232,5 +231,5 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 func (tr *tableResultHandler) Close() error {
 	err := closeAll(tr.optionalResult, tr.result)
 	tr.optionalResult, tr.result = nil, nil
-	return errors.Trace(err)
+	return err
 }

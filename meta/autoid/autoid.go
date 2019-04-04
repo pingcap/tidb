@@ -91,7 +91,10 @@ func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 		var err1 error
 		m := meta.NewMeta(txn)
 		autoID, err1 = m.GetAutoTableID(alloc.dbID, tableID)
-		return errors.Trace(err1)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.GlobalAutoID, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	if alloc.isUnsigned {
@@ -116,7 +119,7 @@ func (alloc *allocator) rebase4Unsigned(tableID int64, requiredBase uint64, allo
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := m.GetAutoTableID(alloc.dbID, tableID)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 		uCurrentEnd := uint64(currentEnd)
 		if allocIDs {
@@ -162,7 +165,7 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := m.GetAutoTableID(alloc.dbID, tableID)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 		if allocIDs {
 			newBase = mathutil.MaxInt64(currentEnd, requiredBase)
@@ -217,7 +220,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 			var err1 error
 			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return err1
 			}
 			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(step)))
 			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
@@ -250,7 +253,7 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 			var err1 error
 			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return err1
 			}
 			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, step)
 			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
