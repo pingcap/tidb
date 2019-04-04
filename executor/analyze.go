@@ -596,6 +596,19 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse,
 	return nil
 }
 
+func (e *AnalyzeFastExec) handleScanResponse(resp *kvrpcpb.ScanResponse, collectors []*statistics.SampleCollector) error {
+	length := int32(len(resp.Pairs))
+	timeZone := e.ctx.GetSessionVars().Location()
+	hasPKInfo := 0
+	if e.pkInfo != nil {
+		hasPKInfo = 1
+	}
+	hasIdxInfo := len(e.idxsInfo)
+	for i, pair := range resp.Pairs {
+
+	}
+}
+
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*statistics.SampleCollector) error {
 	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for i, t := range e.scanTasks {
@@ -615,7 +628,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 		if err != nil {
 			return errors.Trace(err)
 		}
-
+		err = e.handleScanResponse()
 	}
 	return nil
 }
