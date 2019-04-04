@@ -1201,7 +1201,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 					1,             // SEQ_IN_INDEX
 					col.Name.O,    // COLUMN_NAME
 					"A",           // COLLATION
-					0,             // CARDINALITY
+					nil,           // CARDINALITY
 					nil,           // SUB_PART
 					nil,           // PACKED
 					"",            // NULLABLE
@@ -1238,7 +1238,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 				i+1,           // SEQ_IN_INDEX
 				key.Name.O,    // COLUMN_NAME
 				"A",           // COLLATION
-				0,             // CARDINALITY
+				nil,           // CARDINALITY
 				nil,           // SUB_PART
 				nil,           // PACKED
 				nullable,      // NULLABLE
