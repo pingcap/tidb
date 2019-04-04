@@ -219,7 +219,7 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 	return leftCond, rightCond
 }
 
-func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
+func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan, filterCond bool) (
 	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {
 	for _, expr := range conditions {
@@ -243,7 +243,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		// `columns` may be empty, if the condition is like `correlated_column op constant`, or `constant`,
 		// push this kind of constant condition down according to join type.
 		if len(columns) == 0 {
-			leftCond, rightCond = p.pushDownConstExpr(expr, leftCond, rightCond, deriveLeft || deriveRight)
+			leftCond, rightCond = p.pushDownConstExpr(expr, leftCond, rightCond, filterCond)
 			continue
 		}
 		allFromLeft, allFromRight := true, true
