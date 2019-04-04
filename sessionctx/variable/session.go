@@ -390,7 +390,6 @@ func NewSessionVars() *SessionVars {
 		L2CacheSize:               cpuid.CPU.Cache.L2,
 		CommandValue:              uint32(mysql.ComSleep),
 		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
-		EnableFastAnalyze:         false,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
