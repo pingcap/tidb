@@ -438,7 +438,7 @@ type AnalyzeFastExec struct {
 	cache           *tikv.RegionCache
 	wg              *sync.WaitGroup
 	sampLocs        chan *tikv.KeyLocation
-	sampLocRowCount uint64
+	rowCount        uint64
 	tasks           chan *AnalyzeFastTask
 	scanTasks       []*tikv.KeyLocation
 }
@@ -491,7 +491,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 					*err = errors.Trace(*err)
 					return
 				}
-				newCount := atomic.AddUint64(&e.sampLocRowCount, cnt)
+				newCount := atomic.AddUint64(&e.rowCount, cnt)
 				task := &AnalyzeFastTask{
 					Location:  loc,
 					LRowCount: newCount - cnt,
@@ -528,7 +528,7 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 
 	// Do get regions row count.
 	close(e.sampLocs)
-	atomic.StoreUint64(&e.sampLocRowCount, 0)
+	atomic.StoreUint64(&e.rowCount, 0)
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
 	e.wg.Add(e.concurrency)
@@ -596,22 +596,57 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse,
 	return nil
 }
 
-func (e *AnalyzeFastExec) handleScanResponse(resp *kvrpcpb.ScanResponse, collectors []*statistics.SampleCollector) error {
-	length := int32(len(resp.Pairs))
+func (e *AnalyzeFastExec) handleScanResponse(resp *kvrpcpb.ScanResponse, collectors []*statistics.SampleCollector) (err error) {
 	timeZone := e.ctx.GetSessionVars().Location()
 	hasPKInfo := 0
 	if e.pkInfo != nil {
 		hasPKInfo = 1
 	}
 	hasIdxInfo := len(e.idxsInfo)
-	for i, pair := range resp.Pairs {
+	for _, pair := range resp.Pairs {
+		// reservoir sampling
+		e.rowCount++
+		randNum := rand.Int63n(int64(e.rowCount))
+		if randNum > int64(maxSampleSize) {
+			continue
+		}
 
+		p := rand.Int63n(int64(maxRegionSampleSize))
+		if hasPKInfo > 0 {
+			collectors[0].Samples[p].Value, err = tablecodec.DecodeColumnValue(pair.Value, &e.pkInfo.FieldType, timeZone)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		for j, colInfo := range e.colsInfo {
+			collectors[hasPKInfo+j].Samples[p].Value, err = tablecodec.DecodeColumnValue(pair.Value, &colInfo.FieldType, timeZone)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		for j, idxInfo := range e.idxsInfo {
+			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
+			for _, idxCol := range idxInfo.Columns {
+				val, err := tablecodec.DecodeColumnValue(pair.Value, &e.table.Cols()[idxCol.Offset].FieldType, timeZone)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				idxVals = append(idxVals, val)
+			}
+			var bytes []byte
+			bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples[p].Value = types.NewBytesDatum(bytes)
+		}
 	}
+	return nil
 }
 
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*statistics.SampleCollector) error {
 	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
-	for i, t := range e.scanTasks {
+	for _, t := range e.scanTasks {
 		req := &tikvrpc.Request{
 			Type: tikvrpc.CmdScan,
 			Scan: &kvrpcpb.ScanRequest{
@@ -628,7 +663,10 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = e.handleScanResponse()
+		err = e.handleScanResponse(resp.Scan, collectors)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -641,6 +679,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collec
 			}
 		}
 	}()
+	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for {
 		task, ok := <-e.tasks
 		if !ok {
@@ -724,11 +763,13 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		}
 	}
 
-	// TODO: here need to run scan tasks
-	err := e.handleScanTasks(bo, collectors)
-	// ************
-
 	var err error
+	bo := tikv.NewBackoffer(context.Background(), 500)
+	err = e.handleScanTasks(bo, collectors)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
 	hists, cms := make([]*statistics.Histogram, e.concurrency), make([]*statistics.CMSketch, e.concurrency)
 	for i := 0; i < length; i++ {
 		if i == 0 && hasPKInfo > 0 {
@@ -754,13 +795,13 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 			continue
 		}
 
-		if e.sampLocRowCount < maxSampleSize*2 {
+		if e.rowCount < maxSampleSize*2 {
 			// TODO: return normal Analyze
 		}
 
 		randPos := make([]uint64, 0, maxSampleSize+1)
 		for i := 0; i < maxSampleSize; i++ {
-			randPos = append(randPos, uint64(rand.Int63n(int64(e.sampLocRowCount))))
+			randPos = append(randPos, uint64(rand.Int63n(int64(e.rowCount))))
 		}
 		sort.Slice(randPos, func(i, j int) bool {
 			return randPos[i] < randPos[j]
