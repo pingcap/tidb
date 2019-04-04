@@ -148,7 +148,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 	err = plannercore.Preprocess(e.ctx, stmt, e.is, plannercore.InPrepare)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// The parameter markers are appended in visiting order, which may not
@@ -176,7 +176,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	var p plannercore.Plan
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if _, ok := stmt.(*ast.SelectStmt); ok {
 		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
@@ -215,13 +215,13 @@ func (e *ExecuteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 func (e *ExecuteExec) Build() error {
 	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if ok {
 		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	b := newExecutorBuilder(e.ctx, e.is)
 	stmtExec := b.build(e.plan)
@@ -272,7 +272,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 	is := GetInfoSchema(ctx)
 	execPlan, err := planner.Optimize(ctx, execStmt, is)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	stmt := &ExecStmt{
