@@ -176,7 +176,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	for i, usingVar := range e.UsingVars {
 		val, err := usingVar.Eval(chunk.Row{})
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		param := prepared.Params[i].(*driver.ParamMarkerExpr)
 		param.Datum = val
@@ -194,7 +194,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	}
 	p, err := e.getPhysicalPlan(ctx, is, prepared)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	e.Stmt = prepared.Stmt
 	e.Plan = p
@@ -212,14 +212,14 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			return plan, nil
 		}
 	}
 	p, err := OptimizeAstNode(ctx, prepared.Stmt, is)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if prepared.UseCache {
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
@@ -243,7 +243,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if pkCol != nil {
 			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		} else {
 			ts.Ranges = ranger.FullIntRange(false)
@@ -252,19 +252,19 @@ func (e *Execute) rebuildRange(p Plan) error {
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case *PointGetPlan:
 		if x.HandleParam != nil {
 			x.Handle, err = x.HandleParam.Datum.ToInt64(sc)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			return nil
 		}
@@ -278,7 +278,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	case *Insert:
