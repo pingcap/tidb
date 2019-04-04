@@ -1685,7 +1685,7 @@ type dbTableInfo struct {
 func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	tableID := params[pTableID]
-	tableOrPartitionID, err := strconv.Atoi(tableID)
+	physicalID, err := strconv.Atoi(tableID)
 	if err != nil {
 		writeError(w, errors.Errorf("Wrong tableID: %v", tableID))
 		return
@@ -1700,7 +1700,7 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	dbTblInfo := dbTableInfo{
 		SchemaVersion: schema.SchemaMetaVersion(),
 	}
-	tbl, ok := schema.TableByID(int64(tableOrPartitionID))
+	tbl, ok := schema.TableByID(int64(physicalID))
 	if ok {
 		dbTblInfo.TableInfo = tbl.Meta()
 		dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
@@ -1713,7 +1713,8 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeData(w, dbTblInfo)
 		return
 	}
-	dbTblInfo.TableInfo, dbTblInfo.DBInfo = findTableByPartitionID(schema, int64(tableOrPartitionID))
+	// The physicalID maybe a partition ID of the partition-table.
+	dbTblInfo.TableInfo, dbTblInfo.DBInfo = findTableByPartitionID(schema, int64(physicalID))
 	if dbTblInfo.TableInfo == nil {
 		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return
@@ -1721,6 +1722,8 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	writeData(w, dbTblInfo)
 }
 
+// findTableByPartitionID finds the partition-table info by the partitionID.
+// This function will traverse all the tables to find the partitionID partition in which partition-table.
 func findTableByPartitionID(schema infoschema.InfoSchema, partitionID int64) (*model.TableInfo, *model.DBInfo) {
 	allDBs := schema.AllSchemas()
 	for _, db := range allDBs {
