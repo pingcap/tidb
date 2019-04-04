@@ -190,6 +190,7 @@ func (ts *testDDLSuite) TestDDLColumnOptionRestore(c *C) {
 		{"generated always as(id + 1) virtual", "GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
 		{"generated always as(id + 1) stored", "GENERATED ALWAYS AS(`id`+1) STORED"},
 		{"REFERENCES parent(id)", "REFERENCES `parent`(`id`)"},
+		{"COLLATE utf8_bin", "COLLATE utf8_bin"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateTableStmt).Cols[0].Options[0]
@@ -238,6 +239,7 @@ func (ts *testDDLSuite) TestDDLColumnDefRestore(c *C) {
 		{"id text charset UTF8", "`id` TEXT CHARACTER SET UTF8"},
 		{"id varchar(50) collate UTF8MB4_CZECH_CI", "`id` VARCHAR(50) COLLATE UTF8MB4_CZECH_CI"},
 		{"id varchar(50) collate utf8", "`id` VARCHAR(50) COLLATE utf8"},
+		{"id varchar(50) collate utf8 collate utf8mb4_bin", "`id` VARCHAR(50) COLLATE utf8 COLLATE utf8mb4_bin"},
 		{"c1 char(10) character set LATIN1 collate latin1_german1_ci", "`c1` CHAR(10) CHARACTER SET LATIN1 COLLATE latin1_german1_ci"},
 
 		{"id int(11) PRIMARY KEY", "`id` INT(11) PRIMARY KEY"},
@@ -248,6 +250,8 @@ func (ts *testDDLSuite) TestDDLColumnDefRestore(c *C) {
 		{"id INT(11) DEFAULT '10'", "`id` INT(11) DEFAULT '10'"},
 		{"id INT(11) DEFAULT 1.1", "`id` INT(11) DEFAULT 1.1"},
 		{"id INT(11) UNIQUE KEY", "`id` INT(11) UNIQUE KEY"},
+		{"id INT(11) COLLATE ascii_bin", "`id` INT(11) COLLATE ascii_bin"},
+		{"id INT(11) collate ascii_bin collate utf8_bin", "`id` INT(11) COLLATE ascii_bin COLLATE utf8_bin"},
 		{"id INT(11) on update CURRENT_TIMESTAMP", "`id` INT(11) ON UPDATE CURRENT_TIMESTAMP()"},
 		{"id INT(11) comment 'hello'", "`id` INT(11) COMMENT 'hello'"},
 		{"id INT(11) generated always as(id + 1)", "`id` INT(11) GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
