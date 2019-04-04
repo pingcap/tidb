@@ -221,8 +221,8 @@ const (
       	bind_sql text NOT NULL ,
       	default_db text  NOT NULL,
 		status text NOT NULL,
-		create_time timestamp NOT NULL,
-		update_time timestamp NOT NULL,
+		create_time timestamp(3) NOT NULL,
+		update_time timestamp(3) NOT NULL,
 		charset text NOT NULL,
 		collation text NOT NULL,
 		INDEX primary_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
@@ -764,7 +764,9 @@ func upgradeToVer28(s Session) {
 }
 
 func upgradeToVer29(s Session) {
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD INDEX primary_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change create_time create_time timestamp(3)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change update_time update_time timestamp(3)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info modify create_time primary_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

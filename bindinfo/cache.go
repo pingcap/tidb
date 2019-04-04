@@ -17,8 +17,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -248,12 +250,18 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 	if err != nil {
 		return err
 	}
-	ts := oracle.GetTimeFromTS(txn.StartTS())
+	ts := getTimeStringWithoutZone(oracle.GetTimeFromTS(txn.StartTS()))
 	bindSQL = getEscapeCharacter(bindSQL)
 	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
 		originSQL, bindSQL, defaultDB, using, ts, ts, charset, collation)
 	_, err = exec.Execute(ctx, sql)
 	return err
+}
+
+func getTimeStringWithoutZone(ts time.Time) string {
+	tsString := ts.String()
+	strSlice := strings.Split(tsString, " ")
+	return strings.Join(strSlice[0:len(strSlice)-2], " ")
 }
 
 func getEscapeCharacter(str string) string {
