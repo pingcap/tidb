@@ -10,6 +10,7 @@
 [![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 
 - [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
+- Community [**Slack Channel**](http://bit.ly/tidbslack)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - [**Reddit**](https://www.reddit.com/r/TiDB/)
 - **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
