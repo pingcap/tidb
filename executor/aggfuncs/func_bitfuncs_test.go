@@ -20,10 +20,10 @@ import (
 )
 
 func (s *testSuite) TestMergePartialResult4BitFuncs(c *C) {
-	tests := []aggMergeTest{
-		buildAggMergeTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5, 0, 0, 0),
-		buildAggMergeTester(ast.AggFuncBitOr, mysql.TypeLonglong, 5, 7, 7, 7),
-		buildAggMergeTester(ast.AggFuncBitXor, mysql.TypeLonglong, 5, 4, 5, 1),
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5, 0, 0, 0),
+		buildAggTester(ast.AggFuncBitOr, mysql.TypeLonglong, 5, 7, 7, 7),
+		buildAggTester(ast.AggFuncBitXor, mysql.TypeLonglong, 5, 4, 5, 1),
 	}
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)

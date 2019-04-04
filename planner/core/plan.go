@@ -301,5 +301,5 @@ func (p *baseLogicalPlan) findColumn(column *ast.ColumnName) (*expression.Column
 	if err == nil && col == nil {
 		err = errors.Errorf("column %s not found", column.Name.O)
 	}
-	return col, idx, errors.Trace(err)
+	return col, idx, err
 }

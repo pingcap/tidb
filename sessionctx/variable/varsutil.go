@@ -80,11 +80,11 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	gVal, ok, err := GetSessionOnlySysVars(s, key)
 	if err != nil || ok {
-		return gVal, errors.Trace(err)
+		return gVal, err
 	}
 	gVal, err = s.GlobalVarsAccessor.GetGlobalSysVar(key)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	s.systems[key] = gVal
 	return gVal, nil
@@ -107,7 +107,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		conf := config.GetGlobalConfig()
 		j, err := json.MarshalIndent(conf, "", "\t")
 		if err != nil {
-			return "", false, errors.Trace(err)
+			return "", false, err
 		}
 		return string(j), true, nil
 	case TiDBForcePriority:
@@ -141,11 +141,11 @@ func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	gVal, ok, err := GetScopeNoneSystemVar(key)
 	if err != nil || ok {
-		return gVal, errors.Trace(err)
+		return gVal, err
 	}
 	gVal, err = s.GlobalVarsAccessor.GetGlobalSysVar(key)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	return gVal, nil
 }
@@ -179,11 +179,11 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 		sVal, err = value.ToString()
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	sVal, err = ValidateSetSystemVar(vars, name, sVal)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return vars.SetSystemVar(name, sVal)
 }
@@ -359,7 +359,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
-		TiDBOptInSubqToJoinAndAgg,
+		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
 		TiDBCheckMb4ValueInUTF8:
@@ -418,7 +418,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime:
 		v, err := setAnalyzeTime(vars, value)
 		if err != nil {
-			return "", errors.Trace(err)
+			return "", err
 		}
 		return v, nil
 	case TxnIsolation, TransactionIsolation:
@@ -527,13 +527,13 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// TODO: Consider time_zone variable.
 	t1, err := t.Time.GoTime(time.Local)
 	s.SnapshotTS = GoTimeToTS(t1)
-	return errors.Trace(err)
+	return err
 }
 
 // GoTimeToTS converts a Go time to uint64 timestamp.
@@ -557,7 +557,7 @@ func setAnalyzeTime(s *SessionVars, val string) (string, error) {
 		t, err = time.ParseInLocation(AnalyzeFullTimeFormat, val, s.TimeZone)
 	}
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	return t.Format(AnalyzeFullTimeFormat), nil
 }
