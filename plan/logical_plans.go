@@ -170,7 +170,7 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 }
 
 func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
-	eq, left, right, other := p.extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan), false)
+	eq, left, right, other := p.extractOnCondition(onConds, false)
 	p.EqualConditions = append(eq, p.EqualConditions...)
 	p.LeftConditions = append(left, p.LeftConditions...)
 	p.RightConditions = append(right, p.RightConditions...)
