@@ -584,8 +584,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		client := debugpb.NewDebugClient(connArray.Get())
 		ctx1, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		resp, err := tikvrpc.CallDebugRPC(ctx1, client, req)
-		return resp, err
+		return tikvrpc.CallDebugRPC(ctx1, client, req)
 	}
 
 	client := tikvpb.NewTikvClient(connArray.Get())
