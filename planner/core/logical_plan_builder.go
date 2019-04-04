@@ -91,7 +91,7 @@ func (b *PlanBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		for _, arg := range aggFunc.Args {
 			newArg, np, err := b.rewrite(arg, p, nil, true)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, err
 			}
 			p = np
 			newArgList = append(newArgList, newArg)
@@ -147,7 +147,7 @@ func (b *PlanBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 			err = ErrUnsupportedType.GenWithStackByArgs(v)
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		if v, ok := p.(*DataSource); ok {
@@ -330,12 +330,12 @@ func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 
 	leftPlan, err := b.buildResultSetNode(joinNode.Left)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	rightPlan, err := b.buildResultSetNode(joinNode.Right)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.Init(b.ctx)
@@ -374,7 +374,7 @@ func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 	// Set preferred join algorithm if some join hints is specified by user.
 	err = joinPlan.setPreferredJoinType(b.TableHints())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	// "NATURAL JOIN" doesn't have "ON" or "USING" conditions.
@@ -387,18 +387,18 @@ func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 	if joinNode.NaturalJoin {
 		err = b.buildNaturalJoin(joinPlan, leftPlan, rightPlan, joinNode)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	} else if joinNode.Using != nil {
 		err = b.buildUsingClause(joinPlan, leftPlan, rightPlan, joinNode)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	} else if joinNode.On != nil {
 		b.curClause = onClause
 		onExpr, newPlan, err := b.rewrite(joinNode.On.Expr, joinPlan, nil, false)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if newPlan != joinPlan {
 			return nil, errors.New("ON condition doesn't support subqueries yet")
@@ -495,7 +495,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		lc, rc := lsc.Columns[i], rsc.Columns[i]
 		cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		conds = append(conds, cond)
 	}
@@ -519,7 +519,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	for _, cond := range conditions {
 		expr, np, err := b.rewrite(cond, p, AggMapper, false)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		p = np
 		if expr == nil {
@@ -645,7 +645,7 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 		// Other: field is an expression.
 		var err error
 		if colName, err = b.buildProjectionFieldNameFromExpressions(field); err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	return &expression.Column{
@@ -687,14 +687,14 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 			proj.Exprs = append(proj.Exprs, expr)
 			col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
 			if err != nil {
-				return nil, 0, errors.Trace(err)
+				return nil, 0, err
 			}
 			schema.Append(col)
 			continue
 		}
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, 0, err
 		}
 
 		p = np
@@ -702,7 +702,7 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 
 		col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, 0, err
 		}
 		schema.Append(col)
 	}
@@ -797,7 +797,7 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 func (b *PlanBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 	distinctSelectPlans, allSelectPlans, err := b.divideUnionSelectPlans(union.SelectList.Selects)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	unionDistinctPlan := b.buildUnionAll(distinctSelectPlans)
@@ -820,14 +820,14 @@ func (b *PlanBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 	if union.OrderBy != nil {
 		unionPlan, err = b.buildSort(unionPlan, union.OrderBy.Items, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
 	if union.Limit != nil {
 		unionPlan, err = b.buildLimit(unionPlan, union.Limit)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
@@ -863,7 +863,7 @@ func (b *PlanBuilder) divideUnionSelectPlans(selects []*ast.SelectStmt) (distinc
 
 		selectPlan, err := b.buildSelect(stmt)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 
 		if columnNums == -1 {
@@ -937,7 +937,7 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		p = np
@@ -1135,7 +1135,7 @@ func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, s
 func (a *havingWindowAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema *expression.Schema) (int, error) {
 	col, err := schema.FindColumn(v.Name)
 	if err != nil {
-		return -1, errors.Trace(err)
+		return -1, err
 	}
 	if col == nil {
 		return -1, nil
@@ -1231,7 +1231,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			for _, schema := range a.outerSchemas {
 				col, err1 := schema.FindColumn(v.Name)
 				if err1 != nil {
-					a.err = errors.Trace(err1)
+					a.err = err1
 					return node, false
 				}
 				if col != nil {
@@ -1388,7 +1388,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 					return ret, true
 				}
 			}
-			g.err = errors.Trace(err)
+			g.err = err
 			return inNode, false
 		}
 	case *ast.PositionExpr:
@@ -1625,7 +1625,7 @@ func (b *PlanBuilder) checkOnlyFullGroupBy(p LogicalPlan, sel *ast.SelectStmt) (
 	} else {
 		err = b.checkOnlyFullGroupByWithOutGroupClause(p, sel.Fields.Fields)
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *ast.SelectStmt) error {
@@ -1694,7 +1694,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fiel
 		field.Accept(&resolver)
 		err := resolver.Check()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -1795,7 +1795,7 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		itemExpr := retExpr.(ast.ExprNode)
 		expr, np, err := b.rewrite(itemExpr, p, nil, true)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 
 		exprs = append(exprs, expr)
@@ -1912,7 +1912,7 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	if sel.From != nil {
 		p, err = b.buildResultSetNode(sel.From.TableRefs)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	} else {
 		p = b.buildTableDual()
@@ -1921,20 +1921,20 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	originalFields := sel.Fields.Fields
 	sel.Fields.Fields, err = b.unfoldWildStar(p, sel.Fields.Fields)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if sel.GroupBy != nil {
 		p, gbyCols, err = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
 	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil {
 		err = b.checkOnlyFullGroupBy(p, sel)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
@@ -1950,13 +1950,13 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	// which only can be done before building projection and extracting Agg functions.
 	havingMap, orderMap, err = b.resolveHavingAndOrderBy(sel, p)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if sel.Where != nil {
 		p, err = b.buildSelection(p, sel.Where, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
@@ -1970,7 +1970,7 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		var aggIndexMap map[int]int
 		p, aggIndexMap, err = b.buildAggregation(p, aggFuncs, gbyCols)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		for k, v := range totalMap {
 			totalMap[k] = aggIndexMap[v]
@@ -1982,14 +1982,14 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	// we can only process window functions after having clause, so `considerWindow` is false now.
 	p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, totalMap, false)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if sel.Having != nil {
 		b.curClause = havingClause
 		p, err = b.buildSelection(p, sel.Having.Expr, havingMap)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
@@ -2013,14 +2013,14 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	if sel.OrderBy != nil {
 		p, err = b.buildSort(p, sel.OrderBy.Items, orderMap)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
 	if sel.Limit != nil {
 		p, err = b.buildLimit(p, sel.Limit)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
@@ -2097,7 +2097,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 
 	tbl, err := b.is.TableByName(dbName, tn.Name)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	tableInfo := tbl.Meta()
@@ -2117,7 +2117,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 		for _, name := range tn.PartitionNames {
 			_, err = tables.FindPartitionByName(tableInfo, name.L)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 	} else if len(tn.PartitionNames) != 0 {
@@ -2126,7 +2126,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 
 	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	var columns []*table.Column
@@ -2199,7 +2199,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	// buffered in tidb-server memory.
 	txn, err := b.ctx.Txn(false)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if txn.Valid() && !txn.IsReadOnly() {
 		us := LogicalUnionScan{}.Init(b.ctx)
@@ -2211,7 +2211,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	// "Projection" to calculate these columns.
 	proj, err := b.projectVirtualColumns(ds, columns)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if proj != nil {
@@ -2302,7 +2302,7 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 				var err error
 				expr, _, err = b.rewrite(columns[i].GeneratedExpr, ds, nil, true)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				// Because the expression might return different type from
 				// the generated column, we should wrap a CAST on the result.
@@ -2354,7 +2354,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 
 	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	ap := &LogicalApply{LogicalJoin: *join}
@@ -2447,7 +2447,7 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 
 	p, err := b.buildResultSetNode(sel.From.TableRefs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	var tableList []*ast.TableName
@@ -2466,24 +2466,24 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	if sel.Where != nil {
 		p, err = b.buildSelection(p, sel.Where, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	if sel.OrderBy != nil {
 		p, err = b.buildSort(p, sel.OrderBy.Items, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	if sel.Limit != nil {
 		p, err = b.buildLimit(p, sel.Limit)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	orderedList, np, err := b.buildUpdateLists(tableList, update.List, p)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	p = np
 
@@ -2491,7 +2491,7 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, err = DoOptimize(b.optFlag, p)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	err = updt.ResolveIndices()
 	return updt, err
@@ -2503,7 +2503,7 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	for _, assign := range list {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName.L)
 		modifyColumns[columnFullName] = struct{}{}
@@ -2543,7 +2543,7 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	for i, assign := range allAssignments {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		var newExpr expression.Expression
 		var np LogicalPlan
@@ -2566,7 +2566,7 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
 		}
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
@@ -2640,7 +2640,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	}
 	p, err := b.buildResultSetNode(sel.From.TableRefs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	oldSchema := p.Schema()
 	oldLen := oldSchema.Len()
@@ -2648,21 +2648,21 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	if sel.Where != nil {
 		p, err = b.buildSelection(p, sel.Where, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
 	if sel.OrderBy != nil {
 		p, err = b.buildSort(p, sel.OrderBy.Items, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
 	if sel.Limit != nil {
 		p, err = b.buildLimit(p, sel.Limit)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
@@ -2687,7 +2687,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 
 	del.SelectPlan, err = DoOptimize(b.optFlag, p)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	del.SetSchema(expression.NewSchema())
