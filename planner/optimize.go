@@ -14,7 +14,6 @@
 package planner
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/cascades"
@@ -54,7 +53,7 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	// Handle the execute statement.
 	if execPlan, ok := p.(*plannercore.Execute); ok {
 		err := execPlan.OptimizePreparedPlan(ctx, is)
-		return p, errors.Trace(err)
+		return p, err
 	}
 
 	// Handle the non-logical plan statement.
