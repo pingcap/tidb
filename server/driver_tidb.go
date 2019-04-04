@@ -394,16 +394,19 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
-	ci = new(ColumnInfo)
-	ci.Name = fld.ColumnAsName.O
-	ci.OrgName = fld.Column.Name.O
-	ci.Table = fld.TableAsName.O
+	ci = &ColumnInfo{
+		Name:    fld.ColumnAsName.O,
+		OrgName: fld.Column.Name.O,
+		Table:   fld.TableAsName.O,
+		Schema:  fld.DBName.O,
+		Flag:    uint16(fld.Column.Flag),
+		Charset: uint16(mysql.CharsetNameToID(fld.Column.Charset)),
+		Type:    fld.Column.Tp,
+	}
+
 	if fld.Table != nil {
 		ci.OrgTable = fld.Table.Name.O
 	}
-	ci.Schema = fld.DBName.O
-	ci.Flag = uint16(fld.Column.Flag)
-	ci.Charset = uint16(mysql.CharsetIDs[fld.Column.Charset])
 	if fld.Column.Flen == types.UnspecifiedLength {
 		ci.ColumnLength = 0
 	} else {
@@ -446,7 +449,6 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	} else {
 		ci.Decimal = uint8(fld.Column.Decimal)
 	}
-	ci.Type = fld.Column.Tp
 
 	// Keep things compatible for old clients.
 	// Refer to mysql-server/sql/protocol.cc send_result_set_metadata()
