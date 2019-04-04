@@ -129,7 +129,7 @@ func (st *TxnState) changePendingToValid(txnCap int) error {
 	txn, err := future.wait()
 	if err != nil {
 		st.Transaction = nil
-		return errors.Trace(err)
+		return err
 	}
 	txn.SetCap(txnCap)
 	st.Transaction = txn
@@ -189,13 +189,13 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	//	return kv.ErrRetryable
 	// }
 
-	return errors.Trace(st.Transaction.Commit(ctx))
+	return st.Transaction.Commit(ctx)
 }
 
 // Rollback overrides the Transaction interface.
 func (st *TxnState) Rollback() error {
 	defer st.reset()
-	return errors.Trace(st.Transaction.Rollback())
+	return st.Transaction.Rollback()
 }
 
 func (st *TxnState) reset() {
@@ -214,7 +214,7 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 		}
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(val) == 0 {
 		return nil, kv.ErrNotExist
@@ -233,7 +233,7 @@ func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 			continue
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if len(val) != 0 {
 			bufferValues[i] = val
@@ -241,7 +241,7 @@ func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	}
 	storageValues, err := st.Transaction.BatchGet(shrinkKeys)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	for i, key := range keys {
 		if bufferValues[i] == nil {
@@ -266,11 +266,11 @@ func (st *TxnState) Delete(k kv.Key) error {
 func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.Iter(k, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	retrieverIt, err := st.Transaction.Iter(k, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
@@ -279,11 +279,11 @@ func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.IterReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	retrieverIt, err := st.Transaction.IterReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
@@ -401,13 +401,13 @@ func (s *session) StmtCommit() error {
 		}
 
 		if len(v) == 0 {
-			return errors.Trace(st.Transaction.Delete(k))
+			return st.Transaction.Delete(k)
 		}
-		return errors.Trace(st.Transaction.Set(k, v))
+		return st.Transaction.Set(k, v)
 	})
 	if err != nil {
 		st.doNotCommit = err
-		return errors.Trace(err)
+		return err
 	}
 
 	// Need to flush binlog.
