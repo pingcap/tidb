@@ -123,9 +123,9 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 	return true
 }
 
-// ReferTable implements Expression interface.
-func (col *CorrelatedColumn) ReferTable() bool {
-	return true
+// ConstItem implements Expression interface.
+func (col *CorrelatedColumn) ConstItem() bool {
+	return false
 }
 
 // Decorrelate implements Expression interface.
@@ -302,9 +302,9 @@ func (col *Column) IsCorrelated() bool {
 	return false
 }
 
-// ReferTable implements Expression interface.
-func (col *Column) ReferTable() bool {
-	return true
+// ConstItem implements Expression interface.
+func (col *Column) ConstItem() bool {
+	return false
 }
 
 // Decorrelate implements Expression interface.

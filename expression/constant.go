@@ -311,9 +311,9 @@ func (c *Constant) IsCorrelated() bool {
 	return false
 }
 
-// ReferTable implements Expression interface.
-func (c *Constant) ReferTable() bool {
-	return false
+// ConstItem implements Expression interface.
+func (c *Constant) ConstItem() bool {
+	return true
 }
 
 // Decorrelate implements Expression interface.

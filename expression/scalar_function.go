@@ -165,14 +165,20 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 	return false
 }
 
-// ReferTable implements Expression interface.
-func (sf *ScalarFunction) ReferTable() bool {
+// ConstItem implements Expression interface.
+func (sf *ScalarFunction) ConstItem() bool {
+	if _, ok := DeferredFunctions[sf.FuncName.L]; ok {
+		return false
+	}
+	if sf.FuncName.L == ast.GetParam {
+		return false
+	}
 	for _, arg := range sf.GetArgs() {
-		if arg.ReferTable() {
-			return true
+		if !arg.ConstItem() {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // Decorrelate implements Expression interface.
