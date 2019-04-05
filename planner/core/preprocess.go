@@ -434,7 +434,7 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]inter
 }
 
 func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
-	isPrimary, isGenerated := 0, 0
+	isPrimary, isGenerated, isStored := 0, 0, false
 
 	for _, op := range ops {
 		switch op.Tp {
@@ -442,10 +442,11 @@ func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
 			isPrimary = 1
 		case ast.ColumnOptionGenerated:
 			isGenerated = 1
+			isStored = op.Stored
 		}
 	}
 
-	if isPrimary > 0 && isGenerated > 0 {
+	if isPrimary > 0 && isGenerated > 0 && !isStored {
 		return isPrimary, ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
 	}
 
