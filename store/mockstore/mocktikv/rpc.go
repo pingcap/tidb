@@ -823,10 +823,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		r := req.DebugGetRegionProperties
 		region, _ := c.Cluster.GetRegionByID(r.RegionId)
 		scanResp := handler.handleKvScan(&kvrpcpb.ScanRequest{StartKey: region.StartKey, EndKey: region.EndKey})
-		resp.DebugGetRegionProperties = &debugpb.GetRegionPropertiesResponse{Props: []*debugpb.Property{&debugpb.Property{
-			Name:  "num_rows",
-			Value: string(len(scanResp.Pairs)),
-		}}}
+		resp.DebugGetRegionProperties = &debugpb.GetRegionPropertiesResponse{
+			Props: []*debugpb.Property{{
+				Name:  "num_rows",
+				Value: string(len(scanResp.Pairs)),
+			}}}
 	default:
 		return nil, errors.Errorf("unsupport this request type %v", req.Type)
 	}
