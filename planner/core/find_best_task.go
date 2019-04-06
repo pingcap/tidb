@@ -450,6 +450,15 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+	if !candidate.isSingleScan {
+		// If it's parent requires single read task, return max cost.
+		if prop.TaskTp == property.CopSingleReadTaskType {
+			return invalidTask, nil
+		}
+	} else if prop.TaskTp == property.CopDoubleReadTaskType {
+		// If it's parent requires double read task, return max cost.
+		return invalidTask, nil
+	}
 	path := candidate.path
 	idx := path.index
 	is := PhysicalIndexScan{
@@ -474,10 +483,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
 	if !candidate.isSingleScan {
-		// If it's parent requires single read task, return max cost.
-		if prop.TaskTp == property.CopSingleReadTaskType {
-			return invalidTask, nil
-		}
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
@@ -487,9 +492,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}.Init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
-	} else if prop.TaskTp == property.CopDoubleReadTaskType {
-		// If it's parent requires double read task, return max cost.
-		return invalidTask, nil
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Only use expectedCnt when it's smaller than the count we calculated.
