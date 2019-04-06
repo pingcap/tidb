@@ -620,6 +620,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -635,9 +638,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
 			}
 		}
-	}
-	if !prop.IsEmpty() && !candidate.isMatchProp {
-		return invalidTask, nil
 	}
 	path := candidate.path
 	ts.Ranges = path.ranges
