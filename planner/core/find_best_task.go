@@ -16,7 +16,6 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -102,7 +101,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		prop.Enforced = false
 		bestTask, err = p.findBestTask(prop)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		prop.Enforced = true
 		// Next, get the bestTask with enforced prop
@@ -117,7 +116,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		for i, child := range p.children {
 			childTask, err := child.findBestTask(pp.GetChildReqProps(i))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if childTask != nil && childTask.invalid() {
 				break
@@ -183,7 +182,7 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 		if con, ok := cond.(*expression.Constant); ok && con.DeferredExpr == nil {
 			result, _, err := expression.EvalBool(ds.ctx, []expression.Expression{cond}, chunk.Row{})
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if !result {
 				dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats)
@@ -348,7 +347,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		prop.Enforced = false
 		t, err = ds.findBestTask(prop)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		prop.Enforced = true
 		if t != invalidTask {
@@ -371,11 +370,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 
 	t, err = ds.tryToGetDualTask()
 	if err != nil || t != nil {
-		return t, errors.Trace(err)
+		return t, err
 	}
 	t, err = ds.tryToGetMemTask(prop)
 	if err != nil || t != nil {
-		return t, errors.Trace(err)
+		return t, err
 	}
 
 	t = invalidTask
@@ -394,7 +393,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		if path.isTablePath {
 			tblTask, err := ds.convertToTableScan(prop, candidate)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if tblTask.cost() < t.cost() {
 				t = tblTask
@@ -403,7 +402,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if idxTask.cost() < t.cost() {
 			t = idxTask

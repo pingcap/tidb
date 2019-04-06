@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -61,6 +62,8 @@ const (
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
 	CmdSplitRegion
+
+	CmdDebugGetRegionProperties CmdType = 2048 + iota
 )
 
 func (t CmdType) String() string {
@@ -115,6 +118,8 @@ func (t CmdType) String() string {
 		return "MvccGetByStartTS"
 	case CmdSplitRegion:
 		return "SplitRegion"
+	case CmdDebugGetRegionProperties:
+		return "DebugGetRegionProperties"
 	}
 	return "Unknown"
 }
@@ -147,6 +152,8 @@ type Request struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyRequest
 	MvccGetByStartTs   *kvrpcpb.MvccGetByStartTsRequest
 	SplitRegion        *kvrpcpb.SplitRegionRequest
+
+	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -196,6 +203,15 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 	return nil
 }
 
+// IsDebugReq check whether the req is debug req.
+func (req *Request) IsDebugReq() bool {
+	switch req.Type {
+	case CmdDebugGetRegionProperties:
+		return true
+	}
+	return false
+}
+
 // Response wraps all kv/coprocessor responses.
 type Response struct {
 	Type               CmdType
@@ -224,6 +240,8 @@ type Response struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS   *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion        *kvrpcpb.SplitRegionResponse
+
+	DebugGetRegionProperties *debugpb.GetRegionPropertiesResponse
 }
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
@@ -590,6 +608,20 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		return nil, errors.Trace(err)
 	}
 	return resp, nil
+}
+
+// CallDebugRPC launches a debug rpc call.
+func CallDebugRPC(ctx context.Context, client debugpb.DebugClient, req *Request) (*Response, error) {
+	resp := &Response{Type: req.Type}
+	resp.Type = req.Type
+	var err error
+	switch req.Type {
+	case CmdDebugGetRegionProperties:
+		resp.DebugGetRegionProperties, err = client.GetRegionProperties(ctx, req.DebugGetRegionProperties)
+	default:
+		return nil, errors.Errorf("invalid request type: %v", req.Type)
+	}
+	return resp, err
 }
 
 // Lease is used to implement grpc stream timeout.
