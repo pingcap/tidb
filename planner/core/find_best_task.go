@@ -459,6 +459,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		// If it's parent requires double read task, return max cost.
 		return invalidTask, nil
 	}
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
 	path := candidate.path
 	idx := path.index
 	is := PhysicalIndexScan{
@@ -521,8 +524,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		expectedCnt := math.MaxFloat64
 		if prop.IsEmpty() {
 			expectedCnt = prop.ExpectedCnt
-		} else {
-			return invalidTask, nil
 		}
 		is.addPushedDownSelection(cop, ds, expectedCnt, path)
 	}
