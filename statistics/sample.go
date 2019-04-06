@@ -217,7 +217,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			return collectors, s.PkBuilder, nil
 		}
 		if len(s.RecordSet.Fields()) == 0 {
-			return nil, nil, errors.Errorf("%T", s.RecordSet)
+			return nil, nil, errors.Errorf("collect column stats failed: record set has 0 field")
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, s.RecordSet.Fields())
