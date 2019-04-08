@@ -1100,8 +1100,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		// Otherwise, you can kill only your own threads and statements.
 		sm := b.ctx.GetSessionManager()
 		if sm != nil {
-			processList := sm.ShowProcessList()
-			if pi, ok := processList[raw.ConnectionID]; ok {
+			if pi, ok := sm.GetProcessInfo(raw.ConnectionID); ok {
 				loginUser := b.ctx.GetSessionVars().User
 				if pi.User != loginUser.Username {
 					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
@@ -1767,11 +1766,10 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, analyze b
 // buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.
 // See https://dev.mysql.com/doc/refman/8.0/en/explain-for-connection.html.
 func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, error) {
-	processInfo, ok := b.ctx.GetSessionManager().ShowProcessList()[explainFor.ConnectionID]
+	processInfo, ok := b.ctx.GetSessionManager().GetProcessInfo(explainFor.ConnectionID)
 	if !ok {
 		return nil, ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
 	}
-	// Viewing query plan for another user requires ProcessPriv, see url above.
 	if b.ctx.GetSessionVars() != nil && b.ctx.GetSessionVars().User != nil {
 		if b.ctx.GetSessionVars().User.Username != processInfo.User {
 			err := ErrAccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname)
