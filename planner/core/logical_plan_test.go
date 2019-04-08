@@ -906,7 +906,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t3)->DataScan(t1)}->DataScan(t2)}->Projection}->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(t3)}->Projection}->Projection",
 		},
 	}
 	for _, tt := range tests {
@@ -1638,6 +1638,37 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
 				{mysql.AllPrivMask, "test", "ttt", "", nil},
+			},
+		},
+		{
+			sql: "alter table t add column a int(4)",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t", "", nil},
+			},
+		},
+		{
+			sql: "rename table t_old to t_new",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t_old", "", nil},
+				{mysql.DropPriv, "test", "t_old", "", nil},
+				{mysql.CreatePriv, "test", "t_new", "", nil},
+				{mysql.InsertPriv, "test", "t_new", "", nil},
+			},
+		},
+		{
+			sql: "alter table t_old rename to t_new",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t_old", "", nil},
+				{mysql.DropPriv, "test", "t_old", "", nil},
+				{mysql.CreatePriv, "test", "t_new", "", nil},
+				{mysql.InsertPriv, "test", "t_new", "", nil},
+			},
+		},
+		{
+			sql: "alter table t drop partition p0;",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
 	}

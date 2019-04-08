@@ -77,7 +77,7 @@ func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoS
 	}
 	p, err := builder.Build(node)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return p, nil
 }
@@ -99,14 +99,14 @@ func CheckPrivilege(pm privilege.Manager, vs []visitInfo) error {
 func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	logic, err := logicalOptimize(flag, logic)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	physical, err := physicalOptimize(logic)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	finalPlan := postOptimize(physical)
 	return finalPlan, nil
@@ -129,15 +129,15 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 		}
 		logic, err = rule.optimize(logic)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
-	return logic, errors.Trace(err)
+	return logic, err
 }
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	if _, err := logic.recursiveDeriveStats(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	logic.preparePossibleProperties()
@@ -149,7 +149,7 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 
 	t, err := logic.findBestTask(prop)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if t.invalid() {
 		return nil, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")

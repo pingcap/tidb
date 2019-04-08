@@ -13,10 +13,6 @@
 
 package kv
 
-import (
-	"github.com/pingcap/errors"
-)
-
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
@@ -198,7 +194,7 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 		v, err = us.BufferStore.r.Get(k)
 	}
 	if err != nil {
-		return v, errors.Trace(err)
+		return v, err
 	}
 	if len(v) == 0 {
 		return nil, ErrNotExist
