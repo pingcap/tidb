@@ -360,8 +360,8 @@ Sort_23	5.00	root	revenue:desc
         │ │ │   └─TableScan_56	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
         │ │ └─TableReader_59	300005811.00	root	data:TableScan_58
         │ │   └─TableScan_58	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
-        │ └─TableReader_37	11822812.50	root	data:Selection_36
-        │   └─Selection_36	11822812.50	cop	ge(tpch.orders.o_orderdate, 1994-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-01-01)
+        │ └─TableReader_37	0.80	root	data:Selection_36
+        │   └─Selection_36	0.80	cop	ge(tpch.orders.o_orderdate, 1994-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-01-01)
         │     └─TableScan_35	1.00	cop	table:orders, range: decided by [tpch.lineitem.l_orderkey], keep order:false
         └─TableReader_30	1.00	root	data:TableScan_29
           └─TableScan_29	1.00	cop	table:customer, range: decided by [tpch.supplier.s_nationkey tpch.orders.o_custkey], keep order:false
@@ -1096,8 +1096,8 @@ StreamAgg_13	1.00	root	funcs:sum(col_0)
     ├─TableReader_22	6286493.79	root	data:Selection_21
     │ └─Selection_21	6286493.79	cop	eq(tpch.lineitem.l_shipinstruct, "DELIVER IN PERSON"), in(tpch.lineitem.l_shipmode, "AIR", "AIR REG"), or(and(ge(tpch.lineitem.l_quantity, 4), le(tpch.lineitem.l_quantity, 14)), or(and(ge(tpch.lineitem.l_quantity, 18), le(tpch.lineitem.l_quantity, 28)), and(ge(tpch.lineitem.l_quantity, 29), le(tpch.lineitem.l_quantity, 39))))
     │   └─TableScan_20	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
-    └─TableReader_28	8000000.00	root	data:Selection_27
-      └─Selection_27	8000000.00	cop	ge(tpch.part.p_size, 1), or(and(eq(tpch.part.p_brand, "Brand#52"), and(in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(tpch.part.p_size, 5))), or(and(eq(tpch.part.p_brand, "Brand#11"), and(in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(tpch.part.p_size, 10))), and(eq(tpch.part.p_brand, "Brand#51"), and(in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(tpch.part.p_size, 15)))))
+    └─TableReader_28	0.80	root	data:Selection_27
+      └─Selection_27	0.80	cop	ge(tpch.part.p_size, 1), or(and(eq(tpch.part.p_brand, "Brand#52"), and(in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(tpch.part.p_size, 5))), or(and(eq(tpch.part.p_brand, "Brand#11"), and(in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(tpch.part.p_size, 10))), and(eq(tpch.part.p_brand, "Brand#51"), and(in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(tpch.part.p_size, 15)))))
         └─TableScan_26	1.00	cop	table:part, range: decided by [tpch.lineitem.l_partkey], keep order:false
 /*
 Q20 Potential Part Promotion Query
@@ -1235,8 +1235,8 @@ Projection_25	1.00	root	tpch.supplier.s_name, 17_col_0
       │ │ │ └─TableReader_80	240004648.80	root	data:Selection_79
       │ │ │   └─Selection_79	240004648.80	cop	gt(l1.l_receiptdate, l1.l_commitdate)
       │ │ │     └─TableScan_78	300005811.00	cop	table:l1, range:[-inf,+inf], keep order:false
-      │ │ └─TableReader_61	36517371.00	root	data:Selection_60
-      │ │   └─Selection_60	36517371.00	cop	eq(tpch.orders.o_orderstatus, "F")
+      │ │ └─TableReader_61	0.80	root	data:Selection_60
+      │ │   └─Selection_60	0.80	cop	eq(tpch.orders.o_orderstatus, "F")
       │ │     └─TableScan_59	1.00	cop	table:orders, range: decided by [l1.l_orderkey], keep order:false
       │ └─IndexLookUp_55	1.00	root	
       │   ├─IndexScan_53	1.00	cop	table:l2, index:L_ORDERKEY, L_LINENUMBER, range: decided by [l1.l_orderkey], keep order:false

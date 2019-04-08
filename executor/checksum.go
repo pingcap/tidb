@@ -17,7 +17,6 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -43,17 +42,17 @@ type ChecksumTableExec struct {
 // Open implements the Executor Open interface.
 func (e *ChecksumTableExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	concurrency, err := getChecksumTableConcurrency(e.ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	tasks, err := e.buildTasks()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	taskCh := make(chan *checksumTask, len(tasks))
@@ -77,7 +76,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 		e.handleResult(result)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	return nil
@@ -105,7 +104,7 @@ func (e *ChecksumTableExec) buildTasks() ([]*checksumTask, error) {
 	for id, t := range e.tables {
 		reqs, err := t.BuildRequests(e.ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		for _, req := range reqs {
 			tasks = append(tasks, &checksumTask{id, req})
@@ -131,12 +130,12 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 	ctx := context.TODO()
 	res, err := distsql.Checksum(ctx, e.ctx.GetClient(), req, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	res.Fetch(ctx)
 	defer func() {
 		if err1 := res.Close(); err1 != nil {
-			err = errors.Trace(err1)
+			err = err1
 		}
 	}()
 
@@ -145,14 +144,14 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 	for {
 		data, err := res.NextRaw(ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if data == nil {
 			break
 		}
 		checksum := &tipb.ChecksumResponse{}
 		if err = checksum.Unmarshal(data); err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		updateChecksumResponse(resp, checksum)
 	}
@@ -191,7 +190,7 @@ func (c *checksumContext) BuildRequests(ctx sessionctx.Context) ([]*kv.Request, 
 	reqs := make([]*kv.Request, 0, len(c.TableInfo.Indices)+1)
 	req, err := c.buildTableRequest(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	reqs = append(reqs, req)
 	for _, indexInfo := range c.TableInfo.Indices {
@@ -200,7 +199,7 @@ func (c *checksumContext) BuildRequests(ctx sessionctx.Context) ([]*kv.Request, 
 		}
 		req, err = c.buildIndexRequest(ctx, indexInfo)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		reqs = append(reqs, req)
 	}
@@ -248,10 +247,10 @@ func getChecksumTableConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
 	concurrency, err := variable.GetSessionSystemVar(sessionVars, variable.TiDBChecksumTableConcurrency)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	c, err := strconv.ParseInt(concurrency, 10, 64)
-	return int(c), errors.Trace(err)
+	return int(c), err
 }
 
 func updateChecksumResponse(resp, update *tipb.ChecksumResponse) {
