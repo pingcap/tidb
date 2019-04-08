@@ -299,7 +299,7 @@ const (
 	DefEnableWindowFunction          = false
 	DefTiDBDDLSlowOprThreshold       = 300
 	DefTiDBUseFastAnalyze            = false
-	DefTiDBStrictCompatibility 	     = false
+	DefTiDBStrictCompatibility       = false
 )
 
 // Process global variables.
