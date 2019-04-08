@@ -774,6 +774,11 @@ const (
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
 )
 
+// these variables are useless for TiDB, but still need to validate their values for some compatible issues.
+const (
+	serverReadOnly = "read_only"
+)
+
 var (
 	// TxIsolationNames are the valid values of the variable "tx_isolation" or "transaction_isolation".
 	TxIsolationNames = map[string]struct{}{
