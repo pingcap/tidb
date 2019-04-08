@@ -439,6 +439,7 @@ type AnalyzeFastExec struct {
 	wg              *sync.WaitGroup
 	sampLocs        chan *tikv.KeyLocation
 	rowCount        uint64
+	sampCursor      int32
 	tasks           chan *AnalyzeFastTask
 	scanTasks       []*tikv.KeyLocation
 }
@@ -552,16 +553,31 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	return false, nil
 }
 
-func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse, collectors []*statistics.SampleCollector, cursor *int32) (err error) {
-	length := int32(len(resp.Pairs))
+func eliminateDuplicatedPairs(resp *kvrpcpb.BatchGetResponse) []*kvrpcpb.KvPair {
+	sort.Slice(resp.Pairs, func(i, j int) bool {
+		return string(resp.Pairs[i].Key) < string(resp.Pairs[i].Key)
+	})
+	newPairs := make([]*kvrpcpb.KvPair, 0, len(resp.Pairs))
+	for i := 0; i < len(resp.Pairs); i++ {
+		if i > 0 && string(resp.Pairs[i].Key) == string(resp.Pairs[i-1].Key) {
+			continue
+		}
+		newPairs = append(newPairs, resp.Pairs[i])
+	}
+	return newPairs
+}
+
+func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse, collectors []*statistics.SampleCollector) (err error) {
+	pairs := eliminateDuplicatedPairs(resp)
+	length := int32(len(pairs))
 	timeZone := e.ctx.GetSessionVars().Location()
-	newCursor := atomic.AddInt32(cursor, length)
+	newCursor := atomic.AddInt32(&e.sampCursor, length)
 	hasPKInfo := 0
 	if e.pkInfo != nil {
 		hasPKInfo = 1
 	}
 	hasIdxInfo := len(e.idxsInfo)
-	for i, pair := range resp.Pairs {
+	for i, pair := range pairs {
 		samplePos := newCursor - length + int32(i)
 		if hasPKInfo > 0 {
 			collectors[0].Samples[samplePos].Ordinal = int(samplePos)
@@ -609,13 +625,14 @@ func (e *AnalyzeFastExec) handleScanResponse(resp *kvrpcpb.ScanResponse, collect
 		// reservoir sampling
 		e.rowCount++
 		randNum := rand.Int63n(int64(e.rowCount))
-		if randNum > int64(maxSampleSize) {
+		if randNum > int64(maxSampleSize) && e.sampCursor == maxSampleSize {
 			continue
 		}
 
 		p := rand.Int63n(int64(maxSampleSize))
-		if e.rowCount <= maxSampleSize {
-			p = int64(e.rowCount) - 1
+		if e.sampCursor < maxSampleSize {
+			p = int64(e.sampCursor)
+			e.sampCursor++
 		}
 		if hasPKInfo > 0 {
 			collectors[0].Samples[p].Value, err = tablecodec.DecodeColumnValue(pair.Value, &e.pkInfo.FieldType, timeZone)
@@ -676,7 +693,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 	return nil
 }
 
-func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collectors []*statistics.SampleCollector, sampCursor *int32) {
+func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collectors []*statistics.SampleCollector) {
 	defer func() {
 		if *err != nil {
 			for _, ok := <-e.tasks; ok; _, ok = <-e.tasks {
@@ -728,7 +745,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collec
 			return
 		}
 
-		*err = e.handleBatchGetResponse(resp.BatchGet, collectors, sampCursor)
+		*err = e.handleBatchGetResponse(resp.BatchGet, collectors)
 		if *err != nil {
 			*err = errors.Trace(*err)
 			return
@@ -746,7 +763,6 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	// collect column samples and primary key samples and index samples.
 	length := len(e.colsInfo) + hasPKInfo + hasIdxInfo
 	collectors := make([]*statistics.SampleCollector, length)
-	var sampCursor int32
 	for i := range collectors {
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
@@ -759,7 +775,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	e.wg.Add(e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		bo := tikv.NewBackoffer(context.Background(), 500)
-		go e.handleSampTasks(bo, &errs[i], collectors, &sampCursor)
+		go e.handleSampTasks(bo, &errs[i], collectors)
 	}
 	e.wg.Wait()
 	for _, err := range errs {
