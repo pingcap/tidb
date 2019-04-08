@@ -613,9 +613,9 @@ func (e *AnalyzeFastExec) handleScanResponse(resp *kvrpcpb.ScanResponse, collect
 			continue
 		}
 
-		p := rand.Int63n(int64(maxRegionSampleSize))
-		if e.rowCount <= maxRegionSampleSize {
-			p = e.rowCount - 1
+		p := rand.Int63n(int64(maxSampleSize))
+		if e.rowCount <= maxSampleSize {
+			p = int64(e.rowCount) - 1
 		}
 		if hasPKInfo > 0 {
 			collectors[0].Samples[p].Value, err = tablecodec.DecodeColumnValue(pair.Value, &e.pkInfo.FieldType, timeZone)
