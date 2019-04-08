@@ -505,11 +505,12 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 	}
 }
 
+// buildSampTask return tow variable, the first bool is whether the task meeting region error
+// and need to rebuild.
 func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	if e.wg == nil {
 		e.wg = &sync.WaitGroup{}
 	}
-	e.wg.Wait()
 
 	// Do get regions row count.
 	bo := tikv.NewBackoffer(context.Background(), 500)
