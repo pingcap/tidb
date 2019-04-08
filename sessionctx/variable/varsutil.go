@@ -427,9 +427,13 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if !exists {
 			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
-		switch upVal {
-		case "SERIALIZABLE", "READ-UNCOMMITTED":
-			return "", ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
+
+		strictCompatibility, e := GetSessionSystemVar(vars, TiDBStrictCompatibility)
+		if !TiDBOptOn(strictCompatibility) || e != nil {
+			switch upVal {
+			case "SERIALIZABLE", "READ-UNCOMMITTED":
+				return "", ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
+			}
 		}
 		return upVal, nil
 	case TiDBInitChunkSize:
