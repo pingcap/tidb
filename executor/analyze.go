@@ -447,6 +447,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 	defer func() {
 		e.wg.Done()
 		if *needRebuild == true {
+			close(e.sampLocs)
 			for _, ok := <-e.sampLocs; ok; _, ok = <-e.sampLocs {
 				// do nothing
 			}
@@ -509,12 +510,21 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	}
 	e.wg.Wait()
 
+	// Do get regions row count.
+	bo := tikv.NewBackoffer(context.Background(), 500)
+	atomic.StoreUint64(&e.rowCount, 0)
+	needRebuildForRoutine := make([]bool, e.concurrency)
+	errs := make([]error, e.concurrency)
+	e.wg.Add(e.concurrency)
+	for i := 0; i < e.concurrency; i++ {
+		go e.getSampRegionsRowCount(bo, &needRebuildForRoutine[i], &errs[i])
+	}
+
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.table.Meta().ID)
 	var loc *tikv.KeyLocation
 	var err error
-	bo := tikv.NewBackoffer(context.Background(), 500)
 	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, append(loc.EndKey, byte(0))) {
 		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
 			e.scanTasks = append(e.scanTasks, loc)
@@ -525,16 +535,8 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-
-	// Do get regions row count.
 	close(e.sampLocs)
-	atomic.StoreUint64(&e.rowCount, 0)
-	needRebuildForRoutine := make([]bool, e.concurrency)
-	errs := make([]error, e.concurrency)
-	e.wg.Add(e.concurrency)
-	for i := 0; i < e.concurrency; i++ {
-		go e.getSampRegionsRowCount(bo, &needRebuildForRoutine[i], &errs[i])
-	}
+
 	e.wg.Wait()
 	for i := 0; i < e.concurrency; i++ {
 		if errs[i] != nil {
@@ -795,10 +797,6 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 			continue
 		}
 
-		if e.rowCount < maxSampleSize*2 {
-			// TODO: return normal Analyze
-		}
-
 		randPos := make([]uint64, 0, maxSampleSize+1)
 		for i := 0; i < maxSampleSize; i++ {
 			randPos = append(randPos, uint64(rand.Int63n(int64(e.rowCount))))
@@ -810,8 +808,16 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		for task := range e.tasks {
 			task.SampSize = uint64(sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.RRowCount }) - sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.LRowCount }))
 		}
-
 		close(e.tasks)
+
+		// If sample region size is smaller than maxSampleSize * 2,
+		// then we trans the sample tasks to scan tasks.
+		if e.rowCount < maxSampleSize*2 {
+			for task, ok := <-e.tasks; ok; task, ok = <-e.tasks {
+				e.scanTasks = append(e.scanTasks, task.Location)
+			}
+		}
+
 		hists, cms, err = e.runTasks()
 		if err != nil {
 			return nil, nil, errors.Trace(err)
