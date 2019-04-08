@@ -65,40 +65,8 @@ func (s *testSuite) TestExplainFor(c *C) {
 	err = tkUser.ExecToErr("explain for connection 42")
 	c.Check(core.ErrNoSuchThread.Equal(err), IsTrue)
 
-	// Improve test coverage
 	tkRootProcess.Plan = nil
 	ps = []util.ProcessInfo{tkRootProcess}
 	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
-
-	tkRoot.MustExec("insert into t1 values (1, 2);")
-	tkRoot.MustExec("update t1 set c1=3 where c1 = 1;")
-	tkRootProcess = tkRoot.Se.ShowProcess()
-	ps = []util.ProcessInfo{tkRootProcess}
-	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
-		"TableReader_6 10.00 root data:Selection_5",
-		"└─Selection_5 10.00 cop eq(test.t1.c1, 1)",
-		"  └─TableScan_4 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
-	tkRoot.MustExec("delete from t1 where c1 = 1;")
-	tkRootProcess = tkRoot.Se.ShowProcess()
-	ps = []util.ProcessInfo{tkRootProcess}
-	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
-		"TableReader_6 10.00 root data:Selection_5",
-		"└─Selection_5 10.00 cop eq(test.t1.c1, 1)",
-		"  └─TableScan_4 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
-	tkRoot.MustExec("insert into t2 (t2.c1, t2.c2) select t1.c1, t1.c2 from t1 where t1.c1 = 1;")
-	tkRootProcess = tkRoot.Se.ShowProcess()
-	ps = []util.ProcessInfo{tkRootProcess}
-	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
-		"TableReader_9 10.00 root data:Selection_8",
-		"└─Selection_8 10.00 cop eq(test.t1.c1, 1)",
-		"  └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
-	err = tkRoot.ExecToErr(fmt.Sprintf(`explain format="aaa" for connection %d`, tkRootProcess.ID))
-	c.Check(err, NotNil) // For last branch in PlanBuilder.buildExplainFor.
 }

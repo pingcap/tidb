@@ -1737,7 +1737,7 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	return p, nil
 }
 
-func extractStmtPlan(targetPlan Plan) (PhysicalPlan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
 	pp, ok := targetPlan.(PhysicalPlan)
 	if !ok {
 		switch x := targetPlan.(type) {
@@ -1754,7 +1754,14 @@ func extractStmtPlan(targetPlan Plan) (PhysicalPlan, error) {
 			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
 		}
 	}
-	return pp, nil
+
+	p := &Explain{StmtPlan: pp, Analyze: analyze, Format: format, ExecStmt: execStmt, ExecPlan: targetPlan}
+	p.ctx = b.ctx
+	err := p.prepareSchema()
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.
@@ -1777,18 +1784,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 		return &Explain{StmtPlan: nil, Analyze: false, Format: explainFor.Format, ExecStmt: nil, ExecPlan: nil}, nil
 	}
 
-	pp, err := extractStmtPlan(targetPlan)
-	if err != nil {
-		return nil, err
-	}
-
-	p := &Explain{StmtPlan: pp, Analyze: false, Format: explainFor.Format, ExecStmt: nil, ExecPlan: targetPlan}
-	p.ctx = b.ctx
-	err = p.prepareSchema()
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
+	return b.buildExplainPlan(targetPlan, explainFor.Format, false, nil)
 }
 
 func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
@@ -1800,18 +1796,7 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 		return nil, err
 	}
 
-	pp, err := extractStmtPlan(targetPlan)
-	if err != nil {
-		return nil, err
-	}
-
-	p := &Explain{StmtPlan: pp, Analyze: explain.Analyze, Format: explain.Format, ExecStmt: explain.Stmt, ExecPlan: targetPlan}
-	p.ctx = b.ctx
-	err = p.prepareSchema()
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
+	return b.buildExplainPlan(targetPlan, explain.Format, explain.Analyze, explain.Stmt)
 }
 
 func buildShowProcedureSchema() *expression.Schema {
