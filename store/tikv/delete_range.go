@@ -32,7 +32,7 @@ type DeleteRangeTask struct {
 	ctx              context.Context
 	startKey         []byte
 	endKey           []byte
-	isUnsafe         bool
+	notifyOnly       bool
 }
 
 // NewDeleteRangeTask creates a DeleteRangeTask. Deleting will be performed when `Execute` method is invoked.
@@ -46,16 +46,16 @@ func NewDeleteRangeTask(ctx context.Context, store Storage, startKey []byte, end
 		ctx:              ctx,
 		startKey:         startKey,
 		endKey:           endKey,
-		isUnsafe:         false,
+		notifyOnly:       false,
 	}
 }
 
 // NewNotifyDeleteRangeTask creates a task that sends delete range requests to all regions in the range, but with the
-// flag `isUnsafe` set. TiKV will not actually delete the range after receiving request, but it will be replicated via
+// flag `notifyOnly` set. TiKV will not actually delete the range after receiving request, but it will be replicated via
 // raft. This is used to notify the involved regions before sending UnsafeDestroyRange requests.
 func NewNotifyDeleteRangeTask(ctx context.Context, store Storage, startKey []byte, endKey []byte) *DeleteRangeTask {
 	task := NewDeleteRangeTask(ctx, store, startKey, endKey)
-	task.isUnsafe = true
+	task.notifyOnly = true
 	return task
 }
 
@@ -85,9 +85,9 @@ func (t *DeleteRangeTask) Execute() error {
 		req := &tikvrpc.Request{
 			Type: tikvrpc.CmdDeleteRange,
 			DeleteRange: &kvrpcpb.DeleteRangeRequest{
-				StartKey: startKey,
-				EndKey:   endKey,
-				IsUnsafe: t.isUnsafe,
+				StartKey:   startKey,
+				EndKey:     endKey,
+				NotifyOnly: t.notifyOnly,
 			},
 		}
 
