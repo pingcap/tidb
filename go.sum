@@ -42,6 +42,8 @@ github.com/erjiaqing/tipb v0.0.0-20190404024523-ddf5efcb3b92 h1:3yDY04IFlZGDg3Bb
 github.com/erjiaqing/tipb v0.0.0-20190404024523-ddf5efcb3b92/go.mod h1:tcq6f0qlBkUZN2GFEEReBG9fyfMpmjeIqAv/r8qhj1g=
 github.com/erjiaqing/tipb v0.0.0-20190404025215-d6165977a10d h1:+rJJXPuPw7x8Q5uBRlj6jSw1hR93+JukBLqG3I2LCgQ=
 github.com/erjiaqing/tipb v0.0.0-20190404025215-d6165977a10d/go.mod h1:tcq6f0qlBkUZN2GFEEReBG9fyfMpmjeIqAv/r8qhj1g=
+github.com/erjiaqing/tipb v0.0.0-20190404092302-2c5a6b02ee28 h1:QU496D9uNImd6RUH40JBzDcQ4Pqn3H6uTvDGid4chKY=
+github.com/erjiaqing/tipb v0.0.0-20190404092302-2c5a6b02ee28/go.mod h1:tcq6f0qlBkUZN2GFEEReBG9fyfMpmjeIqAv/r8qhj1g=
 github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a h1:QNEenQIsGDEEfFNSnN+h6hE1OwnHqTg7Dl9gEk1Cko4=
 github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a/go.mod h1:49H/RkXP8pKaZy4h0d+NW16rSLhyVBt4o6VLJbmOqDE=
 github.com/fsnotify/fsnotify v1.4.7 h1:IXs+QLmnXW2CcXuY+8Mzv/fWEsPGWxqefPtCP5CnV9I=

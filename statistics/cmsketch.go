@@ -71,7 +71,7 @@ func (c *CMSketch) BuildTopN(data [][]byte, n int32) {
 	for k := range data {
 		found, pos := false, -1
 		for i := range c.topn {
-			if bytes.Equal(c.topn[i], data[k]) {
+			if bytes.Equal(c.topn[i].data, data[k]) {
 				found = true
 				pos = i
 				break
@@ -81,7 +81,7 @@ func (c *CMSketch) BuildTopN(data [][]byte, n int32) {
 		}
 		if found {
 			c.topn[pos].count++
-		} else if !found && pos {
+		} else if !found && pos != -1 {
 			c.topn[pos] = cmscount{data[k], 1}
 		} else {
 			for i := range c.topn {
@@ -95,9 +95,10 @@ func (c *CMSketch) BuildTopN(data [][]byte, n int32) {
 	for k := range data {
 		found := false
 		for i := range c.topn {
-			if bytes.Equal(c.topn[i], data[k]) {
+			if bytes.Equal(c.topn[i].data, data[k]) {
 				found = true
 				c.topn[i].count++
+				c.count++
 				break
 			}
 		}
@@ -111,10 +112,6 @@ func (c *CMSketch) BuildTopN(data [][]byte, n int32) {
 func (c *CMSketch) InsertBytes(bytes []byte) {
 	c.count++
 	h1, h2 := murmur3.Sum128(bytes)
-	if c.topnlimit > 0 {
-		c.topn[cmshash{h1, h2}]++
-		return
-	}
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		c.table[i][j]++
@@ -127,10 +124,6 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	c.count += uint64(count) - uint64(oriCount)
 	// let it overflow naturally
 	deltaCount := count - oriCount
-	if c.topnlimit > 0 {
-		c.topn[cmshash{h1, h2}] += deltaCount
-		return
-	}
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		c.table[i][j] = c.table[i][j] + deltaCount
@@ -271,7 +264,7 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 	if c == nil || rc == nil {
 		return c == nil && rc == nil
 	}
-	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count || c.topnlimit != rc.topnlimit {
+	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count {
 		return false
 	}
 	for i := range c.table {
@@ -285,8 +278,8 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 		if len(rc.topn) != len(c.topn) {
 			return false
 		}
-		for rk, rv := range rc.topn {
-			if v, ok := c.topn[rk]; !ok || v != rv {
+		for i := range c.topn {
+			if c.topn[i].count != rc.topn[i].count || !bytes.Equal(c.topn[i].data, rc.topn[i].data) {
 				return false
 			}
 		}
@@ -303,12 +296,14 @@ func (c *CMSketch) copy() *CMSketch {
 		tbl[i] = make([]uint32, c.width)
 		copy(tbl[i], c.table[i])
 	}
-	var nmap map[cmshash]uint32
-	if c.topnlimit > 0 {
-		nmap = make(map[cmshash]uint32)
-		for k, v := range c.topn {
-			nmap[k] = v
+	var ntopn []cmscount
+	if c.topn != nil {
+		ntopn = make([]cmscount, len(c.topn), len(c.topn))
+		for i, v := range c.topn {
+			ntopn[i].count = v.count
+			ntopn[i].data = make([]byte, len(v.data))
+			copy(ntopn[i].data, v.data)
 		}
 	}
-	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, topnlimit: c.topnlimit, topn: nmap}
+	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, topn: ntopn}
 }
