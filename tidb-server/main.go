@@ -435,6 +435,8 @@ func setGlobalVars() {
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
 	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
 
+	variable.SysVars[variable.TiDBSlowQueryFile].Value = cfg.Log.SlowQueryFile
+
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
 	if plannercore.PreparedPlanCacheEnabled() {
