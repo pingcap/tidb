@@ -17,7 +17,6 @@ import (
 	"context"
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -431,7 +430,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	}
 	path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
@@ -447,7 +446,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 			break
 		}
 	}
-	return noIntervalRange, errors.Trace(err)
+	return noIntervalRange, err
 }
 
 // deriveIndexPathStats will fulfill the information that the accessPath need.

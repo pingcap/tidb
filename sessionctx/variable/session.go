@@ -340,6 +340,9 @@ type SessionVars struct {
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
+
+	// EnableFastAnalyze indicates whether to take fast analyze.
+	EnableFastAnalyze bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -607,7 +610,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		s.TimeZone = tz
 	case SQLModeVar:
@@ -623,7 +626,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBSnapshot:
 		err := setSnapshotTS(s, val)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case AutocommitVar:
 		isAutocommit := TiDBOptOn(val)
@@ -725,6 +728,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
+	case TiDBEnableFastAnalyze:
+		s.EnableFastAnalyze = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
