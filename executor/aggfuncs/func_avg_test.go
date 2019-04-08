@@ -20,11 +20,21 @@ import (
 )
 
 func (s *testSuite) TestMergePartialResult4Avg(c *C) {
-	tests := []aggMergeTest{
-		buildAggMergeTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, 2.0, 3.0, 2.375),
-		buildAggMergeTester(ast.AggFuncAvg, mysql.TypeDouble, 5, 2.0, 3.0, 2.375),
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, 2.0, 3.0, 2.375),
+		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 5, 2.0, 3.0, 2.375),
 	}
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)
+	}
+}
+
+func (s *testSuite) TestAvg(c *C) {
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, nil, 2.0),
+		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 5, nil, 2.0),
+	}
+	for _, test := range tests {
+		s.testAggFunc(c, test)
 	}
 }

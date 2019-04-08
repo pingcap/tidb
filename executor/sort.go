@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
@@ -55,7 +54,7 @@ type SortExec struct {
 func (e *SortExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
-	return errors.Trace(e.children[0].Close())
+	return e.children[0].Close()
 }
 
 // Open implements the Executor Open interface.
@@ -68,7 +67,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
-	return errors.Trace(e.children[0].Open(ctx))
+	return e.children[0].Open(ctx)
 }
 
 // Next implements the Executor Next interface.
@@ -85,7 +84,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		e.initPointers()
 		e.initCompareFuncs()
@@ -110,7 +109,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		chk := e.children[0].newFirstChunk()
 		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		rowCount := chk.NumRows()
 		if rowCount == 0 {
@@ -232,7 +231,7 @@ func (h *topNChunkHeap) Swap(i, j int) {
 func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaTopn)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	return errors.Trace(e.SortExec.Open(ctx))
+	return e.SortExec.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
@@ -251,11 +250,11 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		e.Idx = int(e.limit.Offset)
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = e.executeTopN(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		e.fetched = true
 	}
@@ -281,7 +280,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
 		err := e.children[0].Next(ctx, chunk.NewRecordBatch(srcChk))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if srcChk.NumRows() == 0 {
 			break
@@ -306,19 +305,19 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	for {
 		err := e.children[0].Next(ctx, chunk.NewRecordBatch(childRowChk))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if childRowChk.NumRows() == 0 {
 			break
 		}
 		err = e.processChildChk(childRowChk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionFactor {
 			err = e.doCompaction()
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}

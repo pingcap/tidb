@@ -90,7 +90,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 	for {
 		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
-			r.results <- resultWithErr{err: errors.Trace(err)}
+			r.results <- resultWithErr{err: err}
 			return
 		}
 		if resultSubset == nil {
@@ -126,12 +126,12 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		err := r.readRowsData(chk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
 			r.respChkIdx++
@@ -203,7 +203,7 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 		for i := 0; i < r.rowLen; i++ {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
