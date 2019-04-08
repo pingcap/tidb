@@ -428,8 +428,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 
-		strictCompatibility, e := GetSessionSystemVar(vars, TiDBStrictCompatibility)
-		if !TiDBOptOn(strictCompatibility) || e != nil {
+		strictCompatibility, err := GetSessionSystemVar(vars, TiDBStrictCompatibility)
+		if !TiDBOptOn(strictCompatibility) || err != nil {
 			switch upVal {
 			case "SERIALIZABLE", "READ-UNCOMMITTED":
 				return "", ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)

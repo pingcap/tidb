@@ -601,8 +601,8 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
 	case TxnIsolationOneShot:
-		strictCompatibility, e := GetSessionSystemVar(s, TiDBStrictCompatibility)
-		if !TiDBOptOn(strictCompatibility) || e != nil {
+		strictCompatibility, err := GetSessionSystemVar(s, TiDBStrictCompatibility)
+		if !TiDBOptOn(strictCompatibility) || err != nil {
 			switch val {
 			case "SERIALIZABLE", "READ-UNCOMMITTED":
 				return ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
