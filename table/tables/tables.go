@@ -925,7 +925,7 @@ func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 		return 0, err
 	}
 	if t.meta.ShardRowIDBits > 0 {
-		// use max record ShardRowIDBits to check  overflow.
+		// Use max record ShardRowIDBits to check overflow.
 		if OverflowShardBits(rowID, t.meta.MaxShardRowIDBits) {
 			// If overflow, the rowID may be duplicated. For examples,
 			// t.meta.ShardRowIDBits = 4
