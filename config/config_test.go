@@ -46,11 +46,27 @@ func (s *testConfigSuite) TestConfig(c *C) {
 
 	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
-	_, err = f.WriteString(`[performance]
-txn-entry-count-limit=2000
-txn-total-size-limit=2000
+
+	// Make sure the server refuses to start if there's an unrecognized configuration option
+	_, err = f.WriteString(`
+unrecognized-option-test = true
+`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+
+	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*unknown configuration option(?:.|\n)*")
+
+	f.Truncate(0)
+	f.Seek(0, 0)
+
+	_, err = f.WriteString(`
+token-limit = 0
+[performance]
 [tikv-client]
-commit-timeout="41s"`)
+commit-timeout="41s"
+max-batch-size=128
+`)
+
 	c.Assert(err, IsNil)
 	c.Assert(f.Sync(), IsNil)
 
