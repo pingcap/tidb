@@ -2685,12 +2685,12 @@ func (s *testDBSuite) TestAlterShardRowIDBits(c *C) {
 	tk.MustExec("insert into t1 set a=1;")
 
 	// Test increase shard_row_id_bits failed by overflow global auto ID.
-	_, err := tk.Exec(" alter table t1 SHARD_ROW_ID_BITS = 10;")
+	_, err := tk.Exec("alter table t1 SHARD_ROW_ID_BITS = 10;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID overflow")
 
 	// Test reduce shard_row_id_bits will be ok.
-	tk.MustExec(" alter table t1 SHARD_ROW_ID_BITS = 3;")
+	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 3;")
 	checkShardRowID := func(maxShardRowIDBits, shardRowIDBits uint64) {
 		tbl := testGetTableByName(c, tk.Se, "test", "t1")
 		c.Assert(tbl.Meta().MaxShardRowIDBits == maxShardRowIDBits, IsTrue)
@@ -2701,7 +2701,7 @@ func (s *testDBSuite) TestAlterShardRowIDBits(c *C) {
 	// Test reduce shard_row_id_bits but calculate overflow should use the max record shard_row_id_bits.
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int) shard_row_id_bits = 10")
-	tk.MustExec(" alter table t1 SHARD_ROW_ID_BITS = 5;")
+	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 5;")
 	checkShardRowID(10, 5)
 	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
 	_, err = tk.Exec("insert into t1 set a=1;")
