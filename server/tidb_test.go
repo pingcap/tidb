@@ -128,6 +128,24 @@ func (ts *TidbTestSuite) TestErrorCode(c *C) {
 	runTestErrorCode(c)
 }
 
+func (ts *TidbTestSuite) TestShowProcessList(c *C) {
+	c.Parallel()
+	runTestShowProcessList(c)
+}
+
+func (ts *TidbTestSuite) TestGetProcessInfo(c *C) {
+	for id, info := range ts.server.ShowProcessList() {
+		i, ok := ts.server.GetProcessInfo(id)
+		c.Assert(ok, IsTrue)
+		c.Assert(info, Equals, i)
+	}
+}
+
+func (ts *TidbTestSuite) TestKill(c *C) {
+	c.Parallel()
+	runTestKill(c, ts.server)
+}
+
 func (ts *TidbTestSuite) TestAuth(c *C) {
 	c.Parallel()
 	runTestAuth(c)

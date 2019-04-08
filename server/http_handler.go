@@ -809,7 +809,7 @@ func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 
 func (h tableHandler) getPDAddr() ([]string, error) {
 	var pdAddrs []string
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(tikv.WithEtcdAddress)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
@@ -965,10 +965,13 @@ type pdRegionStats struct {
 	Count            int              `json:"count"`
 	EmptyCount       int              `json:"empty_count"`
 	StorageSize      int64            `json:"storage_size"`
+	StorageKeys      int64            `json:"storage_keys"`
 	StoreLeaderCount map[uint64]int   `json:"store_leader_count"`
 	StorePeerCount   map[uint64]int   `json:"store_peer_count"`
 	StoreLeaderSize  map[uint64]int64 `json:"store_leader_size"`
+	StoreLeaderKeys  map[uint64]int64 `json:"store_leader_keys"`
 	StorePeerSize    map[uint64]int64 `json:"store_peer_size"`
+	StorePeerKeys    map[uint64]int64 `json:"store_perr_keys"`
 }
 
 func (h tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {

@@ -115,9 +115,14 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	return s, nil
 }
 
+// WithEtcdAddress is used for retrieving the address of etcd.
+type WithEtcdAddress interface {
+	EtcdAddrs() []string
+}
+
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
-	EtcdAddrs() []string
+	WithEtcdAddress
 	TLSConfig() *tls.Config
 	StartGCWorker() error
 }

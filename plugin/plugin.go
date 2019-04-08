@@ -258,10 +258,16 @@ func (w *flushWatcher) watchLoop() {
 	}
 }
 
-type loadFn func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error)
+// LoadFn is used to load a plugin for test
+type LoadFn func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error)
 
 var testHook *struct {
-	loadOne loadFn
+	loadOne LoadFn
+}
+
+// SetTestHook sets a load hook for plugin test
+func SetTestHook(fn LoadFn) {
+	testHook = &struct{ loadOne LoadFn }{loadOne: fn}
 }
 
 func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {

@@ -192,6 +192,34 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
 }
 
+func (ts *ConnTestSuite) TestPrepareStmt(c *C) {
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+
+	var outBuffer bytes.Buffer
+	cc := &clientConn{
+		connectionID: 1,
+		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
+		server: &Server{
+			capability: defaultCapability,
+		},
+		alloc: arena.NewAllocator(512),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(&outBuffer),
+		},
+		ctx: tc,
+	}
+	err = cc.writeInitialHandshake()
+	c.Assert(err, IsNil)
+
+	err = cc.handleStmtPrepare("select ?")
+	c.Assert(err, IsNil)
+}
+
 func (ts *ConnTestSuite) TestDispatch(c *C) {
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)

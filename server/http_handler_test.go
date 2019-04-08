@@ -14,6 +14,7 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"database/sql"
 	"encoding/base64"
@@ -55,10 +56,11 @@ import (
 )
 
 type HTTPHandlerTestSuite struct {
-	server  *Server
-	store   kv.Storage
-	domain  *domain.Domain
-	tidbdrv *TiDBDriver
+	server   *Server
+	pdServer *http.Server
+	store    kv.Storage
+	domain   *domain.Domain
+	tidbdrv  *TiDBDriver
 }
 
 var _ = Suite(new(HTTPHandlerTestSuite))
@@ -169,8 +171,9 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 
 func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
 	ts.startServer(c)
+	ts.prepareData(c)
 	defer ts.stopServer(c)
-	resp, err := http.Get("http://127.0.0.1:10090/tables/information_schema/SCHEMATA/regions")
+	resp, err := http.Get("http://127.0.0.1:10090/tables/tidb/test/regions")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	defer resp.Body.Close()
@@ -248,10 +251,23 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
-	mvccStore := mocktikv.MustNewMVCCStore()
-	var err error
-	ts.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	ts.pdServer = mockPDHTTPServer()
+	// ListenAndServe
+	go func() {
+		if err := ts.pdServer.ListenAndServe(); err != nil {
+			return
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	debugStore := DebugMVCCStore{mocktikv.MustNewMVCCStore()}
+	mockTikvStore, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(debugStore))
 	c.Assert(err, IsNil)
+	ts.store = &mockBackend{
+		mockTikvStore.(tikv.Storage),
+		[]string{"127.0.0.1:10100"},
+	}
+
 	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
@@ -278,6 +294,9 @@ func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
 	}
 	if ts.server != nil {
 		ts.server.Close()
+	}
+	if ts.pdServer != nil {
+		ts.pdServer.Close()
 	}
 }
 
@@ -381,8 +400,7 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(data.Info, IsNil)
 
-	c.Skip("MVCCLevelDB doesn't implement MVCCDebugger interface.")
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/0"))
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/123456/tidb/test"))
 	c.Assert(err, IsNil)
 	var p kvrpcpb.MvccGetByStartTsResponse
 	decoder = json.NewDecoder(resp.Body)
@@ -628,16 +646,29 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
-	_, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=3"))
-	c.Assert(err, IsNil)
-	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=-1"))
-	c.Assert(err, IsNil)
-
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history"))
-	c.Assert(err, IsNil)
-	decoder := json.NewDecoder(resp.Body)
-
 	var jobs []*model.Job
+
+	resp, err := http.Get("http://127.0.0.1:10090/ddl/history?limit=3")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&jobs)
+
+	c.Assert(err, IsNil)
+	c.Assert(len(jobs), Equals, 3)
+
+	resp1, err := http.Get("http://127.0.0.1:10090/ddl/history?limit=-1")
+	c.Assert(err, IsNil)
+	defer resp1.Body.Close()
+	msg, err := ioutil.ReadAll(resp1.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(msg), Equals, "ddl history limit must be greater than 1")
+
+	resp2, err := http.Get("http://127.0.0.1:10090/ddl/history")
+	c.Assert(err, IsNil)
+	defer resp2.Body.Close()
+	decoder = json.NewDecoder(resp2.Body)
+
 	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().Store.(kv.Storage))
 	defer s.Close()
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
@@ -718,6 +749,11 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/debug/pprof/some_error_request")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+
 	retryTime := 100
 	for retry := 0; retry < retryTime; retry++ {
 		resp, err := http.Get("http://127.0.0.1:10090/debug/pprof/heap")
@@ -729,6 +765,26 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 		time.Sleep(time.Millisecond * 10)
 	}
 	zaplog.Fatal("failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
+}
+
+func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/debug/zip")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	body, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	c.Assert(err, IsNil)
+	filenames := make([]string, 6)
+	for idx, f := range zr.File {
+		filenames[idx] = f.FileInfo().Name()
+	}
+	sort.Strings(filenames)
+	c.Assert(filenames, DeepEquals, []string{"config", "goroutine", "heap", "mutex", "profile", "version"})
 }
 
 func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
@@ -798,5 +854,45 @@ func (ts *HTTPHandlerTestSuite) TestHotRegionInfo(c *C) {
 	resp, err := http.Get("http://127.0.0.1:10090/regions/hot")
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
-	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	// Verify the resp body.
+	decoder := json.NewDecoder(resp.Body)
+	hotRegions := make(map[string]interface{})
+	err = decoder.Decode(&hotRegions)
+	c.Assert(err, IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestScatterRegions(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	resp, err := http.Get("http://127.0.0.1:10090/tables/tidb/test/scatter")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+}
+
+func (ts *HTTPHandlerTestSuite) TestStopScatterRegions(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	resp, err := http.Get("http://127.0.0.1:10090/tables/tidb/test/stop-scatter")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+}
+
+func (ts *HTTPHandlerTestSuite) TestDiskUsage(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	resp, err := http.Get("http://127.0.0.1:10090/tables/tidb/test/disk-usage")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	b, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, "351")
 }

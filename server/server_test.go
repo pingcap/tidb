@@ -783,22 +783,25 @@ func runTestShowProcessList(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
 		fullSQL := "show                                                                                        full processlist"
 		simpSQL := "show                                                                                        processlist"
-		rows := dbt.mustQuery(fullSQL)
-		c.Assert(rows.Next(), IsTrue)
-		var outA, outB, outC, outD, outE, outF, outG, outH, outI string
-		err := rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH, &outI)
-		c.Assert(err, IsNil)
-		c.Assert(outE, Equals, "Query")
-		c.Assert(outF, Equals, "0")
-		c.Assert(outG, Equals, "2")
-		c.Assert(outH, Equals, fullSQL)
-		rows = dbt.mustQuery(simpSQL)
-		err = rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH, &outI)
-		c.Assert(err, IsNil)
-		c.Assert(outE, Equals, "Query")
-		c.Assert(outF, Equals, "0")
-		c.Assert(outG, Equals, "2")
-		c.Assert(outH, Equals, simpSQL[:100])
+		assertShowProcessQuery := func(rows *sql.Rows, cmd, time, state, info string) {
+			var outA, outB, outC, outE, outF, outG string
+			var outD, outH interface{}
+			for rows.Next() {
+				err := rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH)
+				c.Assert(err, IsNil)
+
+				if outH != nil {
+					outInfo := string(outH.([]byte))
+					if outE == cmd && outF == time && outG == state && outInfo == info {
+						return
+					}
+				}
+			}
+			c.Assert(false, IsTrue)
+		}
+
+		assertShowProcessQuery(dbt.mustQuery(fullSQL), "Query", "0", "2", fullSQL)
+		assertShowProcessQuery(dbt.mustQuery(simpSQL), "Query", "0", "2", simpSQL[:100])
 	})
 }
 
@@ -1038,6 +1041,26 @@ func runTestSumAvg(c *C) {
 		c.Assert(outA, Equals, 1.0)
 		c.Assert(outB, Equals, 1.0)
 		c.Assert(outC, Equals, 1.0)
+	})
+}
+
+func runTestKill(c *C, s *Server) {
+	runTests(c, nil, func(dbt *DBTest) {
+		dbt.mustExec("create database testkill")
+		dbt.mustExec("use testkill")
+		var found bool
+		var id uint64
+		for _, info := range s.ShowProcessList() {
+			if info.DB == "testkill" {
+				found = true
+				id = info.ID
+				break
+			}
+		}
+		c.Assert(found, IsTrue)
+		s.Kill(id, false)
+		_, ok := s.GetProcessInfo(id)
+		c.Assert(ok, IsFalse)
 	})
 }
 

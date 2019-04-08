@@ -109,7 +109,7 @@ func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) (map[TblIn
 
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(tikv.WithEtcdAddress)
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
@@ -410,7 +410,7 @@ type RegionsInfo struct {
 
 // GetRegionsInfo gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(tikv.WithEtcdAddress)
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
@@ -489,7 +489,7 @@ type StoreDetailStat struct {
 
 // GetStoresStat gets the TiKV store information by accessing PD's api.
 func (h *Helper) GetStoresStat() (*StoresStat, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(tikv.WithEtcdAddress)
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}

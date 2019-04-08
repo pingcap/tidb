@@ -38,7 +38,7 @@ func TestLoadPluginSuccess(t *testing.T) {
 	}
 
 	// setup load test hook.
-	testHook = &struct{ loadOne loadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
+	testHook = &struct{ loadOne LoadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 		return func() *Manifest {
 			m := &AuditManifest{
 				Manifest: Manifest{
@@ -130,7 +130,7 @@ func TestLoadPluginSkipError(t *testing.T) {
 	}
 
 	// setup load test hook.
-	testHook = &struct{ loadOne loadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
+	testHook = &struct{ loadOne LoadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 		return func() *Manifest {
 			m := &AuditManifest{
 				Manifest: Manifest{
@@ -225,7 +225,7 @@ func TestLoadFail(t *testing.T) {
 	}
 
 	// setup load test hook.
-	testHook = &struct{ loadOne loadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
+	testHook = &struct{ loadOne LoadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 		return func() *Manifest {
 			m := &AuditManifest{
 				Manifest: Manifest{
