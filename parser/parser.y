@@ -511,7 +511,6 @@ import (
 	tidbHJ		"TIDB_HJ"
 	tidbSMJ		"TIDB_SMJ"
 	tidbINLJ	"TIDB_INLJ"
-	restore		"RESTORE"
 
 	builtinAddDate
 	builtinBitAnd
@@ -634,6 +633,7 @@ import (
 	SelectStmt			"SELECT statement"
 	RenameTableStmt         	"rename table statement"
 	ReplaceIntoStmt			"REPLACE INTO statement"
+	RecoverTableStmt                "recover table statement"
 	RevokeStmt			"Revoke statement"
 	RevokeRoleStmt      "Revoke role statement"
 	RollbackStmt			"ROLLBACK statement"
@@ -1407,7 +1407,35 @@ TableToTable:
 			NewTable: $3.(*ast.TableName),
 		}
 	}
-
+/*******************************************************************
+ *
+ *  Recover Table Statement
+ *
+ *  Example:
+ *      RECOVER TABLE t1;
+ *      RECOVER TABLE BY JOB 100;
+ *
+ *******************************************************************/
+RecoverTableStmt:
+	"RECOVER" "TABLE" "BY" "JOB" NUM
+    {
+        $$ = &ast.RecoverTableStmt{
+            JobID: $5.(int64),
+        }
+    }
+|	"RECOVER" "TABLE" TableName
+    {
+        $$ = &ast.RecoverTableStmt{
+            Table: $3.(*ast.TableName),
+        }
+    }
+|	"RECOVER" "TABLE" TableName NUM
+    {
+        $$ = &ast.RecoverTableStmt{
+            Table: $3.(*ast.TableName),
+            JobNum: $4.(int64),
+        }
+    }
 
 /*******************************************************************************************/
 
@@ -3127,7 +3155,7 @@ UnReservedKeyword:
 
 TiDBKeyword:
  "ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ"
-| "TIDB_SMJ" | "TIDB_INLJ" | "RESTORE"
+| "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
@@ -6012,28 +6040,6 @@ AdminStmt:
 			Index: string($5),
 		}
 	}
-|	"ADMIN" "RESTORE" "TABLE" "BY" "JOB" NUM
-	{
-		$$ = &ast.AdminStmt{
-			Tp: ast.AdminRestoreTable,
-			JobIDs: []int64{$6.(int64)},
-		}
-	}
-|	"ADMIN" "RESTORE" "TABLE" TableName
-	{
-		$$ = &ast.AdminStmt{
-			Tp: ast.AdminRestoreTable,
-			Tables: []*ast.TableName{$4.(*ast.TableName)},
-		}
-	}
-|	"ADMIN" "RESTORE" "TABLE" TableName NUM
-	{
-		$$ = &ast.AdminStmt{
-			Tp: ast.AdminRestoreTable,
-			Tables: []*ast.TableName{$4.(*ast.TableName)},
-			JobNumber: $5.(int64),
-		}
-	}
 |	"ADMIN" "CLEANUP" "INDEX" TableName Identifier
 	{
 		$$ = &ast.AdminStmt{
@@ -6606,6 +6612,7 @@ Statement:
 |	RollbackStmt
 |	RenameTableStmt
 |	ReplaceIntoStmt
+|	RecoverTableStmt
 |	RevokeStmt
 |	RevokeRoleStmt
 |	SelectStmt
