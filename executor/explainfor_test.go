@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -45,6 +46,7 @@ func (s *testSuite) TestExplainFor(c *C) {
 	tkRoot := testkit.NewTestKitWithInit(c, s.store)
 	tkUser := testkit.NewTestKitWithInit(c, s.store)
 	tkRoot.MustExec("create table t1(c1 int, c2 int)")
+	tkRoot.MustExec("create table t2(c1 int, c2 int)")
 	tkRoot.MustExec("create user tu@'%'")
 	tkRoot.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 	tkUser.Se.Auth(&auth.UserIdentity{Username: "tu", Hostname: "localhost", CurrentUser: true, AuthUsername: "tu", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
@@ -59,5 +61,44 @@ func (s *testSuite) TestExplainFor(c *C) {
 		"└─TableScan_4 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
-	c.Check(err, NotNil)
+	c.Check(core.ErrAccessDenied.Equal(err), IsTrue)
+	err = tkUser.ExecToErr("explain for connection 42")
+	c.Check(core.ErrNoSuchThread.Equal(err), IsTrue)
+
+	// Improve test coverage
+	tkRootProcess.Plan = nil
+	ps = []util.ProcessInfo{tkRootProcess}
+	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+
+	tkRoot.MustExec("insert into t1 values (1, 2);")
+	tkRoot.MustExec("update t1 set c1=3 where c1 = 1;")
+	tkRootProcess = tkRoot.Se.ShowProcess()
+	ps = []util.ProcessInfo{tkRootProcess}
+	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
+		"TableReader_6 10.00 root data:Selection_5",
+		"└─Selection_5 10.00 cop eq(test.t1.c1, 1)",
+		"  └─TableScan_4 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	tkRoot.MustExec("delete from t1 where c1 = 1;")
+	tkRootProcess = tkRoot.Se.ShowProcess()
+	ps = []util.ProcessInfo{tkRootProcess}
+	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
+		"TableReader_6 10.00 root data:Selection_5",
+		"└─Selection_5 10.00 cop eq(test.t1.c1, 1)",
+		"  └─TableScan_4 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	tkRoot.MustExec("insert into t2 (t2.c1, t2.c2) select t1.c1, t1.c2 from t1 where t1.c1 = 1;")
+	tkRootProcess = tkRoot.Se.ShowProcess()
+	ps = []util.ProcessInfo{tkRootProcess}
+	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
+		"TableReader_9 10.00 root data:Selection_8",
+		"└─Selection_8 10.00 cop eq(test.t1.c1, 1)",
+		"  └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	err = tkRoot.ExecToErr(fmt.Sprintf(`explain format="aaa" for connection %d`, tkRootProcess.ID))
+	c.Check(err, NotNil) // For last branch in PlanBuilder.buildExplainFor.
 }
