@@ -126,6 +126,7 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 
 	do := s.dom
 	h := do.StatsHandle()
+	h.Clear()
 	is := do.InfoSchema()
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -235,6 +236,7 @@ func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 		"c_varchar ascii ascii_bin",
 		"c_year <nil> <nil>",
 	))
+	tk.MustExec("DROP DATABASE charset_collate_test")
 }
 
 type mockSessionManager struct {
