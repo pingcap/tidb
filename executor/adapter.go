@@ -163,15 +163,18 @@ func (a *ExecStmt) IsPrepared() bool {
 }
 
 // IsReadOnly returns true if a statement is read only.
-// It will update readOnlyCheckStmt if current ExecStmt can be conveted to
-// a plannercore.Execute. Last step is using ast.IsReadOnly function to determine
-// a statement is read only or not.
-func (a *ExecStmt) IsReadOnly() bool {
-	readOnlyCheckStmt := a.StmtNode
-	if checkPlan, ok := a.Plan.(*plannercore.Execute); ok {
-		readOnlyCheckStmt = checkPlan.Stmt
+// If current StmtNode is an ExecuteStmt, we can get its prepared stmt,
+// then using ast.IsReadOnly function to determine a statement is read only or not.
+func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
+	if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
+		s, err := getPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("getPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(s)
 	}
-	return ast.IsReadOnly(readOnlyCheckStmt)
+	return ast.IsReadOnly(a.StmtNode)
 }
 
 // RebuildPlan rebuilds current execute statement plan.
