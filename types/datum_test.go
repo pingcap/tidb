@@ -199,54 +199,31 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 }
 
 func (ts *testTypeConvertSuite) TestToFloat64(c *C) {
-	var datum = NewDatum(float32(3.00))
+	testCases := []struct {
+		d      Datum
+		errMsg string
+		result float64
+	}{
+		{NewDatum(float32(3.00)), "", 3.00},
+		{NewDatum(float64(12345.678)), "", 12345.678},
+		{NewDatum("12345.678"), "", 12345.678},
+		{NewDatum([]byte("12345.678")), "", 12345.678},
+		{NewDatum(int64(12345)), "", 12345},
+		{NewDatum(uint64(123456)), "", 123456},
+		{NewDatum(byte(123)), "cannot convert .*", 0},
+	}
+
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
-	converted, err := datum.ToFloat64(sc)
-	c.Assert(err, IsNil)
-	c.Assert(converted, Equals, float64(3.00))
-
-	datum = NewDatum(float64(12345.678))
-	sc = new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	converted, err = datum.ToFloat64(sc)
-	c.Assert(err, IsNil)
-	c.Assert(converted, Equals, float64(12345.678))
-
-	datum = NewDatum("12345.678")
-	sc = new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	converted, err = datum.ToFloat64(sc)
-	c.Assert(err, IsNil)
-	c.Assert(converted, Equals, float64(12345.678))
-
-	datum = NewDatum([]byte("12345.678"))
-	sc = new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	converted, err = datum.ToFloat64(sc)
-	c.Assert(err, IsNil)
-	c.Assert(converted, Equals, float64(12345.678))
-
-	datum = NewDatum(int64(12345))
-	sc = new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	converted, err = datum.ToFloat64(sc)
-	c.Assert(err, IsNil)
-	c.Assert(converted, Equals, float64(12345))
-
-	datum = NewDatum(uint64(123456))
-	sc = new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	converted, err = datum.ToFloat64(sc)
-	c.Assert(err, IsNil)
-	c.Assert(converted, Equals, float64(123456))
-
-	datum = NewDatum(byte(123))
-	sc = new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	converted, err = datum.ToFloat64(sc)
-	c.Assert(err, ErrorMatches, "cannot convert .*")
-	c.Assert(converted, Equals, float64(0))
+	for _, t := range testCases {
+		converted, err := t.d.ToFloat64(sc)
+		if t.errMsg == "" {
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(err, ErrorMatches, t.errMsg)
+		}
+		c.Assert(converted, Equals, t.result)
+	}
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
