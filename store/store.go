@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var stores = make(map[string]kv.Driver)
@@ -65,9 +66,15 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 
 	var s kv.Storage
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
-		logutil.Logger(context.Background()).Info("new store")
+		logutil.Logger(context.Background()).Info("new store", zap.String("path", path))
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})
-	return s, err
+
+	if err == nil {
+		logutil.Logger(context.Background()).Info("new store with retry success")
+	} else {
+		logutil.Logger(context.Background()).Warn("new store with retry failed", zap.Error(err))
+	}
+	return s, errors.Trace(err)
 }
