@@ -262,6 +262,8 @@ func bootstrap(s Session) {
 			upgrade(s)
 			return
 		}
+		// To reduce conflict when multiple TiDB-server start at the same time.
+		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
 		if dom.DDL().OwnerManager().IsOwner() {
 			doDDLWorks(s)
 			doDMLWorks(s)
