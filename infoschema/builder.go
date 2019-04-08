@@ -53,7 +53,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	var oldTableID, newTableID int64
 	tblIDs := make([]int64, 0, 2)
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionRestoreTable:
+	case model.ActionCreateTable, model.ActionRecoverTable:
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, newTableID)
 	case model.ActionDropTable, model.ActionDropView:
