@@ -33,11 +33,13 @@ const (
 	protocol = "http://"
 )
 
+// Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
 type Helper struct {
 	Store       tikv.Storage
 	RegionCache *tikv.RegionCache
 }
 
+// GetMvccByEncodedKey get the MVCC value by the specific encoded key.
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
 	if err != nil {
@@ -92,6 +94,7 @@ type RegionMetric struct {
 	Count        int    `json:"region_count"`
 }
 
+// FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	etcd, ok := h.Store.(domain.EtcdBackend)
 	if !ok {
