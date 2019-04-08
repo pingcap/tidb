@@ -1737,6 +1737,26 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	return p, nil
 }
 
+func extractStmtPlan(targetPlan Plan) (PhysicalPlan, error) {
+	pp, ok := targetPlan.(PhysicalPlan)
+	if !ok {
+		switch x := targetPlan.(type) {
+		case *Delete:
+			pp = x.SelectPlan
+		case *Update:
+			pp = x.SelectPlan
+		case *Insert:
+			if x.SelectPlan != nil {
+				pp = x.SelectPlan
+			}
+		}
+		if pp == nil {
+			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
+		}
+	}
+	return pp, nil
+}
+
 // buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.
 // See https://dev.mysql.com/doc/refman/8.0/en/explain-for-connection.html.
 func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, error) {
@@ -1757,25 +1777,14 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 		return &Explain{StmtPlan: nil, Analyze: false, Format: explainFor.Format, ExecStmt: nil, ExecPlan: nil}, nil
 	}
 
-	pp, ok := targetPlan.(PhysicalPlan)
-	if !ok {
-		switch x := targetPlan.(type) {
-		case *Delete:
-			pp = x.SelectPlan
-		case *Update:
-			pp = x.SelectPlan
-		case *Insert:
-			if x.SelectPlan != nil {
-				pp = x.SelectPlan
-			}
-		}
-		if pp == nil {
-			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
-		}
+	pp, err := extractStmtPlan(targetPlan)
+	if err != nil {
+		return nil, err
 	}
+
 	p := &Explain{StmtPlan: pp, Analyze: false, Format: explainFor.Format, ExecStmt: nil, ExecPlan: targetPlan}
 	p.ctx = b.ctx
-	err := p.prepareSchema()
+	err = p.prepareSchema()
 	if err != nil {
 		return nil, err
 	}
@@ -1791,22 +1800,11 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 		return nil, err
 	}
 
-	pp, ok := targetPlan.(PhysicalPlan)
-	if !ok {
-		switch x := targetPlan.(type) {
-		case *Delete:
-			pp = x.SelectPlan
-		case *Update:
-			pp = x.SelectPlan
-		case *Insert:
-			if x.SelectPlan != nil {
-				pp = x.SelectPlan
-			}
-		}
-		if pp == nil {
-			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
-		}
+	pp, err := extractStmtPlan(targetPlan)
+	if err != nil {
+		return nil, err
 	}
+
 	p := &Explain{StmtPlan: pp, Analyze: explain.Analyze, Format: explain.Format, ExecStmt: explain.Stmt, ExecPlan: targetPlan}
 	p.ctx = b.ctx
 	err = p.prepareSchema()
