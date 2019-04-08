@@ -1207,7 +1207,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return errors.Trace(err)
 }
 
-func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
+func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check schema exist.
 	schema, ok := is.SchemaByID(schemaID)
@@ -1225,9 +1225,9 @@ func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, sche
 	job := &model.Job{
 		SchemaID:   schemaID,
 		TableID:    tbInfo.ID,
-		Type:       model.ActionRestoreTable,
+		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, restoreTableCheckFlagNone},
+		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, recoverTableCheckFlagNone},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
