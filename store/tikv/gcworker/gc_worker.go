@@ -481,7 +481,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
 
-		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
+		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -522,7 +522,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
 
-		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
+		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -542,7 +542,14 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error
 	return nil
 }
 
-func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte) error {
+func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte) error {
+	// Notify all regions in the range that unsafe destroy range is coming by sending deleteRange
+	notifyTask := tikv.NewNotifyDeleteRangeTask(ctx, w.store, startKey, endKey)
+	err := notifyTask.Execute()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
 	stores, err := w.pdClient.GetAllStores(ctx)
 	if err != nil {

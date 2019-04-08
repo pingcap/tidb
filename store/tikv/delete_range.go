@@ -32,10 +32,12 @@ type DeleteRangeTask struct {
 	ctx              context.Context
 	startKey         []byte
 	endKey           []byte
+	isUnsafe         bool
 }
 
-// NewDeleteRangeTask creates a DeleteRangeTask. Deleting will not be performed right away.
-// WARNING: Currently, this API may leave some waste key-value pairs uncleaned in TiKV. Be careful while using it.
+// NewDeleteRangeTask creates a DeleteRangeTask. Deleting will be performed when `Execute` method is invoked.
+// Be careful while using this API. This API doesn't keep recent MVCC versions, but will delete all versions of all keys
+// in the range immediately. Also notice that frequent invocation to this API may cause performance problems to TiKV.
 func NewDeleteRangeTask(ctx context.Context, store Storage, startKey []byte, endKey []byte) *DeleteRangeTask {
 	return &DeleteRangeTask{
 		completedRegions: 0,
@@ -44,7 +46,17 @@ func NewDeleteRangeTask(ctx context.Context, store Storage, startKey []byte, end
 		ctx:              ctx,
 		startKey:         startKey,
 		endKey:           endKey,
+		isUnsafe:         false,
 	}
+}
+
+// NewNotifyDeleteRangeTask creates a task that sends delete range requests to all regions in the range, but with the
+// flag `isUnsafe` set. TiKV will not actually delete the range after receiving request, but it will be replicated via
+// raft. This is used to notify the involved regions before sending UnsafeDestroyRange requests.
+func NewNotifyDeleteRangeTask(ctx context.Context, store Storage, startKey []byte, endKey []byte) *DeleteRangeTask {
+	task := NewDeleteRangeTask(ctx, store, startKey, endKey)
+	task.isUnsafe = true
+	return task
 }
 
 // Execute performs the delete range operation.
@@ -54,7 +66,7 @@ func (t *DeleteRangeTask) Execute() error {
 		select {
 		case <-t.ctx.Done():
 			t.canceled = true
-			return nil
+			return errors.Trace(t.ctx.Err())
 		default:
 		}
 		bo := NewBackoffer(t.ctx, deleteRangeOneRegionMaxBackoff)
@@ -75,6 +87,7 @@ func (t *DeleteRangeTask) Execute() error {
 			DeleteRange: &kvrpcpb.DeleteRangeRequest{
 				StartKey: startKey,
 				EndKey:   endKey,
+				IsUnsafe: t.isUnsafe,
 			},
 		}
 
