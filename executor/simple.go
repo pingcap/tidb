@@ -168,7 +168,6 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 }
 
 func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
-	failedUsers := make([]string, 0, len(s.Users))
 	for _, role := range s.Roles {
 		exists, err := userExists(e.ctx, role.Username, role.Hostname)
 		if err != nil {
@@ -189,8 +188,10 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 			return errors.Trace(err)
 		}
 		if !exists {
-			failedUsers = append(failedUsers, user.String())
-			continue
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+				return errors.Trace(err)
+			}
+			return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", user.String())
 		}
 		for _, role := range s.Roles {
 			if role.Hostname == "" {
@@ -198,7 +199,6 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 			}
 			sql := fmt.Sprintf(`DELETE IGNORE FROM %s.%s WHERE FROM_HOST='%s' and FROM_USER='%s' and TO_HOST='%s' and TO_USER='%s'`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
-				failedUsers = append(failedUsers, user.String())
 				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
 					return errors.Trace(err)
 				}

@@ -151,6 +151,8 @@ func (s *testSuite3) TestRole(c *C) {
 	_, err = tk.Exec("revoke test@localhost, r_1 from root;")
 	c.Check(err, IsNil)
 	_, err = tk.Exec("revoke `r_2`@`%` from root, u_2;")
+	c.Check(err, NotNil)
+	_, err = tk.Exec("revoke `r_2`@`%` from root;")
 	c.Check(err, IsNil)
 	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
 	result.Check(nil)
