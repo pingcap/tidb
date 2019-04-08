@@ -285,6 +285,41 @@ func (s *testSuite2) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("set global tidb_batch_commit = 2")
 	c.Assert(err, NotNil)
+
+	// test strict compatibility: init
+	tk.MustExec("SET GLOBAL tidb_strict_compatibility = 0")
+	tk.MustExec("SET SESSION tidb_strict_compatibility = 0")
+	tk.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
+
+	// test strict compatibility: error
+	_, err = tk.Exec("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
+
+	_, err = tk.Exec("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
+
+	// test strict compatibility: success
+	tk.MustExec("SET GLOBAL tidb_strict_compatibility = 1")
+	tk.MustExec("SET SESSION tidb_strict_compatibility = 1")
+	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("SERIALIZABLE"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("SERIALIZABLE"))
+
+	// test strict compatibility: success
+	tk.MustExec("SET GLOBAL tidb_strict_compatibility = 0")
+	tk.MustExec("SET SESSION tidb_strict_compatibility = 1")
+	tk.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {
