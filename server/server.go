@@ -43,7 +43,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
 	// For pprof
 	_ "net/http/pprof"
 

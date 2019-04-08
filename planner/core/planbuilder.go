@@ -1775,13 +1775,14 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 	if b.ctx.GetSessionVars() != nil && b.ctx.GetSessionVars().User != nil {
 		if b.ctx.GetSessionVars().User.Username != processInfo.User {
 			err := ErrAccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname)
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ProcessPriv, "", "", "", err)
+			// Different from MySQL's behavior and document.
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 		}
 	}
 
 	targetPlan, ok := processInfo.Plan.(Plan)
 	if !ok || targetPlan == nil {
-		return &Explain{StmtPlan: nil, Analyze: false, Format: explainFor.Format, ExecStmt: nil, ExecPlan: nil}, nil
+		return &Explain{Format: explainFor.Format}, nil
 	}
 
 	return b.buildExplainPlan(targetPlan, explainFor.Format, false, nil)
