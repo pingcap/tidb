@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 )
 
 func TestT(t *testing.T) {
@@ -42,4 +43,9 @@ func (s *testSuite) TestRegisterMetrics(c *C) {
 func (s *testSuite) TestRetLabel(c *C) {
 	c.Assert(RetLabel(nil), Equals, opSucc)
 	c.Assert(RetLabel(errors.New("test error")), Equals, opFailed)
+}
+
+func (s *testSuite) TestExecuteErrorToLabel(c *C) {
+	c.Assert(ExecuteErrorToLabel(errors.New("test")), Equals, `unknown`)
+	c.Assert(ExecuteErrorToLabel(terror.ErrResultUndetermined), Equals, `global:2`)
 }
