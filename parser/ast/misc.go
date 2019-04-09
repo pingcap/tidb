@@ -42,6 +42,7 @@ var (
 	_ StmtNode = &RollbackStmt{}
 	_ StmtNode = &SetPwdStmt{}
 	_ StmtNode = &SetRoleStmt{}
+	_ StmtNode = &SetDefaultRoleStmt{}
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &FlushStmt{}
@@ -844,6 +845,57 @@ func (n *SetRoleStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetRoleStmt)
+	return v.Leave(n)
+}
+
+type SetDefaultRoleStmt struct {
+	stmtNode
+
+	SetRoleOpt SetRoleStmtType
+	RoleList   []*auth.RoleIdentity
+	UserList   []*auth.UserIdentity
+}
+
+func (n *SetDefaultRoleStmt) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("SET DEFAULT ROLE")
+	switch n.SetRoleOpt {
+	case SetRoleNone:
+		ctx.WriteKeyWord(" NONE")
+	case SetRoleAll:
+		ctx.WriteKeyWord(" ALL")
+	default:
+	}
+	for i, role := range n.RoleList {
+		ctx.WritePlain(" ")
+		err := role.Restore(ctx)
+		if err != nil {
+			return errors.Annotate(err, "An error occurred while restore SetDefaultRoleStmt.RoleList")
+		}
+		if i != len(n.RoleList)-1 {
+			ctx.WritePlain(",")
+		}
+	}
+	ctx.WritePlain(" TO")
+	for i, user := range n.UserList {
+		ctx.WritePlain(" ")
+		err := user.Restore(ctx)
+		if err != nil {
+			return errors.Annotate(err, "An error occurred while restore SetDefaultRoleStmt.UserList")
+		}
+		if i != len(n.UserList)-1 {
+			ctx.WritePlain(",")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *SetDefaultRoleStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetDefaultRoleStmt)
 	return v.Leave(n)
 }
 

@@ -11357,6 +11357,15 @@ yynewstate:
 		{
 			parser.yyVAL.statement = yyS[yypt-0].item.(*ast.SetRoleStmt)
 		}
+	case 1058:
+		{
+			tmp := yyS[yypt-2].item.(*ast.SetRoleStmt)
+			parser.yyVAL.statement = &ast.SetDefaultRoleStmt{
+				SetRoleOpt: tmp.SetRoleOpt,
+				RoleList:   tmp.RoleList,
+				UserList:   yyS[yypt-0].item.([]*auth.UserIdentity),
+			}
+		}
 	case 1059:
 		{
 			parser.yyVAL.item = &ast.SetRoleStmt{SetRoleOpt: ast.SetRoleNone, RoleList: nil}
