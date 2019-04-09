@@ -448,7 +448,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 func analyzeFastExec(exec *AnalyzeFastExec) []statistics.AnalyzeResult {
 	hists, cms, err := exec.buildStats()
 	if err != nil {
-		return []statistics.AnalyzeResult{statistics.AnalyzeResult{Err: err}}
+		return []statistics.AnalyzeResult{{Err: err}}
 	}
 	var results []statistics.AnalyzeResult
 	hasIdxInfo := len(exec.idxsInfo)
