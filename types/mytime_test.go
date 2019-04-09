@@ -15,7 +15,6 @@ package types
 
 import (
 	"time"
-	gotime "time"
 
 	. "github.com/pingcap/check"
 )
@@ -237,7 +236,7 @@ func (s *testMyTimeSuite) TestgetFixDays(c *C) {
 		year        int
 		month       int
 		day         int
-		ot          gotime.Time
+		ot          time.Time
 		expectedDay int
 	}{
 		{2000, 1, 0, time.Date(2000, 1, 31, 0, 0, 0, 0, time.UTC), -2},
@@ -258,7 +257,7 @@ func (s *testMyTimeSuite) TestAddDate(c *C) {
 		year  int
 		month int
 		day   int
-		ot    gotime.Time
+		ot    time.Time
 	}{
 		{01, 1, 0, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC)},
 		{02, 1, 12, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC)},
