@@ -527,6 +527,7 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.table.Meta().ID)
 	var loc *tikv.KeyLocation
 	var err error
+	// extract all regions contain the table
 	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, append(loc.EndKey, byte(0))) {
 		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
 			e.scanTasks = append(e.scanTasks, loc)
