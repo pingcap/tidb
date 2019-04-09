@@ -143,7 +143,9 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 		case idxTask:
 			resultCh <- analyzeIndexPushdown(task.idxExec)
 		case fastTask:
-			resultCh <- analyzeFastExec(task.fastExec)
+			for _, result := range analyzeFastExec(task.fastExec) {
+				resultCh <- result
+			}
 		}
 	}
 }
@@ -443,22 +445,43 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 	return hists, cms, nil
 }
 
-func analyzeFastExec(exec *AnalyzeFastExec) statistics.AnalyzeResult {
+func analyzeFastExec(exec *AnalyzeFastExec) []statistics.AnalyzeResult {
 	hists, cms, err := exec.buildStats()
 	if err != nil {
-		return statistics.AnalyzeResult{Err: err}
+		return []statistics.AnalyzeResult{statistics.AnalyzeResult{Err: err}}
 	}
-	result := statistics.AnalyzeResult{
+	var results []statistics.AnalyzeResult
+	hasIdxInfo := len(exec.idxsInfo)
+	hasPKInfo := 0
+	if exec.pkInfo != nil {
+		hasPKInfo = 1
+	}
+	if hasIdxInfo > 0 {
+		for i := hasPKInfo + len(exec.colsInfo); i < len(hists); i++ {
+			idxResult := statistics.AnalyzeResult{
+				PhysicalTableID: exec.PhysicalTableID,
+				Hist:            []*statistics.Histogram{hists[i]},
+				Cms:             []*statistics.CMSketch{cms[i]},
+				IsIndex:         1,
+			}
+			if hists[i].Len() > 0 {
+				idxResult.Count += hists[i].Buckets[hists[i].Len()-1].Count
+			}
+			results = append(results, idxResult)
+		}
+	}
+	colResult := statistics.AnalyzeResult{
 		PhysicalTableID: exec.PhysicalTableID,
-		Hist:            hists,
-		Cms:             cms,
+		Hist:            hists[:hasPKInfo+len(exec.colsInfo)],
+		Cms:             cms[:hasPKInfo+len(exec.colsInfo)],
 	}
 	hist := hists[0]
-	result.Count = hist.NullCount
+	colResult.Count = hist.NullCount
 	if hist.Len() > 0 {
-		result.Count += hist.Buckets[hist.Len()-1].Count
+		colResult.Count += hist.Buckets[hist.Len()-1].Count
 	}
-	return result
+	results = append(results, colResult)
+	return results
 }
 
 // AnalyzeFastTask is the task for build stats.
