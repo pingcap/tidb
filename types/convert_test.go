@@ -884,3 +884,22 @@ func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 		c.Assert(dur.Duration, Equals, tc.dur)
 	}
 }
+
+func (s *testTypeConvertSuite) TestStrToDuration(c *C) {
+	sc := new(stmtctx.StatementContext)
+	var tests = []struct {
+		str        string
+		fsp        int
+		isDuration bool
+	}{
+		{"20190412120000", 4, false},
+		{"20190101180000", 6, false},
+		{"20190101180000", 1, false},
+		{"20190101181234", 3, false},
+	}
+	for _, tt := range tests {
+		_, _, isDuration, err := StrToDuration(sc, tt.str, tt.fsp)
+		c.Assert(err, IsNil)
+		c.Assert(isDuration, Equals, tt.isDuration)
+	}
+}

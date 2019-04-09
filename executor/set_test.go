@@ -602,8 +602,8 @@ func (s *testSuite2) TestSelectGlobalVar(c *C) {
 	tk.MustExec("set @@global.max_connections=151;")
 
 	// test for unknown variable.
-	_, err := tk.Exec("select @@invalid")
+	err := tk.ExecToErr("select @@invalid")
 	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
-	_, err = tk.Exec("select @@global.invalid")
+	err = tk.ExecToErr("select @@global.invalid")
 	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
 }
