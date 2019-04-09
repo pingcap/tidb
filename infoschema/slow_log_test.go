@@ -31,6 +31,7 @@ func (s *testSuite) TestParseSlowLogFile(c *C) {
 # Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Stats: t1:1,t2:2
 select * from t;`)
 	scanner := bufio.NewScanner(slowLog)
 	loc, err := time.LoadLocation("Asia/Shanghai")
@@ -47,7 +48,7 @@ select * from t;`)
 		}
 		recordString += str
 	}
-	expectRecordString := "2019-01-24 22:32:29.313255,405888132465033227,,0,0.216905,0.021,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,select * from t;"
+	expectRecordString := "2019-01-24 22:32:29.313255,405888132465033227,,0,0.216905,0.021,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,select * from t;"
 	c.Assert(expectRecordString, Equals, recordString)
 }
 

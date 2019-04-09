@@ -413,12 +413,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		indexIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
+	statsInfos := a.getStatsInfo()
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, sql))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -442,6 +443,34 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			Internal: sessVars.InRestrictedSQL,
 		})
 	}
+}
+
+func (a *ExecStmt) getStatsInfo() map[string]uint64 {
+	if a.Plan == nil {
+		return nil
+	}
+	physicalPlan, ok := a.Plan.(plannercore.PhysicalPlan)
+	if !ok {
+		return nil
+	}
+	statsInfos := make(map[string]uint64)
+	statsInfos = collectPlanStatsInfo(physicalPlan, statsInfos)
+	return statsInfos
+}
+
+func collectPlanStatsInfo(plan plannercore.PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
+	switch p := plan.(type) {
+	case *plannercore.PhysicalIndexScan:
+		statsInfos[p.Table.Name.O] = p.StatsInfo().StatsVersion
+		return statsInfos
+	case *plannercore.PhysicalTableScan:
+		statsInfos[p.Table.Name.O] = p.StatsInfo().StatsVersion
+		return statsInfos
+	}
+	for _, child := range plan.Children() {
+		statsInfos = collectPlanStatsInfo(child, statsInfos)
+	}
+	return statsInfos
 }
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:

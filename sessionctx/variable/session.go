@@ -872,6 +872,8 @@ const (
 	SlowLogDigestStr = "Digest"
 	// SlowLogQuerySQLStr is slow log field name.
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
+	// SlowLogStatsInfoStr is plan stats info.
+	SlowLogStatsInfoStr = "Stats"
 )
 
 // SlowLogFormat uses for formatting slow log.
@@ -885,8 +887,10 @@ const (
 // # DB: test
 // # Index_ids: [1,2]
 // # Is_internal: false
+// # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+// # Stats: t1:1,t2:2
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest, sql string) string {
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string, statsInfos map[string]uint64, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
 	buf.WriteString(SlowLogRowPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
@@ -909,6 +913,19 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 	buf.WriteString(SlowLogRowPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
 	if len(digest) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+	}
+	if len(statsInfos) > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
+		firstComma := false
+		for k, v := range statsInfos {
+			if firstComma {
+				buf.WriteString("," + k + ":" + strconv.FormatUint(v, 10))
+			} else {
+				buf.WriteString(k + ":" + strconv.FormatUint(v, 10))
+				firstComma = true
+			}
+		}
+		buf.WriteString("\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"

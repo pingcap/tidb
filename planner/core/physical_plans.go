@@ -122,6 +122,10 @@ type PhysicalIndexScan struct {
 	physicalTableID int64
 }
 
+func (ts *PhysicalIndexScan) StatsInfo() *property.StatsInfo {
+	return ts.statsInfo()
+}
+
 // PhysicalMemTable reads memory table.
 type PhysicalMemTable struct {
 	physicalSchemaProducer
@@ -166,6 +170,10 @@ type PhysicalTableScan struct {
 // IsPartition returns true and partition ID if it's actually a partition.
 func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
+}
+
+func (ts *PhysicalTableScan) StatsInfo() *property.StatsInfo {
+	return ts.statsInfo()
 }
 
 // PhysicalProjection is the physical operator of projection.
