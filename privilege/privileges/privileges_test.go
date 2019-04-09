@@ -107,16 +107,17 @@ func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 	mustExec(c, rootSe, `CREATE USER 'testcheck'@'localhost';`)
 
 	se := newSession(c, s.store, s.dbName)
+	activeRoles := make([]*auth.RoleIdentity, 0)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testcheck", Hostname: "localhost"}, nil, nil), IsTrue)
 	pc := privilege.GetPrivilegeManager(se)
-	c.Assert(pc.RequestVerification("test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.SelectPriv), IsFalse)
 
 	mustExec(c, rootSe, `GRANT SELECT ON *.* TO  'testcheck'@'localhost';`)
-	c.Assert(pc.RequestVerification("test", "", "", mysql.SelectPriv), IsTrue)
-	c.Assert(pc.RequestVerification("test", "", "", mysql.UpdatePriv), IsFalse)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsFalse)
 
 	mustExec(c, rootSe, `GRANT Update ON test.* TO  'testcheck'@'localhost';`)
-	c.Assert(pc.RequestVerification("test", "", "", mysql.UpdatePriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
@@ -124,20 +125,21 @@ func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	mustExec(c, rootSe, `CREATE USER 'test1'@'localhost';`)
 
 	se := newSession(c, s.store, s.dbName)
+	activeRoles := make([]*auth.RoleIdentity, 0)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test1", Hostname: "localhost"}, nil, nil), IsTrue)
 	pc := privilege.GetPrivilegeManager(se)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.SelectPriv), IsFalse)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.SelectPriv), IsFalse)
 
 	mustExec(c, rootSe, `GRANT SELECT ON *.* TO  'test1'@'localhost';`)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.SelectPriv), IsTrue)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.UpdatePriv), IsFalse)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.UpdatePriv), IsFalse)
 
 	mustExec(c, rootSe, `GRANT Update ON test.* TO  'test1'@'localhost';`)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.UpdatePriv), IsTrue)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.IndexPriv), IsFalse)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.UpdatePriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.IndexPriv), IsFalse)
 
 	mustExec(c, rootSe, `GRANT Index ON test.test TO  'test1'@'localhost';`)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.IndexPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.IndexPriv), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestShowGrants(c *C) {

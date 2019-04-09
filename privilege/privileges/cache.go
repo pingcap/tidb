@@ -183,6 +183,33 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	return false
 }
 
+// findAllRole is used to find all roles grant to this user.
+func (p *MySQLPrivilege) findAllRole(activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
+	queue, head := make([]*auth.RoleIdentity, 0), 0
+	for _, r := range activeRoles {
+		queue = append(queue, r)
+	}
+	// Using breadth first search to find all roles grant to this user.
+	visited, ret := make(map[string]bool), make([]*auth.RoleIdentity, 0)
+	for head < len(queue) {
+		role := queue[head]
+		if _, ok := visited[role.String()]; !ok {
+			visited[role.String()] = true
+			ret = append(ret, role)
+			key := role.Username + "@" + role.Hostname
+			if edgeTable, ok := p.RoleGraph[key]; ok {
+				for _, v := range edgeTable.roleList {
+					if _, ok := visited[v.String()]; !ok {
+						queue = append(queue, v)
+					}
+				}
+			}
+		}
+		head += 1
+	}
+	return ret
+}
+
 // LoadAll loads the tables from database to memory.
 func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err := p.LoadUserTable(ctx)
@@ -656,29 +683,52 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 }
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
-func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column string, priv mysql.PrivilegeType) bool {
-	record1 := p.matchUser(user, host)
-	if record1 != nil && record1.Privileges&priv > 0 {
+func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
+	roleList := p.findAllRole(activeRoles)
+	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
+
+	var userPriv, dbPriv, tablePriv, columnPriv mysql.PrivilegeType
+	for _, r := range roleList {
+		record1 := p.matchUser(r.Username, r.Hostname)
+		if record1 != nil {
+			userPriv |= record1.Privileges
+		}
+	}
+	if userPriv&priv > 0 {
 		return true
 	}
 
-	record2 := p.matchDB(user, host, db)
-	if record2 != nil && record2.Privileges&priv > 0 {
+	for _, r := range roleList {
+		record2 := p.matchDB(r.Username, r.Hostname, db)
+		if record2 != nil {
+			dbPriv |= record2.Privileges
+		}
+	}
+	if dbPriv&priv > 0 {
 		return true
 	}
 
-	record3 := p.matchTables(user, host, db, table)
-	if record3 != nil {
-		if record3.TablePriv&priv > 0 {
-			return true
-		}
-		if column != "" && record3.ColumnPriv&priv > 0 {
-			return true
+	for _, r := range roleList {
+		record3 := p.matchTables(r.Username, r.Hostname, db, table)
+		if record3 != nil {
+			tablePriv |= record3.TablePriv
+			if column != "" {
+				columnPriv |= record3.ColumnPriv
+			}
 		}
 	}
+	if tablePriv&priv > 0 || columnPriv&priv > 0 {
+		return true
+	}
 
-	record4 := p.matchColumns(user, host, db, table, column)
-	if record4 != nil && record4.ColumnPriv&priv > 0 {
+	columnPriv = 0
+	for _, r := range roleList {
+		record4 := p.matchColumns(r.Username, r.Hostname, db, table, column)
+		if record4 != nil {
+			columnPriv |= record4.ColumnPriv
+		}
+	}
+	if columnPriv&priv > 0 {
 		return true
 	}
 

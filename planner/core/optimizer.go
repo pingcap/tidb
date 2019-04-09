@@ -14,6 +14,7 @@
 package core
 
 import (
+	"github.com/pingcap/parser/auth"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -83,9 +84,9 @@ func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoS
 }
 
 // CheckPrivilege checks the privilege for a user.
-func CheckPrivilege(pm privilege.Manager, vs []visitInfo) error {
+func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
 	for _, v := range vs {
-		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
+		if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
 				return ErrPrivilegeCheckFail
 			}

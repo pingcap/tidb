@@ -15,6 +15,7 @@ package privileges_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -155,6 +156,7 @@ func (s *testCacheSuite) TestLoadDefaultRoleTable(c *C) {
 
 func (s *testCacheSuite) TestPatternMatch(c *C) {
 	se, err := session.CreateSession4Test(s.store)
+	activeRoles := make([]*auth.RoleIdentity, 0)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "USE MYSQL;")
@@ -163,20 +165,20 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	var p privileges.MySQLPrivilege
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
-	c.Assert(p.RequestVerification("root", "10.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
-	c.Assert(p.RequestVerification("root", "10.0.1.118", "test", "", "", mysql.SelectPriv), IsTrue)
-	c.Assert(p.RequestVerification("root", "localhost", "test", "", "", mysql.SelectPriv), IsFalse)
-	c.Assert(p.RequestVerification("root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
-	c.Assert(p.RequestVerification("root", "114.114.114.114", "test", "", "", mysql.SelectPriv), IsFalse)
-	c.Assert(p.RequestVerification("root", "114.114.114.114", "test", "", "", mysql.PrivilegeType(0)), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "10.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "10.0.1.118", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "114.114.114.114", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "114.114.114.114", "test", "", "", mysql.PrivilegeType(0)), IsTrue)
 
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
 	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N")`)
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
-	c.Assert(p.RequestVerification("root", "", "test", "", "", mysql.SelectPriv), IsTrue)
-	c.Assert(p.RequestVerification("root", "notnull", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "notnull", "test", "", "", mysql.SelectPriv), IsFalse)
 
 	// Pattern match for DB.
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
@@ -184,11 +186,12 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	mustExec(c, se, `INSERT INTO mysql.db (user,host,db,select_priv) values ('genius', '%', 'te%', 'Y')`)
 	err = p.LoadDBTable(se)
 	c.Assert(err, IsNil)
-	c.Assert(p.RequestVerification("genius", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "genius", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
 }
 
 func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 	se, err := session.CreateSession4Test(s.store)
+	activeRoles := make([]*auth.RoleIdentity, 0)
 	c.Assert(err, IsNil)
 	defer se.Close()
 	mustExec(c, se, "CREATE DATABASE TCTrain;")
@@ -199,9 +202,9 @@ func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 	err = p.LoadDBTable(se)
 	c.Assert(err, IsNil)
 	// DB and Table names are case insensitive in MySQL.
-	c.Assert(p.RequestVerification("genius", "127.0.0.1", "TCTrain", "TCTrainOrder", "", mysql.SelectPriv), IsTrue)
-	c.Assert(p.RequestVerification("genius", "127.0.0.1", "TCTRAIN", "TCTRAINORDER", "", mysql.SelectPriv), IsTrue)
-	c.Assert(p.RequestVerification("genius", "127.0.0.1", "tctrain", "tctrainorder", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "genius", "127.0.0.1", "TCTrain", "TCTrainOrder", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "genius", "127.0.0.1", "TCTRAIN", "TCTRAINORDER", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "genius", "127.0.0.1", "tctrain", "tctrainorder", "", mysql.SelectPriv), IsTrue)
 }
 
 func (s *testCacheSuite) TestLoadRoleGraph(c *C) {
@@ -306,8 +309,9 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	var p privileges.MySQLPrivilege
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
+	activeRoles := make([]*auth.RoleIdentity, 0)
 	// MySQL mysql.user table schema is not identical to TiDB, check it doesn't break privilege.
-	c.Assert(p.RequestVerification("root", "localhost", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.SelectPriv), IsTrue)
 
 	// Absent of those tables doesn't cause error.
 	mustExec(c, se, "DROP TABLE mysql.db;")
