@@ -832,6 +832,7 @@ func runTestAuth(c *C) {
 		config.Passwd = "123"
 	}))
 	rows, err := db.Query("select current_role;")
+	c.Assert(err, IsNil)
 	c.Assert(rows.Next(), IsTrue)
 	var outA string
 	err = rows.Scan(&outA)
