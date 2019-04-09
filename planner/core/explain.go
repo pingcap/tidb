@@ -74,7 +74,7 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.UsePseudoStats {
+	if p.stats.StatsVersion == 0 {
 		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
@@ -121,7 +121,7 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.UsePseudoStats {
+	if p.stats.StatsVersion == 0 {
 		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
