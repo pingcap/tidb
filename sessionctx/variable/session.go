@@ -775,6 +775,7 @@ const (
 )
 
 // these variables are useless for TiDB, but still need to validate their values for some compatible issues.
+// TODO: some more variables need to be added here.
 const (
 	serverReadOnly = "read_only"
 )
