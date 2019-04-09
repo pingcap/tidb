@@ -604,11 +604,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		switch val {
 		case "SERIALIZABLE", "READ-UNCOMMITTED":
 			skipIsolationLevelCheck, err := GetSessionSystemVar(s, TiDBSkipIsolationLevelCheck)
-			unSupportedValueForVarErr := ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
-			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
-				return unSupportedValueForVarErr
+			returnErr := ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
+			if err != nil {
+				returnErr = err
 			}
-			s.StmtCtx.AppendWarning(unSupportedValueForVarErr)
+			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
+				return returnErr
+			}
+			s.StmtCtx.AppendWarning(returnErr)
 		}
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val

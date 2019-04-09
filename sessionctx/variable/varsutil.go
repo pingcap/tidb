@@ -430,11 +430,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		switch upVal {
 		case "SERIALIZABLE", "READ-UNCOMMITTED":
 			skipIsolationLevelCheck, err := GetSessionSystemVar(vars, TiDBSkipIsolationLevelCheck)
-			unSupportedValueForVarErr := ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
-			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
-				return "", unSupportedValueForVarErr
+			returnErr := ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
+			if err != nil {
+				returnErr = err
 			}
-			vars.StmtCtx.AppendWarning(unSupportedValueForVarErr)
+			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
+				return "", returnErr
+			}
+			vars.StmtCtx.AppendWarning(returnErr)
 		}
 		return upVal, nil
 	case TiDBInitChunkSize:
