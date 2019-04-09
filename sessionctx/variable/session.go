@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"strconv"
 	"strings"
 	"sync"
@@ -601,12 +603,14 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
 	case TxnIsolationOneShot:
-		strictCompatibility, err := GetSessionSystemVar(s, TiDBStrictCompatibility)
-		if !TiDBOptOn(strictCompatibility) || err != nil {
-			switch val {
-			case "SERIALIZABLE", "READ-UNCOMMITTED":
-				return ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
+		switch val {
+		case "SERIALIZABLE", "READ-UNCOMMITTED":
+			skipIsolationLevelCheck, err := GetSessionSystemVar(s, TiDBSkipIsolationLevelCheck)
+			unSupportedValueForVarErr := ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
+			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
+				return unSupportedValueForVarErr
 			}
+			log.Warn("", zap.Error(unSupportedValueForVarErr))
 		}
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val

@@ -132,9 +132,9 @@ const (
 	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
 	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 
-	// tidb_strict_compatibility is used to control whether to return error when set unsupported transaction
+	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
 	// isolation level.
-	TiDBStrictCompatibility = "tidb_strict_compatibility"
+	TiDBSkipIsolationLevelCheck = "tidb_skip_isolation_level_check"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -299,7 +299,7 @@ const (
 	DefEnableWindowFunction          = false
 	DefTiDBDDLSlowOprThreshold       = 300
 	DefTiDBUseFastAnalyze            = false
-	DefTiDBStrictCompatibility       = false
+	DefTiDBSkipIsolationLevelCheck   = false
 )
 
 // Process global variables.

@@ -16,6 +16,8 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"math"
 	"strconv"
 	"strings"
@@ -427,13 +429,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if !exists {
 			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
-
-		strictCompatibility, err := GetSessionSystemVar(vars, TiDBStrictCompatibility)
-		if !TiDBOptOn(strictCompatibility) || err != nil {
-			switch upVal {
-			case "SERIALIZABLE", "READ-UNCOMMITTED":
-				return "", ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
+		switch upVal {
+		case "SERIALIZABLE", "READ-UNCOMMITTED":
+			skipIsolationLevelCheck, err := GetSessionSystemVar(vars, TiDBSkipIsolationLevelCheck)
+			unSupportedValueForVarErr := ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
+			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
+				return "", unSupportedValueForVarErr
 			}
+			log.Warn("", zap.Error(unSupportedValueForVarErr))
 		}
 		return upVal, nil
 	case TiDBInitChunkSize:
