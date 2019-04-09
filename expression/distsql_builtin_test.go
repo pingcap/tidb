@@ -105,14 +105,14 @@ func (s *testEvalSuite) TestEval(c *C) {
 	}
 }
 
-func buildExpr(tp tipb.ExprType, children ...interface{}) *tipb.Expr {
+func buildExpr(c *C, tp tipb.ExprType, children ...interface{}) *tipb.Expr {
 	expr := new(tipb.Expr)
 	expr.Tp = tp
 	expr.Children = make([]*tipb.Expr, len(children))
 	for i, child := range children {
 		switch x := child.(type) {
 		case types.Datum:
-			expr.Children[i] = datumExpr(nil, x)
+			expr.Children[i] = datumExpr(c, x)
 		case *tipb.Expr:
 			expr.Children[i] = x
 		}
@@ -148,7 +148,9 @@ func datumExpr(c *C, d types.Datum) *tipb.Expr {
 		expr.Tp = tipb.ExprType_MysqlDecimal
 		var err error
 		expr.Val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
-		c.Assert(err, IsNil, Commentf("encode decimal failed: %s", err.Error()))
+		if err != nil {
+			c.Assert(err, IsNil, Commentf("encode decimal failed: %s", err.Error()))
+		}
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
