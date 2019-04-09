@@ -24,9 +24,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/kv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/debugpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
@@ -555,23 +556,8 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	return false, nil
 }
 
-func eliminateDuplicatedPairs(resp *kvrpcpb.BatchGetResponse) []*kvrpcpb.KvPair {
-	sort.Slice(resp.Pairs, func(i, j int) bool {
-		return string(resp.Pairs[i].Key) < string(resp.Pairs[i].Key)
-	})
-	newPairs := make([]*kvrpcpb.KvPair, 0, len(resp.Pairs))
-	for i := 0; i < len(resp.Pairs); i++ {
-		if i > 0 && string(resp.Pairs[i].Key) == string(resp.Pairs[i-1].Key) {
-			continue
-		}
-		newPairs = append(newPairs, resp.Pairs[i])
-	}
-	return newPairs
-}
-
-func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse, collectors []*statistics.SampleCollector) (err error) {
-	pairs := eliminateDuplicatedPairs(resp)
-	length := int32(len(pairs))
+func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap *map[string][]byte, collectors []*statistics.SampleCollector) (err error) {
+	length := int32(len(*kvMap))
 	timeZone := e.ctx.GetSessionVars().Location()
 	newCursor := atomic.AddInt32(&e.sampCursor, length)
 	hasPKInfo := 0
@@ -579,18 +565,18 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse,
 		hasPKInfo = 1
 	}
 	hasIdxInfo := len(e.idxsInfo)
-	for i, pair := range pairs {
-		samplePos := newCursor - length + int32(i)
+	samplePos := newCursor - length
+	for _, value := range *kvMap {
 		if hasPKInfo > 0 {
 			collectors[0].Samples[samplePos].Ordinal = int(samplePos)
-			collectors[0].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(pair.Value, &e.pkInfo.FieldType, timeZone)
+			collectors[0].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(value, &e.pkInfo.FieldType, timeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 		for j, colInfo := range e.colsInfo {
 			collectors[hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
-			collectors[hasPKInfo+j].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(pair.Value, &colInfo.FieldType, timeZone)
+			collectors[hasPKInfo+j].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(value, &colInfo.FieldType, timeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -599,7 +585,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse,
 			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples[samplePos].Ordinal = int(samplePos)
 			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
 			for _, idxCol := range idxInfo.Columns {
-				val, err := tablecodec.DecodeColumnValue(pair.Value, &e.table.Cols()[idxCol.Offset].FieldType, timeZone)
+				val, err := tablecodec.DecodeColumnValue(value, &e.table.Cols()[idxCol.Offset].FieldType, timeZone)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -612,18 +598,19 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(resp *kvrpcpb.BatchGetResponse,
 			}
 			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
 		}
+		samplePos++
 	}
 	return nil
 }
 
-func (e *AnalyzeFastExec) handleScanResponse(resp *kvrpcpb.ScanResponse, collectors []*statistics.SampleCollector) (err error) {
+func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statistics.SampleCollector) (err error) {
 	timeZone := e.ctx.GetSessionVars().Location()
 	hasPKInfo := 0
 	if e.pkInfo != nil {
 		hasPKInfo = 1
 	}
 	hasIdxInfo := len(e.idxsInfo)
-	for _, pair := range resp.Pairs {
+	for ; iter.Valid(); iter.Next() {
 		// reservoir sampling
 		e.rowCount++
 		randNum := rand.Int63n(int64(e.rowCount))
@@ -637,13 +624,13 @@ func (e *AnalyzeFastExec) handleScanResponse(resp *kvrpcpb.ScanResponse, collect
 			e.sampCursor++
 		}
 		if hasPKInfo > 0 {
-			collectors[0].Samples[p].Value, err = tablecodec.DecodeColumnValue(pair.Value, &e.pkInfo.FieldType, timeZone)
+			collectors[0].Samples[p].Value, err = tablecodec.DecodeColumnValue(iter.Value(), &e.pkInfo.FieldType, timeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 		for j, colInfo := range e.colsInfo {
-			collectors[hasPKInfo+j].Samples[p].Value, err = tablecodec.DecodeColumnValue(pair.Value, &colInfo.FieldType, timeZone)
+			collectors[hasPKInfo+j].Samples[p].Value, err = tablecodec.DecodeColumnValue(iter.Value(), &colInfo.FieldType, timeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -651,7 +638,7 @@ func (e *AnalyzeFastExec) handleScanResponse(resp *kvrpcpb.ScanResponse, collect
 		for j, idxInfo := range e.idxsInfo {
 			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
 			for _, idxCol := range idxInfo.Columns {
-				val, err := tablecodec.DecodeColumnValue(pair.Value, &e.table.Cols()[idxCol.Offset].FieldType, timeZone)
+				val, err := tablecodec.DecodeColumnValue(iter.Value(), &e.table.Cols()[idxCol.Offset].FieldType, timeZone)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -669,25 +656,16 @@ func (e *AnalyzeFastExec) handleScanResponse(resp *kvrpcpb.ScanResponse, collect
 }
 
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*statistics.SampleCollector) error {
-	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
+	snapshot, err := e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for _, t := range e.scanTasks {
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdScan,
-			Scan: &kvrpcpb.ScanRequest{
-				StartKey: t.StartKey,
-				EndKey:   t.EndKey,
-			},
-		}
-		rpcCtx, err := e.cache.GetRPCContext(bo, t.Region)
+		iter, err := snapshot.Iter(t.StartKey, append(t.EndKey, '0'))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		ctx := context.Background()
-		resp, err := client.SendRequest(ctx, rpcCtx.Addr, req, tikv.ReadTimeoutMedium)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = e.handleScanResponse(resp.Scan, collectors)
+		err = e.handleScanIter(iter, collectors)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -703,7 +681,12 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collec
 			}
 		}
 	}()
-	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
+	var snapshot kv.Snapshot
+	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
+	if *err != nil {
+		*err = errors.Trace(*err)
+		return
+	}
 	for {
 		task, ok := <-e.tasks
 		if !ok {
@@ -723,31 +706,20 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collec
 			return
 		}
 
-		keys := make([][]byte, 0, task.SampSize)
+		keys := make([]kv.Key, 0, task.SampSize)
 		for i := 0; i < int(task.SampSize); i++ {
 			randKey := rand.Int63n(maxRowID-minRowID) + minRowID
 			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, randKey))
 		}
 
-		var resp *tikvrpc.Response
-		var rpcCtx *tikv.RPCContext
-		rpcCtx, *err = e.cache.GetRPCContext(bo, task.Location.Region)
-		if *err != nil {
-			*err = errors.Trace(*err)
-			return
-		}
-		ctx := context.Background()
-		req := &tikvrpc.Request{
-			Type:        tikvrpc.CmdBatchGet,
-			RawBatchGet: &kvrpcpb.RawBatchGetRequest{Keys: keys},
-		}
-		resp, *err = client.SendRequest(ctx, rpcCtx.Addr, req, tikv.ReadTimeoutMedium)
+		var kvMap map[string][]byte
+		kvMap, *err = snapshot.BatchGet(keys)
 		if *err != nil {
 			*err = errors.Trace(*err)
 			return
 		}
 
-		*err = e.handleBatchGetResponse(resp.BatchGet, collectors)
+		*err = e.handleBatchGetResponse(&kvMap, collectors)
 		if *err != nil {
 			*err = errors.Trace(*err)
 			return
