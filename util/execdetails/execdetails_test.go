@@ -27,7 +27,7 @@ func TestString(t *testing.T) {
 		TotalKeys:     100,
 		ProcessedKeys: 10,
 	}
-	expected := "process_time:1s wait_time:1s backoff_time:1s request_count:1 total_keys:100 processed_keys:10"
+	expected := "Process_time: 1 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10"
 	if str := detail.String(); str != expected {
 		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
 	}
