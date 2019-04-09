@@ -218,6 +218,7 @@ func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentit
 	return true
 }
 
+// GetDefaultRoles returns all default roles for certain user.
 func (p *UserPrivileges) GetDefaultRoles(user, host string) []*auth.RoleIdentity {
 	mysqlPrivilege := p.Handle.Get()
 	ret := mysqlPrivilege.getDefaultRoles(user, host)
