@@ -48,7 +48,7 @@ IndexJoin_12	4166.67	root	left outer join, inner:IndexLookUp_11, outer key:test.
 └─IndexLookUp_11	0.00	root	
   ├─Selection_10	0.00	cop	not(isnull(test.t2.c1))
   │ └─IndexScan_8	10.00	cop	table:t2, index:c1, range: decided by [test.t1.c2], keep order:false, stats:pseudo
-  └─TableScan_9	0.00	cop	table:t2, keep order:false
+  └─TableScan_9	0.00	cop	table:t2, keep order:false, stats:pseudo
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
 Point_Get_1	1.00	root	table:t1, handle:1
@@ -80,7 +80,7 @@ IndexLookUp_12	1.11	root
 ├─Selection_10	3.33	cop	gt(test.t1.c1, 1)
 │ └─IndexScan_8	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
 └─Selection_11	1.11	cop	lt(test.t1.c3, 1)
-  └─TableScan_9	3.33	cop	table:t1, keep order:false
+  └─TableScan_9	3.33	cop	table:t1, keep order:false, stats:pseudo
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	count	task	operator info
 TableReader_7	0.33	root	data:Selection_6
@@ -130,7 +130,7 @@ Projection_12	10000.00	root	eq(test.t1.c2, test.t2.c2)
       └─IndexLookUp_43	1.00	root	
         ├─Limit_42	1.00	cop	offset:0, count:1
         │ └─IndexScan_40	1.00	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true, stats:pseudo
-        └─TableScan_41	1.00	cop	table:t2, keep order:false
+        └─TableScan_41	1.00	cop	table:t2, keep order:false, stats:pseudo
 explain select * from t1 order by c1 desc limit 1;
 id	count	task	operator info
 Limit_10	1.00	root	offset:0, count:1
@@ -145,7 +145,7 @@ Limit_9	1.00	root	offset:0, count:1
   │ └─IndexScan_12	9.00	cop	table:t4, index:a, b, range:(1,+inf], keep order:false, stats:pseudo
   └─Limit_16	1.00	cop	offset:0, count:1
     └─Selection_15	1.00	cop	gt(test.t4.c, 1)
-      └─TableScan_13	3.00	cop	table:t4, keep order:false
+      └─TableScan_13	3.00	cop	table:t4, keep order:false, stats:pseudo
 explain select * from t4 where a > 1 and c > 1 limit 1;
 id	count	task	operator info
 Limit_8	1.00	root	offset:0, count:1
