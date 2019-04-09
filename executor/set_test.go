@@ -313,7 +313,7 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 variable 'tx_isolation' does not yet support value: SERIALIZABLE",
-		"Warning 1105  variable 'transaction_isolation' does not yet support value: SERIALIZABLE"))
+		"Warning 1105 variable 'transaction_isolation' does not yet support value: SERIALIZABLE"))
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("SERIALIZABLE"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("SERIALIZABLE"))
 
@@ -323,7 +323,7 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 variable 'tx_isolation' does not yet support value: READ-UNCOMMITTED",
-		"Warning 1105  variable 'transaction_isolation' does not yet support value: READ-UNCOMMITTED"))
+		"Warning 1105 variable 'transaction_isolation' does not yet support value: READ-UNCOMMITTED"))
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
 
