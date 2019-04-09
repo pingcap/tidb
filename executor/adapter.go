@@ -454,22 +454,7 @@ func (a *ExecStmt) getStatsInfo() map[string]uint64 {
 		return nil
 	}
 	statsInfos := make(map[string]uint64)
-	statsInfos = collectPlanStatsInfo(physicalPlan, statsInfos)
-	return statsInfos
-}
-
-func collectPlanStatsInfo(plan plannercore.PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
-	switch p := plan.(type) {
-	case *plannercore.PhysicalIndexScan:
-		statsInfos[p.Table.Name.O] = p.StatsInfo().StatsVersion
-		return statsInfos
-	case *plannercore.PhysicalTableScan:
-		statsInfos[p.Table.Name.O] = p.StatsInfo().StatsVersion
-		return statsInfos
-	}
-	for _, child := range plan.Children() {
-		statsInfos = collectPlanStatsInfo(child, statsInfos)
-	}
+	statsInfos = plannercore.CollectPlanStatsInfo(physicalPlan, statsInfos)
 	return statsInfos
 }
 

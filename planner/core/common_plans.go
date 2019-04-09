@@ -521,6 +521,27 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 	}
 }
 
+func CollectPlanStatsInfo(plan PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
+	for _, child := range plan.Children() {
+		statsInfos = CollectPlanStatsInfo(child, statsInfos)
+	}
+	switch copPlan := plan.(type) {
+	case *PhysicalTableReader:
+		statsInfos = CollectPlanStatsInfo(copPlan.tablePlan, statsInfos)
+	case *PhysicalIndexReader:
+		statsInfos = CollectPlanStatsInfo(copPlan.indexPlan, statsInfos)
+	case *PhysicalIndexLookUpReader:
+		statsInfos = CollectPlanStatsInfo(copPlan.indexPlan, statsInfos)
+		statsInfos = CollectPlanStatsInfo(copPlan.tablePlan, statsInfos)
+	case *PhysicalIndexScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
+	case *PhysicalTableScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
+	}
+
+	return statsInfos
+}
+
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, task type, operator info, and the estemated row count.
 func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
