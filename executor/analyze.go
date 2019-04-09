@@ -610,7 +610,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 		hasPKInfo = 1
 	}
 	hasIdxInfo := len(e.idxsInfo)
-	for ; iter.Valid(); iter.Next() {
+	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
 		e.rowCount++
 		randNum := rand.Int63n(int64(e.rowCount))
@@ -652,7 +652,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples[p].Value = types.NewBytesDatum(bytes)
 		}
 	}
-	return nil
+	return errors.Trace(err)
 }
 
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*statistics.SampleCollector) error {
