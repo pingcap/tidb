@@ -1412,6 +1412,11 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 		}
 	}
 	if !findTask {
+		var concurrency int
+		concurrency, b.err = getBuildStatsConcurrency(e.ctx)
+		if b.err != nil {
+			return
+		}
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: fastTask,
 			fastExec: &AnalyzeFastExec{
@@ -1421,7 +1426,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 				pkInfo:          task.PKInfo,
 				maxNumBuckets:   maxNumBuckets,
 				table:           task.Table,
-				concurrency:     4,
+				concurrency:     concurrency,
 			},
 		})
 	}
@@ -1437,6 +1442,11 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 		}
 	}
 	if !findTask {
+		var concurrency int
+		concurrency, b.err = getBuildStatsConcurrency(e.ctx)
+		if b.err != nil {
+			return
+		}
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: fastTask,
 			fastExec: &AnalyzeFastExec{
@@ -1445,7 +1455,7 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 				idxsInfo:        []*model.IndexInfo{task.IndexInfo},
 				maxNumBuckets:   maxNumBuckets,
 				table:           task.Table,
-				concurrency:     4,
+				concurrency:     concurrency,
 			},
 		})
 	}
