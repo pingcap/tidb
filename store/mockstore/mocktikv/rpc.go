@@ -818,7 +818,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.SplitRegion = handler.handleSplitRegion(r)
-	// DebugGetRegionProperties is for fast analyze in mock tikv
+	// DebugGetRegionProperties is for fast analyze in mock tikv.
 	case tikvrpc.CmdDebugGetRegionProperties:
 		r := req.DebugGetRegionProperties
 		region, _ := c.Cluster.GetRegionByID(r.RegionId)
