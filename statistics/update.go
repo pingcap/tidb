@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"fmt"
+	"go.uber.org/zap/zapcore"
 	"math"
 	"strconv"
 	"strings"
@@ -190,7 +191,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	} else {
 		rate = math.Abs(expected-float64(q.actual)) / float64(q.actual)
 	}
-	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) && log.GetLevel() == log.DebugLevel {
+	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) && log.GetLevel() == zapcore.DebugLevel {
 		q.logDetailedInfo(h)
 	}
 	metrics.StatsInaccuracyRate.Observe(rate)
