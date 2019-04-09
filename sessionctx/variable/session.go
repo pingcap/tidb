@@ -917,11 +917,18 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 	if len(statsInfos) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
+		vStr := ""
 		for k, v := range statsInfos {
-			if firstComma {
-				buf.WriteString("," + k + ":" + strconv.FormatUint(v, 10))
+			if v == 0 {
+				vStr = "pseudo"
 			} else {
-				buf.WriteString(k + ":" + strconv.FormatUint(v, 10))
+				vStr = strconv.FormatUint(v, 10)
+
+			}
+			if firstComma {
+				buf.WriteString("," + k + ":" + vStr)
+			} else {
+				buf.WriteString(k + ":" + vStr)
 				firstComma = true
 			}
 		}

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
@@ -464,7 +465,7 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 	ts.stats = property.NewSimpleStats(1)
 	ts.stats.StatsVersion = ds.statisticTable.Version
 	if ds.statisticTable.Pseudo {
-		ts.stats.StatsVersion = 0
+		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 
 	copTask := &copTask{
@@ -514,7 +515,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	is.stats = property.NewSimpleStats(rowCount)
 	is.stats.StatsVersion = ds.statisticTable.Version
 	if ds.statisticTable.Pseudo {
-		is.stats.StatsVersion = 0
+		is.stats.StatsVersion = statistics.PseudoVersion
 	}
 
 	cop := &copTask{

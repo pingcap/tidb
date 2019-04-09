@@ -98,7 +98,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.Sta
 		StatsVersion: ds.statisticTable.Version,
 	}
 	if ds.statisticTable.Pseudo {
-		profile.StatsVersion = 0
+		profile.StatsVersion = statistics.PseudoVersion
 	}
 
 	for i, col := range ds.Columns {
