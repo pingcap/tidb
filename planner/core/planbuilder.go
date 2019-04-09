@@ -825,10 +825,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{
-		MaxNumBuckets:     as.MaxNumBuckets,
-		EnableFastAnalyze: b.ctx.GetSessionVars().EnableFastAnalyze,
-	}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, err := getPhysicalIDs(tblInfo, as.PartitionNames)
 	if err != nil {
