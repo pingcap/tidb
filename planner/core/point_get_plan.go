@@ -41,6 +41,7 @@ type PointGetPlan struct {
 	IndexInfo        *model.IndexInfo
 	Handle           int64
 	HandleParam      *driver.ParamMarkerExpr
+	UnsignedHandle   bool
 	IndexValues      []types.Datum
 	IndexValueParams []*driver.ParamMarkerExpr
 	expr             expression.Expression
@@ -185,7 +186,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if pairs == nil {
 		return nil
 	}
-	handlePair := findPKHandle(tbl, pairs)
+	handlePair, unsigned := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
 		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, selStmt.Fields.Fields)
 		if schema == nil {
@@ -197,6 +198,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if err != nil {
 			return nil
 		}
+		p.UnsignedHandle = unsigned
 		p.HandleParam = handlePair.param
 		return p
 	}
@@ -362,20 +364,20 @@ func getNameValuePairs(nvPairs []nameValuePair, expr ast.ExprNode) []nameValuePa
 	return nil
 }
 
-func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair) {
+func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, unsigned bool) {
 	if !tblInfo.PKIsHandle {
-		return handlePair
+		return handlePair, unsigned
 	}
 	for _, col := range tblInfo.Columns {
 		if mysql.HasPriKeyFlag(col.Flag) {
 			i := findInPairs(col.Name.L, pairs)
 			if i == -1 {
-				return handlePair
+				return handlePair, unsigned
 			}
-			return pairs[i]
+			return pairs[i], mysql.HasUnsignedFlag(col.Flag)
 		}
 	}
-	return handlePair
+	return handlePair, unsigned
 }
 
 func getIndexValues(idxInfo *model.IndexInfo, pairs []nameValuePair) ([]types.Datum, []*driver.ParamMarkerExpr) {
