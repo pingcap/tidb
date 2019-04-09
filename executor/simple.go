@@ -226,7 +226,8 @@ func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) error {
 	case ast.SetRoleRegular:
 		return e.setDefaultRoleRegular(s)
 	}
-	return nil
+	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
+	return err
 }
 
 func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {

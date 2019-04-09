@@ -59,6 +59,9 @@ type Manager interface {
 
 	// FindEdge find if there is an edge between role and user.
 	FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool
+
+	// GetDefaultRoles returns all default roles for certain user.
+	GetDefaultRoles(user, host string) []*auth.RoleIdentity
 }
 
 const key keyType = 0
