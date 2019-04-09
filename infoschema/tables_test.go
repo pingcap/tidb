@@ -176,6 +176,11 @@ type mockSessionManager struct {
 
 func (sm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo { return sm.processInfoMap }
 
+func (sm *mockSessionManager) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
+	rs, ok := sm.processInfoMap[id]
+	return rs, ok
+}
+
 func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
 
 func (s *testTableSuite) TestSomeTables(c *C) {
