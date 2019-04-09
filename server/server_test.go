@@ -831,6 +831,7 @@ func runTestAuth(c *C) {
 		config.User = "authtest"
 		config.Passwd = "123"
 	}))
+	c.Assert(err, IsNil)
 	rows, err := db.Query("select current_role;")
 	c.Assert(err, IsNil)
 	c.Assert(rows.Next(), IsTrue)
