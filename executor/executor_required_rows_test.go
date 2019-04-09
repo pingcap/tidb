@@ -186,7 +186,7 @@ func buildLimitExec(ctx sessionctx.Context, src Executor, offset, count int) Exe
 func defaultCtx() sessionctx.Context {
 	ctx := mock.NewContext()
 	//ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = 1024
 	ctx.GetSessionVars().MemQuotaSort = variable.DefTiDBMemQuotaSort
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker("", ctx.GetSessionVars().MemQuotaQuery)
 	return ctx
