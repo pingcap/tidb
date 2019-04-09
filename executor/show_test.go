@@ -170,7 +170,7 @@ func (s *testSuite2) TestShow2(c *C) {
 	// TODO: In MySQL, the result is "autocommit ON".
 	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
 
-	// TODO: specifying charset for national char/varchar should not be supported
+	// TODO: Specifying the charset for national char/varchar should not be supported.
 	tk.MustExec("drop table if exists test_full_column")
 	tk.MustExec(`create table test_full_column(
 					c_int int,

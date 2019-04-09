@@ -208,9 +208,9 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 type ColDesc struct {
 	Field string
 	Type  string
-	// Charset is nil if the column doesn't have a charset, or a string indicating charset name
+	// Charset is nil if the column doesn't have a charset, or a string indicating the charset name.
 	Charset interface{}
-	// Collation is nil if the column doesn't have a collation, or a string indicating collation name
+	// Collation is nil if the column doesn't have a collation, or a string indicating the collation name.
 	Collation    interface{}
 	Null         string
 	Key          string
