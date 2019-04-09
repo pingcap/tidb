@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -238,6 +238,8 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
+	case *ast.ExplainForStmt:
+		return b.buildExplainFor(x)
 	case *ast.TraceStmt:
 		return b.buildTrace(x)
 	case *ast.InsertStmt:
@@ -1090,8 +1092,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		// Otherwise, you can kill only your own threads and statements.
 		sm := b.ctx.GetSessionManager()
 		if sm != nil {
-			processList := sm.ShowProcessList()
-			if pi, ok := processList[raw.ConnectionID]; ok {
+			if pi, ok := sm.GetProcessInfo(raw.ConnectionID); ok {
 				loginUser := b.ctx.GetSessionVars().User
 				if pi.User != loginUser.Username {
 					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
@@ -1730,15 +1731,7 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
-	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
-		return b.buildShow(show)
-	}
-	targetPlan, err := OptimizeAstNode(b.ctx, explain.Stmt, b.is)
-	if err != nil {
-		return nil, err
-	}
-
+func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
 	pp, ok := targetPlan.(PhysicalPlan)
 	if !ok {
 		switch x := targetPlan.(type) {
@@ -1755,13 +1748,49 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
 		}
 	}
-	p := &Explain{StmtPlan: pp, Analyze: explain.Analyze, Format: explain.Format, ExecStmt: explain.Stmt, ExecPlan: targetPlan}
+
+	p := &Explain{StmtPlan: pp, Analyze: analyze, Format: format, ExecStmt: execStmt, ExecPlan: targetPlan}
 	p.ctx = b.ctx
-	err = p.prepareSchema()
+	err := p.prepareSchema()
 	if err != nil {
 		return nil, err
 	}
 	return p, nil
+}
+
+// buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.
+// See https://dev.mysql.com/doc/refman/8.0/en/explain-for-connection.html.
+func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, error) {
+	processInfo, ok := b.ctx.GetSessionManager().GetProcessInfo(explainFor.ConnectionID)
+	if !ok {
+		return nil, ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
+	}
+	if b.ctx.GetSessionVars() != nil && b.ctx.GetSessionVars().User != nil {
+		if b.ctx.GetSessionVars().User.Username != processInfo.User {
+			err := ErrAccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname)
+			// Different from MySQL's behavior and document.
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+		}
+	}
+
+	targetPlan, ok := processInfo.Plan.(Plan)
+	if !ok || targetPlan == nil {
+		return &Explain{Format: explainFor.Format}, nil
+	}
+
+	return b.buildExplainPlan(targetPlan, explainFor.Format, false, nil)
+}
+
+func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
+	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
+		return b.buildShow(show)
+	}
+	targetPlan, err := OptimizeAstNode(b.ctx, explain.Stmt, b.is)
+	if err != nil {
+		return nil, err
+	}
+
+	return b.buildExplainPlan(targetPlan, explain.Format, explain.Analyze, explain.Stmt)
 }
 
 func buildShowProcedureSchema() *expression.Schema {
