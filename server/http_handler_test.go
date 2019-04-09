@@ -630,7 +630,7 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	decoder := json.NewDecoder(resp.Body)
 
 	var jobs []*model.Job
-	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
+	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().Store.(kv.Storage))
 	defer s.Close()
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
@@ -744,7 +744,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(info.Version, Equals, mysql.ServerVersion)
 	c.Assert(info.GitHash, Equals, printer.TiDBGitHash)
 
-	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
+	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
 	do, err := session.GetDomain(store.(kv.Storage))
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
@@ -767,7 +767,7 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(clusterInfo.IsAllServerVersionConsistent, IsTrue)
 	c.Assert(clusterInfo.ServersNum, Equals, 1)
 
-	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
+	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
 	do, err := session.GetDomain(store.(kv.Storage))
 	c.Assert(err, IsNil)
 	ddl := do.DDL()

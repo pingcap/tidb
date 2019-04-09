@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -205,9 +206,12 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 
 // ColDesc describes column information like MySQL desc and show columns do.
 type ColDesc struct {
-	Field        string
-	Type         string
-	Collation    string
+	Field string
+	Type  string
+	// Charset is nil if the column doesn't have a charset, or a string indicating the charset name.
+	Charset interface{}
+	// Collation is nil if the column doesn't have a collation, or a string indicating the collation name.
+	Collation    interface{}
 	Null         string
 	Key          string
 	DefaultValue interface{}
@@ -267,9 +271,10 @@ func NewColDesc(col *Column) *ColDesc {
 		}
 	}
 
-	return &ColDesc{
+	desc := &ColDesc{
 		Field:        name.O,
 		Type:         col.GetTypeDesc(),
+		Charset:      col.Charset,
 		Collation:    col.Collate,
 		Null:         nullFlag,
 		Key:          keyFlag,
@@ -278,6 +283,11 @@ func NewColDesc(col *Column) *ColDesc {
 		Privileges:   defaultPrivileges,
 		Comment:      col.Comment,
 	}
+	if !field_types.HasCharset(&col.ColumnInfo.FieldType) {
+		desc.Charset = nil
+		desc.Collation = nil
+	}
+	return desc
 }
 
 // ColDescFieldNames returns the fields name in result set for desc and show columns.
