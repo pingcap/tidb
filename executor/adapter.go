@@ -454,7 +454,7 @@ func (a *ExecStmt) getStatsInfo() map[string]uint64 {
 		return nil
 	}
 	statsInfos := make(map[string]uint64)
-	statsInfos = plannercore.CollectPlanStatsInfo(physicalPlan, statsInfos)
+	statsInfos = plannercore.CollectPlanStatsVersion(physicalPlan, statsInfos)
 	return statsInfos
 }
 
