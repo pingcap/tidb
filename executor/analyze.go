@@ -463,6 +463,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []statistics.AnalyzeResult {
 				Hist:            []*statistics.Histogram{hists[i]},
 				Cms:             []*statistics.CMSketch{cms[i]},
 				IsIndex:         1,
+				Count:           hists[i].NullCount,
 			}
 			if hists[i].Len() > 0 {
 				idxResult.Count += hists[i].Buckets[hists[i].Len()-1].Count
@@ -470,13 +471,13 @@ func analyzeFastExec(exec *AnalyzeFastExec) []statistics.AnalyzeResult {
 			results = append(results, idxResult)
 		}
 	}
+	hist := hists[0]
 	colResult := statistics.AnalyzeResult{
 		PhysicalTableID: exec.PhysicalTableID,
 		Hist:            hists[:hasPKInfo+len(exec.colsInfo)],
 		Cms:             cms[:hasPKInfo+len(exec.colsInfo)],
+		Count:           NullCount,
 	}
-	hist := hists[0]
-	colResult.Count = hist.NullCount
 	if hist.Len() > 0 {
 		colResult.Count += hist.Buckets[hist.Len()-1].Count
 	}
