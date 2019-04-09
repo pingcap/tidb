@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -32,12 +33,14 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/net/context"
 )
 
@@ -124,6 +127,7 @@ func (a *recordSet) Close() error {
 	if a.processinfo != nil {
 		a.processinfo.SetProcessInfo("")
 	}
+	a.stmt.logAudit()
 	return errors.Trace(err)
 }
 
@@ -159,15 +163,18 @@ func (a *ExecStmt) IsPrepared() bool {
 }
 
 // IsReadOnly returns true if a statement is read only.
-// It will update readOnlyCheckStmt if current ExecStmt can be conveted to
-// a plannercore.Execute. Last step is using ast.IsReadOnly function to determine
-// a statement is read only or not.
-func (a *ExecStmt) IsReadOnly() bool {
-	readOnlyCheckStmt := a.StmtNode
-	if checkPlan, ok := a.Plan.(*plannercore.Execute); ok {
-		readOnlyCheckStmt = checkPlan.Stmt
+// If current StmtNode is an ExecuteStmt, we can get its prepared stmt,
+// then using ast.IsReadOnly function to determine a statement is read only or not.
+func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
+	if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
+		s, err := getPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("getPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(s)
 	}
-	return ast.IsReadOnly(readOnlyCheckStmt)
+	return ast.IsReadOnly(a.StmtNode)
 }
 
 // RebuildPlan rebuilds current execute statement plan.
@@ -279,13 +286,14 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		txnTS := uint64(0)
 		// Don't active pending txn here.
 		if txn, err1 := sctx.Txn(false); err1 != nil {
-			log.Error(err1)
+			logutil.Logger(ctx).Error("get current transaction failed", zap.Error(err))
 		} else {
 			if txn.Valid() {
 				txnTS = txn.StartTS()
 			}
 		}
 		a.LogSlowQuery(txnTS, err == nil)
+		a.logAudit()
 	}()
 
 	err = e.Next(ctx, e.newFirstChunk())
@@ -306,7 +314,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			return nil, errors.Trace(err)
 		}
 		if isPointGet {
-			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			logutil.Logger(context.Background()).Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		}
 		if err != nil {
@@ -349,16 +357,34 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 // QueryReplacer replaces new line and tab for grep result including query string.
 var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
 
+func (a *ExecStmt) logAudit() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.InRestrictedSQL {
+		return
+	}
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		audit := plugin.DeclareAuditManifest(p.Manifest)
+		if audit.OnGeneralEvent != nil {
+			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
+			audit.OnGeneralEvent(context.Background(), sessVars, plugin.Log, cmd)
+		}
+		return nil
+	})
+	if err != nil {
+		logutil.Logger(context.Background()).Error("log audit log failure", zap.Error(err))
+	}
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	level := log.GetLevel()
-	if level < log.WarnLevel {
+	if level > zapcore.WarnLevel {
 		return
 	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	if costTime < threshold && level < log.DebugLevel {
+	if costTime < threshold && level > zapcore.DebugLevel {
 		return
 	}
 	sql := a.Text
@@ -368,41 +394,24 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
 
-	connID := sessVars.ConnectionID
-	currentDB := sessVars.CurrentDB
 	var tableIDs, indexIDs string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
-		tableIDs = strings.Replace(fmt.Sprintf("table_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
+		tableIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
 	}
 	if len(sessVars.StmtCtx.IndexIDs) > 0 {
-		indexIDs = strings.Replace(fmt.Sprintf("index_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
-	}
-	user := sessVars.User
-	var internal string
-	if sessVars.InRestrictedSQL {
-		internal = "[INTERNAL] "
+		indexIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
-		logutil.SlowQueryLogger.Debugf(
-			"[QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+		logutil.SlowQueryLogger.Debugf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, sql))
 	} else {
-		logutil.SlowQueryLogger.Warnf(
-			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+		logutil.SlowQueryLogger.Warnf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
 		var userString string
-		if user != nil {
-			userString = user.String()
-		}
-		if len(tableIDs) > 10 {
-			tableIDs = tableIDs[10 : len(tableIDs)-1] // Remove "table_ids:" and the last ","
-		}
-		if len(indexIDs) > 10 {
-			indexIDs = indexIDs[10 : len(indexIDs)-1] // Remove "index_ids:" and the last ","
+		if sessVars.User != nil {
+			userString = sessVars.User.String()
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
@@ -410,10 +419,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			Duration: costTime,
 			Detail:   sessVars.StmtCtx.GetExecDetails(),
 			Succ:     succ,
-			ConnID:   connID,
+			ConnID:   sessVars.ConnectionID,
 			TxnTS:    txnTS,
 			User:     userString,
-			DB:       currentDB,
+			DB:       sessVars.CurrentDB,
 			TableIDs: tableIDs,
 			IndexIDs: indexIDs,
 			Internal: sessVars.InRestrictedSQL,
