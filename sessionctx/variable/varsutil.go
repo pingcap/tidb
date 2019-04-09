@@ -16,8 +16,6 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
 	"math"
 	"strconv"
 	"strings"
@@ -436,7 +434,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
 				return "", unSupportedValueForVarErr
 			}
-			log.Warn("", zap.Error(unSupportedValueForVarErr))
+			vars.StmtCtx.AppendWarning(unSupportedValueForVarErr)
 		}
 		return upVal, nil
 	case TiDBInitChunkSize:

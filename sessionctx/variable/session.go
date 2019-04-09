@@ -17,8 +17,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
 	"strconv"
 	"strings"
 	"sync"
@@ -610,7 +608,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
 				return unSupportedValueForVarErr
 			}
-			log.Warn("", zap.Error(unSupportedValueForVarErr))
+			s.StmtCtx.AppendWarning(unSupportedValueForVarErr)
 		}
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val
