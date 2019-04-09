@@ -1466,8 +1466,9 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
+	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	for _, task := range v.ColTasks {
-		if v.EnableFastAnalyze {
+		if enableFastAnalyze {
 			b.buildAnalyzeFastColumn(e, task, v.MaxNumBuckets)
 		} else {
 			e.tasks = append(e.tasks, &analyzeTask{
@@ -1480,7 +1481,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		}
 	}
 	for _, task := range v.IdxTasks {
-		if v.EnableFastAnalyze {
+		if enableFastAnalyze {
 			b.buildAnalyzeFastIndex(e, task, v.MaxNumBuckets)
 		} else {
 			e.tasks = append(e.tasks, &analyzeTask{

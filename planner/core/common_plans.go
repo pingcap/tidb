@@ -422,8 +422,6 @@ type Analyze struct {
 	ColTasks      []AnalyzeColumnsTask
 	IdxTasks      []AnalyzeIndexTask
 	MaxNumBuckets uint64
-
-	EnableFastAnalyze bool
 }
 
 // LoadData represents a loaddata plan.
