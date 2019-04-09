@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -69,6 +68,11 @@ func (t *DeleteRangeTask) Execute() error {
 			return errors.Trace(t.ctx.Err())
 		default:
 		}
+
+		if bytes.Compare(startKey, rangeEndKey) >= 0 {
+			break
+		}
+
 		bo := NewBackoffer(t.ctx, deleteRangeOneRegionMaxBackoff)
 		loc, err := t.store.GetRegionCache().LocateKey(bo, startKey)
 		if err != nil {
@@ -114,9 +118,6 @@ func (t *DeleteRangeTask) Execute() error {
 			return errors.Errorf("unexpected delete range err: %v", err)
 		}
 		t.completedRegions++
-		if bytes.Equal(endKey, rangeEndKey) {
-			break
-		}
 		startKey = endKey
 	}
 
