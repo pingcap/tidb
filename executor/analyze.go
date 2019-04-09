@@ -476,7 +476,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []statistics.AnalyzeResult {
 		PhysicalTableID: exec.PhysicalTableID,
 		Hist:            hists[:hasPKInfo+len(exec.colsInfo)],
 		Cms:             cms[:hasPKInfo+len(exec.colsInfo)],
-		Count:           NullCount,
+		Count:           hist.NullCount,
 	}
 	if hist.Len() > 0 {
 		colResult.Count += hist.Buckets[hist.Len()-1].Count
