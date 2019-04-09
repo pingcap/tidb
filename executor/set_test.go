@@ -326,6 +326,10 @@ func (s *testSuite2) TestSetVar(c *C) {
 		"Warning 1105  variable 'transaction_isolation' does not yet support value: READ-UNCOMMITTED"))
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+
+	// test skip isolation level check: reset
+	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
+	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {
@@ -625,6 +629,8 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@tx_isolation;")
 	result.Check(testkit.Rows("REPEATABLE-READ"))
 
+	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
+	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 	_, err = tk.Exec("set @@tx_isolation='SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
 }
