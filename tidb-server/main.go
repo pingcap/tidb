@@ -63,6 +63,8 @@ import (
 const (
 	nmVersion          = "V"
 	nmConfig           = "config"
+	nmConfigCheck      = "config-check"
+	nmConfigStrict     = "config-strict"
 	nmStore            = "store"
 	nmStorePath        = "path"
 	nmHost             = "host"
@@ -90,8 +92,10 @@ const (
 )
 
 var (
-	version    = flagBoolean(nmVersion, false, "print version information and exit")
-	configPath = flag.String(nmConfig, "", "config file path")
+	version      = flagBoolean(nmVersion, false, "print version information and exit")
+	configPath   = flag.String(nmConfig, "", "config file path")
+	configCheck  = flagBoolean(nmConfigCheck, false, "check config file validity and exit")
+	configStrict = flagBoolean(nmConfigStrict, false, "enforce config file validity")
 
 	// Base
 	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
@@ -141,11 +145,21 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
-	loadConfig()
+	configWarning := loadConfig()
 	overrideConfig()
 	validateConfig()
+	if *configCheck {
+		fmt.Println("config check successful")
+		os.Exit(0)
+	}
 	setGlobalVars()
 	setupLog()
+	// If configStrict had been specified, and there had been an error, the server would already
+	// have exited by now. If configWarning is not an empty string, write it to the log now that
+	// it's been properly set up.
+	if configWarning != "" {
+		log.Warn(configWarning)
+	}
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -287,12 +301,20 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	return flag.Bool(name, defaultVal, usage)
 }
 
-func loadConfig() {
+func loadConfig() string {
 	cfg = config.GetGlobalConfig()
 	if *configPath != "" {
 		err := cfg.Load(*configPath)
+		// This block is to accommodate an interim situation where strict config checking
+		// is not the default behavior of TiDB. The warning message must be deferred until
+		// logging has been set up. After strict config checking is the default behavior,
+		// This should all be removed.
+		if _, ok := err.(*config.ErrConfigValidationFailed); ok && !*configCheck && !*configStrict {
+			return err.Error()
+		}
 		terror.MustNil(err)
 	}
+	return ""
 }
 
 func overrideConfig() {

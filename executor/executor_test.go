@@ -3433,9 +3433,9 @@ func (s *testSuite3) TestSelectPartition(c *C) {
 	tk.MustQuery("select b from tr partition (r1,R3) order by a").Check(testkit.Rows("4", "7", "8"))
 
 	// test select unknown partition error
-	_, err := tk.Exec("select b from th partition (p0,p4)")
+	err := tk.ExecToErr("select b from th partition (p0,p4)")
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'th'")
-	_, err = tk.Exec("select b from tr partition (r1,r4)")
+	err = tk.ExecToErr("select b from tr partition (r1,r4)")
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'r4' in table 'tr'")
 }
 
@@ -3452,11 +3452,11 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(c int,d int)")
-	_, err := tk.Exec("select * from view1")
+	err := tk.ExecToErr("select * from view1")
 	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view1").Error())
-	_, err = tk.Exec("select * from view2")
+	err = tk.ExecToErr("select * from view2")
 	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view2").Error())
-	_, err = tk.Exec("select * from view3")
+	err = tk.ExecToErr("select * from view3")
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'field list'")
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(a int,b int,c int)")
