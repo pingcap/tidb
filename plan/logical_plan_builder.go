@@ -2410,7 +2410,7 @@ func extractTableListForUpdate(refTables []*ast.TableName, sets []*ast.Assignmen
 	if len(refTables) == 1 {
 		return refTables
 	}
-	var tbls []*ast.TableName
+	tbls := make([]*ast.TableName, len(sets))
 	var tblsMap map[string]*ast.TableName
 
 	for _, a := range sets {
@@ -2419,7 +2419,7 @@ func extractTableListForUpdate(refTables []*ast.TableName, sets []*ast.Assignmen
 		if c.Table.L != "" {
 			for _, tbl := range refTables {
 				if strings.EqualFold(tbl.Name.L, c.Name.L) {
-					tblsMap[fmt.Sprintf("`%s`.`%s`", tbl.Schema.L, tbl.Name.L)] = tbl
+					tblsMap["`"+tbl.Schema.L+"`.`"+tbl.Name.L+"`"] = tbl
 				}
 			}
 		}
