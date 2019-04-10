@@ -15,6 +15,7 @@ package types
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -27,7 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // Portable analogs of some common call errors.
@@ -308,7 +309,7 @@ func (t Time) ToNumber() *MyDecimal {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		log.Error("Fatal: never happen because we've control the format!")
+		logutil.Logger(context.Background()).Error("[fatal] never happen because we've control the format!")
 	}
 
 	if t.Fsp > 0 {
@@ -443,13 +444,35 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 
 // GetFsp gets the fsp of a string.
 func GetFsp(s string) (fsp int) {
-	fsp = len(s) - strings.LastIndex(s, ".") - 1
+	index := GetFracIndex(s)
+	if index < 0 {
+		fsp = 0
+	} else {
+		fsp = len(s) - index - 1
+	}
+
 	if fsp == len(s) {
 		fsp = 0
 	} else if fsp > 6 {
 		fsp = 6
 	}
 	return
+}
+
+// GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
+// but for format like '2019.01.01 00:00:00', the index should be -1.
+func GetFracIndex(s string) (index int) {
+	index = -1
+	for i := len(s) - 1; i >= 0; i-- {
+		if unicode.IsPunct(rune(s[i])) {
+			if s[i] == '.' {
+				index = i
+			}
+			break
+		}
+	}
+
+	return index
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -640,9 +663,10 @@ func ParseDateFormat(format string) []string {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 // The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 func splitDateTime(format string) (seps []string, fracStr string) {
-	if i := strings.LastIndex(format, "."); i > 0 {
-		fracStr = strings.TrimSpace(format[i+1:])
-		format = format[:i]
+	index := GetFracIndex(format)
+	if index > 0 {
+		fracStr = format[index+1:]
+		format = format[:index]
 	}
 
 	seps = ParseDateFormat(format)
@@ -727,6 +751,15 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", str))
 			err = nil
 		}
+	case 2:
+		// YYYY-MM is not valid
+		if len(fracStr) == 0 {
+			return ZeroDatetime, errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(str))
+		}
+
+		// YYYY-MM.DD, DD is treat as fracStr
+		err = scanTimeArgs(append(seps, fracStr), &year, &month, &day)
+		fracStr = ""
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)

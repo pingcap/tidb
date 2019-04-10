@@ -21,11 +21,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/logutil"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -54,7 +55,7 @@ var (
 func main() {
 	flag.Parse()
 	flag.PrintDefaults()
-	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitZapLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
 	err = session.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
@@ -110,7 +111,7 @@ func newBenchDB() *benchDB {
 func (ut *benchDB) mustExec(sql string) {
 	rss, err := ut.session.Execute(context.Background(), sql)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err.Error())
 	}
 	if len(rss) > 0 {
 		ctx := context.Background()
@@ -119,7 +120,7 @@ func (ut *benchDB) mustExec(sql string) {
 		for {
 			err := rs.Next(ctx, chk)
 			if err != nil {
-				log.Fatal(err)
+				log.Fatal(err.Error())
 			}
 			if chk.NumRows() == 0 {
 				break
@@ -139,7 +140,7 @@ func (ut *benchDB) mustParseWork(work string) (name string, spec string) {
 func (ut *benchDB) mustParseInt(s string) int {
 	i, err := strconv.Atoi(s)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err.Error())
 	}
 	return i
 }
@@ -147,13 +148,13 @@ func (ut *benchDB) mustParseInt(s string) int {
 func (ut *benchDB) mustParseRange(s string) (start, end int) {
 	strs := strings.Split(s, "_")
 	if len(strs) != 2 {
-		log.Fatal("invalid range " + s)
+		log.Fatal("parse range failed", zap.String("invalid range", s))
 	}
 	startStr, endStr := strs[0], strs[1]
 	start = ut.mustParseInt(startStr)
 	end = ut.mustParseInt(endStr)
 	if start < 0 || end < start {
-		log.Fatal("invalid range " + s)
+		log.Fatal("parse range failed", zap.String("invalid range", s))
 	}
 	return
 }

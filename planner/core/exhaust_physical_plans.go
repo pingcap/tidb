@@ -490,22 +490,15 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 
-	var rowCount float64
-	pkHist, ok := ds.statisticTable.Columns[pk.ID]
-	if ok && !ds.statisticTable.Pseudo {
-		rowCount = pkHist.AvgCountPerValue(ds.statisticTable.Count)
-	} else {
-		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
-	}
-
-	ts.stats = property.NewSimpleStats(rowCount)
+	ts.stats = property.NewSimpleStats(1)
 	ts.stats.UsePseudoStats = ds.statisticTable.Pseudo
 
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 	}
-	ts.addPushedDownSelection(copTask, ds.stats)
+	selStats := ts.stats.Scale(selectionFactor)
+	ts.addPushedDownSelection(copTask, selStats)
 	t := finishCopTask(ds.ctx, copTask)
 	return t.plan()
 }

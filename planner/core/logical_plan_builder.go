@@ -176,12 +176,42 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 	}
 }
 
+// pushDownConstExpr checks if the condition is from filter condition, if true, push it down to both
+// children of join, whatever the join type is; if false, push it down to inner child of outer join,
+// and both children of non-outer-join.
+func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []expression.Expression,
+	rightCond []expression.Expression, filterCond bool) ([]expression.Expression, []expression.Expression) {
+	switch p.JoinType {
+	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		if filterCond {
+			leftCond = append(leftCond, expr)
+			// Append the expr to right join condition instead of `rightCond`, to make it able to be
+			// pushed down to children of join.
+			p.RightConditions = append(p.RightConditions, expr)
+		} else {
+			rightCond = append(rightCond, expr)
+		}
+	case RightOuterJoin:
+		if filterCond {
+			rightCond = append(rightCond, expr)
+			p.LeftConditions = append(p.LeftConditions, expr)
+		} else {
+			leftCond = append(leftCond, expr)
+		}
+	case SemiJoin, AntiSemiJoin, InnerJoin:
+		leftCond = append(leftCond, expr)
+		rightCond = append(rightCond, expr)
+	}
+	return leftCond, rightCond
+}
+
 // extractOnCondition divide conditions in CNF of join node into 4 groups.
 // These conditions can be where conditions, join conditions, or collection of both.
 // If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
-func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan,
-	deriveLeft bool, deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
+func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool, deriveRight bool) (
+	eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
+	left, right := p.children[0], p.children[1]
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && binop.FuncName.L == ast.EQ {
@@ -205,6 +235,12 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 			}
 		}
 		columns := expression.ExtractColumns(expr)
+		// `columns` may be empty, if the condition is like `correlated_column op constant`, or `constant`,
+		// push this kind of constant condition down according to join type.
+		if len(columns) == 0 {
+			leftCond, rightCond = p.pushDownConstExpr(expr, leftCond, rightCond, deriveLeft || deriveRight)
+			continue
+		}
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
 			if !left.Schema().Contains(col) {

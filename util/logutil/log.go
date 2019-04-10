@@ -206,6 +206,26 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+const (
+	// SlowLogTimeFormat is the time format for slow log.
+	SlowLogTimeFormat = "2006-01-02-15:04:05.999999999 -0700"
+)
+
+type slowLogFormatter struct{}
+
+func (f *slowLogFormatter) Format(entry *log.Entry) ([]byte, error) {
+	var b *bytes.Buffer
+	if entry.Buffer != nil {
+		b = entry.Buffer
+	} else {
+		b = &bytes.Buffer{}
+	}
+
+	fmt.Fprintf(b, "# Time: %s\n", entry.Time.Format(SlowLogTimeFormat))
+	fmt.Fprintf(b, "%s\n", entry.Message)
+	return b.Bytes(), nil
+}
+
 func stringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 	switch strings.ToLower(format) {
 	case "text":
@@ -264,8 +284,8 @@ func initFileLog(cfg *zaplog.FileLogConfig, logger *log.Logger) error {
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.StandardLogger()
 
-// SlowQueryZapLogger is used to log slow query, InitZapLogger will set it according to config file.
-var SlowQueryZapLogger *zap.Logger
+// SlowQueryZapLogger is used to log slow query, InitZapLogger will modify it according to config file.
+var SlowQueryZapLogger = zaplog.L()
 
 // InitLogger initializes PD's logger.
 func InitLogger(cfg *LogConfig) error {
@@ -291,15 +311,7 @@ func InitLogger(cfg *LogConfig) error {
 		if err := initFileLog(&tmp, SlowQueryLogger); err != nil {
 			return errors.Trace(err)
 		}
-		hooks := make(log.LevelHooks)
-		hooks.Add(&contextHook{})
-		SlowQueryLogger.Hooks = hooks
-		slowQueryFormatter := stringToLogFormatter(cfg.Format, cfg.DisableTimestamp)
-		ft, ok := slowQueryFormatter.(*textFormatter)
-		if ok {
-			ft.EnableEntryOrder = true
-		}
-		SlowQueryLogger.Formatter = slowQueryFormatter
+		SlowQueryLogger.Formatter = &slowLogFormatter{}
 	}
 
 	return nil

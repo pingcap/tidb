@@ -24,12 +24,14 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -139,6 +141,16 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if err != nil {
 			return errors.Trace(err)
 		}
+		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
+			if auditPlugin.OnGlobalVariableEvent != nil {
+				auditPlugin.OnGlobalVariableEvent(context.Background(), e.ctx.GetSessionVars(), name, svalue)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
 	} else {
 		// Set session scope system variable.
 		if sysVar.Scope&variable.ScopeSession == 0 {
@@ -177,7 +189,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			valStr, err = value.ToString()
 			terror.Log(errors.Trace(err))
 		}
-		log.Infof("con:%d %s=%s", sessionVars.ConnectionID, name, valStr)
+		logutil.Logger(context.Background()).Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
 
 	return nil
@@ -251,7 +263,7 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
 		vars.SnapshotInfoschema = nil
 		return nil
 	}
-	log.Infof("con:%d loadSnapshotInfoSchema, SnapshotTS:%d", vars.ConnectionID, vars.SnapshotTS)
+	logutil.Logger(context.Background()).Info("load snapshot info schema", zap.Uint64("conn", vars.ConnectionID), zap.Uint64("SnapshotTS", vars.SnapshotTS))
 	dom := domain.GetDomain(e.ctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
 	if err != nil {

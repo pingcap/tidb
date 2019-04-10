@@ -92,6 +92,7 @@ type Session interface {
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
+	SetCommandValue(byte)
 }
 
 var (
@@ -272,6 +273,10 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 		fields = append(fields, rf)
 	}
 	return fields, nil
+}
+
+func (s *session) SetCommandValue(command byte) {
+	atomic.StoreUint32(&s.sessionVars.CommandValue, uint32(command))
 }
 
 func (s *session) doCommit(ctx context.Context) error {
@@ -518,9 +523,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
-			if st.IsReadOnly() {
-				continue
-			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
@@ -1206,7 +1208,7 @@ func loadSystemTZ(se *session) (string, error) {
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Plugin.Load) > 0 {
-		err := plugin.Init(context.Background(), plugin.Config{
+		err := plugin.Load(context.Background(), plugin.Config{
 			Plugins:        strings.Split(cfg.Plugin.Load, ","),
 			PluginDir:      cfg.Plugin.Dir,
 			GlobalSysVar:   &variable.SysVars,
@@ -1246,6 +1248,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	if len(cfg.Plugin.Load) > 0 {
+		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1253,10 +1262,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	err = dom.UpdateTableStatsLoop(se1)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	if len(cfg.Plugin.Load) > 0 {
-		plugin.InitWatchLoops(dom.GetEtcdClient())
 	}
 
 	if raw, ok := store.(domain.EtcdBackend); ok {

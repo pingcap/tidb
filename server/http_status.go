@@ -15,6 +15,7 @@ package server
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -30,9 +31,10 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const defaultStatusAddr = ":10080"
@@ -192,7 +194,7 @@ func (s *Server) startHTTPServer() {
 		terror.Log(err)
 	})
 
-	log.Infof("Listening on %v for status and metrics report.", addr)
+	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", addr))
 	s.statusServer = &http.Server{Addr: addr, Handler: serverMux}
 	var err error
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
@@ -202,7 +204,7 @@ func (s *Server) startHTTPServer() {
 	}
 
 	if err != nil {
-		log.Info(err)
+		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
 	}
 }
 
@@ -224,7 +226,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	js, err := json.Marshal(st)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		log.Error("Encode json error", err)
+		logutil.Logger(context.Background()).Error("encode json failed", zap.Error(err))
 	} else {
 		_, err = w.Write(js)
 		terror.Log(errors.Trace(err))

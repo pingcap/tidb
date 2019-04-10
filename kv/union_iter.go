@@ -14,8 +14,11 @@
 package kv
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // UnionIter is the iterator on an UnionStore.
@@ -120,7 +123,8 @@ func (iter *UnionIter) updateCur() error {
 			} else {
 				// record from dirty comes first
 				if len(iter.dirtyIt.Value()) == 0 {
-					log.Warnf("[kv] delete a record not exists? k = %q", iter.dirtyIt.Key())
+					logutil.Logger(context.Background()).Warn("delete a record not exists?",
+						zap.Binary("key", iter.dirtyIt.Key()))
 					// jump over this deletion
 					if err := iter.dirtyNext(); err != nil {
 						return errors.Trace(err)
