@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -94,7 +95,7 @@ func (t *Table) copy() *Table {
 }
 
 func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSketch, error) {
-	selSQL := fmt.Sprintf("select cm_sketch from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
+	selSQL := fmt.Sprintf("select cm_sketch, version from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -102,7 +103,20 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSke
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	return decodeCMSketch(rows[0].GetBytes(0))
+	selSQL2 := fmt.Sprintf("select value_id, content from mysql.stats_topn where version = %d", rows[0].GetUint64(1))
+	topnrows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL2)
+	if err != nil {
+		// TODO: [cms-topn] deal witl broken data.
+	}
+	topn := make([]hack.MutableString, len(topnrows))
+	for i := range topnrows {
+		p := topnrows[i].GetInt64(0)
+		if p > int64(len(topnrows)) {
+			// TODO: [cms-topn] deal witl broken data.
+		}
+		topn[p] = hack.String(topnrows[i].GetBytes(1))
+	}
+	return decodeCMSketch(rows[0].GetBytes(0), topn)
 }
 
 func (h *Handle) indexStatsFromStorage(row chunk.Row, table *Table, tableInfo *model.TableInfo) error {

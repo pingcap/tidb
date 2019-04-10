@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sort"
 
@@ -23,20 +24,25 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
 )
+
+// TopNThreshold is the minimum ratio of the number of topn elements in CMSketch, 20 means 1 / 20 = 5%.
+const TopNThreshold = 20
 
 // CMSketch is used to estimate point queries.
 // Refer: https://en.wikipedia.org/wiki/Count-min_sketch
 // If topnlimit is 0, topn will be readonly
 // Once constructed with topn, no new values should be inserted, or statistic data will be wrong.
 type CMSketch struct {
-	depth int32
-	width int32
-	count uint64
-	table [][]uint32
-	topn  []cmscount
+	depth     int32
+	width     int32
+	count     uint64
+	table     [][]uint32
+	topn      []cmscount
+	topnindex map[hack.MutableString]uint32
 }
 
 type cmscount struct {
@@ -54,19 +60,21 @@ func NewCMSketch(d, w int32) *CMSketch {
 }
 
 // NewCMSketchWithTopN returns a new CM sketch with TopN elements.
-func NewCMSketchWithTopN(d, w int32, data [][]byte, n int32) *CMSketch {
+// Only when the number of topn elements exceeded len(data) / topnThreshold will store topn elements
+func NewCMSketchWithTopN(d, w int32, data [][]byte, n uint32) *CMSketch {
 	tbl := make([][]uint32, d)
 	for i := range tbl {
 		tbl[i] = make([]uint32, w)
 	}
 	c := &CMSketch{depth: d, width: w, table: tbl}
-	c.BuildTopN(data, n)
+	c.BuildTopN(data, n, TopNThreshold)
 	return c
 }
 
 // BuildTopN builds table of top N elements.
 // elements in data should not be modified after this call.
-func (c *CMSketch) BuildTopN(data [][]byte, n int32) {
+// See https://pdfs.semanticscholar.org/5ae2/6358989c6595798da8f8fd6c2a517536bcae.pdf
+func (c *CMSketch) BuildTopN(data [][]byte, n uint32, topnThreshold uint32) {
 	c.topn = make([]cmscount, n)
 	for k := range data {
 		found, pos := false, -1
@@ -89,9 +97,13 @@ func (c *CMSketch) BuildTopN(data [][]byte, n int32) {
 			}
 		}
 	}
+
 	for i := range c.topn {
 		c.topn[i].count = 0
 	}
+
+	topncount := uint32(0)
+
 	for k := range data {
 		found := false
 		for i := range c.topn {
@@ -99,6 +111,7 @@ func (c *CMSketch) BuildTopN(data [][]byte, n int32) {
 				found = true
 				c.topn[i].count++
 				c.count++
+				topncount++
 				break
 			}
 		}
@@ -106,6 +119,19 @@ func (c *CMSketch) BuildTopN(data [][]byte, n int32) {
 			c.InsertBytes(data[k])
 		}
 	}
+
+	if n/topnThreshold > topncount {
+		for i := range c.topn {
+			c.InsertBytesN(c.topn[i].data, c.topn[i].count)
+		}
+	} else {
+		c.topnindex = make(map[hack.MutableString]uint32)
+		for i := range c.topn {
+			c.topnindex[hack.String(c.topn[i].data)] = c.topn[i].count
+		}
+	}
+
+	c.topn = nil
 }
 
 // InsertBytes inserts the bytes value into the CM Sketch.
@@ -115,6 +141,16 @@ func (c *CMSketch) InsertBytes(bytes []byte) {
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		c.table[i][j]++
+	}
+}
+
+// InsertBytesN adds the bytes value into the CM Sketch by n.
+func (c *CMSketch) InsertBytesN(bytes []byte, n uint32) {
+	c.count += uint64(n)
+	h1, h2 := murmur3.Sum128(bytes)
+	for i := range c.table {
+		j := (h1 + h2*uint64(i)) % uint64(c.width)
+		c.table[i][j] += n
 	}
 }
 
@@ -140,11 +176,9 @@ func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (ui
 
 // QueryBytes is used to query the count of specified bytes.
 func (c *CMSketch) QueryBytes(d []byte) uint32 {
-	if c.topn != nil {
-		for k := range c.topn {
-			if bytes.Equal(d, c.topn[k].data) {
-				return c.topn[k].count
-			}
+	if c.topnindex != nil {
+		if cnt, ok := c.topnindex[hack.String(d)]; ok {
+			return cnt
 		}
 	}
 	h1, h2 := murmur3.Sum128(d)
@@ -152,7 +186,7 @@ func (c *CMSketch) QueryBytes(d []byte) uint32 {
 }
 
 func (c *CMSketch) queryHashValue(h1, h2 uint64) uint32 {
-	// TODO: get estimate number of elements not presented in sample.
+	// [TODO/cms-topn]: get estimate number of elements not presented in sample.
 	vals := make([]uint32, c.depth)
 	min := uint32(math.MaxUint32)
 	for i := range c.table {
@@ -191,7 +225,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 }
 
 // CMSketchToProto converts CMSketch to its protobuf representation.
-func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
+func CMSketchToProto(c *CMSketch) (*tipb.CMSketch, []hack.MutableString) {
 	protoSketch := &tipb.CMSketch{Rows: make([]*tipb.CMSketchRow, c.depth)}
 	for i := range c.table {
 		protoSketch.Rows[i] = &tipb.CMSketchRow{Counters: make([]uint32, c.width)}
@@ -199,17 +233,28 @@ func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 			protoSketch.Rows[i].Counters[j] = c.table[i][j]
 		}
 	}
-	if c.topn != nil {
-		protoSketch.Topn = make([]*tipb.CMSketchTopN, len(c.topn))
-		for i := range c.topn {
-			protoSketch.Topn[i] = &tipb.CMSketchTopN{Data: c.topn[i].data, Count: c.topn[i].count}
+	var topn []hack.MutableString
+	if c.topnindex != nil {
+		topn = make([]hack.MutableString, len(c.topnindex))
+		protoSketch.TopN = make([]uint32, len(c.topnindex))
+		seq := uint32(0)
+		for k, v := range c.topnindex {
+			h1, h2 := murmur3.Sum128(hack.Slice(string(k)))
+			for i := range c.table {
+				j := (h1 + h2*uint64(i)) % uint64(c.width)
+				protoSketch.Rows[i].Counters[j] += v
+			}
+			protoSketch.TopN[seq] = v
+			topn[seq] = k
+			seq++
 		}
 	}
-	return protoSketch
+	return protoSketch, topn
 }
 
 // CMSketchFromProto converts CMSketch from its protobuf representation.
-func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
+// Even if topn is broken, we can still get downgraded CMSketch.
+func CMSketchFromProto(protoSketch *tipb.CMSketch, topn []hack.MutableString) *CMSketch {
 	if protoSketch == nil {
 		return nil
 	}
@@ -221,25 +266,30 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 			c.count = c.count + uint64(counter)
 		}
 	}
-	if protoSketch.Topn != nil {
-		c.topn = make([]cmscount, len(protoSketch.Topn))
-		for i, v := range protoSketch.Topn {
-			c.topn[i].count = v.Count
-			c.topn[i].data = v.Data
+	if protoSketch.TopN != nil && len(topn) == len(protoSketch.TopN) {
+		c.topnindex = make(map[hack.MutableString]uint32)
+		for p, v := range protoSketch.TopN {
+			h1, h2 := murmur3.Sum128(hack.Slice(string(topn[p])))
+			for i := range c.table {
+				j := (h1 + h2*uint64(i)) % uint64(c.width)
+				c.table[i][j] -= v
+			}
+			c.topnindex[topn[p]] = v
 		}
 	}
 	return c
 }
 
-func encodeCMSketch(c *CMSketch) ([]byte, error) {
+func encodeCMSketch(c *CMSketch) ([]byte, []hack.MutableString, error) {
 	if c == nil || c.count == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	p := CMSketchToProto(c)
-	return p.Marshal()
+	p, topn := CMSketchToProto(c)
+	r, err := p.Marshal()
+	return r, topn, err
 }
 
-func decodeCMSketch(data []byte) (*CMSketch, error) {
+func decodeCMSketch(data []byte, topn []hack.MutableString) (*CMSketch, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -251,7 +301,7 @@ func decodeCMSketch(data []byte) (*CMSketch, error) {
 	if len(p.Rows) == 0 {
 		return nil, nil
 	}
-	return CMSketchFromProto(p), nil
+	return CMSketchFromProto(p, topn), nil
 }
 
 // TotalCount returns the count, it is only used for test.
@@ -265,21 +315,25 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 		return c == nil && rc == nil
 	}
 	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count {
+		panic(fmt.Sprintf("width %d/%d depth %d/%d count %d/%d", c.width, rc.width, c.depth, rc.depth, c.count, rc.count))
 		return false
 	}
 	for i := range c.table {
 		for j := range c.table[i] {
 			if c.table[i][j] != rc.table[i][j] {
+				panic("Not match value")
 				return false
 			}
 		}
 	}
-	if len(rc.topn) > 0 || len(c.topn) > 0 {
-		if len(rc.topn) != len(c.topn) {
+	if len(rc.topnindex) > 0 || len(c.topnindex) > 0 {
+		if len(rc.topnindex) != len(c.topnindex) {
+			panic("Not match length")
 			return false
 		}
-		for i := range c.topn {
-			if c.topn[i].count != rc.topn[i].count || !bytes.Equal(c.topn[i].data, rc.topn[i].data) {
+		for k, v := range c.topnindex {
+			if v2, ok := rc.topnindex[k]; !ok || v != v2 {
+				panic("Not found key")
 				return false
 			}
 		}
@@ -296,14 +350,12 @@ func (c *CMSketch) copy() *CMSketch {
 		tbl[i] = make([]uint32, c.width)
 		copy(tbl[i], c.table[i])
 	}
-	var ntopn []cmscount
-	if c.topn != nil {
-		ntopn = make([]cmscount, len(c.topn), len(c.topn))
-		for i, v := range c.topn {
-			ntopn[i].count = v.count
-			ntopn[i].data = make([]byte, len(v.data))
-			copy(ntopn[i].data, v.data)
+	var ntopn map[hack.MutableString]uint32
+	if c.topnindex != nil {
+		ntopn = make(map[hack.MutableString]uint32)
+		for k, v := range c.topnindex {
+			ntopn[k] = v
 		}
 	}
-	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, topn: ntopn}
+	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, topnindex: ntopn}
 }

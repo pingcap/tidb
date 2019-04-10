@@ -250,7 +250,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 			if resp.Cms == nil {
 				logutil.Logger(context.TODO()).Warn("nil CMS in response", zap.String("table", e.idxInfo.Table.O), zap.String("index", e.idxInfo.Name.O))
 			} else {
-				err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms))
+				err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms, nil))
 				if err != nil {
 					return nil, nil, err
 				}

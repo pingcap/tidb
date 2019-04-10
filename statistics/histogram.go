@@ -234,9 +234,16 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return
 	}
-	data, err := encodeCMSketch(cms)
+	data, topn, err := encodeCMSketch(cms)
 	if err != nil {
 		return
+	}
+	for i, v := range topn {
+		insertSQL := fmt.Sprintf("insert into mysql.stats_topn (version, value_id, content) values (%d, %d, X'%X')", version, i, v)
+		_, err1 := exec.Execute(ctx, insertSQL)
+		if err1 != nil {
+			return
+		}
 	}
 	flag := 0
 	if isAnalyzed == 1 {

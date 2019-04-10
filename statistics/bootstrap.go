@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -102,7 +103,20 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables stat
 			if idxInfo == nil {
 				continue
 			}
-			cms, err := decodeCMSketch(row.GetBytes(6))
+			selSQL2 := fmt.Sprintf("select HIGH_PRIORITY value_id, content from mysql.stats_topn where version = %d", version)
+			topnrows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL2)
+			if err != nil {
+				// TODO: [cms-topn] deal witl broken data.
+			}
+			topn := make([]hack.MutableString, len(topnrows))
+			for i := range topnrows {
+				p := topnrows[i].GetInt64(0)
+				if p > int64(len(topnrows)) {
+					// TODO: [cms-topn] deal witl broken data.
+				}
+				topn[p] = hack.String(topnrows[i].GetBytes(1))
+			}
+			cms, err := decodeCMSketch(row.GetBytes(6), topn)
 			if err != nil {
 				cms = nil
 				terror.Log(errors.Trace(err))

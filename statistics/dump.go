@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -39,6 +40,7 @@ type JSONTable struct {
 type jsonColumn struct {
 	Histogram         *tipb.Histogram `json:"histogram"`
 	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
+	TopN              [][]byte        `json:"top_n"`
 	NullCount         int64           `json:"null_count"`
 	TotColSize        int64           `json:"tot_col_size"`
 	LastUpdateVersion uint64          `json:"last_update_version"`
@@ -52,7 +54,14 @@ func dumpJSONCol(hist *Histogram, CMSketch *CMSketch) *jsonColumn {
 		LastUpdateVersion: hist.LastUpdateVersion,
 	}
 	if CMSketch != nil {
-		jsonCol.CMSketch = CMSketchToProto(CMSketch)
+		cms, topn := CMSketchToProto(CMSketch)
+		jsonCol.CMSketch = cms
+		if len(topn) != 0 {
+			jsonCol.TopN = make([][]byte, len(topn))
+			for i := range topn {
+				jsonCol.TopN[i] = hack.Slice(string(topn[i]))
+			}
+		}
 	}
 	return jsonCol
 }
@@ -189,9 +198,13 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			hist := HistogramFromProto(jsonIdx.Histogram)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion
+			topn := make([]hack.MutableString, len(jsonIdx.TopN))
+			for i := range jsonIdx.TopN {
+				topn[i] = hack.String(jsonIdx.TopN[i])
+			}
 			idx := &Index{
 				Histogram: *hist,
-				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),
+				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch, topn),
 				Info:      idxInfo,
 			}
 			tbl.Indices[idx.ID] = idx
@@ -211,10 +224,14 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				return nil, errors.Trace(err)
 			}
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize
+			topn := make([]hack.MutableString, len(jsonCol.TopN))
+			for i := range jsonCol.TopN {
+				topn[i] = hack.String(jsonCol.TopN[i])
+			}
 			col := &Column{
 				PhysicalID: physicalID,
 				Histogram:  *hist,
-				CMSketch:   CMSketchFromProto(jsonCol.CMSketch),
+				CMSketch:   CMSketchFromProto(jsonCol.CMSketch, topn),
 				Info:       colInfo,
 				Count:      count,
 				isHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),

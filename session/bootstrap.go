@@ -186,6 +186,14 @@ const (
 		unique index tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
+	// CreateStatsKVStore stores the columns that are too long to store in top n of cm_sketch.
+	CreateStatsKVStore = `CREATE TABLE if not exists mysql.stats_kvstore (
+		version bigint(64) unsigned NOT NULL DEFAULT 0,
+		value_id bigint(64) NOT NULL,
+		content longblob,
+		unique index tbl(version, value_id)
+	);`
+
 	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
 	CreateGCDeleteRangeTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range (
 		job_id BIGINT NOT NULL COMMENT "the DDL job ID",
@@ -304,6 +312,7 @@ const (
 	version26 = 26
 	version27 = 27
 	version28 = 28
+	version29 = 29
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -473,6 +482,10 @@ func upgrade(s Session) {
 
 	if ver < version28 {
 		upgradeToVer28(s)
+	}
+
+	if ver < version29 {
+		upgradeToVer29(s)
 	}
 
 	updateBootstrapVer(s)
@@ -757,6 +770,10 @@ func upgradeToVer28(s Session) {
 	doReentrantDDL(s, CreateBindInfoTable)
 }
 
+func upgradeToVer29(s Session) {
+	mustExecute(s, CreateStatsKVStore)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -813,6 +830,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateDefaultRolesTable)
 	// Create bind_info table.
 	mustExecute(s, CreateBindInfoTable)
+	// Create stats_kvstore table.
+	mustExecute(s, CreateStatsKVStore)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

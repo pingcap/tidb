@@ -99,6 +99,7 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 }
 
 // SampleCollectorToProto converts SampleCollector to its protobuf representation.
+// This function should only be called by test.
 func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	collector := &tipb.SampleCollector{
 		NullCount: c.NullCount,
@@ -107,7 +108,7 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 		TotalSize: &c.TotalSize,
 	}
 	if c.CMSketch != nil {
-		collector.CmSketch = CMSketchToProto(c.CMSketch)
+		collector.CmSketch, _ = CMSketchToProto(c.CMSketch)
 	}
 	for _, item := range c.Samples {
 		collector.Samples = append(collector.Samples, item.Value.GetBytes())
@@ -127,7 +128,8 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	if collector.TotalSize != nil {
 		s.TotalSize = *collector.TotalSize
 	}
-	s.CMSketch = CMSketchFromProto(collector.CmSketch)
+	// This function is called from executor, and cop does not counts top n.
+	s.CMSketch = CMSketchFromProto(collector.CmSketch, nil)
 	for _, val := range collector.Samples {
 		// When store the histogram bucket boundaries to kv, we need to limit the length of the value.
 		if len(val) <= maxSampleValueLength {

@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
@@ -34,7 +36,7 @@ func (c *CMSketch) insert(val *types.Datum) error {
 	return nil
 }
 
-func insertTopN(d, w int32, val []*types.Datum, n int32) (*CMSketch, error) {
+func insertTopN(d, w int32, val []*types.Datum, n uint32) (*CMSketch, error) {
 	data := make([][]byte, len(val), len(val))
 	for i, v := range val {
 		bytes, err := codec.EncodeValue(nil, nil, *v)
@@ -70,7 +72,7 @@ func buildCMSketchTopNAndMap(d, w, n int32, seed int64, total, imax uint64, s fl
 		vals = append(vals, &val)
 		mp[val.GetInt64()]++
 	}
-	cms, err := insertTopN(d, w, vals, n)
+	cms, err := insertTopN(d, w, vals, uint32(n))
 	return cms, mp, err
 }
 
@@ -145,10 +147,10 @@ func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
 			lSketch.table[i][j] = math.MaxUint32
 		}
 	}
-	bytes, err := encodeCMSketch(lSketch)
+	bytes, _, err := encodeCMSketch(lSketch)
 	c.Assert(err, IsNil)
 	c.Assert(len(bytes), Equals, 61455)
-	rSketch, err := decodeCMSketch(bytes)
+	rSketch, err := decodeCMSketch(bytes, nil)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }
@@ -166,9 +168,14 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 			zipfFactor: 2,
 			avgError:   24,
 		},
+		// If the most data lies in a narrow range, TopN should have better result.
 		{
-			zipfFactor: 3,
-			avgError:   63,
+			zipfFactor: 5,
+			avgError:   24,
+		},
+		{
+			zipfFactor: 8,
+			avgError:   24,
 		},
 	}
 	d, w := int32(5), int32(2048)
@@ -183,20 +190,23 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 }
 
 func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
-	d, w := int32(5), int32(2048)
-	total, imax := uint64(100000), uint64(1000000)
-	lSketch, _, err := buildCMSketchTopNAndMap(d, w, 20, 0, total, imax, 3)
-	c.Check(err, IsNil)
+	lSketch := NewCMSketch(5, 2048)
+	lSketch.count = 2048*(math.MaxUint32/2) + 20*(math.MaxUint32/64)
+	for i := range lSketch.table {
+		for j := range lSketch.table[i] {
+			lSketch.table[i][j] = math.MaxUint32 / 2
+		}
+	}
+	lSketch.topnindex = make(map[hack.MutableString]uint32)
+	for i := 0; i < 20; i++ {
+		tString := fmt.Sprintf("%20000d", i)
+		lSketch.topnindex[hack.MutableString(tString)] = math.MaxUint32 / 64
+	}
 
-	bytes, err := encodeCMSketch(lSketch)
+	bytes, topn, err := encodeCMSketch(lSketch)
 	c.Assert(err, IsNil)
-	c.Assert(len(bytes), Equals, 20665)
-	rSketch, err := decodeCMSketch(bytes)
+	c.Assert(len(bytes), Equals, 61555)
+	rSketch, err := decodeCMSketch(bytes, topn)
 	c.Assert(err, IsNil)
-	bytes2, err := encodeCMSketch(rSketch)
-	c.Assert(err, IsNil)
-	c.Assert(len(bytes2), Equals, 20665)
-	tSketch, err := decodeCMSketch(bytes2)
-	c.Assert(err, IsNil)
-	c.Assert(tSketch.Equal(rSketch), IsTrue)
+	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }
