@@ -62,9 +62,10 @@ unrecognized-option-test = true
 	_, err = f.WriteString(`
 token-limit = 0
 [performance]
+txn-entry-count-limit=2000
+txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
-max-batch-size=128
 `)
 
 	c.Assert(err, IsNil)
