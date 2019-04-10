@@ -26,7 +26,7 @@ type StatsInfo struct {
 
 	HistColl *statistics.HistColl
 	// StatsVersion indicates the statistics version of a table.
-	// If the StatsInfo is calculated using the pseudo statistics on a table, StatsVersion will be 0.
+	// If the StatsInfo is calculated using the pseudo statistics on a table, StatsVersion will be PseudoVersion.
 	StatsVersion uint64
 }
 
