@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"sort"
 
@@ -315,25 +314,21 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 		return c == nil && rc == nil
 	}
 	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count {
-		panic(fmt.Sprintf("width %d/%d depth %d/%d count %d/%d", c.width, rc.width, c.depth, rc.depth, c.count, rc.count))
 		return false
 	}
 	for i := range c.table {
 		for j := range c.table[i] {
 			if c.table[i][j] != rc.table[i][j] {
-				panic("Not match value")
 				return false
 			}
 		}
 	}
 	if len(rc.topnindex) > 0 || len(c.topnindex) > 0 {
 		if len(rc.topnindex) != len(c.topnindex) {
-			panic("Not match length")
 			return false
 		}
 		for k, v := range c.topnindex {
 			if v2, ok := rc.topnindex[k]; !ok || v != v2 {
-				panic("Not found key")
 				return false
 			}
 		}
