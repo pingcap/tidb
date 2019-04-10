@@ -269,7 +269,7 @@ func bootstrap(s Session) {
 			doDMLWorks(s)
 			return
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
