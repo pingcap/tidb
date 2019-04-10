@@ -4135,6 +4135,26 @@ func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("2001-01-01 10:00:00.123456 2011-07-07 10:11:12"))
 }
 
+func (s *testIntegrationSuite) TestIssue9732(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustQuery(`select monthname(str_to_date(null, '%m')), monthname(str_to_date(null, '%m')),
+monthname(str_to_date(1, '%m')), monthname(str_to_date(0, '%m'));`).Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+
+	nullSQLs := []string {
+		"select str_to_date(1, '%m')",
+		"select str_to_date(01, '%d')",
+		"select str_to_date(2019, '%Y')",
+		"select str_to_date('5,2019','%m,%Y')",
+		"select str_to_date('01,2019','%d,%Y')",
+		"select str_to_date('01,5','%d,%m')",
+	}
+	for _, sql := range nullSQLs {
+		tk.MustQuery(sql).Check(testkit.Rows("<nil>"))
+	}
+}
+
 func (s *testIntegrationSuite) TestDaynameArithmetic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
