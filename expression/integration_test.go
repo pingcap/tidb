@@ -4142,7 +4142,7 @@ func (s *testIntegrationSuite) TestIssue9732(c *C) {
 	tk.MustQuery(`select monthname(str_to_date(null, '%m')), monthname(str_to_date(null, '%m')),
 monthname(str_to_date(1, '%m')), monthname(str_to_date(0, '%m'));`).Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 
-	nullSQLs := []string {
+	nullSQLs := []string{
 		"select str_to_date(1, '%m')",
 		"select str_to_date(01, '%d')",
 		"select str_to_date(2019, '%Y')",
