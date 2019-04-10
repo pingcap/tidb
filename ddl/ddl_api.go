@@ -1207,7 +1207,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return errors.Trace(err)
 }
 
-func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
+func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check schema exist.
 	schema, ok := is.SchemaByID(schemaID)
@@ -1225,9 +1225,9 @@ func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, sche
 	job := &model.Job{
 		SchemaID:   schemaID,
 		TableID:    tbInfo.ID,
-		Type:       model.ActionRestoreTable,
+		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, restoreTableCheckFlagNone},
+		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, recoverTableCheckFlagNone},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -1563,6 +1563,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if tbInfo.ShardRowIDBits > shardRowIDBitsMax {
 				tbInfo.ShardRowIDBits = shardRowIDBitsMax
 			}
+			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		}
 	}
 
@@ -1803,6 +1804,14 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	ok, _ := hasAutoIncrementColumn(t.Meta())
 	if ok && uVal != 0 {
 		return errUnsupportedShardRowIDBits
+	}
+	if uVal == t.Meta().ShardRowIDBits {
+		// Nothing need to do.
+		return nil
+	}
+	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
+	if err != nil {
+		return err
 	}
 	job := &model.Job{
 		Type:       model.ActionShardRowID,

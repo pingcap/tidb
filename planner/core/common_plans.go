@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
@@ -82,14 +82,6 @@ type RecoverIndex struct {
 
 	Table     *ast.TableName
 	IndexName string
-}
-
-// RestoreTable is used for recover deleted files by mistake.
-type RestoreTable struct {
-	baseSchemaProducer
-	JobID  int64
-	Table  *ast.TableName
-	JobNum int64
 }
 
 // CleanupIndex is used to delete dangling index data.
@@ -492,6 +484,9 @@ func (e *Explain) prepareSchema() error {
 
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
+	if e.StmtPlan == nil {
+		return nil
+	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
@@ -543,6 +538,8 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 			row = append(row, runtimeStatsColl.GetCopStats(p.ExplainID()).String())
 		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
 			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
+		} else {
+			row = append(row, "time:0ns, loops:0, rows:0")
 		}
 	}
 	e.Rows = append(e.Rows, row)
