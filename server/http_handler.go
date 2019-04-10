@@ -304,7 +304,7 @@ func (t *tikvHandlerTool) scrapeHotInfo(rw string) (map[helper.TblIndex]helper.R
 	if err != nil {
 		return nil, err
 	}
-	tblIdx, err := t.FetchRegionTableIndex(regionMetrics, schema)
+	tblIdx, err := t.FetchRegionTableIndex(regionMetrics, schema.AllSchemas())
 	if err != nil {
 		return nil, err
 	}
@@ -801,7 +801,7 @@ func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 
 func (h tableHandler) getPDAddr() ([]string, error) {
 	var pdAddrs []string
-	etcd, ok := h.Store.(domain.EtcdBackend)
+	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}

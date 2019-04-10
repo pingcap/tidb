@@ -1454,7 +1454,7 @@ func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err
 		return nil, err
 	}
 	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
-	tblIdx, err := tikvHelper.FetchRegionTableIndex(regionMetrics, is)
+	tblIdx, err := tikvHelper.FetchRegionTableIndex(regionMetrics, is.AllSchemas())
 	if err != nil {
 		return nil, err
 	}

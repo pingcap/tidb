@@ -23,8 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -100,7 +99,7 @@ type RegionMetric struct {
 
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
-	etcd, ok := h.Store.(domain.EtcdBackend)
+	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
@@ -165,7 +164,7 @@ type RegionFrameRange struct {
 	region *tikv.KeyLocation // the region
 }
 
-func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, schema infoschema.InfoSchema) (map[TblIndex]RegionMetric, error) {
+func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) (map[TblIndex]RegionMetric, error) {
 	idxMetrics := make(map[TblIndex]RegionMetric)
 	for regionID, regionMetric := range metrics {
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
@@ -179,7 +178,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, schema i
 			return nil, err
 		}
 
-		f := h.FindTableIndexOfRegion(schema, hotRange)
+		f := h.FindTableIndexOfRegion(allSchemas, hotRange)
 		if f != nil {
 			idx := TblIndex{
 				DbName:    f.DBName,
@@ -206,8 +205,8 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, schema i
 	return idxMetrics, nil
 }
 
-func (h *Helper) FindTableIndexOfRegion(schema infoschema.InfoSchema, hotRange *RegionFrameRange) *FrameItem {
-	for _, db := range schema.AllSchemas() {
+func (h *Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *RegionFrameRange) *FrameItem {
+	for _, db := range allSchemas {
 		for _, tbl := range db.Tables {
 			if f := hotRange.GetRecordFrame(tbl.ID, db.Name.O, tbl.Name.O); f != nil {
 				return f
