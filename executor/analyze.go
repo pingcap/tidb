@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"runtime"
 	"sort"
@@ -750,6 +751,29 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collec
 	}
 }
 
+func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
+	for _, sample := range collector.Samples {
+		if sample.Value.IsNull() {
+			collector.NullCount++
+		} else {
+			collector.FMSketch.InsertValue(e.ctx.GetSessionVars().StmtCtx, sample.Value)
+			valString, err := sample.Value.ToString()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			collector.CMSketch.InsertBytes([]byte(valString))
+		}
+	}
+	collector.NullCount = int64(math.Round(float64(e.sampCursor) / float64(e.rowCount) * float64(collector.NullCount)))
+	collector.Count = int64(e.rowCount) - collector.NullCount
+	hist, err := statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), ID, collector, tp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	hist.NDV = hist.NDV * int64(math.Round(float64(e.rowCount)/float64(e.sampCursor)))
+	return hist, nil
+}
+
 func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMSketch, error) {
 	errs := make([]error, e.concurrency)
 	hasPKInfo := 0
@@ -791,9 +815,11 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	hists, cms := make([]*statistics.Histogram, e.concurrency), make([]*statistics.CMSketch, e.concurrency)
 	for i := 0; i < length; i++ {
 		if i == 0 && hasPKInfo > 0 {
-			hists[i], err = statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), e.pkInfo.ID, collectors[i], &e.pkInfo.FieldType)
+			hists[i], err = e.buildHist(e.pkInfo.ID, collectors[i], &e.pkInfo.FieldType)
+		} else if i < hasPKInfo+len(e.colsInfo) {
+			hists[i], err = e.buildHist(e.colsInfo[i-hasPKInfo].ID, collectors[i], &e.colsInfo[i-hasPKInfo].FieldType)
 		} else {
-			hists[i], err = statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), e.colsInfo[i+hasPKInfo].ID, collectors[i], &e.colsInfo[i+hasPKInfo].FieldType)
+			hists[i], err = e.buildHist(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)].ID, collectors[i], types.NewFieldType(mysql.TypeString))
 		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
