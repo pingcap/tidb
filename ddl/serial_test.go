@@ -128,10 +128,10 @@ func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 }
 
-func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
+func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_restore")
-	tk.MustExec("use test_restore")
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover")
 	tk.MustExec("create table t_recover (a int);")
 	defer func(originGC bool) {
@@ -162,19 +162,19 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(err, IsNil)
 	row := rows[0]
-	c.Assert(row.GetString(1), Equals, "test_restore")
+	c.Assert(row.GetString(1), Equals, "test_recover")
 	c.Assert(row.GetString(3), Equals, "drop table")
 	jobID := row.GetInt64(0)
 
 	// if GC safe point is not exists in mysql.tidb
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
 	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// if GC enable is not exists in mysql.tidb
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
 
@@ -183,7 +183,7 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 
 	// recover job is before GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "snapshot is older than GC safe point"), Equals, true)
 
@@ -191,14 +191,14 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	// if there is a new table with the same name, should return failed.
 	tk.MustExec("create table t_recover (a int);")
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
 	c.Assert(err.Error(), Equals, infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
 
-	// drop the new table with the same name, then restore table.
+	// drop the new table with the same name, then recover table.
 	tk.MustExec("drop table t_recover")
 
-	// do restore table.
-	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
+	// do recover table.
+	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 
 	// check recover table meta and data record.
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
@@ -206,8 +206,8 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 
-	// restore table by none exits job.
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", 10000000))
+	// recover table by none exits job.
+	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", 10000000))
 	c.Assert(err, NotNil)
 
 	// Disable GC by manual first, then after recover table, the GC enable status should also be disabled.
@@ -221,11 +221,11 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(err, IsNil)
 	row = rows[0]
-	c.Assert(row.GetString(1), Equals, "test_restore")
+	c.Assert(row.GetString(1), Equals, "test_recover")
 	c.Assert(row.GetString(3), Equals, "drop table")
 	jobID = row.GetInt64(0)
 
-	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
+	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 
 	// check recover table meta and data record.
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1"))
@@ -238,10 +238,10 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 	c.Assert(gcEnable, Equals, false)
 }
 
-func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
+func (s *testSerialSuite) TestRecoverTableByTableName(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_restore")
-	tk.MustExec("use test_restore")
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover, t_recover2")
 	tk.MustExec("create table t_recover (a int);")
 	defer func(originGC bool) {
@@ -268,14 +268,14 @@ func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
 	tk.MustExec("drop table t_recover")
 
 	// if GC safe point is not exists in mysql.tidb
-	_, err := tk.Exec("admin restore table t_recover")
+	_, err := tk.Exec("recover table t_recover")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
 	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// if GC enable is not exists in mysql.tidb
-	_, err = tk.Exec("admin restore table t_recover")
+	_, err = tk.Exec("recover table t_recover")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
 
@@ -284,7 +284,7 @@ func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
 
 	// recover job is before GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
-	_, err = tk.Exec("admin restore table t_recover")
+	_, err = tk.Exec("recover table t_recover")
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "snapshot is older than GC safe point"), Equals, true)
 
@@ -292,14 +292,14 @@ func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	// if there is a new table with the same name, should return failed.
 	tk.MustExec("create table t_recover (a int);")
-	_, err = tk.Exec("admin restore table t_recover")
+	_, err = tk.Exec("recover table t_recover")
 	c.Assert(err.Error(), Equals, infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
 
-	// drop the new table with the same name, then restore table.
+	// drop the new table with the same name, then recover table.
 	tk.MustExec("rename table t_recover to t_recover2")
 
-	// do restore table.
-	tk.MustExec("admin restore table t_recover")
+	// do recover table.
+	tk.MustExec("recover table t_recover")
 
 	// check recover table meta and data record.
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
@@ -309,8 +309,8 @@ func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
 	// check rebase auto id.
 	tk.MustQuery("select a,_tidb_rowid from t_recover;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003"))
 
-	// restore table by none exits job.
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", 10000000))
+	// recover table by none exits job.
+	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", 10000000))
 	c.Assert(err, NotNil)
 
 	// Disable GC by manual first, then after recover table, the GC enable status should also be disabled.
@@ -320,7 +320,7 @@ func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
 	tk.MustExec("delete from t_recover where a > 1")
 	tk.MustExec("drop table t_recover")
 
-	tk.MustExec("admin restore table t_recover")
+	tk.MustExec("recover table t_recover")
 
 	// check recover table meta and data record.
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1"))
@@ -333,10 +333,10 @@ func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
 	c.Assert(gcEnable, Equals, false)
 }
 
-func (s *testSerialSuite) TestRestoreTableByJobIDFail(c *C) {
+func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_restore")
-	tk.MustExec("use test_restore")
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover")
 	tk.MustExec("create table t_recover (a int);")
 	defer func(originGC bool) {
@@ -364,7 +364,7 @@ func (s *testSerialSuite) TestRestoreTableByJobIDFail(c *C) {
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(err, IsNil)
 	row := rows[0]
-	c.Assert(row.GetString(1), Equals, "test_restore")
+	c.Assert(row.GetString(1), Equals, "test_recover")
 	c.Assert(row.GetString(3), Equals, "drop table")
 	jobID := row.GetInt64(0)
 
@@ -376,21 +376,21 @@ func (s *testSerialSuite) TestRestoreTableByJobIDFail(c *C) {
 	// set hook
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionRestoreTable {
+		if job.Type == model.ActionRecoverTable {
 			gofail.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`)
-			gofail.Enable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr", `return(true)`)
+			gofail.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
-	// do restore table.
-	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
+	// do recover table.
+	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
-	gofail.Disable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr")
+	gofail.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr")
 
-	// make sure enable GC after restore table.
+	// make sure enable GC after recover table.
 	enable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(enable, Equals, true)
@@ -402,10 +402,10 @@ func (s *testSerialSuite) TestRestoreTableByJobIDFail(c *C) {
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
 
-func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
+func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_restore")
-	tk.MustExec("use test_restore")
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover")
 	tk.MustExec("create table t_recover (a int);")
 	defer func(originGC bool) {
@@ -436,21 +436,21 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 	// set hook
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionRestoreTable {
+		if job.Type == model.ActionRecoverTable {
 			gofail.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`)
-			gofail.Enable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr", `return(true)`)
+			gofail.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
-	// do restore table.
-	tk.MustExec("admin restore table t_recover")
+	// do recover table.
+	tk.MustExec("recover table t_recover")
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
-	gofail.Disable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr")
+	gofail.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr")
 
-	// make sure enable GC after restore table.
+	// make sure enable GC after recover table.
 	enable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(enable, Equals, true)

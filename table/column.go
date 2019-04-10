@@ -23,11 +23,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -143,7 +143,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 				sc.AppendWarning(err)
 				logutil.Logger(context.Background()).Warn("CastValues failed", zap.Error(err))
 			} else {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		rec[c.Offset] = converted
@@ -201,14 +201,17 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 		w = width
 	}
 
-	return casted, errors.Trace(err)
+	return casted, err
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
 type ColDesc struct {
-	Field        string
-	Type         string
-	Collation    string
+	Field string
+	Type  string
+	// Charset is nil if the column doesn't have a charset, or a string indicating the charset name.
+	Charset interface{}
+	// Collation is nil if the column doesn't have a collation, or a string indicating the collation name.
+	Collation    interface{}
 	Null         string
 	Key          string
 	DefaultValue interface{}
@@ -223,10 +226,10 @@ const defaultPrivileges = "select,insert,update,references"
 func (c *Column) GetTypeDesc() string {
 	desc := c.FieldType.CompactStr()
 	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
-		desc += " UNSIGNED"
+		desc += " unsigned"
 	}
 	if mysql.HasZerofillFlag(c.Flag) && c.Tp != mysql.TypeYear {
-		desc += " ZEROFILL"
+		desc += " zerofill"
 	}
 	return desc
 }
@@ -268,9 +271,10 @@ func NewColDesc(col *Column) *ColDesc {
 		}
 	}
 
-	return &ColDesc{
+	desc := &ColDesc{
 		Field:        name.O,
 		Type:         col.GetTypeDesc(),
+		Charset:      col.Charset,
 		Collation:    col.Collate,
 		Null:         nullFlag,
 		Key:          keyFlag,
@@ -279,6 +283,11 @@ func NewColDesc(col *Column) *ColDesc {
 		Privileges:   defaultPrivileges,
 		Comment:      col.Comment,
 	}
+	if !field_types.HasCharset(&col.ColumnInfo.FieldType) {
+		desc.Charset = nil
+		desc.Collation = nil
+	}
+	return desc
 }
 
 // ColDescFieldNames returns the fields name in result set for desc and show columns.
@@ -321,7 +330,7 @@ func (c *Column) HandleBadNull(d types.Datum, sc *stmtctx.StatementContext) (typ
 			sc.AppendWarning(err)
 			return GetZeroValue(c.ToInfo()), nil
 		}
-		return types.Datum{}, errors.Trace(err)
+		return types.Datum{}, err
 	}
 	return d, nil
 }
@@ -335,7 +344,7 @@ func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
 func CheckNotNull(cols []*Column, row []types.Datum) error {
 	for _, c := range cols {
 		if err := c.CheckNotNull(row[c.Offset]); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -359,7 +368,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	if col.Tp != mysql.TypeTimestamp && col.Tp != mysql.TypeDatetime {
 		value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
 		if err != nil {
-			return types.Datum{}, errors.Trace(err)
+			return types.Datum{}, err
 		}
 		return value, nil
 	}
@@ -383,14 +392,14 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
 	if err != nil {
 		return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
-			col.Name, errors.Trace(err))
+			col.Name, err)
 	}
 	// If the column's default value is not ZeroDatetimeStr nor CurrentTimestamp, should convert the default value to the current session time zone.
 	if needChangeTimeZone {
 		t := value.GetMysqlTime()
 		err = t.ConvertTimeZone(sc.TimeZone, ctx.GetSessionVars().Location())
 		if err != nil {
-			return value, errors.Trace(err)
+			return value, err
 		}
 		value.SetMysqlTime(t)
 	}

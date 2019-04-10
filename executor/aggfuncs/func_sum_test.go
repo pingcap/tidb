@@ -21,11 +21,21 @@ import (
 )
 
 func (s *testSuite) TestMergePartialResult4Sum(c *C) {
-	tests := []aggMergeTest{
-		buildAggMergeTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, types.NewDecFromInt(10), types.NewDecFromInt(9), types.NewDecFromInt(19)),
-		buildAggMergeTester(ast.AggFuncSum, mysql.TypeDouble, 5, 10.0, 9.0, 19.0),
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, types.NewDecFromInt(10), types.NewDecFromInt(9), types.NewDecFromInt(19)),
+		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, 10.0, 9.0, 19.0),
 	}
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)
+	}
+}
+
+func (s *testSuite) TestSum(c *C) {
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, nil, types.NewDecFromInt(10)),
+		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, nil, 10.0),
+	}
+	for _, test := range tests {
+		s.testAggFunc(c, test)
 	}
 }

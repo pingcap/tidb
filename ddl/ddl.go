@@ -180,6 +180,12 @@ var (
 	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 	// ErrUnknownCharacterSet returns unknown character set.
 	ErrUnknownCharacterSet = terror.ClassDDL.New(codeUnknownCharacterSet, "Unknown character set: '%s'")
+	// ErrUnknownCollation returns unknown collation.
+	ErrUnknownCollation = terror.ClassDDL.New(codeUnknownCollation, "Unknown collation: '%s'")
+	// ErrCollationCharsetMismatch returns when collation not match the charset.
+	ErrCollationCharsetMismatch = terror.ClassDDL.New(codeCollationCharsetMismatch, mysql.MySQLErrName[mysql.ErrCollationCharsetMismatch])
+	// ErrConflictingDeclarations return conflict declarations.
+	ErrConflictingDeclarations = terror.ClassDDL.New(codeConflictingDeclarations, "Conflicting declarations: 'CHARACTER SET %s' and 'CHARACTER SET %s'")
 	// ErrPrimaryCantHaveNull returns All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead
 	ErrPrimaryCantHaveNull = terror.ClassDDL.New(codePrimaryCantHaveNull, mysql.MySQLErrName[mysql.ErrPrimaryCantHaveNull])
 
@@ -238,7 +244,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
-	RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
+	RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
@@ -690,6 +696,9 @@ const (
 	codeWrongNameForIndex                      = terror.ErrCode(mysql.ErrWrongNameForIndex)
 	codeErrTooLongIndexComment                 = terror.ErrCode(mysql.ErrTooLongIndexComment)
 	codeUnknownCharacterSet                    = terror.ErrCode(mysql.ErrUnknownCharacterSet)
+	codeUnknownCollation                       = terror.ErrCode(mysql.ErrUnknownCollation)
+	codeCollationCharsetMismatch               = terror.ErrCode(mysql.ErrCollationCharsetMismatch)
+	codeConflictingDeclarations                = terror.ErrCode(mysql.ErrConflictingDeclarations)
 	codeCantCreateTable                        = terror.ErrCode(mysql.ErrCantCreateTable)
 	codeTableMustHaveColumns                   = terror.ErrCode(mysql.ErrTableMustHaveColumns)
 	codePartitionsMustBeDefined                = terror.ErrCode(mysql.ErrPartitionsMustBeDefined)
@@ -750,6 +759,9 @@ func init() {
 		codeErrTooLongIndexComment:                 mysql.ErrTooLongIndexComment,
 		codeViewWrongList:                          mysql.ErrViewWrongList,
 		codeUnknownCharacterSet:                    mysql.ErrUnknownCharacterSet,
+		codeUnknownCollation:                       mysql.ErrUnknownCollation,
+		codeCollationCharsetMismatch:               mysql.ErrCollationCharsetMismatch,
+		codeConflictingDeclarations:                mysql.ErrConflictingDeclarations,
 		codePartitionsMustBeDefined:                mysql.ErrPartitionsMustBeDefined,
 		codePartitionMgmtOnNonpartitioned:          mysql.ErrPartitionMgmtOnNonpartitioned,
 		codeDropPartitionNonExistent:               mysql.ErrDropPartitionNonExistent,

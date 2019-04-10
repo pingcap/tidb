@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -604,7 +603,7 @@ func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err err
 		var value string
 		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		row := types.MakeDatums(v.Name, value)
 		records = append(records, row)
@@ -734,7 +733,7 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, count from mysql.stats_meta")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	rowCountMap := make(map[int64]uint64, len(rows))
 	for _, row := range rows {
@@ -753,7 +752,7 @@ type tableHistID struct {
 func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	colLengthMap := make(map[tableHistID]uint64, len(rows))
 	for _, row := range rows {
@@ -833,12 +832,12 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 	tableRows, err := getRowCountAllTable(ctx)
 	if err != nil {
 		c.setLoading(false)
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	colLength, err := getColLengthAllTables(ctx)
 	if err != nil {
 		c.setLoading(false)
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 
 	c.mu.Lock()
@@ -863,11 +862,11 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 		is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
 		tbl, err := is.TableByName(schema.Name, tblInfo.Name)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		autoIncID, err = tbl.Allocator(ctx).NextGlobalAutoID(tblInfo.ID)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 	}
 	return autoIncID, nil
@@ -913,7 +912,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	checker := privilege.GetPrivilegeManager(ctx)
@@ -943,7 +942,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				}
 				autoIncID, err := getAutoIncrementID(ctx, schema, table)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				rowCount := tableRowsMap[table.ID]
 				dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
@@ -1156,8 +1155,8 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			numericPrecision,                     // NUMERIC_PRECISION
 			numericScale,                         // NUMERIC_SCALE
 			datetimePrecision,                    // DATETIME_PRECISION
-			col.Charset,                          // CHARACTER_SET_NAME
-			col.Collate,                          // COLLATION_NAME
+			columnDesc.Charset,                   // CHARACTER_SET_NAME
+			columnDesc.Collation,                 // COLLATION_NAME
 			columnType,                           // COLUMN_TYPE
 			columnDesc.Key,                       // COLUMN_KEY
 			columnDesc.Extra,                     // EXTRA
@@ -1165,12 +1164,6 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Comment,                   // COLUMN_COMMENT
 			col.GeneratedExprString,              // GENERATION_EXPRESSION
 		)
-		// In mysql, 'character_set_name' and 'collation_name' are setted to null when column type is non-varchar or non-blob in information_schema.
-		if col.Tp != mysql.TypeVarchar && col.Tp != mysql.TypeBlob {
-			record[13].SetNull()
-			record[14].SetNull()
-		}
-
 		rows = append(rows, record)
 	}
 	return rows
@@ -1202,7 +1195,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 					1,             // SEQ_IN_INDEX
 					col.Name.O,    // COLUMN_NAME
 					"A",           // COLLATION
-					0,             // CARDINALITY
+					nil,           // CARDINALITY
 					nil,           // SUB_PART
 					nil,           // PACKED
 					"",            // NULLABLE
@@ -1239,7 +1232,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 				i+1,           // SEQ_IN_INDEX
 				key.Name.O,    // COLUMN_NAME
 				"A",           // COLLATION
-				0,             // CARDINALITY
+				nil,           // CARDINALITY
 				nil,           // SUB_PART
 				nil,           // PACKED
 				nullable,      // NULLABLE
@@ -1554,7 +1547,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForSlowLog(ctx)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(cols) == len(it.cols) {
 		return
@@ -1577,12 +1570,12 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 	}
 	rows, err := it.getRows(ctx, cols)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for i, row := range rows {
 		more, err := fn(int64(i), row, cols)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !more {
 			break
