@@ -1563,6 +1563,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if tbInfo.ShardRowIDBits > shardRowIDBitsMax {
 				tbInfo.ShardRowIDBits = shardRowIDBitsMax
 			}
+			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		}
 	}
 
@@ -1803,6 +1804,14 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	ok, _ := hasAutoIncrementColumn(t.Meta())
 	if ok && uVal != 0 {
 		return errUnsupportedShardRowIDBits
+	}
+	if uVal == t.Meta().ShardRowIDBits {
+		// Nothing need to do.
+		return nil
+	}
+	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
+	if err != nil {
+		return err
 	}
 	job := &model.Job{
 		Type:       model.ActionShardRowID,

@@ -344,7 +344,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`drop table if exists show_test_comment`)
 	tk.MustExec(`create table show_test_comment (id int not null default 0 comment "show_test_comment_id")`)
 	tk.MustQuery(`show full columns from show_test_comment`).Check(testutil.RowsWithSep("|",
-		"id|int(11)|binary|NO||0||select,insert,update,references|show_test_comment_id",
+		"id|int(11)|<nil>|NO||0||select,insert,update,references|show_test_comment_id",
 	))
 
 	// Test show create table with AUTO_INCREMENT option
