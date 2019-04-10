@@ -519,12 +519,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}
 		cop.keepOrder = true
 		is.KeepOrder = true
-		is.addPushedDownSelection(cop, ds, prop.ExpectedCnt, path)
-	} else {
-		// prop.IsEmpty() would always return true when coming to here,
-		// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
-		is.addPushedDownSelection(cop, ds, prop.ExpectedCnt, path)
 	}
+	// prop.IsEmpty() would always return true when coming to here,
+	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
+	is.addPushedDownSelection(cop, ds, prop.ExpectedCnt, path)
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
