@@ -457,7 +457,7 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 		chk := exec.newFirstChunk()
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
@@ -515,7 +515,7 @@ func (s *testExecSuite) TestProjectionUnparallelRequiredRows(c *C) {
 		chk := exec.newFirstChunk()
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
@@ -570,7 +570,7 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 		chk := exec.newFirstChunk()
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 
 			// wait projectionInputFetcher blocked on fetching data
