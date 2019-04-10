@@ -150,6 +150,22 @@ func (c *CMSketch) buildTopNMap(topn []cmscount) {
 	}
 }
 
+// flatten merges top n data into cmsketch and disables top n
+func (c *CMSketch) flatten() {
+	if c.topnindex == nil {
+		return
+	}
+	for _, v1 := range c.topnindex {
+		for _, v := range v1 {
+			for i := range c.table {
+				j := (v.h1 + v.h2*uint64(i)) % uint64(c.width)
+				c.table[i][j] += uint32(v.count)
+			}
+		}
+	}
+	c.topnindex = nil
+}
+
 // InsertBytes inserts the bytes value into the CM Sketch.
 func (c *CMSketch) InsertBytes(bytes []byte) {
 	c.InsertBytesN(bytes, 1)
@@ -157,7 +173,7 @@ func (c *CMSketch) InsertBytes(bytes []byte) {
 
 // InsertBytesN adds the bytes value into the CM Sketch by n.
 func (c *CMSketch) InsertBytesN(bytes []byte, n uint64) {
-	// TODO: flatten topn
+	c.flatten()
 	c.count += n
 	h1, h2 := murmur3.Sum128(bytes)
 	for i := range c.table {
@@ -168,7 +184,7 @@ func (c *CMSketch) InsertBytesN(bytes []byte, n uint64) {
 
 // setValue sets the count for value that hashed into (h1, h2).
 func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
-	// TODO: flatten topn
+	c.flatten()
 	oriCount := c.queryHashValue(h1, h2)
 	c.count += uint64(count) - uint64(oriCount)
 	// let it overflow naturally
@@ -230,6 +246,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint32 {
 // MergeCMSketch merges two CM Sketch.
 // Do not call with CMSketch with top N initialized
 func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
+	c.flatten()
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
@@ -237,6 +254,16 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 	for i := range c.table {
 		for j := range c.table[i] {
 			c.table[i][j] += rc.table[i][j]
+		}
+	}
+	if rc.topnindex {
+		for _, v1 := range rc.topnindex {
+			for _, v := range v1 {
+				for i := range c.table {
+					j := (v.h1 + v.h2*uint64(i)) % uint64(c.width)
+					c.table[i][j] += uint32(v.count)
+				}
+			}
 		}
 	}
 	return nil
