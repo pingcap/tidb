@@ -80,4 +80,4 @@ require (
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
 
-replace github.com/pingcap/parser => github.com/lysu/parser v0.0.0-20190409142935-295139949cbb
+replace github.com/pingcap/parser => github.com/lysu/parser v0.0.0-20190410025826-059b6f83c7bc
