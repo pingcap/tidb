@@ -256,7 +256,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 			c.table[i][j] += rc.table[i][j]
 		}
 	}
-	if rc.topnindex {
+	if rc.topnindex != nil {
 		for _, v1 := range rc.topnindex {
 			for _, v := range v1 {
 				for i := range c.table {
