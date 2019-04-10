@@ -14,17 +14,21 @@
 package helper
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -132,4 +136,221 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 		}
 	}
 	return metric, nil
+}
+
+type TblIndex struct {
+	DbName    string
+	TableName string
+	TableID   int64
+	IndexName string
+	IndexID   int64
+}
+
+// FrameItem includes a index's or record's meta data with table's info.
+type FrameItem struct {
+	DBName      string   `json:"db_name"`
+	TableName   string   `json:"table_name"`
+	TableID     int64    `json:"table_id"`
+	IsRecord    bool     `json:"is_record"`
+	RecordID    int64    `json:"record_id,omitempty"`
+	IndexName   string   `json:"index_name,omitempty"`
+	IndexID     int64    `json:"index_id,omitempty"`
+	IndexValues []string `json:"index_values,omitempty"`
+}
+
+// RegionFrameRange contains a frame range info which the region covered.
+type RegionFrameRange struct {
+	first  *FrameItem        // start frame of the region
+	last   *FrameItem        // end frame of the region
+	region *tikv.KeyLocation // the region
+}
+
+func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, schema infoschema.InfoSchema) (map[TblIndex]RegionMetric, error) {
+	idxMetrics := make(map[TblIndex]RegionMetric)
+	for regionID, regionMetric := range metrics {
+		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("locate region failed", zap.Error(err))
+			continue
+		}
+
+		hotRange, err := NewRegionFrameRange(region)
+		if err != nil {
+			return nil, err
+		}
+
+		f := h.FindTableIndexOfRegion(schema, hotRange)
+		if f != nil {
+			idx := TblIndex{
+				DbName:    f.DBName,
+				TableName: f.TableName,
+				TableID:   f.TableID,
+				IndexName: f.IndexName,
+				IndexID:   f.IndexID,
+			}
+			metric, exists := idxMetrics[idx]
+			if !exists {
+				metric = regionMetric
+				metric.Count++
+				idxMetrics[idx] = metric
+			} else {
+				metric.FlowBytes += regionMetric.FlowBytes
+				if metric.MaxHotDegree < regionMetric.MaxHotDegree {
+					metric.MaxHotDegree = regionMetric.MaxHotDegree
+				}
+				metric.Count++
+			}
+		}
+	}
+
+	return idxMetrics, nil
+}
+
+func (h *Helper) FindTableIndexOfRegion(schema infoschema.InfoSchema, hotRange *RegionFrameRange) *FrameItem {
+	for _, db := range schema.AllSchemas() {
+		for _, tbl := range db.Tables {
+			if f := hotRange.GetRecordFrame(tbl.ID, db.Name.O, tbl.Name.O); f != nil {
+				return f
+			}
+			for _, idx := range tbl.Indices {
+				if f := hotRange.GetIndexFrame(tbl.ID, idx.ID, db.Name.O, tbl.Name.O, idx.Name.O); f != nil {
+					return f
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// NewRegionFrameRange init a NewRegionFrameRange with region info.
+func NewRegionFrameRange(region *tikv.KeyLocation) (idxRange *RegionFrameRange, err error) {
+	var first, last *FrameItem
+	// check and init first frame
+	if len(region.StartKey) > 0 {
+		first, err = NewFrameItemFromRegionKey(region.StartKey)
+		if err != nil {
+			return
+		}
+	} else { // empty startKey means start with -infinite
+		first = &FrameItem{
+			IndexID:  int64(math.MinInt64),
+			IsRecord: false,
+			TableID:  int64(math.MinInt64),
+		}
+	}
+
+	// check and init last frame
+	if len(region.EndKey) > 0 {
+		last, err = NewFrameItemFromRegionKey(region.EndKey)
+		if err != nil {
+			return
+		}
+	} else { // empty endKey means end with +infinite
+		last = &FrameItem{
+			TableID:  int64(math.MaxInt64),
+			IndexID:  int64(math.MaxInt64),
+			IsRecord: true,
+		}
+	}
+
+	idxRange = &RegionFrameRange{
+		region: region,
+		first:  first,
+		last:   last,
+	}
+	return idxRange, nil
+}
+
+// NewFrameItemFromRegionKey creates a FrameItem with region's startKey or endKey,
+// returns err when key is illegal.
+func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
+	frame = &FrameItem{}
+	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
+	if err == nil {
+		if frame.IsRecord {
+			_, frame.RecordID, err = tablecodec.DecodeRecordKey(key)
+		} else {
+			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
+		}
+		logutil.Logger(context.Background()).Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
+		// Ignore decode errors.
+		err = nil
+		return
+	}
+	if bytes.HasPrefix(key, tablecodec.TablePrefix()) {
+		// If SplitTable is enabled, the key may be `t{id}`.
+		if len(key) == tablecodec.TableSplitKeyLen {
+			frame.TableID = tablecodec.DecodeTableID(key)
+			return frame, nil
+		}
+		return nil, errors.Trace(err)
+	}
+
+	// key start with tablePrefix must be either record key or index key
+	// That's means table's record key and index key are always together
+	// in the continuous interval. And for key with prefix smaller than
+	// tablePrefix, is smaller than all tables. While for key with prefix
+	// bigger than tablePrefix, means is bigger than all tables.
+	err = nil
+	if bytes.Compare(key, tablecodec.TablePrefix()) < 0 {
+		frame.TableID = math.MinInt64
+		frame.IndexID = math.MinInt64
+		frame.IsRecord = false
+		return
+	}
+	// bigger than tablePrefix, means is bigger than all tables.
+	frame.TableID = math.MaxInt64
+	frame.TableID = math.MaxInt64
+	frame.IsRecord = true
+	return
+}
+
+// GetRecordFrame returns the record frame of a table. If the table's records
+// are not covered by this frame range, it returns nil.
+func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName string) *FrameItem {
+	if tableID == r.first.TableID && r.first.IsRecord {
+		r.first.DBName, r.first.TableName = dbName, tableName
+		return r.first
+	}
+	if tableID == r.last.TableID && r.last.IsRecord {
+		r.last.DBName, r.last.TableName = dbName, tableName
+		return r.last
+	}
+
+	if tableID >= r.first.TableID && tableID < r.last.TableID {
+		return &FrameItem{
+			DBName:    dbName,
+			TableName: tableName,
+			TableID:   tableID,
+			IsRecord:  true,
+		}
+	}
+	return nil
+}
+
+// GetIndexFrame returns the indnex frame of a table. If the table's indices are
+// not covered by this frame range, it returns nil.
+func (r *RegionFrameRange) GetIndexFrame(tableID, indexID int64, dbName, tableName, indexName string) *FrameItem {
+	if tableID == r.first.TableID && !r.first.IsRecord && indexID == r.first.IndexID {
+		r.first.DBName, r.first.TableName, r.first.IndexName = dbName, tableName, indexName
+		return r.first
+	}
+	if tableID == r.last.TableID && indexID == r.last.IndexID {
+		r.last.DBName, r.last.TableName, r.last.IndexName = dbName, tableName, indexName
+		return r.last
+	}
+
+	greaterThanFirst := tableID > r.first.TableID || (tableID == r.first.TableID && !r.first.IsRecord && indexID > r.first.IndexID)
+	lessThanLast := tableID < r.last.TableID || (tableID == r.last.TableID && (r.last.IsRecord || indexID < r.last.IndexID))
+	if greaterThanFirst && lessThanLast {
+		return &FrameItem{
+			DBName:    dbName,
+			TableName: tableName,
+			TableID:   tableID,
+			IsRecord:  false,
+			IndexName: indexName,
+			IndexID:   indexID,
+		}
+	}
+	return nil
 }

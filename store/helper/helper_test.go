@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
 )
 
@@ -75,7 +76,7 @@ func (s *HelperTestSuite) TestHotRegion(c *C) {
 		Store:       s.store,
 		RegionCache: s.store.GetRegionCache(),
 	}
-	regionMetric, err := helper.FetchHotRegion("/pd/api/v1/hotspot/regions/read")
+	regionMetric, err := helper.FetchHotRegion(pdapi.HotRead)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
 	c.Assert(fmt.Sprintf("%v", regionMetric), Equals, "map[1:{100 1 0}]")
 }
