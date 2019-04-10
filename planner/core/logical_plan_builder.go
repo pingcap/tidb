@@ -2614,8 +2614,7 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		col := assign.Col
 
 		dbName := col.DBName.L
-		// With sql below we need to get database by table alia name
-		// update ap.record t inner join tp.record tt on t.id=tt.id  set t.name=tt.name
+		// To solve issue#10028, we need to get database name by the table alias name.
 		for _, tbl := range tableList {
 			if strings.EqualFold(tbl.Name.L, col.TblName.L) {
 				dbName = tbl.DBInfo.Name.L
