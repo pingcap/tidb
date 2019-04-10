@@ -938,6 +938,7 @@ const (
 	ErrResolveLockTimeout = 9004
 	ErrRegionUnavailable  = 9005
 	ErrGCTooEarly         = 9006
+	ErrWriteConflict      = 9007
 
 	ErrTxnTooLarge = 9500
 )

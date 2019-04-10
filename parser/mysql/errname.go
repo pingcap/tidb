@@ -936,6 +936,7 @@ var MySQLErrName = map[uint16]string{
 	ErrResolveLockTimeout: "Resolve lock timeout",
 	ErrRegionUnavailable:  "Region is unavailable",
 	ErrGCTooEarly:         "GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v",
+	ErrWriteConflict:      "Write conflict, txnStartTS=%d, conflictTS=%d, key=%s",
 
 	ErrTxnTooLarge: "Transaction is too large",
 }
