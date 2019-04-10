@@ -2410,7 +2410,7 @@ func extractTableListForUpdate(refTables []*ast.TableName, sets []*ast.Assignmen
 	if len(refTables) == 1 {
 		return refTables
 	}
-	tbls := make([]*ast.TableName, len(sets))
+	tbls := make([]*ast.TableName, 0, len(sets))
 	var tblsMap map[string]*ast.TableName
 
 	for _, a := range sets {
