@@ -1767,16 +1767,16 @@ type dataReaderBuilder struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, datums [][]types.Datum,
-	IndexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
+	indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plannercore.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(ctx, v, datums)
 	case *plannercore.PhysicalIndexReader:
-		return builder.buildIndexReaderForIndexJoin(ctx, v, datums, IndexRanges, keyOff2IdxOff)
+		return builder.buildIndexReaderForIndexJoin(ctx, v, datums, indexRanges, keyOff2IdxOff)
 	case *plannercore.PhysicalIndexLookUpReader:
-		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, datums, IndexRanges, keyOff2IdxOff)
+		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, datums, indexRanges, keyOff2IdxOff)
 	case *plannercore.PhysicalUnionScan:
-		return builder.buildUnionScanForIndexJoin(ctx, v, datums, IndexRanges, keyOff2IdxOff)
+		return builder.buildUnionScanForIndexJoin(ctx, v, datums, indexRanges, keyOff2IdxOff)
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }

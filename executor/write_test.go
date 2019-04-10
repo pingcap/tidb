@@ -2089,7 +2089,7 @@ func (s *testSuite2) TestBatchInsertDelete(c *C) {
 	for i := 0; i < 200; i++ {
 		values = append(values, "(1)")
 	}
-	sql = sql + strings.Join(values, ",")
+	sql += strings.Join(values, ",")
 	tk.MustExec(sql)
 	tk.MustQuery("select count(*) from com_batch_insert;").Check(testkit.Rows("200"))
 
