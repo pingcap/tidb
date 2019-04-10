@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package helper
+package helper_test
 
 import (
 	"crypto/tls"
@@ -24,6 +24,7 @@ import (
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -72,7 +73,7 @@ func (s *HelperTestSuite) SetUpSuite(c *C) {
 }
 
 func (s *HelperTestSuite) TestHotRegion(c *C) {
-	helper := Helper{
+	helper := helper.Helper{
 		Store:       s.store,
 		RegionCache: s.store.GetRegionCache(),
 	}
@@ -94,8 +95,8 @@ func (s *HelperTestSuite) mockPDHTTPServer(c *C) {
 func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	regionsStat := hotRegionsStat{
-		[]regionStat{
+	regionsStat := helper.HotRegionsStat{
+		RegionsStat: []helper.RegionStat{
 			{
 				FlowBytes: 100,
 				RegionID:  1,
@@ -103,8 +104,8 @@ func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http
 			},
 		},
 	}
-	resp := StoreHotRegionInfos{
-		AsLeader: make(map[uint64]*hotRegionsStat),
+	resp := helper.StoreHotRegionInfos{
+		AsLeader: make(map[uint64]*helper.HotRegionsStat),
 	}
 	resp.AsLeader[0] = &regionsStat
 	data, err := json.MarshalIndent(resp, "", "	")

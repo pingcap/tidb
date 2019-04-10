@@ -72,19 +72,19 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 // StoreHotRegionInfos records all hog region stores.
 // it's the response of PD.
 type StoreHotRegionInfos struct {
-	AsPeer   map[uint64]*hotRegionsStat `json:"as_peer"`
-	AsLeader map[uint64]*hotRegionsStat `json:"as_leader"`
+	AsPeer   map[uint64]*HotRegionsStat `json:"as_peer"`
+	AsLeader map[uint64]*HotRegionsStat `json:"as_leader"`
 }
 
-// hotRegions records echo store's hot region.
+// HotRegionsStat records echo store's hot region.
 // it's the response of PD.
-type hotRegionsStat struct {
-	RegionsStat []regionStat `json:"statistics"`
+type HotRegionsStat struct {
+	RegionsStat []RegionStat `json:"statistics"`
 }
 
-// regionStat records each hot region's statistics
+// RegionStat records each hot region's statistics
 // it's the response of PD.
-type regionStat struct {
+type RegionStat struct {
 	RegionID  uint64 `json:"region_id"`
 	FlowBytes uint64 `json:"flow_bytes"`
 	HotDegree int    `json:"hot_degree"`
@@ -97,6 +97,7 @@ type RegionMetric struct {
 	Count        int    `json:"region_count"`
 }
 
+// ScrapeHotInfo gets the needed hot region information by the url given.
 func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) (map[TblIndex]RegionMetric, error) {
 	regionMetrics, err := h.FetchHotRegion(rw)
 	if err != nil {
@@ -145,6 +146,7 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	return metric, nil
 }
 
+// TblIndex stores the things to index one table.
 type TblIndex struct {
 	DbName    string
 	TableName string
@@ -172,6 +174,7 @@ type RegionFrameRange struct {
 	region *tikv.KeyLocation // the region
 }
 
+// FetchRegionTableIndex constructs a map that maps a table to its hot region information by the given raw hot region metrics.
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) (map[TblIndex]RegionMetric, error) {
 	idxMetrics := make(map[TblIndex]RegionMetric)
 	for regionID, regionMetric := range metrics {
@@ -213,6 +216,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 	return idxMetrics, nil
 }
 
+// FindTableIndexOfRegion finds what table is involved in this hot region. And constructs the new frame item for future use.
 func (h *Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *RegionFrameRange) *FrameItem {
 	for _, db := range allSchemas {
 		for _, tbl := range db.Tables {
