@@ -294,10 +294,8 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		// Don't active pending txn here.
 		if txn, err1 := sctx.Txn(false); err1 != nil {
 			logutil.Logger(ctx).Error("get current transaction failed", zap.Error(err))
-		} else {
-			if txn.Valid() {
-				txnTS = txn.StartTS()
-			}
+		} else if txn.Valid() {
+			txnTS = txn.StartTS()
 		}
 		a.LogSlowQuery(txnTS, err == nil)
 		a.logAudit()

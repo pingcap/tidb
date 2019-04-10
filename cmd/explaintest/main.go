@@ -149,10 +149,8 @@ LOOP:
 					t.buf.WriteString("\n")
 				}
 			}
-		} else {
-			if err = t.execute(q); err != nil {
-				return errors.Annotate(err, fmt.Sprintf("sql:%v", q.Query))
-			}
+		} else if err = t.execute(q); err != nil {
+			return errors.Annotate(err, fmt.Sprintf("sql:%v", q.Query))
 		}
 	}
 
