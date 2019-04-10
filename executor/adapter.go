@@ -446,13 +446,22 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 }
 
 func (a *ExecStmt) getStatsInfo() map[string]uint64 {
-	if a.Plan == nil {
+	var physicalPlan plannercore.PhysicalPlan
+	switch p := a.Plan.(type) {
+	case *plannercore.Insert:
+		physicalPlan = p.SelectPlan
+	case *plannercore.Update:
+		physicalPlan = p.SelectPlan
+	case *plannercore.Delete:
+		physicalPlan = p.SelectPlan
+	case plannercore.PhysicalPlan:
+		physicalPlan = p
+	}
+
+	if physicalPlan == nil {
 		return nil
 	}
-	physicalPlan, ok := a.Plan.(plannercore.PhysicalPlan)
-	if !ok {
-		return nil
-	}
+
 	statsInfos := make(map[string]uint64)
 	statsInfos = plannercore.CollectPlanStatsVersion(physicalPlan, statsInfos)
 	return statsInfos
