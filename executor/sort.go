@@ -88,10 +88,7 @@ func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		sort.Slice(e.rowPtrs, e.keyColumnsLess)
 		e.fetched = true
 	}
-	for chk.NumRows() < e.maxChunkSize {
-		if e.Idx >= len(e.rowPtrs) {
-			return nil
-		}
+	for !chk.IsFull() && e.Idx < len(e.rowPtrs) {
 		rowPtr := e.rowPtrs[e.Idx]
 		chk.AppendRow(e.rowChunks.GetRow(rowPtr))
 		e.Idx++
@@ -256,7 +253,7 @@ func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	for chk.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
+	for !chk.IsFull() && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 		chk.AppendRow(row)
 		e.Idx++
@@ -271,6 +268,8 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
 		srcChk := e.children[0].newFirstChunk()
+		// adjust required rows by total limit
+		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
 		err := e.children[0].Next(ctx, srcChk)
 		if err != nil {
 			return errors.Trace(err)
