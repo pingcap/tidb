@@ -186,12 +186,14 @@ const (
 		unique index tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
-	// CreateStatsKVStore stores the columns that are too long to store in top n of cm_sketch.
-	CreateStatsKVStore = `CREATE TABLE if not exists mysql.stats_kvstore (
-		version bigint(64) unsigned NOT NULL DEFAULT 0,
+	// CreateStatsTopNStore stores the columns that are too long to store in top n of cm_sketch.
+	CreateStatsTopNStore = `CREATE TABLE if not exists mysql.stats_topnstore (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
 		value_id bigint(64) NOT NULL,
 		content longblob,
-		unique index tbl(version, value_id)
+		unique index tbl(table_id, is_index, hist_id, value_id)
 	);`
 
 	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
@@ -771,7 +773,7 @@ func upgradeToVer28(s Session) {
 }
 
 func upgradeToVer29(s Session) {
-	mustExecute(s, CreateStatsKVStore)
+	mustExecute(s, CreateStatsTopNStore)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -831,7 +833,7 @@ func doDDLWorks(s Session) {
 	// Create bind_info table.
 	mustExecute(s, CreateBindInfoTable)
 	// Create stats_kvstore table.
-	mustExecute(s, CreateStatsKVStore)
+	mustExecute(s, CreateStatsTopNStore)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

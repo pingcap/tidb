@@ -107,7 +107,7 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 		TotalSize: &c.TotalSize,
 	}
 	if c.CMSketch != nil {
-		collector.CmSketch, _ = CMSketchToProto(c.CMSketch)
+		collector.CmSketch = CMSketchToProto(c.CMSketch)
 	}
 	for _, item := range c.Samples {
 		collector.Samples = append(collector.Samples, item.Value.GetBytes())
@@ -127,8 +127,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	if collector.TotalSize != nil {
 		s.TotalSize = *collector.TotalSize
 	}
-	// This function is called from executor, and cop does not counts top n.
-	s.CMSketch = CMSketchFromProto(collector.CmSketch, nil)
+	s.CMSketch = CMSketchFromProto(collector.CmSketch)
 	for _, val := range collector.Samples {
 		// When store the histogram bucket boundaries to kv, we need to limit the length of the value.
 		if len(val) <= maxSampleValueLength {

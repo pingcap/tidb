@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/spaolacci/murmur3"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
@@ -84,11 +84,11 @@ func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		var diff uint32
-		if count > estimate {
-			diff = count - estimate
+		var diff uint64
+		if uint64(count) > estimate {
+			diff = uint64(count) - estimate
 		} else {
-			diff = estimate - count
+			diff = estimate - uint64(count)
 		}
 		total += uint64(diff)
 	}
@@ -197,15 +197,16 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 			lSketch.table[i][j] = math.MaxUint32 / 2
 		}
 	}
-	lSketch.topnindex = make(map[hack.MutableString]uint32)
+	lSketch.topnindex = make(map[uint64][]cmscount)
 	for i := 0; i < 20; i++ {
-		tString := fmt.Sprintf("%20000d", i)
-		lSketch.topnindex[hack.MutableString(tString)] = math.MaxUint32 / 64
+		tString := []byte(fmt.Sprintf("%20000d", i))
+		h1, h2 := murmur3.Sum128(tString)
+		lSketch.topnindex[h1] = []cmscount{{h1, h2, tString, math.MaxUint32 / 64}}
 	}
 
 	bytes, topn, err := encodeCMSketch(lSketch)
 	c.Assert(err, IsNil)
-	c.Assert(len(bytes), Equals, 61555)
+	c.Assert(len(bytes), Equals, 61595)
 	rSketch, err := decodeCMSketch(bytes, topn)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)

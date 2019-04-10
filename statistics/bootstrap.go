@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -103,18 +102,20 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables stat
 			if idxInfo == nil {
 				continue
 			}
-			selSQL2 := fmt.Sprintf("select HIGH_PRIORITY value_id, content from mysql.stats_topn where version = %d", version)
+			// sql := "select HIGH_PRIORITY table_id, is_index, hist_id,
+			//fmt.Sprintf("select value_id, content from mysql.stats_topn where table_id = %d, is_index = %d, hist_id = %d", tblID, isIndex, histID)
+			selSQL2 := fmt.Sprintf("select HIGH_PRIORITY value_id, content from mysql.stats_topnstore where table_id = %d and is_index = %d and hist_id = %d", row.GetInt64(0), row.GetInt64(1), row.GetInt64(2))
 			topnrows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL2)
 			if err != nil {
 				// TODO: [cms-topn] deal witl broken data.
 			}
-			topn := make([]hack.MutableString, len(topnrows))
+			topn := make([][]byte, len(topnrows))
 			for i := range topnrows {
 				p := topnrows[i].GetInt64(0)
 				if p > int64(len(topnrows)) {
 					// TODO: [cms-topn] deal witl broken data.
 				}
-				topn[p] = hack.String(topnrows[i].GetBytes(1))
+				topn[p] = topnrows[i].GetBytes(1)
 			}
 			cms, err := decodeCMSketch(row.GetBytes(6), topn)
 			if err != nil {

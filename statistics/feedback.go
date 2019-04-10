@@ -948,18 +948,18 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 		if idxHist := t.indexStartWithColumn(colName); idxHist != nil && idxHist.Histogram.Len() > 0 {
 			rangeString := logForIndexRange(idxHist, &rang, -1, factor)
 			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
-				zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
+				zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
 				zap.String("range", rangeString))
 		} else if colHist := t.columnByName(colName); colHist != nil && colHist.Histogram.Len() > 0 {
 			rangeString := colRangeToStr(colHist, &rang, -1, factor)
 			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
-				zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
+				zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
 				zap.String("range", rangeString))
 		} else {
 			count, err := getPseudoRowCountByColumnRanges(sc, float64(t.Count), []*ranger.Range{&rang}, 0)
 			if err == nil {
 				logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
-					zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
+					zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
 					zap.Stringer("range", &rang), zap.Float64("pseudo count", math.Round(count)))
 			}
 		}

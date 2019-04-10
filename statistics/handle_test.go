@@ -510,3 +510,6 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(len(result.Rows()), Equals, 1)
 	c.Assert(result.Rows()[0][9], Equals, "0")
 }
+
+func (s *testStatsSuite) TestCMSketch(c *C) {
+}

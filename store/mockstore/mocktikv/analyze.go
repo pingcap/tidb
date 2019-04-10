@@ -103,8 +103,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 	hg := statistics.HistogramToProto(statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if cms != nil {
-		// Ignores the TopN
-		cm, _ = statistics.CMSketchToProto(cms)
+		cm = statistics.CMSketchToProto(cms)
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
