@@ -202,3 +202,8 @@ func (c *CMSketch) copy() *CMSketch {
 	}
 	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl}
 }
+
+// GetWidthAndDepth returns the width and depth of CM Sketch.
+func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
+	return c.width, c.depth
+}

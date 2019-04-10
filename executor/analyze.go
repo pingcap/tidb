@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"math"
 	"runtime"
 	"strconv"
 
@@ -28,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -108,12 +111,16 @@ type taskType int
 const (
 	colTask taskType = iota
 	idxTask
+	pkIncrementalTask
+	idxIncrementalTask
 )
 
 type analyzeTask struct {
-	taskType taskType
-	idxExec  *AnalyzeIndexExec
-	colExec  *AnalyzeColumnsExec
+	taskType           taskType
+	idxExec            *AnalyzeIndexExec
+	colExec            *AnalyzeColumnsExec
+	idxIncrementalExec *analyzeIndexIncrementalExec
+	colIncrementalEXec *analyzePKIncrementalExec
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
@@ -137,12 +144,25 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			resultCh <- analyzeColumnsPushdown(task.colExec)
 		case idxTask:
 			resultCh <- analyzeIndexPushdown(task.idxExec)
+		case pkIncrementalTask:
+			resultCh <- analyzePKIncremental(task.colIncrementalEXec)
+		case idxIncrementalTask:
+			resultCh <- analyzeIndexIncremental(task.idxIncrementalExec)
 		}
 	}
 }
 
 func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
-	hist, cms, err := idxExec.buildStats()
+	ranges := ranger.FullRange()
+	// For single-column index, we do not load null rows from TiKV, so the built histogram would not include
+	// null values, and its `NullCount` would be set by result of another distsql call to get null rows.
+	// For multi-column index, we cannot define null for the rows, so we still use full range, and the rows
+	// containing null fields would exist in built histograms. Note that, the `NullCount` of histograms for
+	// multi-column index is always 0 then.
+	if len(idxExec.idxInfo.Columns) == 1 {
+		ranges = ranger.FullNotNullRange()
+	}
+	hist, cms, err := idxExec.buildStats(ranges, true)
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
 	}
@@ -199,21 +219,12 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	return nil
 }
 
-func (e *AnalyzeIndexExec) open() error {
-	ranges := ranger.FullRange()
-	// For single-column index, we do not load null rows from TiKV, so the built histogram would not include
-	// null values, and its `NullCount` would be set by result of another distsql call to get null rows.
-	// For multi-column index, we cannot define null for the rows, so we still use full range, and the rows
-	// containing null fields would exist in built histograms. Note that, the `NullCount` of histograms for
-	// multi-column index is always 0 then.
-	if len(e.idxInfo.Columns) == 1 {
-		ranges = ranger.FullNotNullRange()
-	}
+func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error {
 	err := e.fetchAnalyzeResult(ranges, false)
 	if err != nil {
 		return err
 	}
-	if len(e.idxInfo.Columns) == 1 {
+	if considerNull && len(e.idxInfo.Columns) == 1 {
 		ranges = ranger.NullRange()
 		err = e.fetchAnalyzeResult(ranges, true)
 		if err != nil {
@@ -260,8 +271,8 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 	return hist, cms, nil
 }
 
-func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
-	if err = e.open(); err != nil {
+func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool) (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
+	if err = e.open(ranges, considerNull); err != nil {
 		return nil, nil, err
 	}
 	defer func() {
@@ -285,7 +296,13 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 }
 
 func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResult {
-	hists, cms, err := colExec.buildStats()
+	var ranges []*ranger.Range
+	if colExec.pkInfo != nil {
+		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(colExec.pkInfo.Flag))
+	} else {
+		ranges = ranger.FullIntRange(false)
+	}
+	hists, cms, err := colExec.buildStats(ranges)
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
 	}
@@ -315,13 +332,7 @@ type AnalyzeColumnsExec struct {
 	maxNumBuckets   uint64
 }
 
-func (e *AnalyzeColumnsExec) open() error {
-	var ranges []*ranger.Range
-	if e.pkInfo != nil {
-		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(e.pkInfo.Flag))
-	} else {
-		ranges = ranger.FullIntRange(false)
-	}
+func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := splitRanges(ranges, true)
 	firstResult, err := e.buildResp(firstPartRanges)
@@ -363,8 +374,8 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	return result, nil
 }
 
-func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
-	if err = e.open(); err != nil {
+func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
+	if err = e.open(ranges); err != nil {
 		return nil, nil, err
 	}
 	defer func() {
@@ -434,4 +445,84 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		cms = append(cms, collectors[i].CMSketch)
 	}
 	return hists, cms, nil
+}
+
+type analyzeIndexIncrementalExec struct {
+	AnalyzeIndexExec
+	index *statistics.Index
+}
+
+func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) statistics.AnalyzeResult {
+	idx := idxExec.index
+	highBound := idx.Histogram.GetUpper(idx.Len() - 1)
+	values, err := codec.Decode(highBound.GetBytes(), len(idxExec.idxInfo.Columns))
+	if err != nil {
+		return statistics.AnalyzeResult{Err: err}
+	}
+	ran := ranger.Range{LowVal: values, HighVal: []types.Datum{types.MaxValueDatum()}}
+	hist, cms, err := idxExec.buildStats([]*ranger.Range{&ran}, false)
+	if err != nil {
+		return statistics.AnalyzeResult{Err: err}
+	}
+	oldHist, oldCMS, err := idx.RemoveUpperBound(idxExec.ctx.GetSessionVars().StmtCtx, values)
+	if err != nil {
+		return statistics.AnalyzeResult{Err: err}
+	}
+	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, oldHist, hist, int(idxExec.maxNumBuckets))
+	if err != nil {
+		return statistics.AnalyzeResult{Err: err}
+	}
+	if oldCMS != nil && cms != nil {
+		err = cms.MergeCMSketch(oldCMS)
+		if err != nil {
+			return statistics.AnalyzeResult{Err: err}
+		}
+	}
+	result := statistics.AnalyzeResult{
+		PhysicalTableID: idxExec.physicalTableID,
+		Hist:            []*statistics.Histogram{hist},
+		Cms:             []*statistics.CMSketch{cms},
+		IsIndex:         1,
+	}
+	result.Count = hist.NullCount
+	if hist.Len() > 0 {
+		result.Count += hist.Buckets[hist.Len()-1].Count
+	}
+	return result
+}
+
+type analyzePKIncrementalExec struct {
+	AnalyzeColumnsExec
+	pkStats *statistics.Column
+}
+
+func analyzePKIncremental(colExec *analyzePKIncrementalExec) statistics.AnalyzeResult {
+	pkStats := colExec.pkStats
+	high := pkStats.GetUpper(pkStats.Len() - 1)
+	var maxVal types.Datum
+	if mysql.HasUnsignedFlag(colExec.pkInfo.Flag) {
+		maxVal = types.NewUintDatum(math.MaxUint64)
+	} else {
+		maxVal = types.NewIntDatum(math.MaxInt64)
+	}
+	ran := ranger.Range{LowVal: []types.Datum{*high}, LowExclude: true, HighVal: []types.Datum{maxVal}}
+	hists, _, err := colExec.buildStats([]*ranger.Range{&ran})
+	if err != nil {
+		return statistics.AnalyzeResult{Err: err}
+	}
+	hist := hists[0]
+	oldHist := pkStats.Histogram.Copy()
+	hist, err = statistics.MergeHistograms(colExec.ctx.GetSessionVars().StmtCtx, oldHist, hist, int(colExec.maxNumBuckets))
+	if err != nil {
+		return statistics.AnalyzeResult{Err: err}
+	}
+	result := statistics.AnalyzeResult{
+		PhysicalTableID: colExec.physicalTableID,
+		Hist:            []*statistics.Histogram{hist},
+		Cms:             []*statistics.CMSketch{nil},
+	}
+	if hist.Len() > 0 {
+		result.Count += hist.Buckets[hist.Len()-1].Count
+	}
+	return result
 }

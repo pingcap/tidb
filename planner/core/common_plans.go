@@ -396,6 +396,7 @@ type AnalyzeColumnsTask struct {
 	PhysicalTableID int64
 	PKInfo          *model.ColumnInfo
 	ColsInfo        []*model.ColumnInfo
+	Incremental     bool
 }
 
 // AnalyzeIndexTask is used for analyze index.
@@ -403,6 +404,7 @@ type AnalyzeIndexTask struct {
 	// PhysicalTableID is the id for a partition or a table.
 	PhysicalTableID int64
 	IndexInfo       *model.IndexInfo
+	Incremental     bool
 }
 
 // Analyze represents an analyze plan
