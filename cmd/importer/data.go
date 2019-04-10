@@ -94,7 +94,7 @@ func (d *datum) uniqString(n int) string {
 		}
 
 		idx := data % int64(len(alphabet))
-		data = data / int64(len(alphabet))
+		data /= int64(len(alphabet))
 
 		value = append(value, alphabet[idx])
 

@@ -173,7 +173,7 @@ func (h *histogram) randString() string {
 		prefix := getValidPrefix(lower, upper)
 		restLen := h.avgLen - len(prefix)
 		if restLen > 0 {
-			prefix = prefix + randString(restLen)
+			prefix += randString(restLen)
 		}
 		return prefix
 	}
