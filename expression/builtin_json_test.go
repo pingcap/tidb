@@ -598,7 +598,7 @@ func (s *testEvaluatorSuite) TestJSONKeys(c *C) {
 		{[]interface{}{`{"a": 1}`, "$.a"}, nil, true},
 		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a"}, `["c"]`, true},
 		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a.c"}, nil, true},
-		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "null"}, nil, true},
+		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, nil}, nil, true},
 
 		// Tests path expression contains any asterisk
 		{[]interface{}{`{}`, "$.*"}, nil, false},
