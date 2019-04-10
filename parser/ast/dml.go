@@ -1185,6 +1185,17 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+const (
+	Terminated = iota
+	Enclosed
+	Escaped
+)
+
+type FieldItem struct {
+	Type  int
+	Value string
+}
+
 // FieldsClause represents fields references clause in load data statement.
 type FieldsClause struct {
 	Terminated string
