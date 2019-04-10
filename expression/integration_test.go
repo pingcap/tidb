@@ -4142,16 +4142,27 @@ func (s *testIntegrationSuite) TestIssue9732(c *C) {
 	tk.MustQuery(`select monthname(str_to_date(null, '%m')), monthname(str_to_date(null, '%m')),
 monthname(str_to_date(1, '%m')), monthname(str_to_date(0, '%m'));`).Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 
-	nullSQLs := []string{
-		"select str_to_date(1, '%m')",
-		"select str_to_date(01, '%d')",
-		"select str_to_date(2019, '%Y')",
-		"select str_to_date('5,2019','%m,%Y')",
-		"select str_to_date('01,2019','%d,%Y')",
-		"select str_to_date('01,5','%d,%m')",
+	nullCases := []struct {
+		sql string
+		ret string
+	}{
+		{"select str_to_date(1, '%m')", "0000-01-00"},
+		{"select str_to_date(01, '%d')", "0000-00-01"},
+		{"select str_to_date(2019, '%Y')", "2019-00-00"},
+		{"select str_to_date('5,2019','%m,%Y')", "2019-05-00"},
+		{"select str_to_date('01,2019','%d,%Y')", "2019-00-01"},
+		{"select str_to_date('01,5','%d,%m')", "0000-05-01"},
 	}
-	for _, sql := range nullSQLs {
-		tk.MustQuery(sql).Check(testkit.Rows("<nil>"))
+
+	for _, nullCase := range nullCases {
+		tk.MustQuery(nullCase.sql).Check(testkit.Rows("<nil>"))
+	}
+
+	// remove NO_ZERO_DATE mode
+	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+
+	for _, nullCase := range nullCases {
+		tk.MustQuery(nullCase.sql).Check(testkit.Rows(nullCase.ret))
 	}
 }
 
