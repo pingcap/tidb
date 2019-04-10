@@ -74,6 +74,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 			// TODO: Add restrictions to this operation.
 			go splitTableRegion(d.store, tbInfo.ID)
 		}
+
+		if tbInfo.ShardRowIDBits > 0 {
+			go preSplitTableRegion(d.store, tbInfo, tbInfo.ShardRowIDBits/2)
+		}
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
@@ -321,6 +326,7 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 
 type splitableStore interface {
 	SplitRegion(splitKey kv.Key) error
+	SplitRegionAndScatter(splitKey kv.Key) error
 }
 
 func splitTableRegion(store kv.Storage, tableID int64) {
@@ -332,6 +338,32 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	if err := s.SplitRegion(tableStartKey); err != nil {
 		// It will be automatically split by TiKV later.
 		logutil.Logger(ddlLogCtx).Warn("[ddl] split table region failed", zap.Error(err))
+	}
+}
+
+func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, shardBits uint64) {
+	s, ok := store.(splitableStore)
+	if !ok {
+		return
+	}
+	// split table region
+	step := int64(1 << (tblInfo.ShardRowIDBits - shardBits))
+	max := int64(1 << tblInfo.ShardRowIDBits)
+	for p := int64(step); p < max; p += step {
+		recordID := p << (64 - tblInfo.ShardRowIDBits)
+		recordPrefix := tablecodec.GenTableRecordPrefix(tblInfo.ID)
+		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
+		if err := s.SplitRegionAndScatter(key); err != nil {
+			logutil.Logger(ddlLogCtx).Warn("[ddl] split table region failed", zap.Error(err))
+		}
+	}
+
+	// split index region.
+	for _, idx := range tblInfo.Indices {
+		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
+		if err := s.SplitRegionAndScatter(indexPrefix); err != nil {
+			logutil.Logger(ddlLogCtx).Warn("[ddl] split table region failed", zap.Error(err))
+		}
 	}
 }
 

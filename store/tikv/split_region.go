@@ -16,9 +16,9 @@ package tikv
 import (
 	"bytes"
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
@@ -28,6 +28,11 @@ import (
 // SplitRegion splits the region contains splitKey into 2 regions: [start,
 // splitKey) and [splitKey, end).
 func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
+	_, err := s.splitRegion(splitKey)
+	return err
+}
+
+func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 	logutil.Logger(context.Background()).Info("start split region",
 		zap.Binary("at", splitKey))
 	bo := NewBackoffer(context.Background(), splitRegionBackoff)
@@ -42,25 +47,25 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 	for {
 		loc, err := s.regionCache.LocateKey(bo, splitKey)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if bytes.Equal(splitKey, loc.StartKey) {
 			logutil.Logger(context.Background()).Info("skip split region",
 				zap.Binary("at", splitKey))
-			return nil
+			return nil, nil
 		}
 		res, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		regionErr, err := res.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if regionErr != nil {
 			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			continue
 		}
@@ -68,6 +73,42 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 			zap.Binary("at", splitKey),
 			zap.Stringer("new region left", res.SplitRegion.GetLeft()),
 			zap.Stringer("new region right", res.SplitRegion.GetRight()))
+		return res.SplitRegion.GetLeft(), nil
+	}
+}
+
+/*
+func (s *tikvStore) scatterRegion(left *metapb.Region) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	resp3, err := s.pdClient.ScatterRegion(ctx, &pdpb.ScatterRegionRequest{
+		Header:   &pdpb.RequestHeader{
+			ClusterId: s.clusterID,
+		},
+		RegionId: left.GetId(),
+	})
+	cancel()
+
+	if err != nil {
+		return err
+	}
+	if resp3.Header.GetError() != nil {
+		return errors.New("scatter region failed")
+	}
+	return nil
+
+}
+*/
+
+func (s *tikvStore) SplitRegionAndScatter(splitKey kv.Key) error {
+	logutil.Logger(context.Background()).Info("split region and scatter\n\n", zap.Binary("key", splitKey))
+	left, err := s.splitRegion(splitKey)
+	if err != nil {
+		return err
+	}
+	if left == nil {
 		return nil
 	}
+
+	return nil
+
 }
