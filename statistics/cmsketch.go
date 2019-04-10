@@ -27,8 +27,8 @@ import (
 	"github.com/spaolacci/murmur3"
 )
 
-// TopNThreshold is the minimum ratio of the number of topn elements in CMSketch, 20 means 1 / 20 = 5%.
-const TopNThreshold = 20
+// topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 20 means 1 / 20 = 5%.
+const topNThreshold = 20
 
 // CMSketch is used to estimate point queries.
 // Refer: https://en.wikipedia.org/wiki/Count-min_sketch
@@ -66,7 +66,7 @@ func NewCMSketchWithTopN(d, w int32, data [][]byte, n uint32) *CMSketch {
 		tbl[i] = make([]uint32, w)
 	}
 	c := &CMSketch{depth: d, width: w, table: tbl}
-	c.BuildTopN(data, n, TopNThreshold)
+	c.BuildTopN(data, n, topNThreshold)
 	return c
 }
 
