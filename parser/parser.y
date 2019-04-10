@@ -2905,7 +2905,7 @@ PredicateExpr:
 	{
 		escape := $4.(string)
 		if len(escape) > 1 {
-			yylex.AppendError(yylex.Errorf("Incorrect arguments %s to ESCAPE", escape))
+			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		} else if len(escape) == 0 {
 			escape = "\\"
@@ -7023,7 +7023,7 @@ NumericType:
 		if x.Flen == types.UnspecifiedLength || x.Flen == 0 {
 			x.Flen = 1
 		} else if x.Flen > 64 {
-			yylex.AppendError(yylex.Errorf("invalid field length %d for bit type, must in [1, 64]", x.Flen))
+			yylex.AppendError(ErrTooBigDisplayWidth.GenWithStackByArgs(x.Flen))
 		}
 		$$ = x
 	}
@@ -8239,7 +8239,7 @@ FieldItem:
 	{
 		str := $4
 		if str != "\\" && len(str) > 1 {
-			yylex.AppendError(yylex.Errorf("Incorrect arguments %s to ESCAPE", escape))
+			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
 		}
 		$$ = &ast.FieldItem{
@@ -8251,7 +8251,7 @@ FieldItem:
 	{
 		str := $3
 		if str != "\\" && len(str) > 1 {
-			yylex.AppendError(yylex.Errorf("Incorrect arguments %s to ESCAPE", escape))
+			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
 		}
 		$$ = &ast.FieldItem{
@@ -8263,7 +8263,7 @@ FieldItem:
 	{
 		str := $3
 		if str != "\\" && len(str) > 1 {
-			yylex.AppendError(yylex.Errorf("Incorrect arguments %s to ESCAPE", escape))
+			yylex.AppendError(ErrWrongFieldTerminators.GenWithStackByArgs())
 			return 1
 		}
 		$$ = &ast.FieldItem{

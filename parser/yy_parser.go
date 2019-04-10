@@ -31,6 +31,9 @@ const (
 	codeErrSyntax                  = terror.ErrCode(mysql.ErrSyntax)
 	codeErrUnknownCharacterSet     = terror.ErrCode(mysql.ErrUnknownCharacterSet)
 	codeErrInvalidYearColumnLength = terror.ErrCode(mysql.ErrInvalidYearColumnLength)
+	codeWrongArgument              = terror.ErrCode(mysql.ErrWrongArguments)
+	codeWrongFieldTerminators      = terror.ErrCode(mysql.ErrWrongFieldTerminators)
+	codeTooBigDisplayWidth         = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
 )
 
 var (
@@ -42,6 +45,13 @@ var (
 	ErrUnknownCharacterSet = terror.ClassParser.New(codeErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
 	// ErrInvalidYearColumnLength returns for illegal column length for year type.
 	ErrInvalidYearColumnLength = terror.ClassParser.New(codeErrInvalidYearColumnLength, mysql.MySQLErrName[mysql.ErrInvalidYearColumnLength])
+	// ErrWrongArguments returns for illegal argument.
+	ErrWrongArguments = terror.ClassParser.New(codeWrongArgument, mysql.MySQLErrName[mysql.ErrWrongArguments])
+	// ErrWrongFieldTerminators returns for illegal field terminators.
+	ErrWrongFieldTerminators = terror.ClassParser.New(codeWrongFieldTerminators, mysql.MySQLErrName[mysql.ErrWrongFieldTerminators])
+	// ErrTooBigDisplayWidth returns for data display width exceed limit .
+	ErrTooBigDisplayWidth = terror.ClassParser.New(codeTooBigDisplayWidth, mysql.MySQLErrName[mysql.ErrTooBigDisplaywidth])
+
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodePattern  = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
@@ -55,6 +65,9 @@ func init() {
 		codeErrParse:                   mysql.ErrParse,
 		codeErrUnknownCharacterSet:     mysql.ErrUnknownCharacterSet,
 		codeErrInvalidYearColumnLength: mysql.ErrInvalidYearColumnLength,
+		codeWrongArgument:              mysql.ErrWrongArguments,
+		codeWrongFieldTerminators:      mysql.ErrWrongFieldTerminators,
+		codeTooBigDisplayWidth:         mysql.ErrTooBigDisplaywidth,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassParser] = parserMySQLErrCodes
 }
