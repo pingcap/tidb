@@ -269,7 +269,7 @@ func (t Time) String() string {
 	terror.Log(errors.Trace(err))
 	if t.Fsp > 0 {
 		tmp := fmt.Sprintf(".%06d", t.Time.Microsecond())
-		str = str + tmp[:1+t.Fsp]
+		str += tmp[:1+t.Fsp]
 	}
 
 	return str
@@ -1296,7 +1296,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Adjust hour/min/second.
 	if num <= 99991231 {
-		num = num * 1000000
+		num *= 1000000
 		return getTime(sc, num, t.Type)
 	}
 
@@ -1311,7 +1311,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// Adjust year
 	// YYMMDDHHMMSS, 2000-2069
 	if num <= 69*10000000000+1231235959 {
-		num = num + 20000000000000
+		num += 20000000000000
 		return getTime(sc, num, t.Type)
 	}
 
@@ -1323,7 +1323,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// Adjust year
 	// YYMMDDHHMMSS, 1970-1999
 	if num <= 991231235959 {
-		num = num + 19000000000000
+		num += 19000000000000
 		return getTime(sc, num, t.Type)
 	}
 

@@ -166,7 +166,7 @@ func strToInt(str string) (int64, error) {
 			err = errors.Trace(ErrBadNumber)
 			break
 		}
-		r = r * uint64(10)
+		r *= uint64(10)
 
 		r1 := r + uint64(str[i]-'0')
 		if r1 < r || r1 > maxUint {

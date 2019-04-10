@@ -170,11 +170,9 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 			if len(indexStr) == 1 && indexStr[0] == '*' {
 				pe.flags |= pathExpressionContainsAsterisk
 				index = arrayIndexAsterisk
-			} else {
-				if index, err = strconv.Atoi(indexStr); err != nil {
-					err = errors.Trace(err)
-					return
-				}
+			} else if index, err = strconv.Atoi(indexStr); err != nil {
+				err = errors.Trace(err)
+				return
 			}
 			pe.legs = append(pe.legs, pathLeg{typ: pathLegIndex, arrayIndex: index})
 		} else if pathExprSuffix[start] == '.' {

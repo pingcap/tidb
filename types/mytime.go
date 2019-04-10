@@ -173,7 +173,7 @@ func AddDate(year, month, day int64, ot gotime.Time) (nt gotime.Time) {
 
 func calcTimeFromSec(to *MysqlTime, seconds, microseconds int) {
 	to.hour = seconds / 3600
-	seconds = seconds % 3600
+	seconds %= 3600
 	to.minute = uint8(seconds / 60)
 	to.second = uint8(seconds % 60)
 	to.microsecond = uint32(microseconds)

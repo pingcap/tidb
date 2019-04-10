@@ -767,7 +767,7 @@ func (d *MyDecimal) doMiniRightShift(shift, beg, end int) {
 		d.wordBuf[bufFrom] = d.wordBuf[bufFrom]/powers10[shift] + (d.wordBuf[bufFrom-1]%powers10[shift])*powers10[cShift]
 		bufFrom--
 	}
-	d.wordBuf[bufFrom] = d.wordBuf[bufFrom] / powers10[shift]
+	d.wordBuf[bufFrom] /= powers10[shift]
 }
 
 // Round rounds the decimal to "frac" digits.
