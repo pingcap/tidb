@@ -553,7 +553,7 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	var loc *tikv.KeyLocation
 	var err error
 	// extract all regions contain the table
-	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, append(loc.EndKey, byte(0))) {
+	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, loc.EndKey) {
 		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
 			e.scanTasks = append(e.scanTasks, loc)
 		} else {
@@ -580,8 +580,8 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	return false, nil
 }
 
-func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap *map[string][]byte, collectors []*statistics.SampleCollector) (err error) {
-	length := int32(len(*kvMap))
+func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collectors []*statistics.SampleCollector) (err error) {
+	length := int32(len(kvMap))
 	timeZone := e.ctx.GetSessionVars().Location()
 	newCursor := atomic.AddInt32(&e.sampCursor, length)
 	hasPKInfo := 0
@@ -590,7 +590,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap *map[string][]byte, colle
 	}
 	hasIdxInfo := len(e.idxsInfo)
 	samplePos := newCursor - length
-	for _, value := range *kvMap {
+	for _, value := range kvMap {
 		if hasPKInfo > 0 {
 			collectors[0].Samples[samplePos].Ordinal = int(samplePos)
 			collectors[0].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(value, &e.pkInfo.FieldType, timeZone)
@@ -685,7 +685,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 		return errors.Trace(err)
 	}
 	for _, t := range e.scanTasks {
-		iter, err := snapshot.Iter(t.StartKey, append(t.EndKey, '0'))
+		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -743,7 +743,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collec
 			return
 		}
 
-		*err = e.handleBatchGetResponse(&kvMap, collectors)
+		*err = e.handleBatchGetResponse(kvMap, collectors)
 		if *err != nil {
 			*err = errors.Trace(*err)
 			return
@@ -830,7 +830,8 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 }
 
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
-	for {
+	// Only four rebuilds for sample task are allowed.
+	for buildCnt := 0; buildCnt < 5; buildCnt++ {
 		needRebuild, err := e.buildSampTask()
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -867,4 +868,5 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 
 		return hists, cms, nil
 	}
+	return nil, nil, errors.Errorf("Too many rebuilds for getting sample tasks.")
 }
