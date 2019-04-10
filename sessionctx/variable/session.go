@@ -919,7 +919,7 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 		firstComma := false
 		vStr := ""
 		for k, v := range statsInfos {
-			if v == 0 {
+			if v == statistics.PseudoVersion {
 				vStr = "pseudo"
 			} else {
 				vStr = strconv.FormatUint(v, 10)
