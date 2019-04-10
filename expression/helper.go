@@ -49,15 +49,15 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 		Fsp:  fsp,
 	}
 
-	defaultTime, err := getSystemTimestamp(ctx)
-	if err != nil {
-		return d, err
-	}
 	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
+			defaultTime, err := getSystemTimestamp(ctx)
+			if err != nil {
+				return d, err
+			}
 			value.Time = types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond))
 			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
