@@ -97,6 +97,14 @@ type RegionMetric struct {
 	Count        int    `json:"region_count"`
 }
 
+func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) (map[TblIndex]RegionMetric, error) {
+	regionMetrics, err := h.FetchHotRegion(rw)
+	if err != nil {
+		return nil, err
+	}
+	return h.FetchRegionTableIndex(regionMetrics, allSchemas)
+}
+
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	etcd, ok := h.Store.(tikv.EtcdBackend)

@@ -294,23 +294,6 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 	return t.GetMvccByEncodedKey(encodedKey)
 }
 
-func (t *tikvHandlerTool) scrapeHotInfo(rw string) (map[helper.TblIndex]helper.RegionMetric, error) {
-	regionMetrics, err := t.FetchHotRegion(rw)
-	if err != nil {
-		return nil, err
-	}
-
-	schema, err := t.schema()
-	if err != nil {
-		return nil, err
-	}
-	tblIdx, err := t.FetchRegionTableIndex(regionMetrics, schema.AllSchemas())
-	if err != nil {
-		return nil, err
-	}
-	return tblIdx, nil
-}
-
 // settingsHandler is the handler for list tidb server settings.
 type settingsHandler struct {
 }
@@ -1045,12 +1028,17 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if router == "RegionHot" {
-			hotRead, err := h.scrapeHotInfo(pdapi.HotRead)
+			schema, err := h.schema()
 			if err != nil {
 				writeError(w, err)
 				return
 			}
-			hotWrite, err := h.scrapeHotInfo(pdapi.HotWrite)
+			hotRead, err := h.ScrapeHotInfo(pdapi.HotRead, schema.AllSchemas())
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			hotWrite, err := h.ScrapeHotInfo(pdapi.HotWrite, schema.AllSchemas())
 			if err != nil {
 				writeError(w, err)
 				return

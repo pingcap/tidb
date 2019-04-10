@@ -71,7 +71,7 @@ const (
 	tableProcesslist                        = "PROCESSLIST"
 	tableTiDBIndexes                        = "TIDB_INDEXES"
 	tableSlowLog                            = "SLOW_QUERY"
-	tableTiDBHotRegions                     = "TIDB_HOT_REGION"
+	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
 )
 
 type columnInfo struct {
@@ -555,6 +555,7 @@ var tableTiDBHotRegionsCols = []columnInfo{
 	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"MAX_HOT_DEGREE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"FLOW_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
@@ -1445,34 +1446,45 @@ func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err
 	if !ok {
 		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
+	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	regionMetrics, err := tikvHelper.FetchHotRegion(pdapi.HotRead)
+	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
 	if err != nil {
 		return nil, err
 	}
-	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
-	tblIdx, err := tikvHelper.FetchRegionTableIndex(regionMetrics, is.AllSchemas())
+	records = append(records, dataForHotRegionByMetrics(metrics, "read")...)
+	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
 	if err != nil {
 		return nil, err
 	}
-	for tblIndex, regionMetric := range tblIdx {
+	records = append(records, dataForHotRegionByMetrics(metrics, "write")...)
+	return records, nil
+}
+
+func dataForHotRegionByMetrics(metrics map[helper.TblIndex]helper.RegionMetric, tp string) [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(metrics))
+	for tblIndex, regionMetric := range metrics {
 		row := make([]types.Datum, len(tableTiDBHotRegionsCols))
 		if tblIndex.IndexName != "" {
 			row[1].SetInt64(tblIndex.IndexID)
 			row[4].SetString(tblIndex.IndexName)
+		} else {
+			row[1].SetNull()
+			row[4].SetNull()
 		}
 		row[0].SetInt64(tblIndex.TableID)
 		row[2].SetString(tblIndex.DbName)
 		row[3].SetString(tblIndex.TableName)
-		row[5].SetInt64(int64(regionMetric.MaxHotDegree))
-		row[6].SetInt64(int64(regionMetric.Count))
-		row[7].SetUint64(regionMetric.FlowBytes)
-		records = append(records, row)
+		row[5].SetString(tp)
+		row[6].SetInt64(int64(regionMetric.MaxHotDegree))
+		row[7].SetInt64(int64(regionMetric.Count))
+		row[8].SetUint64(regionMetric.FlowBytes)
+		rows = append(rows, row)
 	}
-	return records, nil
+	return rows
 }
 
 var tableNameToColumns = map[string][]columnInfo{
