@@ -722,8 +722,7 @@ func sizeOfPlan(p Plan) (sz int) {
 	case *PhysicalIndexReader:
 		sz = len(x.IndexPlans)
 	case *PhysicalIndexLookUpReader:
-		sz = len(x.TablePlans)
-		sz = sz + len(x.IndexPlans)
+		sz = len(x.TablePlans) + len(x.IndexPlans)
 	case *PointGetPlan:
 		sz = 1
 	case PhysicalPlan:
@@ -732,15 +731,15 @@ func sizeOfPlan(p Plan) (sz int) {
 		}
 	case *Insert:
 		if x.SelectPlan != nil {
-			sz = sz + sizeOfPlan(x.SelectPlan)
+			sz = sizeOfPlan(x.SelectPlan)
 		}
 	case *Update:
 		if x.SelectPlan != nil {
-			sz = sz + sizeOfPlan(x.SelectPlan)
+			sz = sizeOfPlan(x.SelectPlan)
 		}
 	case *Delete:
 		if x.SelectPlan != nil {
-			sz = sz + sizeOfPlan(x.SelectPlan)
+			sz = sizeOfPlan(x.SelectPlan)
 		}
 	}
 	return sz
