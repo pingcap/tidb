@@ -154,6 +154,9 @@ func (r *selectResult) getSelectResp() error {
 		if re.err != nil {
 			return errors.Trace(re.err)
 		}
+		if r.memTracker != nil && r.selectResp != nil {
+			r.memTracker.Consume(-int64(r.selectResp.Size()))
+		}
 		if re.result == nil {
 			r.selectResp = nil
 			return nil
@@ -165,6 +168,9 @@ func (r *selectResult) getSelectResp() error {
 		err := r.selectResp.Unmarshal(re.result.GetData())
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if r.memTracker != nil && r.selectResp != nil {
+			r.memTracker.Consume(int64(r.selectResp.Size()))
 		}
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
