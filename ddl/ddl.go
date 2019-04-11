@@ -228,6 +228,8 @@ var (
 	ErrAlterOperationNotSupported = terror.ClassDDL.New(codeNotSupportedAlterOperation, mysql.MySQLErrName[mysql.ErrAlterOperationNotSupportedReason])
 	// ErrWrongObject returns for wrong object.
 	ErrWrongObject = terror.ClassDDL.New(codeErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
+	// ErrTableCantHandleFt returns FULLTEXT keys are not supported by table type
+	ErrTableCantHandleFt = terror.ClassDDL.New(codeErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
 	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
 	ErrFieldNotFoundPart = terror.ClassDDL.New(codeFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
 	// ErrPartitionColumnList returns "Inconsistency in usage of column lists for partitioning".
@@ -716,6 +718,7 @@ const (
 	codePrimaryCantHaveNull                    = terror.ErrCode(mysql.ErrPrimaryCantHaveNull)
 	codeWrongExprInPartitionFunc               = terror.ErrCode(mysql.ErrWrongExprInPartitionFunc)
 	codeWarnDataTruncated                      = terror.ErrCode(mysql.WarnDataTruncated)
+	codeErrTableCantHandleFt                   = terror.ErrCode(mysql.ErrTableCantHandleFt)
 	codeCoalesceOnlyOnHashPartition            = terror.ErrCode(mysql.ErrCoalesceOnlyOnHashPartition)
 	codeUnknownPartition                       = terror.ErrCode(mysql.ErrUnknownPartition)
 	codeErrGeneratedColumnFunctionIsNotAllowed = terror.ErrCode(mysql.ErrGeneratedColumnFunctionIsNotAllowed)
@@ -776,6 +779,7 @@ func init() {
 		codePrimaryCantHaveNull:                    mysql.ErrPrimaryCantHaveNull,
 		codeWrongExprInPartitionFunc:               mysql.ErrWrongExprInPartitionFunc,
 		codeWarnDataTruncated:                      mysql.WarnDataTruncated,
+		codeErrTableCantHandleFt:                   mysql.ErrTableCantHandleFt,
 		codeCoalesceOnlyOnHashPartition:            mysql.ErrCoalesceOnlyOnHashPartition,
 		codeUnknownPartition:                       mysql.ErrUnknownPartition,
 		codeNotSupportedAlterOperation:             mysql.ErrAlterOperationNotSupportedReason,
