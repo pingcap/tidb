@@ -175,6 +175,14 @@ func (s *testSuite3) TestDefaultRole(c *C) {
 	_, err := tk.Exec(setRoleSQL)
 	c.Check(err, NotNil)
 
+	setRoleSQL = `SET DEFAULT ROLE r_1 TO u_1000;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, NotNil)
+
+	setRoleSQL = `SET DEFAULT ROLE r_1, r_3 TO u_1;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, NotNil)
+
 	setRoleSQL = `SET DEFAULT ROLE r_1 TO u_1;`
 	_, err = tk.Exec(setRoleSQL)
 	c.Check(err, IsNil)
