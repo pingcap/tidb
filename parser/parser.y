@@ -596,9 +596,6 @@ import (
 	BeginTransactionStmt		"BEGIN TRANSACTION statement"
 	BinlogStmt			"Binlog base64 statement"
 	CommitStmt			"COMMIT statement"
-	ConnectionOption		"single connection options"
-	ConnectionOptionList		"connection options for CREATE USER statement"
-	ConnectionOptions		"optional connection options for CREATE USER statement"
 	CreateTableStmt			"CREATE TABLE statement"
 	CreateViewStmt			"CREATE VIEW  stetement"
 	CreateUserStmt			"CREATE User statement"
@@ -681,6 +678,9 @@ import (
 	ColumnOptionList		"column definition option list"
 	VirtualOrStored			"indicate generated column is stored or not"
 	ColumnOptionListOpt		"optional column definition option list"
+	ConnectionOption		"single connection options"
+	ConnectionOptionList		"connection options for CREATE USER statement"
+	ConnectionOptions		"optional connection options for CREATE USER statement"
 	Constraint			"table constraint"
 	ConstraintElem			"table constraint element"
 	ConstraintKeywordOpt		"Constraint Keyword or empty"
@@ -7554,6 +7554,9 @@ CreateUserStmt:
 			IsCreateRole: false,
 			IfNotExists: $3.(bool),
 			Specs: $4.([]*ast.UserSpec),
+			TslOptions: $5.([]*ast.TslOption),
+			ResourceOptions: $6.([]*ast.ResourceOption),
+			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
 	}
 
@@ -7613,127 +7616,182 @@ UserSpecList:
 
 ConnectionOptions:
 	{
-		$$ = nil
+		l := []*ast.ResourceOption{}
+		$$ = l
 	}
 |	"WITH" ConnectionOptionList
 	{
-		$$ = nil
+		$$ = $2
 	}
 
 ConnectionOptionList:
 	ConnectionOption
 	{
-		$$ = nil
+		$$ = []*ast.ResourceOption{$1.(*ast.ResourceOption)}
 	}
 |	ConnectionOptionList ConnectionOption
 	{
-		$$ = nil
+		l := $1.([]*ast.ResourceOption)
+		l = append(l, $2.(*ast.ResourceOption))
+		$$ = l
 	}
 
 ConnectionOption:
 	"MAX_QUERIES_PER_HOUR" NUM
 	{
-		$$ = nil
+		$$ = &ast.ResourceOption {
+			Type: ast.MaxQueriesPerHour,
+			Count: $2.(int64),
+		}
 	}
 |	"MAX_UPDATES_PER_HOUR" NUM
 	{
-		$$ = nil
+		$$ = &ast.ResourceOption {
+			Type: ast.MaxUpdatesPerHour,
+			Count: $2.(int64),
+		}
 	}
 |	"MAX_CONNECTIONS_PER_HOUR" NUM
 	{
-		$$ = nil
+		$$ = &ast.ResourceOption {
+			Type: ast.MaxConnectionsPerHour,
+			Count: $2.(int64),
+		}
 	}
 |	"MAX_USER_CONNECTIONS" NUM
 	{
-		$$ = nil
+		$$ = &ast.ResourceOption {
+			Type: ast.MaxUserConnections,
+			Count: $2.(int64),
+		}
 	}
 
 RequireClause:
 	{
-		$$ = nil
+		l := []*ast.TslOption{}
+		$$ = l
 	}
 |	"REQUIRE" "NONE"
 	{
-		$$ = nil
+		t := &ast.TslOption {
+			Type: ast.TslNone,
+		}
+		$$ = []*ast.TslOption{t}
 	}
 |	"REQUIRE" "SSL"
 	{
-		$$ = nil
+		t := &ast.TslOption {
+			Type: ast.Ssl,
+		}
+		$$ = []*ast.TslOption{t}
 	}
 |	"REQUIRE" "X509"
 	{
-		$$ = nil
+		t := &ast.TslOption {
+			Type: ast.X509,
+		}
+		$$ = []*ast.TslOption{t}
 	}
 |	"REQUIRE" RequireList
 	{
-		$$ = nil
+		$$ = $2
 	}
 
 RequireList:
 	RequireListElement
 	{
-		$$ = nil
+		$$ = []*ast.TslOption{$1.(*ast.TslOption)}
 	}
 |	RequireListElement "AND" RequireList
 	{
-		$$ = nil
+		l := $3.([]*ast.TslOption)
+		l = append(l, $1.(*ast.TslOption))
+		$$ = l
 	}
 
 RequireListElement:
-	"ISSUER" StringLiteral
+	"ISSUER" stringLit
 	{
-		$$ = nil
+		$$ = &ast.TslOption {
+			Type: ast.Issuer,
+			Value: $2,
+		}
 	}
-|	"SUBJECT" StringLiteral
+|	"SUBJECT" stringLit
 	{
-		$$ = nil
+		$$ = &ast.TslOption {
+			Type: ast.Subject,
+			Value: $2,
+		}
 	}
-|	"CIPHER" StringLiteral
+|	"CIPHER" stringLit
 	{
-		$$ = nil
+		$$ = &ast.TslOption {
+			Type: ast.Cipher,
+			Value: $2,
+		}
 	}
 
 PasswordOrLockOptions:
 	{
-		$$ = nil
+		l := []*ast.PasswordOrLockOption{}
+		$$ = l
 	}
 |	PasswordOrLockOptionList
 	{
-		$$ = nil
+		$$ = $1
 	}
 
 PasswordOrLockOptionList:
 	PasswordOrLockOption
 	{
-		$$ = nil
+		$$ = []*ast.PasswordOrLockOption{$1.(*ast.PasswordOrLockOption)}
 	}
 |	PasswordOrLockOptionList PasswordOrLockOption
 	{
-		$$ = nil
+		l := $1.([]*ast.PasswordOrLockOption)
+		l = append(l, $2.(*ast.PasswordOrLockOption))
+		$$ = l
 	}
 
 PasswordOrLockOption:
 	"ACCOUNT" "UNLOCK"
 	{
-		$$ = nil
+		$$ = &ast.PasswordOrLockOption {
+			Type: ast.Unlock,
+		}
 	}
 |	"ACCOUNT" "LOCK"
 	{
-		$$ = nil
+		$$ = &ast.PasswordOrLockOption {
+			Type: ast.Lock,
+		}
 	}
 |	PasswordExpire
 	{
-		$$ = nil
+		$$ = &ast.PasswordOrLockOption {
+			Type: ast.PasswordExpire,
+		}
 	}
 |	PasswordExpire "INTERVAL" NUM "DAY"
 	{
-		$$ = nil
+		$$ = &ast.PasswordOrLockOption {
+			Type: ast.PasswordExpireInterval,
+			Count: $3.(int64),
+		}
 	}
 |	PasswordExpire "NEVER"
 	{
-		$$ = nil
+		$$ = &ast.PasswordOrLockOption {
+			Type: ast.PasswordExpireNever,
+		}
 	}
 |	PasswordExpire "DEFAULT"
+	{
+		$$ = &ast.PasswordOrLockOption {
+			Type: ast.PasswordExpireDefault,
+		}
+	}
 
 PasswordExpire:
 	"PASSWORD" "EXPIRE" ClearPasswordExpireOptions
