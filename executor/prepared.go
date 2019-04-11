@@ -57,19 +57,80 @@ func (p *paramMarkerSorter) Swap(i, j int) {
 	p.markers[i], p.markers[j] = p.markers[j], p.markers[i]
 }
 
-type paramMarkerExtractor struct {
-	markers []ast.ParamMarkerExpr
+// PrepareVisitor checks ast tree to extract information for prepare.
+type PrepareVisitor struct {
+	// CheckCacheable indicate whether check cachable during visit ast.
+	CheckCacheable bool
+
+	markers        []ast.ParamMarkerExpr
+	astUncacheable bool
+	execSubPlan    bool
 }
 
-func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
+func (e *PrepareVisitor) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
-	if x, ok := in.(*driver.ParamMarkerExpr); ok {
-		e.markers = append(e.markers, x)
+func (e *PrepareVisitor) Leave(in ast.Node) (ast.Node, bool) {
+	switch node := in.(type) {
+	case *driver.ParamMarkerExpr:
+		e.markers = append(e.markers, node)
+	case *ast.SubqueryExpr:
+		e.execSubPlan = true
+		e.astUncacheable = true
 	}
+
+	if !e.CheckCacheable {
+		return in, true
+	}
+	e.checkAstCacheable(in)
 	return in, true
+}
+
+func (e *PrepareVisitor) checkAstCacheable(in ast.Node) {
+	switch node := in.(type) {
+	case *ast.VariableExpr, *ast.ExistsSubqueryExpr:
+		e.astUncacheable = true
+	case *ast.FuncCallExpr:
+		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
+			e.astUncacheable = true
+		}
+	case *ast.OrderByClause:
+		for _, item := range node.Items {
+			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
+				e.astUncacheable = true
+			}
+		}
+	case *ast.GroupByClause:
+		for _, item := range node.Items {
+			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
+				e.astUncacheable = true
+			}
+		}
+	case *ast.Limit:
+		if node.Count != nil {
+			if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+				e.astUncacheable = true
+			}
+		}
+		if node.Offset != nil {
+			if _, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+				e.astUncacheable = true
+			}
+		}
+	}
+}
+
+// Cacheable checks whether input ast is checkAstCacheable.
+func (e *PrepareVisitor) Cacheable(node ast.Node) bool {
+	_, isSelect := node.(*ast.SelectStmt)
+	_, isUpdate := node.(*ast.UpdateStmt)
+	_, isInsert := node.(*ast.InsertStmt)
+	_, isDelete := node.(*ast.DeleteStmt)
+	if !(isSelect || isUpdate || isInsert || isDelete) {
+		return false
+	}
+	return !e.astUncacheable
 }
 
 // PrepareExec represents a PREPARE executor.
@@ -137,12 +198,22 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if err != nil {
 		return err
 	}
-	var extractor paramMarkerExtractor
-	stmt.Accept(&extractor)
+	prepareVisitor := PrepareVisitor{CheckCacheable: plannercore.PreparedPlanCacheEnabled()}
+	stmt.Accept(&prepareVisitor)
+
+	type prepareTxn interface {
+		PrepareTxnCtx(ctx context.Context)
+	}
+
+	if prepareVisitor.execSubPlan {
+		// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
+		// So we have to call PrepareTxnCtx here.
+		e.ctx.(prepareTxn).PrepareTxnCtx(ctx)
+	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
 	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
-	if len(extractor.markers) > math.MaxUint16 {
+	if len(prepareVisitor.markers) > math.MaxUint16 {
 		return ErrPsManyParam
 	}
 
@@ -154,7 +225,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	// The parameter markers are appended in visiting order, which may not
 	// be the same as the position order in the query string. We need to
 	// sort it by position.
-	sorter := &paramMarkerSorter{markers: extractor.markers}
+	sorter := &paramMarkerSorter{markers: prepareVisitor.markers}
 	sort.Sort(sorter)
 	e.ParamCount = len(sorter.markers)
 	for i := 0; i < e.ParamCount; i++ {
@@ -165,7 +236,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && (vars.LightningMode || plannercore.Cacheable(stmt))
+	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && (vars.LightningMode || prepareVisitor.Cacheable(stmt))
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {

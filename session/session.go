@@ -1014,9 +1014,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 	ctx := context.Background()
 	inTxn := s.GetSessionVars().InTxn()
-	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
-	// So we have to call PrepareTxnCtx here.
-	s.PrepareTxnCtx(ctx)
+	s.RefreshSchema(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -1615,6 +1613,19 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 	txnFuture := s.getTxnFuture(ctx)
 	s.txn.changeInvalidToPending(txnFuture)
+	is := domain.GetDomain(s).InfoSchema()
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:    is,
+		SchemaVersion: is.SchemaMetaVersion(),
+		CreateTime:    time.Now(),
+	}
+}
+
+func (s *session) RefreshSchema(ctx context.Context) {
+	if s.txn.validOrPending() {
+		return
+	}
+
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
