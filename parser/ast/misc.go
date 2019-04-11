@@ -953,14 +953,119 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 	return opt.HashString, true
 }
 
+const (
+	TslNone = iota
+	Ssl
+	X509
+	Cipher
+	Issuer
+	Subject
+)
+
+type TslOption struct {
+	Type  int
+	Value string
+}
+
+func (t *TslOption) Restore(ctx *RestoreCtx) error {
+	switch t.Type {
+	case TslNone:
+		ctx.WriteKeyWord("NONE")
+	case Ssl:
+		ctx.WriteKeyWord("SSL")
+	case X509:
+		ctx.WriteKeyWord("X509")
+	case Cipher:
+		ctx.WriteKeyWord("CIPHER ")
+		ctx.WriteString(t.Value)
+	case Issuer:
+		ctx.WriteKeyWord("ISSUER ")
+		ctx.WriteString(t.Value)
+	case Subject:
+		ctx.WriteKeyWord("CIPHER")
+		ctx.WriteString(t.Value)
+	default:
+		return errors.Errorf("Unsupported TslOption.Type %d", t.Type)
+	}
+	return nil
+}
+
+const (
+	MaxQueriesPerHour = iota + 1
+	MaxUpdatesPerHour
+	MaxConnectionsPerHour
+	MaxUserConnections
+)
+
+type ResourceOption struct {
+	Type  int
+	Count int64
+}
+
+func (r *ResourceOption) Restore(ctx *RestoreCtx) error {
+	switch r.Type {
+	case MaxQueriesPerHour:
+		ctx.WriteKeyWord("MAX_QUERIES_PER_HOUR ")
+	case MaxUpdatesPerHour:
+		ctx.WriteKeyWord("MAX_UPDATES_PER_HOUR ")
+	case MaxConnectionsPerHour:
+		ctx.WriteKeyWord("MAX_CONNECTIONS_PER_HOUR ")
+	case MaxUserConnections:
+		ctx.WriteKeyWord("MAX_USER_CONNECTIONS ")
+	default:
+		return errors.Errorf("Unsupported ResourceOption.Type %d", r.Type)
+	}
+	ctx.WritePlainf("%d", r.Count)
+	return nil
+}
+
+const (
+	PasswordExpire = iota + 1
+	PasswordExpireDefault
+	PasswordExpireNever
+	PasswordExpireInterval
+	Lock
+	Unlock
+)
+
+type PasswordOrLockOption struct {
+	Type  int
+	Count int64
+}
+
+func (p *PasswordOrLockOption) Restore(ctx *RestoreCtx) error {
+	switch p.Type {
+	case PasswordExpire:
+		ctx.WriteKeyWord("PASSWORD EXPIRE")
+	case PasswordExpireDefault:
+		ctx.WriteKeyWord("PASSWORD EXPIRE DEFAULT")
+	case PasswordExpireNever:
+		ctx.WriteKeyWord("PASSWORD EXPIRE NEVER")
+	case PasswordExpireInterval:
+		ctx.WriteKeyWord("PASSWORD EXPIRE NEVER")
+		ctx.WritePlainf(" %d", p.Count)
+		ctx.WriteKeyWord(" DAY")
+	case Lock:
+		ctx.WriteKeyWord("ACCOUNT LOCK")
+	case Unlock:
+		ctx.WriteKeyWord("ACCOUNT UNLOCK")
+	default:
+		return errors.Errorf("Unsupported PasswordOrLockOption.Type %d", p.Type)
+	}
+	return nil
+}
+
 // CreateUserStmt creates user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
 	stmtNode
 
-	IsCreateRole bool
-	IfNotExists  bool
-	Specs        []*UserSpec
+	IsCreateRole          bool
+	IfNotExists           bool
+	Specs                 []*UserSpec
+	TslOptions            []*TslOption
+	ResourceOptions       []*ResourceOption
+	PasswordOrLockOptions []*PasswordOrLockOption
 }
 
 // Restore implements Node interface.
@@ -979,6 +1084,40 @@ func (n *CreateUserStmt) Restore(ctx *RestoreCtx) error {
 		}
 		if err := v.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.Specs[%d]", i)
+		}
+	}
+
+	tslOptionLen := len(n.TslOptions)
+
+	if tslOptionLen != 0 {
+		ctx.WriteKeyWord(" REQUIRE ")
+	}
+
+	// Restore `tslOptions` reversely to keep order the same with original sql
+	for i := tslOptionLen; i > 0; i-- {
+		if i != tslOptionLen {
+			ctx.WriteKeyWord(" AND ")
+		}
+		if err := n.TslOptions[i-1].Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.TslOptions[%d]", i)
+		}
+	}
+
+	if len(n.ResourceOptions) != 0 {
+		ctx.WriteKeyWord(" WITH")
+	}
+
+	for i, v := range n.ResourceOptions {
+		ctx.WritePlain(" ")
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.ResourceOptions[%d]", i)
+		}
+	}
+
+	for i, v := range n.PasswordOrLockOptions {
+		ctx.WritePlain(" ")
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.PasswordOrLockOptions[%d]", i)
 		}
 	}
 	return nil
