@@ -405,7 +405,7 @@ type copResponse struct {
 	execdetails.ExecDetails
 	startKey kv.Key
 	err      error
-	respSize int
+	respSize int64
 }
 
 const (
@@ -428,17 +428,20 @@ func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
 }
 
 // MemSize returns how many bytes of memory this response use
-func (rs *copResponse) MemSize() int {
+func (rs *copResponse) MemSize() int64 {
 	if rs.respSize != 0 {
 		return rs.respSize
 	}
 
 	// ignore rs.err
-	rs.respSize += len(rs.startKey)
-	rs.respSize += sizeofExecDetails
+	rs.respSize += int64(cap(rs.startKey))
+	rs.respSize += int64(sizeofExecDetails)
+	if rs.CommitDetail != nil {
+		rs.respSize += int64(sizeofCommitDetails)
+	}
 	if rs.pbResp != nil {
 		// Using a approximate size since it's hard to get a accurate value.
-		rs.respSize += rs.pbResp.Size()
+		rs.respSize += int64(rs.pbResp.Size())
 	}
 	return rs.respSize
 }

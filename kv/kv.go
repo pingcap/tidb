@@ -221,7 +221,7 @@ type ResultSubset interface {
 	// GetExecDetails gets the detail information.
 	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
-	MemSize() int
+	MemSize() int64
 }
 
 // Response represents the response returned from KV layer.
