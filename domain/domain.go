@@ -81,12 +81,12 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	var fullLoad bool
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
-		return 0, nil, fullLoad, errors.Trace(err)
+		return 0, nil, fullLoad, err
 	}
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersion()
 	if err != nil {
-		return 0, nil, fullLoad, errors.Trace(err)
+		return 0, nil, fullLoad, err
 	}
 	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
 		return latestSchemaVersion, nil, fullLoad, nil
@@ -112,7 +112,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		logutil.Logger(context.Background()).Error("failed to load schema diff", zap.Error(err))
 	}
 	if ok {
-		logutil.Logger(context.Background()).Info("diff load InfoSchema from version failed",
+		logutil.Logger(context.Background()).Info("diff load InfoSchema success",
 			zap.Int64("usedSchemaVersion", usedSchemaVersion),
 			zap.Int64("latestSchemaVersion", latestSchemaVersion),
 			zap.Duration("start time", time.Since(startTime)),
@@ -123,14 +123,14 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	fullLoad = true
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
-		return 0, nil, fullLoad, errors.Trace(err)
+		return 0, nil, fullLoad, err
 	}
 
 	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, latestSchemaVersion)
 	if err != nil {
-		return 0, nil, fullLoad, errors.Trace(err)
+		return 0, nil, fullLoad, err
 	}
-	logutil.Logger(context.Background()).Info("full load InfoSchema failed", zap.Int64("usedSchemaVersion", usedSchemaVersion),
+	logutil.Logger(context.Background()).Info("full load InfoSchema success", zap.Int64("usedSchemaVersion", usedSchemaVersion),
 		zap.Int64("latestSchemaVersion", latestSchemaVersion), zap.Duration("start time", time.Since(startTime)))
 	newISBuilder.Build()
 	return latestSchemaVersion, nil, fullLoad, nil
@@ -139,7 +139,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
 	allSchemas, err := m.ListDatabases()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
 	doneCh := make(chan error, len(splittedSchemas))
@@ -149,7 +149,7 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 	for range splittedSchemas {
 		err = <-doneCh
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	return allSchemas, nil
@@ -231,7 +231,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		usedVersion++
 		diff, err := m.GetSchemaDiff(usedVersion)
 		if err != nil {
-			return false, nil, errors.Trace(err)
+			return false, nil, err
 		}
 		if diff == nil {
 			// If diff is missing for any version between used and new version, we fall back to full reload.
@@ -244,7 +244,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	for _, diff := range diffs {
 		ids, err := builder.ApplyDiff(m, diff)
 		if err != nil {
-			return false, nil, errors.Trace(err)
+			return false, nil, err
 		}
 		tblIDs = append(tblIDs, ids...)
 	}
@@ -262,7 +262,7 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 	snapHandle := do.infoHandle.EmptyClone()
 	_, _, _, err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return snapHandle.Get(), nil
 }
@@ -271,7 +271,7 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return meta.NewSnapshotMeta(snapshot), nil
 }
@@ -316,7 +316,7 @@ func (do *Domain) Reload() error {
 
 	ver, err := do.store.CurrentVersion()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	schemaVersion := int64(0)
@@ -333,7 +333,7 @@ func (do *Domain) Reload() error {
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
-		return errors.Trace(err)
+		return err
 	}
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
@@ -495,7 +495,7 @@ func (do *Domain) mustRestartSyncer() error {
 		// If the domain has stopped, we return an error immediately.
 		select {
 		case <-do.exit:
-			return errors.Trace(err)
+			return err
 		default:
 		}
 		time.Sleep(time.Second)
@@ -529,7 +529,7 @@ func (do *Domain) mustReload() (exitLoop bool) {
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
 	if do.ddl != nil {
-		terror.Log(errors.Trace(do.ddl.Stop()))
+		terror.Log(do.ddl.Stop())
 	}
 	if do.info != nil {
 		do.info.RemoveServerInfo()
@@ -631,16 +631,16 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 
 	err := do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	do.info = NewInfoSyncer(do.ddl.GetID(), do.etcdClient)
 	err = do.info.Init(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = do.Reload()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// Only when the store is local that the lease value is 0.
@@ -733,7 +733,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	do.privHandle = privileges.NewHandle()
 	err := do.privHandle.Update(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	var watchCh clientv3.WatchChan
@@ -798,7 +798,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser)
 	err := bindCacheUpdater.Update(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	duration := 3 * time.Second

@@ -43,6 +43,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
 	// For pprof
 	_ "net/http/pprof"
 
@@ -413,7 +414,7 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
-		logutil.Logger(ctx).Info("close connection")
+		logutil.Logger(ctx).Info("connection closed")
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
@@ -494,6 +495,17 @@ func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
 	}
 	s.rwlock.RUnlock()
 	return rs
+}
+
+// GetProcessInfo implements the SessionManager interface.
+func (s *Server) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
+	s.rwlock.RLock()
+	conn, ok := s.clients[uint32(id)]
+	s.rwlock.RUnlock()
+	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
+		return util.ProcessInfo{}, false
+	}
+	return conn.ctx.ShowProcess(), ok
 }
 
 // Kill implements the SessionManager interface.
