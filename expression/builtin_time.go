@@ -4603,6 +4603,10 @@ func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, 
 	var overflow bool
 	// MySQL TIME datatype: https://dev.mysql.com/doc/refman/5.7/en/time.html
 	// ranges from '-838:59:59.000000' to '838:59:59.000000'
+	if hour < 0 && mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+		hour = 838
+		overflow = true
+	}
 	if hour < -838 {
 		hour = -838
 		overflow = true
