@@ -17,6 +17,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -150,22 +151,42 @@ func handlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType
 		return val, err
 	}
 
-	if !sc.PadCharToFullLength || types.IsBinaryStr(ft) || ft.Tp == mysql.TypeVarchar || ft.Tp == mysql.TypeVarString {
+	isBinary := mysql.HasBinaryFlag(ft.Flag) // || ft.Collate == charset.CollationBin
+	isVarchar := ft.Tp == mysql.TypeVarString || ft.Tp == mysql.TypeVarchar
+	isChar := ft.Tp == mysql.TypeString
+	switch {
+	case isVarchar && isBinary:
+		noTrailingSpace := strings.TrimRight(targetStr, " ")
+		if numSpacesToFill := ft.Flen - len(noTrailingSpace); numSpacesToFill > 0 {
+			noTrailingSpace += strings.Repeat(" ", numSpacesToFill)
+		}
+		val.SetString(noTrailingSpace)
+		return val, nil
+	case isVarchar && !isBinary:
 		val.SetString(targetStr)
 		return val, nil
+	case isChar && isBinary:
+		noTrailingSpace := strings.TrimRight(targetStr, " ")
+		val.SetString(noTrailingSpace)
+		return val, nil
+	case isChar && !isBinary && !sc.PadCharToFullLength:
+		val.SetString(targetStr)
+		return val, nil
+	case isChar && !isBinary && sc.PadCharToFullLength:
+		if len(targetStr) != ft.Flen {
+			// return kv.ErrNotExist to indicate that this value can not match any
+			// (key, value) pair in tikv storage.
+			return val, kv.ErrNotExist
+		}
+		// Trailing spaces of data typed "CHAR[N]" is trimed in the storage, we
+		// need to trim these trailing spaces as well.
+		noTrailingSpace := strings.TrimRight(targetStr, " ")
+		val.SetString(noTrailingSpace)
+		return val, nil
+	default:
+		// should never happen.
+		return val, errors.Errorf("handlePadCharToFullLength: unhandled FieldType: %v", ft.String())
 	}
-
-	if len(targetStr) != ft.Flen {
-		// return kv.ErrNotExist to indicate that this value can not match any
-		// (key, value) pair in tikv storage.
-		return val, kv.ErrNotExist
-	}
-
-	// Trailing spaces of data typed "CHAR[N]" is trimed in the storage, we
-	// need to trim these trailing spaces as well.
-	noTrailingSpace := strings.TrimRight(targetStr, " ")
-	val.SetString(noTrailingSpace)
-	return val, nil
 }
 
 func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
