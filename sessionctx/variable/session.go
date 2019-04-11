@@ -611,7 +611,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		s.TimeZone = tz
 	case SQLModeVar:
@@ -627,7 +627,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBSnapshot:
 		err := setSnapshotTS(s, val)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case AutocommitVar:
 		isAutocommit := TiDBOptOn(val)

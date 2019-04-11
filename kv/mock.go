@@ -16,7 +16,6 @@ package kv
 import (
 	"context"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -203,7 +202,7 @@ func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 			continue
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		m[string(k)] = v
 	}

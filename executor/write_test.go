@@ -2383,7 +2383,7 @@ func (s *testSuite2) TestReplaceLog(c *C) {
 	tbl, err := is.TableByName(dbName, tblName)
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
-	idxInfo := findIndexByName("b", tblInfo.Indices)
+	idxInfo := tblInfo.FindIndexByName("b")
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 
 	txn, err := s.store.Begin()

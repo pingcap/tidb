@@ -630,7 +630,9 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeDatetime, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
 	signedAccept(c, mysql.TypeDatetime, ZeroDatetime, "0000-00-00 00:00:00")
 	signedAccept(c, mysql.TypeDatetime, int64(0), "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeDatetime, NewDecFromFloatForTest(20010101100000.123456), "2001-01-01 10:00:00")
 	signedAccept(c, mysql.TypeTimestamp, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
+	signedAccept(c, mysql.TypeTimestamp, NewDecFromFloatForTest(20010101100000.123456), "2001-01-01 10:00:00")
 	signedAccept(c, mysql.TypeDuration, "10:11:12", "10:11:12")
 	signedAccept(c, mysql.TypeDuration, ZeroDatetime, "00:00:00")
 	signedAccept(c, mysql.TypeDuration, ZeroDuration, "00:00:00")
@@ -880,5 +882,24 @@ func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 		dur, err := NumberToDuration(tc.number, 0)
 		c.Assert(err, IsNil)
 		c.Assert(dur.Duration, Equals, tc.dur)
+	}
+}
+
+func (s *testTypeConvertSuite) TestStrToDuration(c *C) {
+	sc := new(stmtctx.StatementContext)
+	var tests = []struct {
+		str        string
+		fsp        int
+		isDuration bool
+	}{
+		{"20190412120000", 4, false},
+		{"20190101180000", 6, false},
+		{"20190101180000", 1, false},
+		{"20190101181234", 3, false},
+	}
+	for _, tt := range tests {
+		_, _, isDuration, err := StrToDuration(sc, tt.str, tt.fsp)
+		c.Assert(err, IsNil)
+		c.Assert(isDuration, Equals, tt.isDuration)
 	}
 }

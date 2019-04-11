@@ -16,7 +16,9 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io/ioutil"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -108,6 +110,18 @@ type Security struct {
 	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
 }
 
+// The ErrConfigValidationFailed error is used so that external callers can do a type assertion
+// to defer handling of this specific error when someone does not want strict type checking.
+// This is needed only because logging hasn't been set up at the time we parse the config file.
+// This should all be ripped out once strict config checking is made the default behavior.
+type ErrConfigValidationFailed struct {
+	err string
+}
+
+func (e *ErrConfigValidationFailed) Error() string {
+	return e.err
+}
+
 // ToTLSConfig generates tls's config based on security section of the config.
 func (s *Security) ToTLSConfig() (*tls.Config, error) {
 	var tlsConfig *tls.Config
@@ -146,6 +160,7 @@ func (s *Security) ToTLSConfig() (*tls.Config, error) {
 // Status is the status section of the config.
 type Status struct {
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
+	StatusHost      string `toml:"status-host" json:"status-host"`
 	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
@@ -302,6 +317,7 @@ var defaultConf = Config{
 	},
 	Status: Status{
 		ReportStatus:    true,
+		StatusHost:      "0.0.0.0",
 		StatusPort:      10080,
 		MetricsInterval: 15,
 		RecordQPSbyDB:   false,
@@ -371,11 +387,23 @@ func GetGlobalConfig() *Config {
 
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
-	_, err := toml.DecodeFile(confFile, c)
+	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit <= 0 {
 		c.TokenLimit = 1000
 	}
-	return errors.Trace(err)
+
+	// If any items in confFile file are not mapped into the Config struct, issue
+	// an error and stop the server from starting.
+	undecoded := metaData.Undecoded()
+	if len(undecoded) > 0 && err == nil {
+		var undecodedItems []string
+		for _, item := range undecoded {
+			undecodedItems = append(undecodedItems, item.String())
+		}
+		err = &ErrConfigValidationFailed{fmt.Sprintf("config file %s contained unknown configuration options: %s", confFile, strings.Join(undecodedItems, ", "))}
+	}
+
+	return err
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

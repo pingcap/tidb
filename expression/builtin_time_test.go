@@ -1939,6 +1939,23 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		}
 	}
 
+	// MAKETIME(CAST(-1 AS UNSIGNED),0,0);
+	tp1 := &types.FieldType{
+		Tp:      mysql.TypeLonglong,
+		Flag:    mysql.UnsignedFlag,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+		Flen:    mysql.MaxIntWidth,
+	}
+	f := BuildCastFunction(s.ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err := f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	f1, err := maketime.getFunction(s.ctx, s.datumsToConstants([]types.Datum{res, makeDatums(0)[0], makeDatums(0)[0]}))
+	c.Assert(err, IsNil)
+	got, err := evalBuiltinFunc(f1, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(got.GetMysqlDuration().String(), Equals, "838:59:59")
+
 	tbl = []struct {
 		Args []interface{}
 		Want interface{}
