@@ -1538,6 +1538,7 @@ func checkDatetimeType(t MysqlTime, allowZeroInDate, allowInvalidDate bool) erro
 
 // ExtractDatetimeNum extracts time value number from datetime unit and format.
 func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
+	// TODO: Consider time_zone variable.
 	switch strings.ToUpper(unit) {
 	case "DAY":
 		return int64(t.Time.Day()), nil
@@ -1545,12 +1546,7 @@ func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
 		week := t.Time.Week(0)
 		return int64(week), nil
 	case "MONTH":
-		// TODO: Consider time_zone variable.
-		t1, err := t.Time.GoTime(gotime.Local)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		return int64(t1.Month()), nil
+		return int64(t.Time.Month()), nil
 	case "QUARTER":
 		m := int64(t.Time.Month())
 		// 1 - 3 -> 1
