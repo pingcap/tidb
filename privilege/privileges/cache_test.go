@@ -237,6 +237,40 @@ func (s *testCacheSuite) TestLoadRoleGraph(c *C) {
 	c.Assert(graph["root@%"].Find("r_1", "%"), Equals, false)
 }
 
+func (s *testCacheSuite) TestRoleGraphBFS(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, `CREATE ROLE r_1, r_2, r_3, r_4, r_5, r_6;`)
+	mustExec(c, se, `GRANT r_2 TO r_1;`)
+	mustExec(c, se, `GRANT r_3 TO r_2;`)
+	mustExec(c, se, `GRANT r_4 TO r_3;`)
+	mustExec(c, se, `GRANT r_1 TO r_4;`)
+	mustExec(c, se, `GRANT r_5 TO r_3, r_6;`)
+
+	var p privileges.MySQLPrivilege
+	err = p.LoadRoleGraph(se)
+	c.Assert(err, IsNil)
+
+	activeRoles := make([]*auth.RoleIdentity, 0)
+	ret := p.FindAllRole(activeRoles)
+	c.Assert(len(ret), Equals, 0)
+	activeRoles = append(activeRoles, &auth.RoleIdentity{Username: "r_1", Hostname: "%"})
+	ret = p.FindAllRole(activeRoles)
+	c.Assert(len(ret), Equals, 5)
+
+	activeRoles = make([]*auth.RoleIdentity, 0)
+	activeRoles = append(activeRoles, &auth.RoleIdentity{Username: "r_6", Hostname: "%"})
+	ret = p.FindAllRole(activeRoles)
+	c.Assert(len(ret), Equals, 2)
+
+	activeRoles = make([]*auth.RoleIdentity, 0)
+	activeRoles = append(activeRoles, &auth.RoleIdentity{Username: "r_3", Hostname: "%"})
+	activeRoles = append(activeRoles, &auth.RoleIdentity{Username: "r_6", Hostname: "%"})
+	ret = p.FindAllRole(activeRoles)
+	c.Assert(len(ret), Equals, 6)
+}
+
 func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)

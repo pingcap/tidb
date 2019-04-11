@@ -183,8 +183,8 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	return false
 }
 
-// findAllRole is used to find all roles grant to this user.
-func (p *MySQLPrivilege) findAllRole(activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
+// FindAllRole is used to find all roles grant to this user.
+func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
 	queue, head := make([]*auth.RoleIdentity, 0), 0
 	for _, r := range activeRoles {
 		queue = append(queue, r)
@@ -684,7 +684,7 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
 func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
-	roleList := p.findAllRole(activeRoles)
+	roleList := p.FindAllRole(activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
 
 	var userPriv, dbPriv, tablePriv, columnPriv mysql.PrivilegeType
