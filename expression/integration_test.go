@@ -4069,3 +4069,34 @@ func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
 	tk.MustExec("insert t values (20010101100000.123456, 20110707101112.123456)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2001-01-01 10:00:00.123456 2011-07-07 10:11:12"))
 }
+
+func (s *testIntegrationSuite) TestIssue9732(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustQuery(`select monthname(str_to_date(null, '%m')), monthname(str_to_date(null, '%m')),
+monthname(str_to_date(1, '%m')), monthname(str_to_date(0, '%m'));`).Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+
+	nullCases := []struct {
+		sql string
+		ret string
+	}{
+		{"select str_to_date(1, '%m')", "0000-01-00"},
+		{"select str_to_date(01, '%d')", "0000-00-01"},
+		{"select str_to_date(2019, '%Y')", "2019-00-00"},
+		{"select str_to_date('5,2019','%m,%Y')", "2019-05-00"},
+		{"select str_to_date('01,2019','%d,%Y')", "2019-00-01"},
+		{"select str_to_date('01,5','%d,%m')", "0000-05-01"},
+	}
+
+	for _, nullCase := range nullCases {
+		tk.MustQuery(nullCase.sql).Check(testkit.Rows("<nil>"))
+	}
+
+	// remove NO_ZERO_DATE mode
+	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+
+	for _, nullCase := range nullCases {
+		tk.MustQuery(nullCase.sql).Check(testkit.Rows(nullCase.ret))
+	}
+}
