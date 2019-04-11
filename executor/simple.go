@@ -85,6 +85,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err erro
 		err = e.executeDropStats(x)
 	case *ast.SetRoleStmt:
 		err = e.executeSetRole(x)
+	case *ast.RevokeRoleStmt:
+		err = e.executeRevokeRole(x)
 	}
 	e.done = true
 	return err
@@ -163,6 +165,52 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		return err
 	}
 	return nil
+}
+
+func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
+	for _, role := range s.Roles {
+		exists, err := userExists(e.ctx, role.Username, role.Hostname)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !exists {
+			return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
+		}
+	}
+
+	// begin a transaction to insert role graph edges.
+	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
+		return errors.Trace(err)
+	}
+	for _, user := range s.Users {
+		exists, err := userExists(e.ctx, user.Username, user.Hostname)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !exists {
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+				return errors.Trace(err)
+			}
+			return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", user.String())
+		}
+		for _, role := range s.Roles {
+			if role.Hostname == "" {
+				role.Hostname = "%"
+			}
+			sql := fmt.Sprintf(`DELETE IGNORE FROM %s.%s WHERE FROM_HOST='%s' and FROM_USER='%s' and TO_HOST='%s' and TO_USER='%s'`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+				if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+					return errors.Trace(err)
+				}
+				return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
+			}
+		}
+	}
+	if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
+		return err
+	}
+	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
+	return errors.Trace(err)
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
