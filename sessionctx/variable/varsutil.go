@@ -437,7 +437,13 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
 				return "", returnErr
 			}
-			vars.StmtCtx.AppendWarning(returnErr)
+			//SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
+			// 1. tx_isolation
+			// 2. transaction_isolation
+			// The following if condition is used to deduplicate two same warnings.
+			if name == "transaction_isolation" {
+				vars.StmtCtx.AppendWarning(returnErr)
+			}
 		}
 		return upVal, nil
 	case TiDBInitChunkSize:
