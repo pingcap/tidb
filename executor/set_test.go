@@ -298,12 +298,12 @@ func (s *testSuite2) TestSetVar(c *C) {
 
 	// test skip isolation level check: error
 	_, err = tk.Exec("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
 	_, err = tk.Exec("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
@@ -312,8 +312,8 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 1")
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 variable 'tx_isolation' does not yet support value: SERIALIZABLE",
-		"Warning 1105 variable 'transaction_isolation' does not yet support value: SERIALIZABLE"))
+		"Warning 1105 The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error",
+		"Warning 1105 The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error"))
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("SERIALIZABLE"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("SERIALIZABLE"))
 
@@ -322,8 +322,8 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 1")
 	tk.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 variable 'tx_isolation' does not yet support value: READ-UNCOMMITTED",
-		"Warning 1105 variable 'transaction_isolation' does not yet support value: READ-UNCOMMITTED"))
+		"Warning 1105 The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error",
+		"Warning 1105 The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error"))
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
 

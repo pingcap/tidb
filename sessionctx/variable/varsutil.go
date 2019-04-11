@@ -430,7 +430,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		switch upVal {
 		case "SERIALIZABLE", "READ-UNCOMMITTED":
 			skipIsolationLevelCheck, err := GetSessionSystemVar(vars, TiDBSkipIsolationLevelCheck)
-			returnErr := ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
+			returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(value)
 			if err != nil {
 				returnErr = err
 			}
