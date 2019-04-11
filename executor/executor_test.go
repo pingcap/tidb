@@ -3655,6 +3655,7 @@ type testOOMSuite struct {
 }
 
 func (s *testOOMSuite) SetUpSuite(c *C) {
+	c.Skip("log.ReplaceGlobals(lg, r) in registerHook() may result in data race")
 	testleak.BeforeTest()
 	s.registerHook()
 	var err error
