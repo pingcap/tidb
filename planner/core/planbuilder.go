@@ -762,10 +762,7 @@ func getPhysicalIDs(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]i
 }
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{
-		MaxNumBuckets:     as.MaxNumBuckets,
-		EnableFastAnalyze: b.ctx.GetSessionVars().EnableFastAnalyze,
-	}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
 			return nil, errors.Errorf("analyze %s is not supported now.", tbl.Name.O)
@@ -803,10 +800,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{
-		MaxNumBuckets:     as.MaxNumBuckets,
-		EnableFastAnalyze: b.ctx.GetSessionVars().EnableFastAnalyze,
-	}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, err := getPhysicalIDs(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -825,10 +819,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{
-		MaxNumBuckets:     as.MaxNumBuckets,
-		EnableFastAnalyze: b.ctx.GetSessionVars().EnableFastAnalyze,
-	}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, err := getPhysicalIDs(tblInfo, as.PartitionNames)
 	if err != nil {
