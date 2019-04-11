@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -771,14 +772,27 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 		if err != nil {
 			return nil, err
 		}
+		table, ok := b.is.TableByID(tbl.TableInfo.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tbl.TableInfo.Name.O)
+		}
 		for _, idx := range idxInfo {
 			for _, id := range physicalIDs {
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
+					PhysicalTableID: id,
+					IndexInfo:       idx,
+					Table:           table,
+				})
 			}
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
 			for _, id := range physicalIDs {
-				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PhysicalTableID: id, PKInfo: pkInfo, ColsInfo: colInfo})
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
+					PhysicalTableID: id,
+					PKInfo:          pkInfo,
+					ColsInfo:        colInfo,
+					Table:           table,
+				})
 			}
 		}
 	}
@@ -827,6 +841,10 @@ const (
 )
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	// If enable fast analyze, the storage must be tikv.Storage.
+	if _, isTikvStorage := b.ctx.GetStore().(tikv.Storage); !isTikvStorage && b.ctx.GetSessionVars().EnableFastAnalyze {
+		return nil, errors.Errorf("Only support fast analyze in tikv storage.")
+	}
 	for _, tbl := range as.TableNames {
 		user := b.ctx.GetSessionVars().User
 		var insertErr, selectErr error

@@ -1397,6 +1397,22 @@ func (s *testIntegrationSuite) TestAlterAlgorithm(c *C) {
 	s.tk.MustExec("alter table t default charset = utf8mb4, ALGORITHM=INSTANT")
 }
 
+func (s *testIntegrationSuite) TestFulltextIndexIgnore(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t_ft")
+	defer s.tk.MustExec("drop table if exists t_ft")
+	// Make sure that creating and altering to add a fulltext key gives the correct warning
+	s.assertWarningExec(c, "create table t_ft (a text, fulltext key (a))", ddl.ErrTableCantHandleFt)
+	s.assertWarningExec(c, "alter table t_ft add fulltext key (a)", ddl.ErrTableCantHandleFt)
+
+	// Make sure table t_ft still has no indexes even after it was created and altered
+	r := s.tk.MustQuery("show index from t_ft")
+	c.Assert(r.Rows(), HasLen, 0)
+	r = s.tk.MustQuery("select * from information_schema.statistics where table_schema='test' and table_name='t_ft'")
+	c.Assert(r.Rows(), HasLen, 0)
+}
+
 func (s *testIntegrationSuite) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
