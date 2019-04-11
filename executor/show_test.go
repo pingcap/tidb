@@ -392,9 +392,13 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
 	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS select * from t1  "))
 	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS select * from t1  "))
-
 	tk.MustExec("drop view v1")
 	tk.MustExec("drop table t1")
+
+	tk.MustExec("drop view if exists v")
+	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
+	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS select JSON_MERGE('{}', '{}') as col;  "))
+	tk.MustExec("drop view if exists v")
 
 	// For issue #9211
 	tk.MustExec("create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
