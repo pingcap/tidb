@@ -127,7 +127,7 @@ func (mds *mockDataSource) Next(ctx context.Context, req *chunk.RecordBatch) err
 }
 
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
-	baseExec := newBaseExecutor(opt.ctx, opt.schema, nil)
+	baseExec := newBaseExecutor(opt.ctx, opt.schema, "", nil)
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
 	types := m.retTypes()
 	colData := make([][]interface{}, len(types))
@@ -194,7 +194,7 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, plan.CacheKey())
 	exec := b.build(plan)
 	hashAgg := exec.(*HashAggExec)
 	hashAgg.children[0] = src
@@ -209,7 +209,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, src Executor, schema *expres
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, plan.CacheKey())
 	exec := b.build(plan)
 	streamAgg := exec.(*StreamAggExec)
 	streamAgg.children[0] = src

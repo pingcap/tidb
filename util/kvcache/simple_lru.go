@@ -26,6 +26,7 @@ type Key interface {
 
 // Value is the interface that every value in LRU Cache should implement.
 type Value interface {
+	Delete()
 }
 
 // cacheEntry wraps Key and Value. It's the value of list.Element.
@@ -119,6 +120,7 @@ func (l *SimpleLRUCache) Delete(key Key) {
 	if element == nil {
 		return
 	}
+	element.Value.(*cacheEntry).value.Delete()
 	l.cache.Remove(element)
 	delete(l.elements, k)
 	l.size--
@@ -128,6 +130,7 @@ func (l *SimpleLRUCache) Delete(key Key) {
 func (l *SimpleLRUCache) DeleteAll() {
 	for lru := l.cache.Back(); lru != nil; lru = l.cache.Back() {
 		l.cache.Remove(lru)
+		lru.Value.(*cacheEntry).value.Delete()
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
 	}

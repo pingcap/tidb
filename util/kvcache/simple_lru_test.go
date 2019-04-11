@@ -46,6 +46,19 @@ func (mk *mockCacheKey) Hash() []byte {
 	return mk.hash
 }
 
+type mockCacheValue struct {
+	val int64
+}
+
+func (mv *mockCacheValue) Delete() {
+}
+
+func newMockCacheValue(val int64) *mockCacheValue {
+	return &mockCacheValue{
+		val: val,
+	}
+}
+
 func newMockHashKey(key int64) *mockCacheKey {
 	return &mockCacheKey{
 		key: key,
@@ -60,11 +73,11 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	c.Assert(lru.capacity, Equals, uint(3))
 
 	keys := make([]*mockCacheKey, 5)
-	vals := make([]int64, 5)
+	vals := make([]*mockCacheValue, 5)
 
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
-		vals[i] = int64(i)
+		vals[i] = newMockCacheValue(int64(i))
 		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(lru.size, Equals, lru.capacity)
@@ -96,9 +109,9 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 		c.Assert(element, Equals, root)
 
 		// test value
-		value, ok := entry.value.(int64)
+		value, ok := entry.value.(*mockCacheValue)
 		c.Assert(ok, IsTrue)
-		c.Assert(value, Equals, vals[i])
+		c.Assert(value.val, Equals, vals[i].val)
 
 		root = root.Next()
 	}
@@ -114,11 +127,11 @@ func (s *testLRUCacheSuite) TestOOMGuard(c *C) {
 	c.Assert(lru.capacity, Equals, uint(3))
 
 	keys := make([]*mockCacheKey, 5)
-	vals := make([]int64, 5)
+	vals := make([]*mockCacheValue, 5)
 
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
-		vals[i] = int64(i)
+		vals[i] = newMockCacheValue(int64(i))
 		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(lru.size, Equals, uint(0))
@@ -138,11 +151,11 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 	lru := NewSimpleLRUCache(3, 0.1, maxMem)
 
 	keys := make([]*mockCacheKey, 5)
-	vals := make([]int64, 5)
+	vals := make([]*mockCacheValue, 5)
 
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
-		vals[i] = int64(i)
+		vals[i] = newMockCacheValue(int64(i))
 		lru.Put(keys[i], vals[i])
 	}
 
@@ -157,7 +170,7 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 		value, exists := lru.Get(keys[i])
 		c.Assert(exists, IsTrue)
 		c.Assert(value, NotNil)
-		c.Assert(value, Equals, vals[i])
+		c.Assert(value.(*mockCacheValue).val, Equals, vals[i].val)
 		c.Assert(lru.size, Equals, uint(3))
 		c.Assert(lru.capacity, Equals, uint(3))
 
@@ -168,9 +181,9 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 		c.Assert(ok, IsTrue)
 		c.Assert(entry.key, Equals, keys[i])
 
-		value, ok = entry.value.(int64)
+		value, ok = entry.value.(*mockCacheValue)
 		c.Assert(ok, IsTrue)
-		c.Assert(value, Equals, vals[i])
+		c.Assert(value.(*mockCacheValue).val, Equals, vals[i].val)
 	}
 }
 
@@ -181,11 +194,11 @@ func (s *testLRUCacheSuite) TestDelete(c *C) {
 	lru := NewSimpleLRUCache(3, 0.1, maxMem)
 
 	keys := make([]*mockCacheKey, 3)
-	vals := make([]int64, 3)
+	vals := make([]*mockCacheValue, 3)
 
 	for i := 0; i < 3; i++ {
 		keys[i] = newMockHashKey(int64(i))
-		vals[i] = int64(i)
+		vals[i] = newMockCacheValue(int64(i))
 		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(int(lru.size), Equals, 3)
@@ -210,11 +223,11 @@ func (s *testLRUCacheSuite) TestDeleteAll(c *C) {
 	lru := NewSimpleLRUCache(3, 0.1, maxMem)
 
 	keys := make([]*mockCacheKey, 3)
-	vals := make([]int64, 3)
+	vals := make([]*mockCacheValue, 3)
 
 	for i := 0; i < 3; i++ {
 		keys[i] = newMockHashKey(int64(i))
-		vals[i] = int64(i)
+		vals[i] = newMockCacheValue(int64(i))
 		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(int(lru.size), Equals, 3)

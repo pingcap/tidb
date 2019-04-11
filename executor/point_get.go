@@ -46,6 +46,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		idxVals: p.IndexValues,
 		handle:  p.Handle,
 		startTS: startTS,
+		id:      p.ExplainID(),
+		hashBuf: make([]byte, 0, 20),
+		planKey: b.planKey,
 	}
 }
 
@@ -61,6 +64,11 @@ type PointGetExecutor struct {
 	startTS  uint64
 	snapshot kv.Snapshot
 	done     bool
+
+	id           string
+	noChunksUsed int
+	hashBuf      []byte
+	planKey      []byte
 }
 
 // Open implements the Executor interface.
@@ -257,6 +265,12 @@ func (e *PointGetExecutor) retTypes() []*types.FieldType {
 	return e.tps
 }
 
+// hash returns the signature of the executor
+func (e *PointGetExecutor) getHash() []byte {
+	return computeHashImpl(e.hashBuf, e.id, e.noChunksUsed)
+}
+
 func (e *PointGetExecutor) newFirstChunk() *chunk.Chunk {
-	return chunk.New(e.retTypes(), 1, 1)
+	e.noChunksUsed = e.noChunksUsed + 1
+	return reuseChunkImpl(e.ctx, e.planKey, e.getHash(), e.retTypes(), 1, 1)
 }

@@ -127,7 +127,7 @@ func buildTableReader(sctx sessionctx.Context) Executor {
 }
 
 func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
-	builder := newExecutorBuilder(sctx, nil)
+	builder := newExecutorBuilder(sctx, nil, nil)
 	req, _, err := builder.constructDAGReq(nil)
 	if err != nil {
 		panic(err)
@@ -142,7 +142,7 @@ func buildMockBaseExec(sctx sessionctx.Context) baseExecutor {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(sctx, schema, nil)
+	baseExec := newBaseExecutor(sctx, schema, "", nil)
 	return baseExec
 }
 

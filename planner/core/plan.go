@@ -37,6 +37,8 @@ type Plan interface {
 	ID() int
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
+	// Get the cache key used in the plan cache
+	CacheKey() []byte
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
@@ -44,6 +46,8 @@ type Plan interface {
 
 	// property.StatsInfo will return the property.StatsInfo for this plan.
 	statsInfo() *property.StatsInfo
+
+	setCacheKey(key []byte)
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
@@ -241,10 +245,11 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) erro
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	tp    string
-	id    int
-	ctx   sessionctx.Context
-	stats *property.StatsInfo
+	tp       string
+	id       int
+	ctx      sessionctx.Context
+	stats    *property.StatsInfo
+	cacheKey []byte
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
@@ -264,6 +269,14 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
+}
+
+func (p *basePlan) setCacheKey(key []byte) {
+	p.cacheKey = key
+}
+
+func (p *basePlan) CacheKey() []byte {
+	return p.cacheKey
 }
 
 // Schema implements Plan Schema interface.

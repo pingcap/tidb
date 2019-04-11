@@ -43,7 +43,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -84,6 +86,10 @@ type baseExecutor struct {
 	children      []Executor
 	retFieldTypes []*types.FieldType
 	runtimeStats  *execdetails.RuntimeStats
+
+	noChunksUsed int
+	hashBuf      []byte
+	planKey      []byte
 }
 
 // Open initializes children recursively and "childrenResults" according to children's schemas.
@@ -118,7 +124,8 @@ func (e *baseExecutor) Schema() *expression.Schema {
 
 // newFirstChunk creates a new chunk to buffer current executor's result.
 func (e *baseExecutor) newFirstChunk() *chunk.Chunk {
-	return chunk.New(e.retTypes(), e.initCap, e.maxChunkSize)
+	e.noChunksUsed = e.noChunksUsed + 1
+	return reuseChunkImpl(e.ctx, e.planKey, e.getHash(), e.retTypes(), e.initCap, e.maxChunkSize)
 }
 
 // retTypes returns all output column types.
@@ -131,7 +138,48 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	return nil
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, children ...Executor) baseExecutor {
+// hash returns the signature of the executor
+func (e *baseExecutor) getHash() []byte {
+	return computeHashImpl(e.hashBuf, e.id, e.noChunksUsed)
+}
+
+func computeHashImpl(hashBuf []byte, id string, noChunksUsed int) []byte {
+	var (
+		eid        = hack.Slice(id)
+		bufferSize = len(eid) + 1*8
+	)
+	if cap(hashBuf) < bufferSize {
+		hashBuf = make([]byte, bufferSize)
+	}
+	hashBuf = hashBuf[:0]
+	hashBuf = append(hashBuf, eid...)
+	hashBuf = codec.EncodeInt(hashBuf, int64(noChunksUsed))
+	return hashBuf
+}
+
+// reuseChunkImpl returns a new chunk or an used one to buffer current executor's result.
+func reuseChunkImpl(ctx sessionctx.Context, planKey []byte, hash []byte, rt []*types.FieldType, cap int, sz int) *chunk.Chunk {
+	if len(planKey) > 0 {
+		key := plannercore.ConvertPlanCacheKey(planKey)
+		if val, hit := ctx.PreparedPlanCache().Get(key); hit {
+			chks := val.(*plannercore.PSTMTPlanCacheValue).Chunks
+			if chk, ok := chks[string(hash)]; ok {
+				if chk.RequiredRows() < sz {
+					chk.GrowAndReset(sz)
+				} else {
+					chk.Reset()
+				}
+				return chk
+			}
+			chk := chunk.New(rt, cap, sz)
+			chks[string(hash)] = chk
+			return chk
+		}
+	}
+	return chunk.New(rt, cap, sz)
+}
+
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, planKey []byte, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -139,6 +187,8 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
+		hashBuf:      make([]byte, 0, 40),
+		planKey:      planKey,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id != nil {
@@ -173,6 +223,7 @@ type Executor interface {
 
 	retTypes() []*types.FieldType
 	newFirstChunk() *chunk.Chunk
+	getHash() []byte
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.

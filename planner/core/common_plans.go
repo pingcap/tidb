@@ -221,6 +221,7 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 		return nil, err
 	}
 	if prepared.UseCache {
+		p.setCacheKey(cacheKey.Hash())
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
@@ -712,4 +713,35 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 	for i := range pipelines {
 		buffer.WriteString(pipelines[i])
 	}
+}
+
+func sizeOfPlan(p Plan) (sz int) {
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		sz = len(x.TablePlans)
+	case *PhysicalIndexReader:
+		sz = len(x.IndexPlans)
+	case *PhysicalIndexLookUpReader:
+		sz = len(x.TablePlans)
+		sz = sz + len(x.IndexPlans)
+	case *PointGetPlan:
+		sz = 1
+	case PhysicalPlan:
+		for _, child := range x.Children() {
+			sz = sz + sizeOfPlan(child)
+		}
+	case *Insert:
+		if x.SelectPlan != nil {
+			sz = sz + sizeOfPlan(x.SelectPlan)
+		}
+	case *Update:
+		if x.SelectPlan != nil {
+			sz = sz + sizeOfPlan(x.SelectPlan)
+		}
+	case *Delete:
+		if x.SelectPlan != nil {
+			sz = sz + sizeOfPlan(x.SelectPlan)
+		}
+	}
+	return sz
 }

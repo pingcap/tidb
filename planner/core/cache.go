@@ -14,6 +14,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/util/chunk"
 	"sync/atomic"
 	"time"
 
@@ -122,12 +123,35 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 
 // PSTMTPlanCacheValue stores the cached Statement and StmtNode.
 type PSTMTPlanCacheValue struct {
-	Plan Plan
+	Plan   Plan
+	Chunks map[string]*chunk.Chunk
+}
+
+// Delete implements Value interface.
+func (value *PSTMTPlanCacheValue) Delete() {
+	value.Chunks = make(map[string]*chunk.Chunk)
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
 func NewPSTMTPlanCacheValue(plan Plan) *PSTMTPlanCacheValue {
 	return &PSTMTPlanCacheValue{
-		Plan: plan,
+		Plan:   plan,
+		Chunks: make(map[string]*chunk.Chunk, sizeOfPlan(plan)),
+	}
+}
+
+type planCacheKey struct {
+	hash []byte
+}
+
+// Hash implements Key interface.
+func (key *planCacheKey) Hash() []byte {
+	return key.hash
+}
+
+// ConvertPlanCacheKey converts the physical plan key to the plan cache key
+func ConvertPlanCacheKey(key []byte) kvcache.Key {
+	return &planCacheKey{
+		hash: key,
 	}
 }

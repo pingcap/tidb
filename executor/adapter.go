@@ -524,7 +524,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Plan.CacheKey())
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
