@@ -810,8 +810,12 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 		if sample.Value.IsNull() {
 			collector.NullCount++
 		} else {
-			collector.FMSketch.InsertValue(e.ctx.GetSessionVars().StmtCtx, sample.Value)
-			valString, err := sample.Value.ToString()
+			err := collector.FMSketch.InsertValue(e.ctx.GetSessionVars().StmtCtx, sample.Value)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			var valString string
+			valString, err = sample.Value.ToString()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
