@@ -892,7 +892,7 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if !e.selected[e.inputRow.Idx()] {
 				continue
 			}
-			if chk.NumRows() >= chk.Capacity() {
+			if chk.IsFull() {
 				return nil
 			}
 			chk.AppendRow(e.inputRow)
