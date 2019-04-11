@@ -56,3 +56,42 @@ func (s *testSuite1) TestPointGet(c *C) {
 		`5 5 6 5 6 7 6 7 7`,
 	))
 }
+
+func (s *testSuite1) TestPointGetCharPK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a char(2) primary key, b char(2));`)
+
+	tk.MustExec(`insert into t values("aa", "bb");`)
+	tk.MustPointGet(`select * from t where a = "aab";`).Check(testkit.Rows())
+
+	tk.MustExec(`truncate table t;`)
+	tk.MustExec(`insert into t values("a ", "b ");`)
+	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+
+	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
+	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+
+	// Test CHAR BINARY.
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a char(2) binary primary key, b char(2));`)
+
+	tk.MustExec(`insert into t values("aa", "bb");`)
+	tk.MustPointGet(`select * from t where a = "aab";`).Check(testkit.Rows())
+
+	tk.MustExec(`truncate table t;`)
+	tk.MustExec(`insert into t values("a ", "b ");`)
+	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+
+	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
+	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+}

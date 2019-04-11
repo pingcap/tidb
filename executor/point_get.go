@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -85,7 +87,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 	}
 	if e.idxInfo != nil {
 		idxKey, err1 := e.encodeIndexKey()
-		if err1 != nil {
+		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
 		handleVal, err1 := e.get(idxKey)
@@ -115,20 +117,55 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 	return e.decodeRowValToChunk(val, req.Chunk)
 }
 
-func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {
+func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for i := range e.idxVals {
 		colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
-		casted, err := table.CastValue(e.ctx, e.idxVals[i], colInfo)
+		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
+			e.idxVals[i], err = handlePadCharToFullLength(sc, &colInfo.FieldType, e.idxVals[i])
+		} else {
+			e.idxVals[i], err = table.CastValue(e.ctx, e.idxVals[i], colInfo)
+		}
 		if err != nil {
 			return nil, err
 		}
-		e.idxVals[i] = casted
 	}
-	encodedIdxVals, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
+
+	encodedIdxVals, err := codec.EncodeKey(sc, nil, e.idxVals...)
 	if err != nil {
 		return nil, err
 	}
 	return tablecodec.EncodeIndexSeekKey(e.tblInfo.ID, e.idxInfo.ID, encodedIdxVals), nil
+}
+
+// handlePadCharToFullLength handles the "PAD_CHAR_TO_FULL_LENGTH" sql mode for
+// CHAR[N] index columns.
+
+// NOTE: kv.ErrNotExist is returned to indicate that this value can not match
+//		 any (key, value) pair in tikv storage. This error should be handle by
+//		 the caller.
+func handlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum) (types.Datum, error) {
+	targetStr, err := val.ToString()
+	if err != nil {
+		return val, err
+	}
+
+	if !sc.PadCharToFullLength || types.IsBinaryStr(ft) || ft.Tp == mysql.TypeVarchar || ft.Tp == mysql.TypeVarString {
+		val.SetString(targetStr)
+		return val, nil
+	}
+
+	if len(targetStr) != ft.Flen {
+		// return kv.ErrNotExist to indicate that this value can not match any
+		// (key, value) pair in tikv storage.
+		return val, kv.ErrNotExist
+	}
+
+	// Trailing spaces of data typed "CHAR[N]" is trimed in the storage, we
+	// need to trim these trailing spaces as well.
+	noTrailingSpace := strings.TrimRight(targetStr, " ")
+	val.SetString(noTrailingSpace)
+	return val, nil
 }
 
 func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
