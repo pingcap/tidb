@@ -23,6 +23,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -817,6 +818,16 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.SplitRegion = handler.handleSplitRegion(r)
+	// DebugGetRegionProperties is for fast analyze in mock tikv.
+	case tikvrpc.CmdDebugGetRegionProperties:
+		r := req.DebugGetRegionProperties
+		region, _ := c.Cluster.GetRegionByID(r.RegionId)
+		scanResp := handler.handleKvScan(&kvrpcpb.ScanRequest{StartKey: region.StartKey, EndKey: region.EndKey})
+		resp.DebugGetRegionProperties = &debugpb.GetRegionPropertiesResponse{
+			Props: []*debugpb.Property{{
+				Name:  "num_rows",
+				Value: string(len(scanResp.Pairs)),
+			}}}
 	default:
 		return nil, errors.Errorf("unsupport this request type %v", req.Type)
 	}
