@@ -31,9 +31,10 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -238,6 +239,8 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
+	case *ast.ExplainForStmt:
+		return b.buildExplainFor(x)
 	case *ast.TraceStmt:
 		return b.buildTrace(x)
 	case *ast.InsertStmt:
@@ -625,14 +628,6 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ShowSlow{ShowSlow: as.ShowSlow}
 		p.SetSchema(buildShowSlowSchema())
 		ret = p
-	case ast.AdminRestoreTable:
-		if len(as.JobIDs) > 0 {
-			ret = &RestoreTable{JobID: as.JobIDs[0]}
-		} else if len(as.Tables) > 0 {
-			ret = &RestoreTable{Table: as.Tables[0], JobNum: as.JobNumber}
-		} else {
-			return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
-		}
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -777,14 +772,27 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 		if err != nil {
 			return nil, err
 		}
+		table, ok := b.is.TableByID(tbl.TableInfo.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tbl.TableInfo.Name.O)
+		}
 		for _, idx := range idxInfo {
 			for _, id := range physicalIDs {
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
+					PhysicalTableID: id,
+					IndexInfo:       idx,
+					Table:           table,
+				})
 			}
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
 			for _, id := range physicalIDs {
-				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PhysicalTableID: id, PKInfo: pkInfo, ColsInfo: colInfo})
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
+					PhysicalTableID: id,
+					PKInfo:          pkInfo,
+					ColsInfo:        colInfo,
+					Table:           table,
+				})
 			}
 		}
 	}
@@ -833,6 +841,10 @@ const (
 )
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	// If enable fast analyze, the storage must be tikv.Storage.
+	if _, isTikvStorage := b.ctx.GetStore().(tikv.Storage); !isTikvStorage && b.ctx.GetSessionVars().EnableFastAnalyze {
+		return nil, errors.Errorf("Only support fast analyze in tikv storage.")
+	}
 	for _, tbl := range as.TableNames {
 		user := b.ctx.GetSessionVars().User
 		var insertErr, selectErr error
@@ -1098,8 +1110,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		// Otherwise, you can kill only your own threads and statements.
 		sm := b.ctx.GetSessionManager()
 		if sm != nil {
-			processList := sm.ShowProcessList()
-			if pi, ok := processList[raw.ConnectionID]; ok {
+			if pi, ok := sm.GetProcessInfo(raw.ConnectionID); ok {
 				loginUser := b.ctx.GetSessionVars().User
 				if pi.User != loginUser.Username {
 					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
@@ -1701,6 +1712,9 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.NewTable.Schema.L,
 			v.NewTable.Name.L, "", authErr)
+	case *ast.RecoverTableStmt:
+		// Recover table command can only be executed by administrator.
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	}
 	p := &DDL{Statement: node}
 	return p, nil
@@ -1735,15 +1749,7 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
-	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
-		return b.buildShow(show)
-	}
-	targetPlan, err := OptimizeAstNode(b.ctx, explain.Stmt, b.is)
-	if err != nil {
-		return nil, err
-	}
-
+func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
 	pp, ok := targetPlan.(PhysicalPlan)
 	if !ok {
 		switch x := targetPlan.(type) {
@@ -1760,13 +1766,49 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
 		}
 	}
-	p := &Explain{StmtPlan: pp, Analyze: explain.Analyze, Format: explain.Format, ExecStmt: explain.Stmt, ExecPlan: targetPlan}
+
+	p := &Explain{StmtPlan: pp, Analyze: analyze, Format: format, ExecStmt: execStmt, ExecPlan: targetPlan}
 	p.ctx = b.ctx
-	err = p.prepareSchema()
+	err := p.prepareSchema()
 	if err != nil {
 		return nil, err
 	}
 	return p, nil
+}
+
+// buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.
+// See https://dev.mysql.com/doc/refman/8.0/en/explain-for-connection.html.
+func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, error) {
+	processInfo, ok := b.ctx.GetSessionManager().GetProcessInfo(explainFor.ConnectionID)
+	if !ok {
+		return nil, ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
+	}
+	if b.ctx.GetSessionVars() != nil && b.ctx.GetSessionVars().User != nil {
+		if b.ctx.GetSessionVars().User.Username != processInfo.User {
+			err := ErrAccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname)
+			// Different from MySQL's behavior and document.
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+		}
+	}
+
+	targetPlan, ok := processInfo.Plan.(Plan)
+	if !ok || targetPlan == nil {
+		return &Explain{Format: explainFor.Format}, nil
+	}
+
+	return b.buildExplainPlan(targetPlan, explainFor.Format, false, nil)
+}
+
+func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
+	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
+		return b.buildShow(show)
+	}
+	targetPlan, err := OptimizeAstNode(b.ctx, explain.Stmt, b.is)
+	if err != nil {
+		return nil, err
+	}
+
+	return b.buildExplainPlan(targetPlan, explain.Format, explain.Analyze, explain.Stmt)
 }
 
 func buildShowProcedureSchema() *expression.Schema {

@@ -141,6 +141,8 @@ type session struct {
 		values map[fmt.Stringer]interface{}
 	}
 
+	currentPlan plannercore.Plan
+
 	store kv.Storage
 
 	parser *parser.Parser
@@ -881,6 +883,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
 		Command: command,
+		Plan:    s.currentPlan,
 		Time:    t,
 		State:   s.Status(),
 		Info:    sql,
@@ -972,6 +975,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			return nil, err
 		}
 		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
+		s.currentPlan = stmt.Plan
 
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
@@ -1672,14 +1676,14 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		user := vars.User
 		schemaVersion := vars.TxnCtx.SchemaVersion
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			logutil.Logger(context.Background()).Info("[CRUCIAL OPERATION]",
-				zap.Uint64("con", vars.ConnectionID),
+			logutil.Logger(context.Background()).Info("CRUCIAL OPERATION",
+				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("secure text", ss.SecureText()),
 				zap.Stringer("user", user))
 		} else {
-			logutil.Logger(context.Background()).Info("[CRUCIAL OPERATION]",
-				zap.Uint64("con", vars.ConnectionID),
+			logutil.Logger(context.Background()).Info("CRUCIAL OPERATION",
+				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
 				zap.String("sql", stmt.Text()),
@@ -1693,8 +1697,8 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		logutil.Logger(context.Background()).Info("[GENERAL_LOG]",
-			zap.Uint64("con", vars.ConnectionID),
+		logutil.Logger(context.Background()).Info("GENERAL_LOG",
+			zap.Uint64("conn", vars.ConnectionID),
 			zap.Stringer("user", vars.User),
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
