@@ -306,13 +306,6 @@ func (e *ShowExec) fetchShowColumns() error {
 				columnDefault = defaultValStr
 			}
 		}
-		// issue #9807
-		// Some types in show full columns should print other collations.
-		switch col.Tp {
-		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime,
-			mysql.TypeYear, mysql.TypeNewDate:
-			desc.Collation = "NULL"
-		}
 
 		// The FULL keyword causes the output to include the column collation and comments,
 		// as well as the privileges you have for each column.
