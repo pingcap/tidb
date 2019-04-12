@@ -1395,18 +1395,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
-	err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
+	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
+	err = vars.SetSystemVar("warning_count", warnCount)
 	if err != nil {
 		return err
 	}
-	err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
+	err = vars.SetSystemVar("error_count", errCount)
 	if err != nil {
 		return err
 	}
-	if s != nil {
-		// execute missed stmtID uses empty sql
-		sc.OriginalSQL = s.Text()
-	}
+	// execute missed stmtID uses empty sql
+	sc.OriginalSQL = s.Text()
 	vars.StmtCtx = sc
 	return
 }
