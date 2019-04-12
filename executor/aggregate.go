@@ -602,11 +602,6 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		e.prepared = true
 	}
 
-	// gofail: var parallelHashAggError bool
-	// if parallelHashAggError {
-	// 	return errors.New("HashAggExec.parallelExec error")
-	// }
-
 	for !chk.IsFull() {
 		e.finalInputCh <- chk
 		result, ok := <-e.finalOutputCh
