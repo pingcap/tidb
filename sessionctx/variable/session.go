@@ -410,6 +410,7 @@ func NewSessionVars() *SessionVars {
 		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
 		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
 		MemQuotaNestedLoopApply:   DefTiDBMemQuotaNestedLoopApply,
+		MemQuotaDistSQL:           DefTiDBMemQuotaDistSQL,
 	}
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: DefIndexJoinBatchSize,
@@ -603,7 +604,21 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TxnIsolationOneShot:
 		switch val {
 		case "SERIALIZABLE", "READ-UNCOMMITTED":
-			return ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
+			skipIsolationLevelCheck, err := GetSessionSystemVar(s, TiDBSkipIsolationLevelCheck)
+			returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(val)
+			if err != nil {
+				returnErr = err
+			}
+			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
+				return returnErr
+			}
+			//SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
+			// 1. tx_isolation
+			// 2. transaction_isolation
+			// The following if condition is used to deduplicate two same warnings.
+			if name == "transaction_isolation" {
+				s.StmtCtx.AppendWarning(returnErr)
+			}
 		}
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val
@@ -759,6 +774,12 @@ const (
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
 )
 
+// these variables are useless for TiDB, but still need to validate their values for some compatible issues.
+// TODO: some more variables need to be added here.
+const (
+	serverReadOnly = "read_only"
+)
+
 var (
 	// TxIsolationNames are the valid values of the variable "tx_isolation" or "transaction_isolation".
 	TxIsolationNames = map[string]struct{}{
@@ -822,6 +843,8 @@ type MemQuota struct {
 	MemQuotaIndexLookupJoin int64
 	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
 	MemQuotaNestedLoopApply int64
+	// MemQuotaDistSQL defines the memory quota for all operators in DistSQL layer like co-processor and selectResult.
+	MemQuotaDistSQL int64
 }
 
 // BatchSize defines batch size values.
