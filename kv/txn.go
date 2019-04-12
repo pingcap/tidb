@@ -14,14 +14,15 @@
 package kv
 
 import (
+	"context"
 	"math"
 	"math/rand"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // ContextKey is the type of context's key
@@ -37,7 +38,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
-			log.Errorf("[kv] RunInNewTxn error - %v", err)
+			logutil.Logger(context.Background()).Error("RunInNewTxn", zap.Error(err))
 			return errors.Trace(err)
 		}
 
@@ -51,7 +52,10 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			err1 := txn.Rollback()
 			terror.Log(errors.Trace(err1))
 			if retryable && IsRetryableError(err) {
-				log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
+				logutil.Logger(context.Background()).Warn("RunInNewTxn",
+					zap.Uint64("retry txn", txn.StartTS()),
+					zap.Uint64("original txn", originalTxnTS),
+					zap.Error(err))
 				continue
 			}
 			return errors.Trace(err)
@@ -62,7 +66,10 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			break
 		}
 		if retryable && IsRetryableError(err) {
-			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
+			logutil.Logger(context.Background()).Warn("RunInNewTxn",
+				zap.Uint64("retry txn", txn.StartTS()),
+				zap.Uint64("original txn", originalTxnTS),
+				zap.Error(err))
 			BackOff(i)
 			continue
 		}

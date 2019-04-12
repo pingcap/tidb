@@ -14,12 +14,14 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
@@ -86,7 +88,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.Stat
 	ds.stats = profile
 	selectivity, err := profile.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
-		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+		logutil.Logger(context.Background()).Warn("an error happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
 	return profile.Scale(selectivity)
@@ -187,7 +189,7 @@ func (lt *LogicalTopN) deriveStats() (*property.StatsInfo, error) {
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
-		log.Errorf("Cannot find column %v indices from schema %s", cols, schema)
+		logutil.Logger(context.Background()).Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
 		return 0
 	}
 	var cardinality = 1.0

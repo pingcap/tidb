@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -34,8 +35,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const ( // GET_FORMAT first argument.
@@ -4601,6 +4603,10 @@ func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, 
 	var overflow bool
 	// MySQL TIME datatype: https://dev.mysql.com/doc/refman/5.7/en/time.html
 	// ranges from '-838:59:59.000000' to '838:59:59.000000'
+	if hour < 0 && mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+		hour = 838
+		overflow = true
+	}
 	if hour < -838 {
 		hour = -838
 		overflow = true
@@ -5270,7 +5276,7 @@ func (b *builtinTimeFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	dur, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	// if err != nil, then dur is ZeroDuration, outputs 00:00:00 in this case which follows the behavior of mysql.
 	if err != nil {
-		log.Warnf("Expression.EvalDuration() in time_format() failed, due to %s", err.Error())
+		logutil.Logger(context.Background()).Warn("time_format.args[0].EvalDuration failed", zap.Error(err))
 	}
 	if isNull {
 		return "", isNull, errors.Trace(err)

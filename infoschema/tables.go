@@ -67,6 +67,7 @@ const (
 	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
 	tableTiDBIndexes                        = "TIDB_INDEXES"
+	tableSlowLog                            = "SLOW_QUERY"
 )
 
 type columnInfo struct {
@@ -1081,8 +1082,8 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			numericPrecision,                     // NUMERIC_PRECISION
 			numericScale,                         // NUMERIC_SCALE
 			datetimePrecision,                    // DATETIME_PRECISION
-			col.Charset,                          // CHARACTER_SET_NAME
-			col.Collate,                          // COLLATION_NAME
+			columnDesc.Charset,                   // CHARACTER_SET_NAME
+			columnDesc.Collation,                 // COLLATION_NAME
 			columnType,                           // COLUMN_TYPE
 			columnDesc.Key,                       // COLUMN_KEY
 			columnDesc.Extra,                     // EXTRA
@@ -1090,12 +1091,6 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Comment,                   // COLUMN_COMMENT
 			col.GeneratedExprString,              // GENERATION_EXPRESSION
 		)
-		// In mysql, 'character_set_name' and 'collation_name' are setted to null when column type is non-varchar or non-blob in information_schema.
-		if col.Tp != mysql.TypeVarchar && col.Tp != mysql.TypeBlob {
-			record[13].SetNull()
-			record[14].SetNull()
-		}
-
 		rows = append(rows, record)
 	}
 	return rows
@@ -1383,6 +1378,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
+	tableSlowLog:                            slowQueryCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1473,6 +1469,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForCollationCharacterSetApplicability()
 	case tableProcesslist:
 		fullRows = dataForProcesslist(ctx)
+	case tableSlowLog:
+		fullRows, err = dataForSlowLog(ctx)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

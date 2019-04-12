@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -176,7 +175,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 		_, dup := tiPlugins.versions[pName]
 		if dup {
 			if cfg.SkipWhenFail {
-				log.Warnf("duplicate load %s and ignored", pName)
+				logutil.Logger(context.Background()).Warn("duplicate load and ignored", zap.String("plugin", pName))
 				continue
 			}
 			err = errDuplicatePlugin.GenWithStackByArgs(pluginID)
@@ -187,7 +186,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 		plugin, err = loadOne(cfg.PluginDir, ID(pluginID))
 		if err != nil {
 			if cfg.SkipWhenFail {
-				log.Warnf("load plugin %s failure and ignored, %v", pluginID, err)
+				logutil.Logger(context.Background()).Warn("load plugin failure and ignored", zap.String("plugin ID", pluginID), zap.Error(err))
 				continue
 			}
 			return
@@ -200,7 +199,8 @@ func Load(ctx context.Context, cfg Config) (err error) {
 		for i := range tiPlugins.plugins[kind] {
 			if err = tiPlugins.plugins[kind][i].validate(ctx, tiPlugins, initMode); err != nil {
 				if cfg.SkipWhenFail {
-					log.Warnf("validate plugin %s fail and disable plugin, %v", tiPlugins.plugins[kind][i].Name, err)
+					logutil.Logger(context.Background()).Warn("validate plugin fail and disable plugin",
+						zap.String("plugin", tiPlugins.plugins[kind][i].Name), zap.Error(err))
 					tiPlugins.plugins[kind][i].State = Disable
 					err = nil
 					continue
@@ -244,7 +244,7 @@ func Init(ctx context.Context, cfg Config) (err error) {
 			p := tiPlugins.plugins[kind][i]
 			if err = p.OnInit(ctx, p.Manifest); err != nil {
 				if cfg.SkipWhenFail {
-					log.Warnf("call Plugin %s OnInit failure, err: %v", p.Name, err)
+					logutil.Logger(context.Background()).Warn("call plugin OnInit failure", zap.String("plugin", p.Name), zap.Error(err))
 					tiPlugins.plugins[kind][i].State = Disable
 					err = nil
 					continue
@@ -287,7 +287,7 @@ func (w *flushWatcher) watchLoop() {
 		case <-watchChan:
 			err := w.manifest.OnFlush(w.ctx, w.manifest)
 			if err != nil {
-				log.Errorf("Notify plugin %s flush event failure: %v", w.manifest.Name, err)
+				logutil.Logger(context.Background()).Error("notify plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
 			}
 		}
 	}

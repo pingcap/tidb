@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testEvalSuite{})
@@ -53,39 +52,39 @@ func (s *testEvalSuite) TestEval(c *C) {
 	}{
 		// Datums.
 		{
-			datumExpr(types.NewFloat32Datum(1.1)),
+			datumExpr(c, types.NewFloat32Datum(1.1)),
 			types.NewFloat32Datum(1.1),
 		},
 		{
-			datumExpr(types.NewFloat64Datum(1.1)),
+			datumExpr(c, types.NewFloat64Datum(1.1)),
 			types.NewFloat64Datum(1.1),
 		},
 		{
-			datumExpr(types.NewIntDatum(1)),
+			datumExpr(c, types.NewIntDatum(1)),
 			types.NewIntDatum(1),
 		},
 		{
-			datumExpr(types.NewUintDatum(1)),
+			datumExpr(c, types.NewUintDatum(1)),
 			types.NewUintDatum(1),
 		},
 		{
-			datumExpr(types.NewBytesDatum([]byte("abc"))),
+			datumExpr(c, types.NewBytesDatum([]byte("abc"))),
 			types.NewBytesDatum([]byte("abc")),
 		},
 		{
-			datumExpr(types.NewStringDatum("abc")),
+			datumExpr(c, types.NewStringDatum("abc")),
 			types.NewStringDatum("abc"),
 		},
 		{
-			datumExpr(types.Datum{}),
+			datumExpr(c, types.Datum{}),
 			types.Datum{},
 		},
 		{
-			datumExpr(types.NewDurationDatum(types.Duration{Duration: time.Hour})),
+			datumExpr(c, types.NewDurationDatum(types.Duration{Duration: time.Hour})),
 			types.NewDurationDatum(types.Duration{Duration: time.Hour}),
 		},
 		{
-			datumExpr(types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
+			datumExpr(c, types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
 			types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1)),
 		},
 		{
@@ -106,14 +105,14 @@ func (s *testEvalSuite) TestEval(c *C) {
 	}
 }
 
-func buildExpr(tp tipb.ExprType, children ...interface{}) *tipb.Expr {
+func buildExpr(c *C, tp tipb.ExprType, children ...interface{}) *tipb.Expr {
 	expr := new(tipb.Expr)
 	expr.Tp = tp
 	expr.Children = make([]*tipb.Expr, len(children))
 	for i, child := range children {
 		switch x := child.(type) {
 		case types.Datum:
-			expr.Children[i] = datumExpr(x)
+			expr.Children[i] = datumExpr(c, x)
 		case *tipb.Expr:
 			expr.Children[i] = x
 		}
@@ -121,7 +120,7 @@ func buildExpr(tp tipb.ExprType, children ...interface{}) *tipb.Expr {
 	return expr
 }
 
-func datumExpr(d types.Datum) *tipb.Expr {
+func datumExpr(c *C, d types.Datum) *tipb.Expr {
 	expr := new(tipb.Expr)
 	switch d.Kind() {
 	case types.KindInt64:
@@ -150,7 +149,7 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		var err error
 		expr.Val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		if err != nil {
-			log.Warnf("err happened when EncodeDecimal in datumExpr:%s", err.Error())
+			c.Assert(err, IsNil, Commentf("encode decimal failed: %s", err.Error()))
 		}
 	default:
 		expr.Tp = tipb.ExprType_Null

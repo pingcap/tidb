@@ -523,9 +523,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
-			if st.IsReadOnly() {
-				continue
-			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
@@ -1559,14 +1556,14 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		user := vars.User
 		schemaVersion := vars.TxnCtx.SchemaVersion
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			logutil.Logger(context.Background()).Info("[CRUCIAL OPERATION]",
-				zap.Uint64("con", vars.ConnectionID),
+			logutil.Logger(context.Background()).Info("CRUCIAL OPERATION",
+				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("secure text", ss.SecureText()),
 				zap.Stringer("user", user))
 		} else {
-			logutil.Logger(context.Background()).Info("[CRUCIAL OPERATION]",
-				zap.Uint64("con", vars.ConnectionID),
+			logutil.Logger(context.Background()).Info("CRUCIAL OPERATION",
+				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
 				zap.String("sql", stmt.Text()),
@@ -1580,8 +1577,8 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		logutil.Logger(context.Background()).Info("[GENERAL_LOG]",
-			zap.Uint64("con", vars.ConnectionID),
+		logutil.Logger(context.Background()).Info("GENERAL_LOG",
+			zap.Uint64("conn", vars.ConnectionID),
 			zap.Stringer("user", vars.User),
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),

@@ -163,15 +163,18 @@ func (a *ExecStmt) IsPrepared() bool {
 }
 
 // IsReadOnly returns true if a statement is read only.
-// It will update readOnlyCheckStmt if current ExecStmt can be conveted to
-// a plannercore.Execute. Last step is using ast.IsReadOnly function to determine
-// a statement is read only or not.
-func (a *ExecStmt) IsReadOnly() bool {
-	readOnlyCheckStmt := a.StmtNode
-	if checkPlan, ok := a.Plan.(*plannercore.Execute); ok {
-		readOnlyCheckStmt = checkPlan.Stmt
+// If current StmtNode is an ExecuteStmt, we can get its prepared stmt,
+// then using ast.IsReadOnly function to determine a statement is read only or not.
+func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
+	if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
+		s, err := getPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("getPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(s)
 	}
-	return ast.IsReadOnly(readOnlyCheckStmt)
+	return ast.IsReadOnly(a.StmtNode)
 }
 
 // RebuildPlan rebuilds current execute statement plan.
@@ -391,52 +394,38 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
 
-	connID := sessVars.ConnectionID
-	currentDB := sessVars.CurrentDB
 	var tableIDs, indexIDs string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
-		tableIDs = strings.Replace(fmt.Sprintf("table_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
+		tableIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
 	}
 	if len(sessVars.StmtCtx.IndexIDs) > 0 {
-		indexIDs = strings.Replace(fmt.Sprintf("index_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
-	}
-	user := sessVars.User
-	var internal string
-	if sessVars.InRestrictedSQL {
-		internal = "[INTERNAL] "
+		indexIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
-		logutil.SlowQueryLogger.Debugf(
-			"[QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+		_, digest := sessVars.StmtCtx.SQLDigest()
+		logutil.SlowQueryLogger.Debugf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
 	} else {
-		logutil.SlowQueryLogger.Warnf(
-			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+		_, digest := sessVars.StmtCtx.SQLDigest()
+		logutil.SlowQueryLogger.Warnf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
 		var userString string
-		if user != nil {
-			userString = user.String()
-		}
-		if len(tableIDs) > 10 {
-			tableIDs = tableIDs[10 : len(tableIDs)-1] // Remove "table_ids:" and the last ","
-		}
-		if len(indexIDs) > 10 {
-			indexIDs = indexIDs[10 : len(indexIDs)-1] // Remove "index_ids:" and the last ","
+		if sessVars.User != nil {
+			userString = sessVars.User.String()
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
+			Digest:   digest,
 			Start:    a.StartTime,
 			Duration: costTime,
 			Detail:   sessVars.StmtCtx.GetExecDetails(),
 			Succ:     succ,
-			ConnID:   connID,
+			ConnID:   sessVars.ConnectionID,
 			TxnTS:    txnTS,
 			User:     userString,
-			DB:       currentDB,
+			DB:       sessVars.CurrentDB,
 			TableIDs: tableIDs,
 			IndexIDs: indexIDs,
 			Internal: sessVars.InRestrictedSQL,
