@@ -434,7 +434,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_bin_trust_function_creators", "OFF"},
 	{ScopeNone, "innodb_write_io_threads", "4"},
 	{ScopeGlobal, "mysql_native_password_proxy_users", ""},
-	{ScopeGlobal, "read_only", "OFF"},
+	{ScopeGlobal, serverReadOnly, "0"},
 	{ScopeNone, "large_page_size", "0"},
 	{ScopeNone, "table_open_cache_instances", "1"},
 	{ScopeGlobal, "innodb_stats_persistent", "ON"},
