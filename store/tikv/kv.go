@@ -51,13 +51,19 @@ type Driver struct {
 }
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
+	var unaryInterceptor grpc.UnaryClientInterceptor
+	var streamInterceptor grpc.StreamClientInterceptor
+	if config.GetGlobalConfig().DebugMode > 0 {
+		unaryInterceptor = grpc_prometheus.UnaryClientInterceptor
+		streamInterceptor = grpc_prometheus.StreamClientInterceptor
+	}
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
-			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+			grpc.WithUnaryInterceptor(unaryInterceptor),
+			grpc.WithStreamInterceptor(streamInterceptor),
 		},
 		TLS: tlsConfig,
 	})

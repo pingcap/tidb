@@ -207,7 +207,6 @@ func (a *connArray) Init(addr string, security config.Security) error {
 
 	var unaryInterceptor grpc.UnaryClientInterceptor
 	var streamInterceptor grpc.StreamClientInterceptor
-
 	if config.GetGlobalConfig().DebugMode > 0 {
 		unaryInterceptor = grpc_prometheus.UnaryClientInterceptor
 		streamInterceptor = grpc_prometheus.StreamClientInterceptor

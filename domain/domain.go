@@ -591,14 +591,20 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	perfschema.Init()
 	if ebd, ok := do.store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
+			var unaryInterceptor grpc.UnaryClientInterceptor
+			var streamInterceptor grpc.StreamClientInterceptor
+			if config.GetGlobalConfig().DebugMode > 0 {
+				unaryInterceptor = grpc_prometheus.UnaryClientInterceptor
+				streamInterceptor = grpc_prometheus.StreamClientInterceptor
+			}
 			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
 				Endpoints:        addrs,
 				AutoSyncInterval: 30 * time.Second,
 				DialTimeout:      5 * time.Second,
 				DialOptions: []grpc.DialOption{
-					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+					grpc.WithUnaryInterceptor(unaryInterceptor),
+					grpc.WithStreamInterceptor(streamInterceptor),
 					grpc.WithBackoffMaxDelay(time.Second * 3),
 					grpc.WithKeepaliveParams(keepalive.ClientParameters{
 						Time:                time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
