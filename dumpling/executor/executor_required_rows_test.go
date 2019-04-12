@@ -530,6 +530,7 @@ func (s *testExecSuite) TestProjectionUnparallelRequiredRows(c *C) {
 }
 
 func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
+	c.Skip("not stable because of goroutine schedule")
 	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
 	testCases := []struct {
 		totalRows      int
