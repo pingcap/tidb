@@ -346,7 +346,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
 	if !ok {
 		return
 	}
-	// split table region
+	// Split table region.
 	step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions))
 	// The highest bit is the symbol bit， and alloc _tidb_rowid will always be positive number.
 	// So we only need to split the region for the positive number.
@@ -360,7 +360,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
 		}
 	}
 
-	// split index region.
+	// Split index region.
 	for _, idx := range tblInfo.Indices {
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
 		if err := s.SplitRegionAndScatter(indexPrefix); err != nil {
