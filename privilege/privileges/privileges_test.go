@@ -260,6 +260,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	expected = []string{`GRANT USAGE ON *.* TO 'testrole'@'localhost'`,
 		`GRANT Select,Insert,Update,Delete ON test.* TO 'testrole'@'localhost'`,
 		`GRANT 'r1'@'%', 'r2'@'%' TO 'testrole'@'localhost'`}
+	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 	mustExec(c, se, `DROP ROLE 'r1', 'r2'`)
 	mustExec(c, se, `DROP USER 'testrole'@'localhost'`)
 }
