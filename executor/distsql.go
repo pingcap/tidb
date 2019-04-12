@@ -291,6 +291,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetMemTracker(e.ctx, "IndexReaderDistSQLTracker").
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -421,6 +422,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.indexStreaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetMemTracker(e.ctx, "IndexLookupDistSQLTracker").
 		Build()
 	if err != nil {
 		return errors.Trace(err)

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
@@ -68,6 +69,8 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+
+	memTracker *memory.Tracker
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -89,6 +92,10 @@ func (r *selectResult) fetch(ctx context.Context) {
 		}
 		if resultSubset == nil {
 			return
+		}
+
+		if r.memTracker != nil {
+			r.memTracker.Consume(int64(resultSubset.MemSize()))
 		}
 
 		select {
@@ -141,14 +148,23 @@ func (r *selectResult) getSelectResp() error {
 		if re.err != nil {
 			return errors.Trace(re.err)
 		}
+		if r.memTracker != nil && r.selectResp != nil {
+			r.memTracker.Consume(-int64(r.selectResp.Size()))
+		}
 		if re.result == nil {
 			r.selectResp = nil
 			return nil
+		}
+		if r.memTracker != nil {
+			r.memTracker.Consume(-int64(re.result.MemSize()))
 		}
 		r.selectResp = new(tipb.SelectResponse)
 		err := r.selectResp.Unmarshal(re.result.GetData())
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if r.memTracker != nil && r.selectResp != nil {
+			r.memTracker.Consume(int64(r.selectResp.Size()))
 		}
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
