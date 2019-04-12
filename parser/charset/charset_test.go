@@ -14,6 +14,7 @@
 package charset
 
 import (
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -96,5 +97,42 @@ func (s *testCharsetSuite) TestGetDefaultCollation(c *C) {
 	}
 	for _, tt := range tests {
 		testGetDefaultCollation(c, tt.cs, tt.co, tt.succ)
+	}
+}
+
+func (s *testCharsetSuite) TestGetCharsetDesc(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		cs     string
+		result string
+		succ   bool
+	}{
+		{"utf8", "utf8", true},
+		{"UTF8", "utf8", true},
+		{"utf8mb4", "utf8mb4", true},
+		{"ascii", "ascii", true},
+		{"binary", "binary", true},
+		{"latin1", "latin1", true},
+		{"invalid_cs", "", false},
+		{"", "utf8_bin", false},
+	}
+	for _, tt := range tests {
+		desc, err := GetCharsetDesc(tt.cs)
+		if !tt.succ {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(desc.Name, Equals, tt.result)
+		}
+	}
+}
+
+func BenchmarkGetCharsetDesc(b *testing.B) {
+	b.ResetTimer()
+	charsets := []string{CharsetUTF8, CharsetUTF8MB4, CharsetASCII, CharsetLatin1, CharsetBin}
+	index := rand.Intn(len(charsets))
+	cs := charsets[index]
+
+	for i := 0; i < b.N; i++ {
+		GetCharsetDesc(cs)
 	}
 }
