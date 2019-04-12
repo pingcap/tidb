@@ -286,7 +286,6 @@ func (s *testSuite2) TestSetVar(c *C) {
 	_, err = tk.Exec("set global tidb_batch_commit = 2")
 	c.Assert(err, NotNil)
 
-<<<<<<< HEAD
 	// test skip isolation level check: init
 	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
