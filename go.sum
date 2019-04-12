@@ -36,10 +36,8 @@ github.com/dustin/go-humanize v1.0.0 h1:VSnTsYCnlFHaM2/igO1h6X3HA71jcobQuxemgkq4
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385 h1:clC1lXBpe2kTj2VHdaIu9ajZQe4kcEY9j0NsnDDBZ3o=
 github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385/go.mod h1:0vRUJqYpeSZifjYj7uP3BG/gKcuzL9xWVV/Y+cK33KM=
-github.com/erjiaqing/tipb v0.0.0-20190410094134-3b09492be372 h1:sUTbvz6Z7TqvhVpqKzCX8xP6yj4ekyxGiLZNYHCLGpw=
-github.com/erjiaqing/tipb v0.0.0-20190410094134-3b09492be372/go.mod h1:tcq6f0qlBkUZN2GFEEReBG9fyfMpmjeIqAv/r8qhj1g=
-github.com/erjiaqing/tipb v0.0.0-20190410110513-f479e31709c9 h1:JXDFTzI68fvVGlMToFRDcaHWoNDml/wR9h57JSRXfGw=
-github.com/erjiaqing/tipb v0.0.0-20190410110513-f479e31709c9/go.mod h1:tcq6f0qlBkUZN2GFEEReBG9fyfMpmjeIqAv/r8qhj1g=
+github.com/erjiaqing/tipb v0.0.0-20190412084800-66fe8d63f8c7 h1:mX7GS7FIgJAT04AcBCGFM9WNasrlEjHegp+JWKVJujo=
+github.com/erjiaqing/tipb v0.0.0-20190412084800-66fe8d63f8c7/go.mod h1:tcq6f0qlBkUZN2GFEEReBG9fyfMpmjeIqAv/r8qhj1g=
 github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a h1:QNEenQIsGDEEfFNSnN+h6hE1OwnHqTg7Dl9gEk1Cko4=
 github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a/go.mod h1:49H/RkXP8pKaZy4h0d+NW16rSLhyVBt4o6VLJbmOqDE=
 github.com/fsnotify/fsnotify v1.4.7 h1:IXs+QLmnXW2CcXuY+8Mzv/fWEsPGWxqefPtCP5CnV9I=

@@ -32,16 +32,11 @@ const topNThreshold = 10
 
 // CMSketch is used to estimate point queries.
 // Refer: https://en.wikipedia.org/wiki/Count-min_sketch
-// If topnlimit is 0, topn will be readonly
-// Once constructed with topn, no new values should be inserted, or statistic data will be wrong.
 type CMSketch struct {
 	depth        int32
 	width        int32
 	count        uint64 // TopN is not counted in count
-	total        uint64 // In case with sampled data, this stores original data
-	sampleSize   uint32 // Sample size of the sampled CMSketch.
-	defaultValue uint32 // In sampled data, if cmsketch returns a small value (less than avg value / 2), then this will returned.
-	ndv          uint64 // Number of distinct items
+	defaultValue uint64 // In sampled data, if cmsketch returns a small value (less than avg value / 2), then this will returned.
 	table        [][]uint32
 	topnindex    map[uint64][]cmscount
 }
@@ -70,80 +65,125 @@ func NewCMSketchWithTopN(d, w int32, data [][]byte, n uint32, total uint64) *CMS
 	for i := range tbl {
 		tbl[i] = make([]uint32, w)
 	}
-	c := &CMSketch{depth: d, width: w, table: tbl, total: total}
-	c.BuildTopN(data, n, topNThreshold)
+	c := &CMSketch{depth: d, width: w, table: tbl}
+	c.BuildTopN(data, n, topNThreshold, total)
 	return c
 }
 
 // BuildTopN builds table of top N elements.
 // elements in data should not be modified after this call.
 // Not exactly n elements, will add a few elements, the number of which is close to the n-th most element.
-func (c *CMSketch) BuildTopN(data [][]byte, n uint32, topnThreshold uint32) {
-	topn := make([]cmscount, n)
-	c.sampleSize = uint32(len(data))
+func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint64) {
+	sampleSize := uint64(len(data))
+	ratio := total / uint64(sampleSize)
+	if total < sampleSize {
+		ratio = 1
+	}
+
+	counter := make(map[uint64][]cmscount)
+	ndv := uint32(0)
+
 	for k := range data {
-		found, pos := false, -1
-		for i := range topn {
-			if bytes.Equal(topn[i].data, data[k]) {
-				found = true
-				pos = i
-				break
-			} else if topn[i].count == 0 {
-				pos = i
+		h1, h2 := murmur3.Sum128(data[k])
+		sl, ok := counter[h1]
+		if !ok {
+			sl = make([]cmscount, 0)
+		}
+		exists := false
+		for i := range sl {
+			if sl[i].h2 == h2 && bytes.Equal(sl[i].data, data[k]) {
+				exists = true
+				sl[i].count++
 			}
 		}
-		if found {
-			topn[pos].count++
-		} else if !found && pos != -1 {
-			topn[pos] = cmscount{data: data[k], count: 1}
-		} else {
-			for i := range topn {
-				topn[i].count--
-			}
+		if !exists {
+			sl = append(sl, cmscount{h1, h2, data[k], 1})
+			ndv++
+		}
+		counter[h1] = sl
+	}
+
+	sorted := make([]uint64, ndv)
+	seq := 0
+
+	for _, sl := range counter {
+		for i := range sl {
+			sorted[seq] = sl[i].count
+			seq++
 		}
 	}
 
-	for i := range topn {
-		topn[i].count = 0
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] > sorted[j]
+	})
+
+	if n > ndv {
+		n = ndv
 	}
+
+	topnCountThreshold := sorted[n-1]
+	newTopN := topnCountThreshold
+	realTopN := n
+
+	for i := n; i < ndv && i < n*2; i++ {
+		if sorted[i]*2 < topnCountThreshold {
+			break
+		}
+		newTopN = sorted[i]
+		realTopN = i
+	}
+
+	topnCountThreshold = newTopN
+
+	topn := make([]cmscount, realTopN)
 
 	topncount := uint64(0)
-	ratio := c.total / uint64(c.sampleSize)
 
-	for k := range data {
-		found := false
-		for i := range topn {
-			if bytes.Equal(topn[i].data, data[k]) {
-				found = true
-				topn[i].count++
-				topncount++
-				break
+	seq = 0
+	for _, sl := range counter {
+		for i := range sl {
+			if uint32(seq) < realTopN && sl[i].count >= topnCountThreshold {
+				topn[seq] = sl[i]
+				topn[seq].count *= ratio
+				topncount += sl[i].count
+				seq++
+			} else {
+				c.InsertBytesN(sl[i].data, sl[i].count*ratio)
 			}
-		}
-		if !found {
-			c.InsertBytesN(data[k], ratio)
 		}
 	}
 
-	if uint64(c.sampleSize/topnThreshold) > topncount {
+	if sampleSize/uint64(topnThreshold) > topncount {
 		for i := range topn {
-			c.InsertBytesN(topn[i].data, topn[i].count)
+			c.InsertBytesN(topn[i].data, topn[i].count*ratio)
 		}
 	} else {
-		for i := range topn {
-			if topn[i].data == nil {
-				continue
-			}
-			if c.total > uint64(c.sampleSize) {
-				// Only scale top n elements
-				topn[i].count *= c.total / uint64(c.sampleSize)
-			}
-			topn[i].h1, topn[i].h2 = murmur3.Sum128(topn[i].data)
-		}
 		c.buildTopNMap(topn)
 	}
 
-	// TODO: calculate defaultValue here
+	// Interesting, seems we have collected all distinct values.
+	// These three tests tests if all divisions are legal.
+	// They also tests if we sampled all possible data.
+	countWithoutTopN := total - topncount*ratio
+	if total < topncount*ratio {
+		c.defaultValue = 1
+		return
+	}
+
+	ndvWithoutTopN := ndv - realTopN
+	sampleSizeWithoutTopN := sampleSize - topncount
+	if sampleSizeWithoutTopN == 0 {
+		c.defaultValue = 1
+		return
+	}
+
+	estimateNDV := uint64(ndvWithoutTopN) * countWithoutTopN / sampleSizeWithoutTopN
+	if estimateNDV == 0 {
+		c.defaultValue = 1
+		return
+	}
+
+	c.defaultValue = countWithoutTopN / estimateNDV
 }
 
 func (c *CMSketch) buildTopNMap(topn []cmscount) {
@@ -208,7 +248,7 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	oriCount := c.queryHashValue(h1, h2)
 	c.count += uint64(count) - uint64(oriCount)
 	// let it overflow naturally
-	deltaCount := count - oriCount
+	deltaCount := count - uint32(oriCount)
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		c.table[i][j] = c.table[i][j] + deltaCount
@@ -240,10 +280,10 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 	if count, ok := c.queryTopN(h1, h2, d); ok {
 		return count
 	}
-	return uint64(c.queryHashValue(h1, h2))
+	return c.queryHashValue(h1, h2)
 }
 
-func (c *CMSketch) queryHashValue(h1, h2 uint64) uint32 {
+func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	// [TODO/cms-topn]: better estimate.
 	vals := make([]uint32, c.depth)
 	min := uint32(math.MaxUint32)
@@ -265,11 +305,11 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint32 {
 		res = min
 	}
 	// If res is small than some value, we think it is sampled occasionally
-	if res < 2*uint32((c.count/uint64(c.width))) && c.total > 0 {
+	if res < 2*uint32((c.count/uint64(c.width))) && c.defaultValue > 0 {
 		// Assume items not in CMSketch is a average value
-		res = uint32(c.total * c.count / uint64(uint32(c.width)*c.sampleSize))
+		return c.defaultValue
 	}
-	return res
+	return uint64(res)
 }
 
 // MergeCMSketch merges two CM Sketch.
@@ -392,7 +432,7 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 	if c == nil || rc == nil {
 		return c == nil && rc == nil
 	}
-	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count {
+	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count || c.defaultValue != rc.defaultValue {
 		return false
 	}
 	for i := range c.table {

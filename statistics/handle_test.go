@@ -511,7 +511,7 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(result.Rows()[0][9], Equals, "0")
 }
 
-func (s *testStatsSuite) TestCMSketch0000(c *C) {
+func (s *testStatsSuite) TestCMSketchTopNStore(c *C) {
 	// Just test if we can store and recover the Top N elements stored in database.
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
