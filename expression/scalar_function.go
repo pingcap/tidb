@@ -167,10 +167,8 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 
 // ConstItem implements Expression interface.
 func (sf *ScalarFunction) ConstItem() bool {
-	if _, ok := DeferredFunctions[sf.FuncName.L]; ok {
-		return false
-	}
-	if sf.FuncName.L == ast.GetParam {
+	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
+	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 		return false
 	}
 	for _, arg := range sf.GetArgs() {
