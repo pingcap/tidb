@@ -75,8 +75,8 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 			go splitTableRegion(d.store, tbInfo.ID)
 		}
 
-		if tbInfo.ShardRowIDBits > 0 {
-			go preSplitTableRegion(d.store, tbInfo, tbInfo.ShardRowIDBits/2)
+		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
+			go preSplitTableRegion(d.store, tbInfo)
 		}
 
 		// Finish this job.
@@ -341,13 +341,13 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	}
 }
 
-func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, shardBits uint64) {
+func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
 	s, ok := store.(splitableStore)
 	if !ok {
 		return
 	}
 	// split table region
-	step := int64(1 << (tblInfo.ShardRowIDBits - shardBits))
+	step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions))
 	// The highest bit is the symbol bit， and alloc _tidb_rowid will always be positive number.
 	// So we only need to split the region for the positive number.
 	max := int64(1 << (tblInfo.ShardRowIDBits - 1))
@@ -356,7 +356,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, shardBits u
 		recordPrefix := tablecodec.GenTableRecordPrefix(tblInfo.ID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 		if err := s.SplitRegionAndScatter(key); err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] split table region failed", zap.Error(err))
+			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID), zap.Error(err))
 		}
 	}
 
@@ -364,7 +364,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, shardBits u
 	for _, idx := range tblInfo.Indices {
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
 		if err := s.SplitRegionAndScatter(indexPrefix); err != nil {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] split table region failed", zap.Error(err))
+			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table index region failed", zap.String("index", idx.Name.L), zap.Error(err))
 		}
 	}
 }
