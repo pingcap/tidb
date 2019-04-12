@@ -111,13 +111,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		return in, true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
-	case *ast.AdminStmt:
-		// The specified table in admin restore syntax maybe already been dropped.
-		// So skip check table name here, otherwise, admin restore table [table_name] syntax will return
-		// table not exists error. But admin restore is use to restore the dropped table. So skip children here.
-		return in, node.Tp == ast.AdminRestoreTable
 	case *ast.CreateBindingStmt:
 		p.checkBindGrammar(node)
+	case *ast.RecoverTableStmt:
+		// The specified table in recover table statement maybe already been dropped.
+		// So skip check table name here, otherwise, recover table [table_name] syntax will return
+		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
+		return in, true
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -342,7 +342,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			p.err = err
 			return
 		}
-		countPrimaryKey += isPrimary(colDef.Options)
+		isPrimary, err := checkColumnOptions(colDef.Options)
+		if err != nil {
+			p.err = err
+			return
+		}
+		countPrimaryKey += isPrimary
 		if countPrimaryKey > 1 {
 			p.err = infoschema.ErrMultiplePriKey
 			return
@@ -439,13 +444,24 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]inter
 	return nil
 }
 
-func isPrimary(ops []*ast.ColumnOption) int {
+func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
+	isPrimary, isGenerated, isStored := 0, 0, false
+
 	for _, op := range ops {
-		if op.Tp == ast.ColumnOptionPrimaryKey {
-			return 1
+		switch op.Tp {
+		case ast.ColumnOptionPrimaryKey:
+			isPrimary = 1
+		case ast.ColumnOptionGenerated:
+			isGenerated = 1
+			isStored = op.Stored
 		}
 	}
-	return 0
+
+	if isPrimary > 0 && isGenerated > 0 && !isStored {
+		return isPrimary, ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
+	}
+
+	return isPrimary, nil
 }
 
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
