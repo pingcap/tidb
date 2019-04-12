@@ -119,17 +119,20 @@ func GetCharsetInfo(cs string) (string, string, error) {
 
 // GetCharsetDesc gets charset descriptions in the local charsets.
 func GetCharsetDesc(cs string) (*Desc, error) {
-	c, ok := charsets[strings.ToLower(cs)]
-	if !ok {
+	switch strings.ToLower(cs) {
+	case CharsetUTF8:
+		return descs[0], nil
+	case CharsetUTF8MB4:
+		return descs[1], nil
+	case CharsetASCII:
+		return descs[2], nil
+	case CharsetLatin1:
+		return descs[3], nil
+	case CharsetBin:
+		return descs[4], nil
+	default:
 		return nil, errors.Errorf("Unknown charset %s", cs)
 	}
-	desc := &Desc{
-		Name:             c.Name,
-		DefaultCollation: c.DefaultCollation,
-		Desc:             c.Desc,
-		Maxlen:           c.Maxlen,
-	}
-	return desc, nil
 }
 
 // GetCharsetInfoByID returns charset and collation for id as cs_number.
