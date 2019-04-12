@@ -18,12 +18,14 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -38,6 +40,14 @@ type RequestBuilder struct {
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	return &builder.Request, builder.err
+}
+
+// SetMemTracker sets a memTracker for this request.
+func (builder *RequestBuilder) SetMemTracker(sctx sessionctx.Context, label string) *RequestBuilder {
+	t := memory.NewTracker(label, sctx.GetSessionVars().MemQuotaDistSQL)
+	t.AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
+	builder.Request.MemTracker = t
+	return builder
 }
 
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"

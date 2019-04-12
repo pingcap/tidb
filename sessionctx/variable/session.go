@@ -410,6 +410,7 @@ func NewSessionVars() *SessionVars {
 		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
 		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
 		MemQuotaNestedLoopApply:   DefTiDBMemQuotaNestedLoopApply,
+		MemQuotaDistSQL:           DefTiDBMemQuotaDistSQL,
 	}
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: DefIndexJoinBatchSize,
@@ -773,6 +774,12 @@ const (
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
 )
 
+// these variables are useless for TiDB, but still need to validate their values for some compatible issues.
+// TODO: some more variables need to be added here.
+const (
+	serverReadOnly = "read_only"
+)
+
 var (
 	// TxIsolationNames are the valid values of the variable "tx_isolation" or "transaction_isolation".
 	TxIsolationNames = map[string]struct{}{
@@ -836,6 +843,8 @@ type MemQuota struct {
 	MemQuotaIndexLookupJoin int64
 	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
 	MemQuotaNestedLoopApply int64
+	// MemQuotaDistSQL defines the memory quota for all operators in DistSQL layer like co-processor and selectResult.
+	MemQuotaDistSQL int64
 }
 
 // BatchSize defines batch size values.
