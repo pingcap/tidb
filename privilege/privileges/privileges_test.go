@@ -235,32 +235,27 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	// Test SHOW GRANTS with USING roles.
 	mustExec(c, se, `CREATE ROLE 'r1', 'r2'`)
 	mustExec(c, se, `GRANT SELECT ON test.* TO 'r1'`)
-	mustExec(c, se, `GRANT INSERT, UPDATE, DELETE ON test.* TO 'r2'`)
+	mustExec(c, se, `GRANT INSERT, UPDATE ON test.* TO 'r2'`)
 	mustExec(c, se, `CREATE USER 'testrole'@'localhost' IDENTIFIED BY 'u1pass'`)
 	mustExec(c, se, `GRANT 'r1', 'r2' TO 'testrole'@'localhost'`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 2)
-	expected = []string{`GRANT USAGE ON *.* TO 'testrole'@'localhost'`,
-		`GRANT 'r1'@'%', 'r2'@'%' TO 'testrole'@'localhost'`}
-	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
-	roles := make([]*auth.RoleIdentity, 0, 10)
+	roles := make([]*auth.RoleIdentity, 0)
 	roles = append(roles, &auth.RoleIdentity{Username: "r2", Hostname: "%"})
+	mustExec(c, se, `GRANT DELETE ON test.* TO 'testrole'@'localhost'`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, roles)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
-	expected = []string{`GRANT USAGE ON *.* TO 'testrole'@'localhost'`,
-		`GRANT Insert,Update,Delete ON test.* TO 'testrole'@'localhost'`,
-		`GRANT 'r1'@'%', 'r2'@'%' TO 'testrole'@'localhost'`}
-	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 	roles = append(roles, &auth.RoleIdentity{Username: "r1", Hostname: "%"})
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, roles)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
-	expected = []string{`GRANT USAGE ON *.* TO 'testrole'@'localhost'`,
-		`GRANT Select,Insert,Update,Delete ON test.* TO 'testrole'@'localhost'`,
-		`GRANT 'r1'@'%', 'r2'@'%' TO 'testrole'@'localhost'`}
-	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
+	mustExec(c, se, `GRANT INSERT, DELETE ON test.test TO 'r2'`)
+	mustExec(c, se, `GRANT UPDATE ON a.b TO 'testrole'@'localhost'`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, roles)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 5)
 	mustExec(c, se, `DROP ROLE 'r1', 'r2'`)
 	mustExec(c, se, `DROP USER 'testrole'@'localhost'`)
 }
