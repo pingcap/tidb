@@ -348,7 +348,9 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, shardBits u
 	}
 	// split table region
 	step := int64(1 << (tblInfo.ShardRowIDBits - shardBits))
-	max := int64(1 << tblInfo.ShardRowIDBits)
+	// The highest bit is the symbol bit， and alloc _tidb_rowid will always be positive number.
+	// So we only need to split the region for the positive number.
+	max := int64(1 << (tblInfo.ShardRowIDBits - 1))
 	for p := int64(step); p < max; p += step {
 		recordID := p << (64 - tblInfo.ShardRowIDBits)
 		recordPrefix := tablecodec.GenTableRecordPrefix(tblInfo.ID)
