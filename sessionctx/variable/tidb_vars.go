@@ -282,6 +282,7 @@ const (
 	DefTiDBMemQuotaIndexLookupReader = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupJoin   = 32 << 30 // 32GB.
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
+	DefTiDBMemQuotaDistSQL           = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
 	DefTiDBDisableTxnAutoRetry       = false
