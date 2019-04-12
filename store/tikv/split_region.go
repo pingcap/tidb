@@ -16,8 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"time"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -80,20 +78,31 @@ func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 }
 
 func (s *tikvStore) scatterRegion(left *metapb.Region) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	err := s.pdClient.ScatterRegion(ctx, left.Id)
-	cancel()
-	return err
+	if left == nil {
+		return nil
+	}
+	logutil.Logger(context.Background()).Info("start scatter region",
+		zap.Uint64("regionID", left.Id))
+	bo := NewBackoffer(context.Background(), scatterRegionBackoff)
+	for {
+		err := s.pdClient.ScatterRegion(context.Background(), left.Id)
+		if err != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+		logutil.Logger(context.Background()).Info("scatter region complete",
+			zap.Uint64("regionID", left.Id))
+		return nil
+	}
 }
 
 func (s *tikvStore) SplitRegionAndScatter(splitKey kv.Key) error {
-	logutil.Logger(context.Background()).Info("split region and scatter\n\n", zap.Binary("key", splitKey))
 	left, err := s.splitRegion(splitKey)
 	if err != nil {
 		return err
-	}
-	if left == nil {
-		return nil
 	}
 	return s.scatterRegion(left)
 }

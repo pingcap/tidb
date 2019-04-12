@@ -173,6 +173,7 @@ const (
 	deleteRangeOneRegionMaxBackoff = 100000
 	rawkvMaxBackoff                = 20000
 	splitRegionBackoff             = 20000
+	scatterRegionBackoff           = 20000
 )
 
 // CommitMaxBackoff is max sleep time of the 'commit' command
