@@ -183,11 +183,6 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	for _, r := range roles {
-		if r.Hostname == "" {
-			r.Hostname = "%"
-		}
-	}
 	grants = mysqlPrivilege.showGrants(u, h, roles)
 	if len(grants) == 0 {
 		err = errNonexistingGrant.GenWithStackByArgs(u, h)

@@ -910,6 +910,9 @@ func (e *ShowExec) fetchShowGrants() error {
 		return errors.New("miss privilege checker")
 	}
 	for _, r := range e.Roles {
+		if r.Hostname == "" {
+			r.Hostname = "%"
+		}
 		if !checker.FindEdge(e.ctx, r, e.User) {
 			return ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
 		}
