@@ -102,7 +102,7 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSke
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	selSQL2 := fmt.Sprintf("select value_id, content from mysql.stats_topn where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
+	selSQL2 := fmt.Sprintf("select value_id, content from mysql.stats_topnstore where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	topnrows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL2)
 	if err != nil {
 		// TODO: [cms-topn] deal witl broken data.

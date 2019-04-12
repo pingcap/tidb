@@ -36,7 +36,7 @@ func (c *CMSketch) insert(val *types.Datum) error {
 	return nil
 }
 
-func insertTopN(d, w int32, val []*types.Datum, n uint32) (*CMSketch, error) {
+func insertTopN(d, w int32, val []*types.Datum, n uint32, total uint64) (*CMSketch, error) {
 	data := make([][]byte, len(val), len(val))
 	for i, v := range val {
 		bytes, err := codec.EncodeValue(nil, nil, *v)
@@ -45,7 +45,7 @@ func insertTopN(d, w int32, val []*types.Datum, n uint32) (*CMSketch, error) {
 		}
 		data[i] = bytes
 	}
-	return NewCMSketchWithTopN(d, w, data, n), nil
+	return NewCMSketchWithTopN(d, w, data, n, total), nil
 }
 
 func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) (*CMSketch, map[int64]uint32, error) {
@@ -63,16 +63,18 @@ func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) 
 	return cms, mp, nil
 }
 
-func buildCMSketchTopNAndMap(d, w, n int32, seed int64, total, imax uint64, s float64) (*CMSketch, map[int64]uint32, error) {
+func buildCMSketchTopNAndMap(d, w, n, sample int32, seed int64, total, imax uint64, s float64) (*CMSketch, map[int64]uint32, error) {
 	mp := make(map[int64]uint32)
 	zipf := rand.NewZipf(rand.New(rand.NewSource(seed)), s, 1, imax)
 	vals := make([]*types.Datum, 0)
 	for i := uint64(0); i < total; i++ {
 		val := types.NewIntDatum(int64(zipf.Uint64()))
-		vals = append(vals, &val)
 		mp[val.GetInt64()]++
+		if i < uint64(sample) {
+			vals = append(vals, &val)
+		}
 	}
-	cms, err := insertTopN(d, w, vals, uint32(n))
+	cms, err := insertTopN(d, w, vals, uint32(n), total)
 	return cms, mp, err
 }
 
@@ -160,28 +162,29 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		zipfFactor float64
 		avgError   uint64
 	}{
+		// If no siginificant most items, TopN may will produce results worse than normal algorithm.
 		{
 			zipfFactor: 1.1,
-			avgError:   3,
+			avgError:   36,
 		},
 		{
 			zipfFactor: 2,
-			avgError:   24,
+			avgError:   12,
 		},
-		// If the most data lies in a narrow range, TopN should have better result.
+		// If the most data lies in a narrow range, our guess may have better result.
 		{
 			zipfFactor: 5,
-			avgError:   24,
+			avgError:   6,
 		},
 		{
 			zipfFactor: 8,
-			avgError:   24,
+			avgError:   3,
 		},
 	}
 	d, w := int32(5), int32(2048)
-	total, imax := uint64(100000), uint64(1000000)
+	total, imax := uint64(1000000), uint64(1000000)
 	for _, t := range tests {
-		lSketch, lMap, err := buildCMSketchTopNAndMap(d, w, 20, 0, total, imax, t.zipfFactor)
+		lSketch, lMap, err := buildCMSketchTopNAndMap(d, w, 20, 1000, 0, total, imax, t.zipfFactor)
 		c.Check(err, IsNil)
 		avg, err := averageAbsoluteError(lSketch, lMap)
 		c.Assert(err, IsNil)
@@ -191,22 +194,22 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 
 func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 	lSketch := NewCMSketch(5, 2048)
-	lSketch.count = 2048*(math.MaxUint32/2) + 20*(math.MaxUint32/64)
+	lSketch.count = 2048 * (math.MaxUint32)
 	for i := range lSketch.table {
 		for j := range lSketch.table[i] {
-			lSketch.table[i][j] = math.MaxUint32 / 2
+			lSketch.table[i][j] = math.MaxUint32
 		}
 	}
 	lSketch.topnindex = make(map[uint64][]cmscount)
 	for i := 0; i < 20; i++ {
 		tString := []byte(fmt.Sprintf("%20000d", i))
 		h1, h2 := murmur3.Sum128(tString)
-		lSketch.topnindex[h1] = []cmscount{{h1, h2, tString, math.MaxUint32 / 64}}
+		lSketch.topnindex[h1] = []cmscount{{h1, h2, tString, math.MaxUint64}}
 	}
 
 	bytes, topn, err := encodeCMSketch(lSketch)
 	c.Assert(err, IsNil)
-	c.Assert(len(bytes), Equals, 61595)
+	c.Assert(len(bytes), Equals, 61715)
 	rSketch, err := decodeCMSketch(bytes, topn)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)

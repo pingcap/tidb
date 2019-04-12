@@ -189,9 +189,11 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			hist := HistogramFromProto(jsonIdx.Histogram)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion
+			cms, err := CMSketchFromProto(jsonIdx.CMSketch)
+			_ = err // How to deal with error here?
 			idx := &Index{
 				Histogram: *hist,
-				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),
+				CMSketch:  cms,
 				Info:      idxInfo,
 			}
 			tbl.Indices[idx.ID] = idx
@@ -211,10 +213,12 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				return nil, errors.Trace(err)
 			}
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize
+			cms, err := CMSketchFromProto(jsonCol.CMSketch)
+			_ = err // How to deal with error here
 			col := &Column{
 				PhysicalID: physicalID,
 				Histogram:  *hist,
-				CMSketch:   CMSketchFromProto(jsonCol.CMSketch),
+				CMSketch:   cms,
 				Info:       colInfo,
 				Count:      count,
 				isHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),

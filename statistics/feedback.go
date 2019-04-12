@@ -600,10 +600,9 @@ func UpdateCMSketch(c *CMSketch, eqFeedbacks []feedback) *CMSketch {
 	if c == nil || len(eqFeedbacks) == 0 {
 		return c
 	}
-	newCMSketch := c.copy()
+	newCMSketch := c.Copy()
 	for _, fb := range eqFeedbacks {
-		h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
-		newCMSketch.setValue(h1, h2, uint32(fb.count))
+		newCMSketch.setValueBytes(fb.lower.GetBytes(), uint64(fb.count))
 	}
 	return newCMSketch
 }
