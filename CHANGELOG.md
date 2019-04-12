@@ -1,6 +1,33 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.1.8] 2019-04-12
+
+* Fix the issue that the processing logic of `GROUP_CONCAT` function is incompatible with MySQL when there is a NULL-valued parameter [#9930](https://github.com/pingcap/tidb/pull/9930)
+* Fix the equality check issue of decimal values in the `Distinct` mode [#9931](https://github.com/pingcap/tidb/pull/9931)
+* Fix the collation compatibility issue of the date, datetime, and timestamp types for the `SHOW FULL COLUMNS` statement 
+    - [#9938](https://github.com/pingcap/tidb/pull/9938)
+    - [#10114](https://github.com/pingcap/tidb/pull/10114)
+* Support committing transactions in batches for DML statements, enabled using `enable-batch-dml` [#9882](https://github.com/pingcap/tidb/pull/9882)
+* Fix the issue that the row count estimation is inaccurate when the filtering condition contains correlated columns [#9937](https://github.com/pingcap/tidb/pull/9937)
+* Fix the compatibility issue between the `DATE_ADD` and `DATE_SUB` functions
+    - [#9963](https://github.com/pingcap/tidb/pull/9963)
+    - [#9966](https://github.com/pingcap/tidb/pull/9966)
+* Support the `%H` format for the `STR_TO_DATE` function to improve compatibility [#9964](https://github.com/pingcap/tidb/pull/9964)
+* Fix the issue that the result is wrong when the `GROUP_CONCAT` function groups by a unique index [#9969](https://github.com/pingcap/tidb/pull/9969)
+* Add the `txn-entry-count-limit` configuration item to modify the maximum number of statements of a transaction and the `txn-total-size-limit` configuration item to modify the maximum size in bytes of a transaction [#9952](https://github.com/pingcap/tidb/pull/9952)
+* Return a warning when the Optimizer Hints contains an unmatched table name [#9970](https://github.com/pingcap/tidb/pull/9970)
+* Unify the log format to facilitate collecting logs using tools for analysis Unified Log Format
+* Fix the issue that a lot of NULL values cause inaccurate statistics estimation [#9979](https://github.com/pingcap/tidb/pull/9979)
+* Fix the issue that an error is reported when the default value of the TIMESTAMP type is the boundary value [#9987](https://github.com/pingcap/tidb/pull/9987)
+* Validate the value of `time_zone` [#10000](https://github.com/pingcap/tidb/pull/10000)  
+* Support the `2019.01.01` time format [#10001](https://github.com/pingcap/tidb/pull/10001)
+* Fix the issue that the row count estimation is displayed incorrectly in the result returned by the `EXPLAIN` statement in some cases [#10044](https://github.com/pingcap/tidb/pull/10044)
+* Fix the issue that `KILL TIDB [session id]` cannot instantly stop the execution of a statement in some cases [#9976](https://github.com/pingcap/tidb/pull/9976)
+* Fix the predicate pushdown issue of constant filtering conditions in some cases [#10049](https://github.com/pingcap/tidb/pull/10049)
+* Fix the issue that a read-only statement is not processed correctly in some cases [#10048](https://github.com/pingcap/tidb/pull/10048)
+
+
 ## [2.1.7] 2019-03-27
 
 * Fix the issue of longer startup time when upgrading the program caused by canceling DDL operations [#9768](https://github.com/pingcap/tidb/pull/9768)
