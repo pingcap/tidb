@@ -205,8 +205,13 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
-	unaryInterceptor := grpc_prometheus.UnaryClientInterceptor
-	streamInterceptor := grpc_prometheus.StreamClientInterceptor
+	var unaryInterceptor grpc.UnaryClientInterceptor
+	var streamInterceptor grpc.StreamClientInterceptor
+
+	if config.GetGlobalConfig().DebugMode > 0 {
+		unaryInterceptor = grpc_prometheus.UnaryClientInterceptor
+		streamInterceptor = grpc_prometheus.StreamClientInterceptor
+	}
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
 		unaryInterceptor = grpc_middleware.ChainUnaryClient(

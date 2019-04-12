@@ -246,6 +246,9 @@ const (
 
 	// TiDBEnableFastAnalyze indicates to use fast analyze.
 	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
+
+	// TiDBDebugMode indicates whether running in diagnosis mode which will log more metrics.
+	TiDBDebugMode = "tidb_debug_mode"
 )
 
 // Default TiDB system variable values.

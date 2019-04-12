@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
@@ -86,6 +86,7 @@ const (
 	nmTokenLimit       = "token-limit"
 	nmPluginDir        = "plugin-dir"
 	nmPluginLoad       = "plugin-load"
+	nmDebugMode        = "debug-mode"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -111,6 +112,7 @@ var (
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 	pluginDir        = flag.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
 	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
+	debugMode        = flag.String(nmDebugMode, "0", "tidb debug mode.")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -367,6 +369,11 @@ func overrideConfig() {
 	}
 	if actualFlags[nmPluginDir] {
 		cfg.Plugin.Dir = *pluginDir
+	}
+	if actualFlags[nmDebugMode] {
+		d, err := strconv.Atoi(*debugMode)
+		terror.MustNil(err)
+		cfg.DebugMode = d
 	}
 
 	// Log

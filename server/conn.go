@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -721,8 +722,11 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
-	span := opentracing.StartSpan("server.dispatch")
-	ctx = opentracing.ContextWithSpan(ctx, span)
+	var span opentracing.Span
+	if config.GetGlobalConfig().DebugMode > 0 {
+		span = opentracing.StartSpan("server.dispatch")
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
 
 	ctx1, cancelFunc := context.WithCancel(ctx)
 	cc.mu.Lock()
@@ -737,7 +741,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
 		cc.server.releaseToken(token)
-		span.Finish()
+		if span != nil {
+			span.Finish()
+		}
 	}()
 
 	if cmd < mysql.ComEnd {
