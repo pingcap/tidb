@@ -14,7 +14,6 @@ All notable changes to this project will be documented in this file. See also [R
     - [#9966](https://github.com/pingcap/tidb/pull/9966)
 * Support the `%H` format for the `STR_TO_DATE` function to improve compatibility [#9964](https://github.com/pingcap/tidb/pull/9964)
 * Fix the issue that the result is wrong when the `GROUP_CONCAT` function groups by a unique index [#9969](https://github.com/pingcap/tidb/pull/9969)
-* Add the `txn-entry-count-limit` configuration item to modify the maximum number of statements of a transaction and the `txn-total-size-limit` configuration item to modify the maximum size in bytes of a transaction [#9952](https://github.com/pingcap/tidb/pull/9952)
 * Return a warning when the Optimizer Hints contains an unmatched table name [#9970](https://github.com/pingcap/tidb/pull/9970)
 * Unify the log format to facilitate collecting logs using tools for analysis Unified Log Format
 * Fix the issue that a lot of NULL values cause inaccurate statistics estimation [#9979](https://github.com/pingcap/tidb/pull/9979)
