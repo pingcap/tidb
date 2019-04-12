@@ -531,15 +531,16 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
-	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
+	explainID := p.ExplainID()()
+	row := []string{e.prettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
-		if runtimeStatsColl.ExistsCopStats(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.GetCopStats(p.ExplainID()).String())
-		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
+		if runtimeStatsColl.ExistsCopStats(explainID) {
+			row = append(row, runtimeStatsColl.GetCopStats(explainID).String())
+		} else if runtimeStatsColl.ExistsRootStats(explainID) {
+			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
 		} else {
 			row = append(row, "time:0ns, loops:0, rows:0")
 		}
@@ -613,7 +614,7 @@ func (e *Explain) getIndent4Child(indent string, isLastChild bool) string {
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	buffer := bytes.NewBufferString("")
-	buffer.WriteString(fmt.Sprintf("\ndigraph %s {\n", p.ExplainID()))
+	buffer.WriteString(fmt.Sprintf("\ndigraph %s {\n", p.ExplainID()()))
 	e.prepareTaskDot(p, "root", buffer)
 	buffer.WriteString(fmt.Sprintln("}"))
 
@@ -627,7 +628,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 	buffer.WriteString(fmt.Sprintf("label = \"%s\"\n", taskTp))
 
 	if len(p.Children()) == 0 {
-		buffer.WriteString(fmt.Sprintf("\"%s\"\n}\n", p.ExplainID()))
+		buffer.WriteString(fmt.Sprintf("\"%s\"\n}\n", p.ExplainID()()))
 		return
 	}
 
@@ -638,19 +639,19 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 		curPlan := planQueue[0]
 		switch copPlan := curPlan.(type) {
 		case *PhysicalTableReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID()(), copPlan.tablePlan.ExplainID()()))
 			copTasks = append(copTasks, copPlan.tablePlan)
 		case *PhysicalIndexReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID()(), copPlan.indexPlan.ExplainID()()))
 			copTasks = append(copTasks, copPlan.indexPlan)
 		case *PhysicalIndexLookUpReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID()(), copPlan.tablePlan.ExplainID()()))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID()(), copPlan.indexPlan.ExplainID()()))
 			copTasks = append(copTasks, copPlan.tablePlan)
 			copTasks = append(copTasks, copPlan.indexPlan)
 		}
 		for _, child := range curPlan.Children() {
-			buffer.WriteString(fmt.Sprintf("\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID()))
+			buffer.WriteString(fmt.Sprintf("\"%s\" -> \"%s\"\n", curPlan.ExplainID()(), child.ExplainID()()))
 			planQueue = append(planQueue, child)
 		}
 	}

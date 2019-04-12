@@ -74,7 +74,7 @@ type selectResult struct {
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
-	copPlanIDs []string
+	copPlanIDs []func() string
 
 	memTracker *memory.Tracker
 }
@@ -207,7 +207,7 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID, callee, detail)
+				RecordOneCopTask(planID(), callee, detail)
 		}
 	}
 }

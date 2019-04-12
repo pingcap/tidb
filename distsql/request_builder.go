@@ -43,7 +43,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 }
 
 // SetMemTracker sets a memTracker for this request.
-func (builder *RequestBuilder) SetMemTracker(sctx sessionctx.Context, label string) *RequestBuilder {
+func (builder *RequestBuilder) SetMemTracker(sctx sessionctx.Context, label func() string) *RequestBuilder {
 	t := memory.NewTracker(label, sctx.GetSessionVars().MemQuotaDistSQL)
 	t.AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
 	builder.Request.MemTracker = t
