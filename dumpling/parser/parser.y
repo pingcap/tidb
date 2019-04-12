@@ -856,6 +856,7 @@ import (
 	UserSpec		"Username and auth option"
 	UserSpecList		"Username and auth option list"
 	UserVariableList	"User defined variable name list"
+	UsingRoles	"UsingRoles is role option for SHOW GRANT"
 	Values			"values"
 	ValuesList		"values list"
 	ValuesOpt		"values optional"
@@ -6204,12 +6205,21 @@ ShowStmt:
 		// See https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
 		$$ = &ast.ShowStmt{Tp: ast.ShowGrants}
 	}
-|	"SHOW" "GRANTS" "FOR" Username
+|	"SHOW" "GRANTS" "FOR" Username UsingRoles
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
-		$$ = &ast.ShowStmt{
-			Tp:	ast.ShowGrants,
-			User:	$4.(*auth.UserIdentity),
+		if $5 != nil {
+			$$ = &ast.ShowStmt{
+				Tp:	ast.ShowGrants,
+				User:	$4.(*auth.UserIdentity),
+				Roles:  $5.([]*auth.RoleIdentity),
+			}
+		} else {
+			$$ = &ast.ShowStmt{
+				Tp:	ast.ShowGrants,
+				User:	$4.(*auth.UserIdentity),
+				Roles:  nil,
+			}
 		}
 	}
 |	"SHOW" "MASTER" "STATUS"
@@ -6292,6 +6302,15 @@ ShowStmt:
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowPrivileges,
 		}
+	}
+
+UsingRoles:
+	{
+		$$ = nil
+	}
+|	"USING" RolenameList
+	{
+		$$ = $2.([]*auth.RoleIdentity)
 	}
 
 ShowIndexKwd:
