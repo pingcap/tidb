@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -450,7 +449,7 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 			rs.Close()
 		}
 		t := s.testGetTable(c, "t")
-		indexInfo := expression.FindIndexByName("idx_c2", t.Meta().Indices)
+		indexInfo := t.Meta().FindIndexByName("idx_c2")
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
@@ -2671,4 +2670,41 @@ func (s *testDBSuite) TestModifyColumnCharset(c *C) {
 			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
+}
+
+func (s *testDBSuite) TestAlterShardRowIDBits(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+
+	tk.MustExec("use test")
+	// Test alter shard_row_id_bits
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int) shard_row_id_bits = 5")
+	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
+	tk.MustExec("insert into t1 set a=1;")
+
+	// Test increase shard_row_id_bits failed by overflow global auto ID.
+	_, err := tk.Exec("alter table t1 SHARD_ROW_ID_BITS = 10;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID overflow")
+
+	// Test reduce shard_row_id_bits will be ok.
+	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 3;")
+	checkShardRowID := func(maxShardRowIDBits, shardRowIDBits uint64) {
+		tbl := testGetTableByName(c, tk.Se, "test", "t1")
+		c.Assert(tbl.Meta().MaxShardRowIDBits == maxShardRowIDBits, IsTrue)
+		c.Assert(tbl.Meta().ShardRowIDBits == shardRowIDBits, IsTrue)
+	}
+	checkShardRowID(5, 3)
+
+	// Test reduce shard_row_id_bits but calculate overflow should use the max record shard_row_id_bits.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int) shard_row_id_bits = 10")
+	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 5;")
+	checkShardRowID(10, 5)
+	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
+	_, err = tk.Exec("insert into t1 set a=1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
 }

@@ -53,7 +53,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	var oldTableID, newTableID int64
 	tblIDs := make([]int64, 0, 2)
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionRestoreTable:
+	case model.ActionCreateTable, model.ActionRecoverTable:
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, newTableID)
 	case model.ActionDropTable, model.ActionDropView:
@@ -199,7 +199,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 
 // ConvertOldVersionUTF8ToUTF8MB4IfNeed convert old version UTF8 to UTF8MB4 if config.TreatOldVersionUTF8AsUTF8MB4 is enable.
 func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
-	if !config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 || tbInfo.Version >= model.TableInfoVersion2 {
+	if tbInfo.Version >= model.TableInfoVersion2 || !config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
 		return
 	}
 	if tbInfo.Charset == charset.CharsetUTF8 {

@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -34,7 +33,7 @@ import (
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	startTS, err := b.getStartTS()
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = err
 		return nil
 	}
 	return &PointGetExecutor{
@@ -82,29 +81,29 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 	var err error
 	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if e.idxInfo != nil {
 		idxKey, err1 := e.encodeIndexKey()
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 		handleVal, err1 := e.get(idxKey)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
-			return errors.Trace(err1)
+			return err1
 		}
 		if len(handleVal) == 0 {
 			return nil
 		}
 		e.handle, err1 = tables.DecodeHandle(handleVal)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 	}
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
 	val, err := e.get(key)
 	if err != nil && !kv.ErrNotExist.Equal(err) {
-		return errors.Trace(err)
+		return err
 	}
 	if len(val) == 0 {
 		if e.idxInfo != nil {
@@ -121,13 +120,13 @@ func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {
 		colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
 		casted, err := table.CastValue(e.ctx, e.idxVals[i], colInfo)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		e.idxVals[i] = casted
 	}
 	encodedIdxVals, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return tablecodec.EncodeIndexSeekKey(e.tblInfo.ID, e.idxInfo.ID, encodedIdxVals), nil
 }
@@ -135,7 +134,7 @@ func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {
 func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
 		return txn.Get(key)
@@ -158,7 +157,7 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 	}
 	decodedVals, err := tablecodec.CutRowNew(rowVal, colID2DecodedPos)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if decodedVals == nil {
 		decodedVals = make([][]byte, len(colID2DecodedPos))
@@ -185,14 +184,14 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 			colInfo := getColInfoByID(e.tblInfo, id)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return err1
 			}
 			chk.AppendDatum(firstPos, &d)
 			continue
 		}
 		_, err = decoder.DecodeOne(decodedVals[decodedPos], firstPos, e.schema.Columns[firstPos].RetType)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		// Fill other positions.
 		for i := 1; i < len(schemaPoses); i++ {

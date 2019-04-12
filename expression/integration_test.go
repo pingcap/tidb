@@ -559,6 +559,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	ctx := context.Background()
+	var err error
 
 	// for length
 	tk.MustExec("drop table if exists t")
@@ -900,8 +901,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 
 	// for convert
-	result = tk.MustQuery(`select convert("123" using "866"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
-	result.Check(testkit.Rows("123 123 中文 中文 中文 中文"))
+	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
+	result.Check(testkit.Rows("123 中文 中文 中文 中文"))
+	// Charset 866 does not have a default collation configured currently, so this will return error.
+	err = tk.ExecToErr(`select convert("123" using "866");`)
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: '866'")
+	// Test case in issue #4436.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(20));")
+	err = tk.ExecToErr("select convert(a using a) from t;")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'a'")
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
@@ -2362,11 +2371,8 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("ad\x01\x00Y"))
 	result = tk.MustQuery("select char(97, null, 100, 256, 89 using ascii)")
 	result.Check(testkit.Rows("ad\x01\x00Y"))
-	charRecordSet, err := tk.Exec("select char(97, null, 100, 256, 89 using tidb)")
-	c.Assert(err, IsNil)
-	c.Assert(charRecordSet, NotNil)
-	_, err = session.GetRows4Test(ctx, tk.Se, charRecordSet)
-	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
+	err = tk.ExecToErr("select char(97, null, 100, 256, 89 using tidb)")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'tidb'")
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")
@@ -4127,4 +4133,83 @@ func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
 	tk.MustExec("create table t(a datetime(6), b timestamp)")
 	tk.MustExec("insert t values (20010101100000.123456, 20110707101112.123456)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2001-01-01 10:00:00.123456 2011-07-07 10:11:12"))
+}
+
+func (s *testIntegrationSuite) TestIssue9732(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustQuery(`select monthname(str_to_date(null, '%m')), monthname(str_to_date(null, '%m')),
+monthname(str_to_date(1, '%m')), monthname(str_to_date(0, '%m'));`).Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+
+	nullCases := []struct {
+		sql string
+		ret string
+	}{
+		{"select str_to_date(1, '%m')", "0000-01-00"},
+		{"select str_to_date(01, '%d')", "0000-00-01"},
+		{"select str_to_date(2019, '%Y')", "2019-00-00"},
+		{"select str_to_date('5,2019','%m,%Y')", "2019-05-00"},
+		{"select str_to_date('01,2019','%d,%Y')", "2019-00-01"},
+		{"select str_to_date('01,5','%d,%m')", "0000-05-01"},
+	}
+
+	for _, nullCase := range nullCases {
+		tk.MustQuery(nullCase.sql).Check(testkit.Rows("<nil>"))
+	}
+
+	// remove NO_ZERO_DATE mode
+	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+
+	for _, nullCase := range nullCases {
+		tk.MustQuery(nullCase.sql).Check(testkit.Rows(nullCase.ret))
+	}
+}
+
+func (s *testIntegrationSuite) TestDaynameArithmetic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{`select dayname("1962-03-01")+0;`, "3"},
+		{`select dayname("1962-03-02")+0;`, "4"},
+		{`select dayname("1962-03-03")+0;`, "5"},
+		{`select dayname("1962-03-04")+0;`, "6"},
+		{`select dayname("1962-03-05")+0;`, "0"},
+		{`select dayname("1962-03-06")+0;`, "1"},
+		{`select dayname("1962-03-07")+0;`, "2"},
+		{`select dayname("1962-03-08")+0;`, "3"},
+		{`select dayname("1962-03-01")+1;`, "4"},
+		{`select dayname("1962-03-01")+2;`, "5"},
+		{`select dayname("1962-03-01")+3;`, "6"},
+		{`select dayname("1962-03-01")+4;`, "7"},
+		{`select dayname("1962-03-01")+5;`, "8"},
+		{`select dayname("1962-03-01")+6;`, "9"},
+		{`select dayname("1962-03-01")+7;`, "10"},
+		{`select dayname("1962-03-01")+2333;`, "2336"},
+		{`select dayname("1962-03-01")+2.333;`, "5.333"},
+		{`select dayname("1962-03-01")>2;`, "1"},
+		{`select dayname("1962-03-01")<2;`, "0"},
+		{`select dayname("1962-03-01")=3;`, "1"},
+		{`select dayname("1962-03-01")!=3;`, "0"},
+		{`select dayname("1962-03-01")<4;`, "1"},
+		{`select dayname("1962-03-01")>4;`, "0"},
+		{`select !dayname("1962-03-01");`, "0"},
+		{`select dayname("1962-03-01")&1;`, "1"},
+		{`select dayname("1962-03-01")&3;`, "3"},
+		{`select dayname("1962-03-01")&7;`, "3"},
+		{`select dayname("1962-03-01")|1;`, "3"},
+		{`select dayname("1962-03-01")|3;`, "3"},
+		{`select dayname("1962-03-01")|7;`, "7"},
+		{`select dayname("1962-03-01")^1;`, "2"},
+		{`select dayname("1962-03-01")^3;`, "0"},
+		{`select dayname("1962-03-01")^7;`, "4"},
+	}
+
+	for _, c := range cases {
+		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
+	}
 }

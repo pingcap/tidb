@@ -251,7 +251,7 @@ func (e *ShowExec) fetchShowTables() error {
 		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 	// sort for tables
-	var tableNames []string
+	tableNames := make([]string, 0, len(e.is.SchemaTables(e.DBName)))
 	var tableTypes = make(map[string]string)
 	for _, v := range e.is.SchemaTables(e.DBName) {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
@@ -369,13 +369,6 @@ func (e *ShowExec) fetchShowColumns() error {
 			} else {
 				columnDefault = defaultValStr
 			}
-		}
-		// issue #9807
-		// Some types in show full columns should print other collations.
-		switch col.Tp {
-		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime,
-			mysql.TypeYear, mysql.TypeNewDate:
-			desc.Collation = "NULL"
 		}
 
 		// The FULL keyword causes the output to include the column collation and comments,

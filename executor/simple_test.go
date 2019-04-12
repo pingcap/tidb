@@ -93,6 +93,7 @@ func (s *testSuite3) TestRole(c *C) {
 	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
 	result.Check(nil)
 
+	// Test for DROP ROLE.
 	createRoleSQL := `CREATE ROLE 'test'@'localhost';`
 	tk.MustExec(createRoleSQL)
 	// Make sure user test in mysql.User.
@@ -119,6 +120,44 @@ func (s *testSuite3) TestRole(c *C) {
 	result.Check(nil)
 	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
 	result.Check(nil)
+
+	// Test for GRANT ROLE
+	createRoleSQL = `CREATE ROLE 'r_1'@'localhost', 'r_2'@'localhost', 'r_3'@'localhost';`
+	tk.MustExec(createRoleSQL)
+	grantRoleSQL := `GRANT 'r_1'@'localhost' TO 'r_2'@'localhost';`
+	tk.MustExec(grantRoleSQL)
+	result = tk.MustQuery(`SELECT TO_USER FROM mysql.role_edges WHERE FROM_USER="r_1" and FROM_HOST="localhost"`)
+	result.Check(testkit.Rows("r_2"))
+
+	grantRoleSQL = `GRANT 'r_1'@'localhost' TO 'r_3'@'localhost', 'r_4'@'localhost';`
+	_, err = tk.Exec(grantRoleSQL)
+	c.Check(err, NotNil)
+	result = tk.MustQuery(`SELECT FROM_USER FROM mysql.role_edges WHERE TO_USER="r_3" and TO_HOST="localhost"`)
+	result.Check(nil)
+
+	dropRoleSQL := `DROP ROLE IF EXISTS 'r_1'@'localhost' ;`
+	tk.MustExec(dropRoleSQL)
+	dropRoleSQL = `DROP ROLE IF EXISTS 'r_2'@'localhost' ;`
+	tk.MustExec(dropRoleSQL)
+	dropRoleSQL = `DROP ROLE IF EXISTS 'r_3'@'localhost' ;`
+	tk.MustExec(dropRoleSQL)
+
+	// Test for revoke role
+	createRoleSQL = `CREATE ROLE 'test'@'localhost', r_1, r_2;`
+	tk.MustExec(createRoleSQL)
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('localhost','test','%','root')")
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','root')")
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','root')")
+	_, err = tk.Exec("revoke test@localhost, r_1 from root;")
+	c.Check(err, IsNil)
+	_, err = tk.Exec("revoke `r_2`@`%` from root, u_2;")
+	c.Check(err, NotNil)
+	_, err = tk.Exec("revoke `r_2`@`%` from root;")
+	c.Check(err, IsNil)
+	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
+	result.Check(nil)
+	dropRoleSQL = `DROP ROLE 'test'@'localhost', r_1, r_2;`
+	tk.MustExec(dropRoleSQL)
 }
 
 func (s *testSuite3) TestUser(c *C) {
