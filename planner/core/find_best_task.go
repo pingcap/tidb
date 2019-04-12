@@ -451,6 +451,18 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+	if !candidate.isSingleScan {
+		// If it's parent requires single read task, return max cost.
+		if prop.TaskTp == property.CopSingleReadTaskType {
+			return invalidTask, nil
+		}
+	} else if prop.TaskTp == property.CopDoubleReadTaskType {
+		// If it's parent requires double read task, return max cost.
+		return invalidTask, nil
+	}
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
 	path := candidate.path
 	idx := path.index
 	is := PhysicalIndexScan{
@@ -475,10 +487,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
 	if !candidate.isSingleScan {
-		// If it's parent requires single read task, return max cost.
-		if prop.TaskTp == property.CopSingleReadTaskType {
-			return invalidTask, nil
-		}
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
@@ -488,9 +496,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}.Init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
-	} else if prop.TaskTp == property.CopDoubleReadTaskType {
-		// If it's parent requires double read task, return max cost.
-		return invalidTask, nil
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Only use expectedCnt when it's smaller than the count we calculated.
@@ -519,16 +524,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}
 		cop.keepOrder = true
 		is.KeepOrder = true
-		is.addPushedDownSelection(cop, ds, prop.ExpectedCnt, path)
-	} else {
-		expectedCnt := math.MaxFloat64
-		if prop.IsEmpty() {
-			expectedCnt = prop.ExpectedCnt
-		} else {
-			return invalidTask, nil
-		}
-		is.addPushedDownSelection(cop, ds, expectedCnt, path)
 	}
+	// prop.IsEmpty() would always return true when coming to here,
+	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
+	is.addPushedDownSelection(cop, ds, prop.ExpectedCnt, path)
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -624,6 +623,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -639,9 +641,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
 			}
 		}
-	}
-	if !prop.IsEmpty() && !candidate.isMatchProp {
-		return invalidTask, nil
 	}
 	path := candidate.path
 	ts.Ranges = path.ranges
