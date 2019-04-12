@@ -1005,7 +1005,7 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(row chunk.Row) (res json.BinaryJSON, 
 		return res, true, nil
 	}
 	if res.TypeCode != json.TypeCodeObject {
-		return res, true, json.ErrInvalidJSONData
+		return res, true, nil
 	}
 
 	return res.GetKeys(), false, nil
