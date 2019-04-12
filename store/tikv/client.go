@@ -566,12 +566,14 @@ func sendBatchRequest(
 
 // SendRequest sends a Request to server and receives Response.
 func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	start := time.Now()
-	reqType := req.Type.String()
-	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-	defer func() {
-		metrics.TiKVSendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds())
-	}()
+	if config.GetGlobalConfig().DebugMode > 0 {
+		start := time.Now()
+		reqType := req.Type.String()
+		storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
+		defer func() {
+			metrics.TiKVSendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds())
+		}()
+	}
 
 	connArray, err := c.getConnArray(addr)
 	if err != nil {
