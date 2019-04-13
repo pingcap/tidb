@@ -519,11 +519,11 @@ type AnalyzeFastExec struct {
 	sampLocs        chan *tikv.KeyLocation
 	rowCount        uint64
 	sampCursor      int32
-	tasks           chan *AnalyzeFastTask
+	sampTasks       []*AnalyzeFastTask
 	scanTasks       []*tikv.KeyLocation
 }
 
-func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error) {
+func (e *AnalyzeFastExec) getSampRegionsRowCount(i int, bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
 	defer func() {
 		e.wg.Done()
 		if *needRebuild == true {
@@ -535,9 +535,13 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 	}()
 	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for {
-		loc, ok := <-e.sampLocs
-		if !ok {
-			return
+		var loc *tikv.KeyLocation
+		select {
+		case location, ok := <-e.sampLocs:
+			if !ok {
+				return
+			}
+			loc = location
 		}
 		req := &tikvrpc.Request{
 			Type: tikvrpc.CmdDebugGetRegionProperties,
@@ -578,7 +582,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 					LRowCount: newCount - cnt,
 					RRowCount: newCount,
 				}
-				e.tasks <- task
+				*sampTasks = append(*sampTasks, task)
 			}
 		}
 	}
@@ -587,18 +591,16 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 // buildSampTask return tow variable, the first bool is whether the task meeting region error
 // and need to rebuild.
 func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
-	if e.wg == nil {
-		e.wg = &sync.WaitGroup{}
-	}
-
 	// Do get regions row count.
 	bo := tikv.NewBackoffer(context.Background(), 500)
 	atomic.StoreUint64(&e.rowCount, 0)
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
+	sampTasksForRoutine := make([][]*AnalyzeFastTask, e.concurrency)
+	e.sampLocs = make(chan *tikv.KeyLocation, e.concurrency)
 	e.wg.Add(e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		go e.getSampRegionsRowCount(bo, &needRebuildForRoutine[i], &errs[i])
+		go e.getSampRegionsRowCount(i, bo, &needRebuildForRoutine[i], &errs[i], &sampTasksForRoutine[i])
 	}
 
 	store, _ := e.ctx.GetStore().(tikv.Storage)
@@ -607,9 +609,20 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	var loc *tikv.KeyLocation
 	var err error
 	// extract all regions contain the table
+	e.scanTasks = e.scanTasks[:0]
+	e.sampTasks = e.sampTasks[:0]
+	// If length of KeyLocation.StartKey is 0, then the start key is infinitesimal.
+	// If length of KeyLocation.EndKey is 0, then the end kety is infinity.
 	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, loc.EndKey) {
-		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
+		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 || len(loc.StartKey) == 0 || len(loc.EndKey) == 0 {
 			e.scanTasks = append(e.scanTasks, loc)
+			if len(loc.StartKey) == 0 {
+				loc.StartKey = startKey
+			}
+			if len(loc.EndKey) == 0 {
+				loc.EndKey = endKey
+				break
+			}
 		} else {
 			e.sampLocs <- loc
 		}
@@ -618,7 +631,6 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	close(e.sampLocs)
-
 	e.wg.Wait()
 	for i := 0; i < e.concurrency; i++ {
 		if errs[i] != nil {
@@ -629,6 +641,9 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 		if needRebuildForRoutine[i] == true {
 			return true, nil
 		}
+	}
+	for i := 0; i < e.concurrency; i++ {
+		e.sampTasks = append(e.sampTasks, sampTasksForRoutine[i]...)
 	}
 
 	return false, nil
@@ -646,6 +661,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 	samplePos := newCursor - length
 	for _, value := range kvMap {
 		if hasPKInfo > 0 {
+			collectors[0].Samples = append(collectors[0].Samples, &statistics.SampleItem{})
 			collectors[0].Samples[samplePos].Ordinal = int(samplePos)
 			collectors[0].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(value, &e.pkInfo.FieldType, timeZone)
 			if err != nil {
@@ -653,6 +669,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 			}
 		}
 		for j, colInfo := range e.colsInfo {
+			collectors[hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{})
 			collectors[hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
 			collectors[hasPKInfo+j].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(value, &colInfo.FieldType, timeZone)
 			if err != nil {
@@ -660,6 +677,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 			}
 		}
 		for j, idxInfo := range e.idxsInfo {
+			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{})
 			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples[samplePos].Ordinal = int(samplePos)
 			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
 			for _, idxCol := range idxInfo.Columns {
@@ -700,6 +718,9 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 		if e.sampCursor < maxSampleSize {
 			p = int64(e.sampCursor)
 			e.sampCursor++
+			for _, c := range collectors {
+				c.Samples = append(c.Samples, &statistics.SampleItem{})
+			}
 		}
 		if hasPKInfo > 0 {
 			collectors[0].Samples[p].Value, err = tablecodec.DecodeColumnValue(iter.Value(), &e.pkInfo.FieldType, timeZone)
@@ -751,26 +772,16 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 	return nil
 }
 
-func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, err *error, collectors []*statistics.SampleCollector) {
-	defer func() {
-		if *err != nil {
-			for _, ok := <-e.tasks; ok; _, ok = <-e.tasks {
-				// Do nothing.
-			}
-		}
-	}()
+func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *error, collectors []*statistics.SampleCollector) {
+	defer e.wg.Done()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
 	if *err != nil {
 		*err = errors.Trace(*err)
 		return
 	}
-	for {
-		task, ok := <-e.tasks
-		if !ok {
-			return
-		}
-
+	for i := rid; i < len(e.sampTasks); i += e.concurrency {
+		task := e.sampTasks[i]
 		var tableID, minRowID, maxRowID int64
 		startKey, endKey := task.Location.StartKey, task.Location.EndKey
 		tableID, minRowID, *err = tablecodec.DecodeRecordKey(startKey)
@@ -854,7 +865,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	e.wg.Add(e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		bo := tikv.NewBackoffer(context.Background(), 500)
-		go e.handleSampTasks(bo, &errs[i], collectors)
+		go e.handleSampTasks(bo, i, &errs[i], collectors)
 	}
 	e.wg.Wait()
 	for _, err := range errs {
@@ -898,24 +909,24 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 			continue
 		}
 
-		randPos := make([]uint64, 0, maxSampleSize+1)
-		for i := 0; i < maxSampleSize; i++ {
-			randPos = append(randPos, uint64(rand.Int63n(int64(e.rowCount))))
-		}
-		sort.Slice(randPos, func(i, j int) bool {
-			return randPos[i] < randPos[j]
-		})
-
-		for task := range e.tasks {
-			task.SampSize = uint64(sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.RRowCount }) - sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.LRowCount }))
-		}
-		close(e.tasks)
-
 		// If sample region size is smaller than maxSampleSize * 2,
 		// then we trans the sample tasks to scan tasks.
 		if e.rowCount < maxSampleSize*2 {
-			for task, ok := <-e.tasks; ok; task, ok = <-e.tasks {
+			for _, task := range e.sampTasks {
 				e.scanTasks = append(e.scanTasks, task.Location)
+			}
+			e.sampTasks = e.sampTasks[:0]
+		} else {
+			randPos := make([]uint64, 0, maxSampleSize+1)
+			for i := 0; i < maxSampleSize; i++ {
+				randPos = append(randPos, uint64(rand.Int63n(int64(e.rowCount))))
+			}
+			sort.Slice(randPos, func(i, j int) bool {
+				return randPos[i] < randPos[j]
+			})
+
+			for _, task := range e.sampTasks {
+				task.SampSize = uint64(sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.RRowCount }) - sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.LRowCount }))
 			}
 		}
 

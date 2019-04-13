@@ -1415,6 +1415,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 				maxNumBuckets:   maxNumBuckets,
 				table:           task.Table,
 				concurrency:     concurrency,
+				wg:              &sync.WaitGroup{},
 			},
 		})
 	}
@@ -1444,6 +1445,7 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 				maxNumBuckets:   maxNumBuckets,
 				table:           task.Table,
 				concurrency:     concurrency,
+				wg:              &sync.WaitGroup{},
 			},
 		})
 	}
