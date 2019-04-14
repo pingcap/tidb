@@ -523,7 +523,7 @@ type AnalyzeFastExec struct {
 	scanTasks       []*tikv.KeyLocation
 }
 
-func (e *AnalyzeFastExec) getSampRegionsRowCount(i int, bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
+func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
 	defer func() {
 		e.wg.Done()
 		if *needRebuild == true {
@@ -600,7 +600,7 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	e.sampLocs = make(chan *tikv.KeyLocation, e.concurrency)
 	e.wg.Add(e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		go e.getSampRegionsRowCount(i, bo, &needRebuildForRoutine[i], &errs[i], &sampTasksForRoutine[i])
+		go e.getSampRegionsRowCount(bo, &needRebuildForRoutine[i], &errs[i], &sampTasksForRoutine[i])
 	}
 
 	store, _ := e.ctx.GetStore().(tikv.Storage)

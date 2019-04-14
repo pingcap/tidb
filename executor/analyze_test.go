@@ -110,6 +110,26 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	c.Assert(tbl.Columns[1].Len(), Equals, 4)
 }
 
+func (s *testSuite1) TestFastAnalyze(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set @@global.tidb_enable_fast_analyze=1")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+
+	tk.MustExec("analyze table t")
+	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	tbl := s.dom.StatsHandle().(tableInfo)
+	c.Assert(tbl.Columns[1].Len(), Equals, 20)
+
+}
+
 func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
