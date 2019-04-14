@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"math/rand"
 	"runtime"
 	"sort"
@@ -462,12 +461,11 @@ func analyzeFastExec(exec *AnalyzeFastExec) []statistics.AnalyzeResult {
 		return []statistics.AnalyzeResult{{Err: err}}
 	}
 	var results []statistics.AnalyzeResult
-	hasIdxInfo := len(exec.idxsInfo)
 	hasPKInfo := 0
 	if exec.pkInfo != nil {
 		hasPKInfo = 1
 	}
-	if hasIdxInfo > 0 {
+	if len(exec.idxsInfo) > 0 {
 		for i := hasPKInfo + len(exec.colsInfo); i < len(hists); i++ {
 			idxResult := statistics.AnalyzeResult{
 				PhysicalTableID: exec.PhysicalTableID,
@@ -605,7 +603,7 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
-	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.table.Meta().ID)
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.PhysicalTableID)
 	var loc *tikv.KeyLocation
 	var err error
 	// extract all regions contain the table
@@ -614,6 +612,8 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	// If length of KeyLocation.StartKey is 0, then the start key is infinitesimal.
 	// If length of KeyLocation.EndKey is 0, then the end kety is infinity.
 	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, loc.EndKey) {
+		fmt.Println("startKey: ", loc.StartKey)
+		fmt.Println("endKey: ", loc.EndKey)
 		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 || len(loc.StartKey) == 0 || len(loc.EndKey) == 0 {
 			e.scanTasks = append(e.scanTasks, loc)
 			if len(loc.StartKey) == 0 {
@@ -651,48 +651,70 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 
 func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collectors []*statistics.SampleCollector) (err error) {
 	length := int32(len(kvMap))
-	timeZone := e.ctx.GetSessionVars().Location()
 	newCursor := atomic.AddInt32(&e.sampCursor, length)
 	hasPKInfo := 0
 	if e.pkInfo != nil {
 		hasPKInfo = 1
 	}
-	hasIdxInfo := len(e.idxsInfo)
 	samplePos := newCursor - length
-	for _, value := range kvMap {
-		if hasPKInfo > 0 {
-			collectors[0].Samples = append(collectors[0].Samples, &statistics.SampleItem{})
-			collectors[0].Samples[samplePos].Ordinal = int(samplePos)
-			collectors[0].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(value, &e.pkInfo.FieldType, timeZone)
+	for sKey, sValue := range kvMap {
+		// Decode the cols value in order.
+		var values []types.Datum
+		lastPos := int64(0)
+		for len(sValue) > 0 {
+			var offsetDatum, val types.Datum
+			sValue, offsetDatum, err = codec.DecodeOne(sValue)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if offsetDatum.Kind() != types.KindInt64 {
+				return errors.Errorf("Meeting invalid type when decode values")
+			}
+			offset := offsetDatum.GetInt64()
+			if offset != lastPos+1 {
+				var key int64
+				_, key, err = tablecodec.DecodeRecordKey(kv.Key(sKey))
+				if err != nil {
+					return errors.Trace(err)
+				}
+				values = append(values, types.NewIntDatum(key))
+			}
+			sValue, val, err = codec.DecodeOne(sValue)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			values = append(values, val)
+			lastPos = offset
+		}
+
+		// build statistic collector.
+		if hasPKInfo > 0 {
+			collectors[0].Samples = append(collectors[0].Samples, &statistics.SampleItem{})
+			collectors[0].Samples[samplePos].Ordinal = int(samplePos)
+			collectors[0].Samples[samplePos].Value = values[e.pkInfo.Offset]
+			collectors[0].TotalSize += int64(len(values[e.pkInfo.Offset].GetBytes()) - 1)
 		}
 		for j, colInfo := range e.colsInfo {
 			collectors[hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{})
 			collectors[hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
-			collectors[hasPKInfo+j].Samples[samplePos].Value, err = tablecodec.DecodeColumnValue(value, &colInfo.FieldType, timeZone)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			collectors[hasPKInfo+j].Samples[samplePos].Value = values[colInfo.Offset]
+			collectors[hasPKInfo].TotalSize += int64(len(values[colInfo.Offset].GetBytes()) - 1)
 		}
 		for j, idxInfo := range e.idxsInfo {
-			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{})
-			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples[samplePos].Ordinal = int(samplePos)
+			collectors[len(e.colsInfo)+hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{})
+			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
 			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
 			for _, idxCol := range idxInfo.Columns {
-				val, err := tablecodec.DecodeColumnValue(value, &e.table.Cols()[idxCol.Offset].FieldType, timeZone)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				idxVals = append(idxVals, val)
+				idxVals = append(idxVals, values[idxCol.Offset])
 			}
 			var bytes []byte
 			bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
+			v := types.NewBytesDatum(bytes)
+			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Value = v
+			collectors[len(e.colsInfo)+hasPKInfo+j].TotalSize += int64(len(v.GetBytes()) - 1)
 		}
 		samplePos++
 	}
@@ -700,12 +722,10 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 }
 
 func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statistics.SampleCollector) (err error) {
-	timeZone := e.ctx.GetSessionVars().Location()
 	hasPKInfo := 0
 	if e.pkInfo != nil {
 		hasPKInfo = 1
 	}
-	hasIdxInfo := len(e.idxsInfo)
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
 		e.rowCount++
@@ -719,36 +739,66 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 			p = int64(e.sampCursor)
 			e.sampCursor++
 			for _, c := range collectors {
-				c.Samples = append(c.Samples, &statistics.SampleItem{})
+				item := &statistics.SampleItem{}
+				c.Samples = append(c.Samples, item)
+				c.TotalSize += int64(len(item.Value.GetBytes()) - 1)
 			}
 		}
-		if hasPKInfo > 0 {
-			collectors[0].Samples[p].Value, err = tablecodec.DecodeColumnValue(iter.Value(), &e.pkInfo.FieldType, timeZone)
+
+		// Decode the cols value in order.
+		sValue := iter.Value()
+		var values []types.Datum
+		lastPos := int64(0)
+		for len(sValue) > 0 {
+			var offsetDatum, val types.Datum
+			sValue, offsetDatum, err = codec.DecodeOne(sValue)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if offsetDatum.Kind() != types.KindInt64 {
+				return errors.Errorf("Meeting invalid type when decode values")
+			}
+			offset := offsetDatum.GetInt64()
+			if offset != lastPos+1 {
+				var key int64
+				_, key, err = tablecodec.DecodeRecordKey(iter.Key())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				values = append(values, types.NewIntDatum(key))
+			}
+			sValue, val, err = codec.DecodeOne(sValue)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			values = append(values, val)
+			lastPos = offset
+		}
+
+		// build statistic collector.
+		if hasPKInfo > 0 {
+			collectors[0].TotalSize -= int64(len(collectors[0].Samples[p].Value.GetBytes()) - 1)
+			collectors[0].Samples[p].Value = values[e.pkInfo.Offset]
+			collectors[0].TotalSize += int64(len(collectors[0].Samples[p].Value.GetBytes()) - 1)
 		}
 		for j, colInfo := range e.colsInfo {
-			collectors[hasPKInfo+j].Samples[p].Value, err = tablecodec.DecodeColumnValue(iter.Value(), &colInfo.FieldType, timeZone)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			collectors[hasPKInfo+j].TotalSize -= int64(len(collectors[hasPKInfo+j].Samples[p].Value.GetBytes()) - 1)
+			collectors[hasPKInfo+j].Samples[p].Value = values[colInfo.Offset]
+			collectors[hasPKInfo+j].TotalSize += int64(len(collectors[hasPKInfo+j].Samples[p].Value.GetBytes()) - 1)
 		}
 		for j, idxInfo := range e.idxsInfo {
 			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
 			for _, idxCol := range idxInfo.Columns {
-				val, err := tablecodec.DecodeColumnValue(iter.Value(), &e.table.Cols()[idxCol.Offset].FieldType, timeZone)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				idxVals = append(idxVals, val)
+				idxVals = append(idxVals, values[idxCol.Offset])
 			}
 			var bytes []byte
 			bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			collectors[len(e.colsInfo)+hasIdxInfo+j].Samples[p].Value = types.NewBytesDatum(bytes)
+			collectors[len(e.colsInfo)+hasPKInfo+j].TotalSize -= int64(len(collectors[len(e.colsInfo)+hasPKInfo+j].Samples[p].Value.GetBytes()) - 1)
+			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[p].Value = types.NewBytesDatum(bytes)
+			collectors[len(e.colsInfo)+hasPKInfo+j].TotalSize += int64(len(collectors[len(e.colsInfo)+hasPKInfo+j].Samples[p].Value.GetBytes()) - 1)
 		}
 	}
 	return errors.Trace(err)
@@ -817,6 +867,8 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 }
 
 func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
+	// build collector properties.
+	collector.Count = int64(len(collector.Samples))
 	for _, sample := range collector.Samples {
 		if sample.Value.IsNull() {
 			collector.NullCount++
@@ -833,13 +885,13 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 			collector.CMSketch.InsertBytes([]byte(valString))
 		}
 	}
-	collector.NullCount = int64(math.Round(float64(e.sampCursor) / float64(e.rowCount) * float64(collector.NullCount)))
-	collector.Count = int64(e.rowCount) - collector.NullCount
-	hist, err := statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), ID, collector, tp)
+	// TODO: build collector's CMSketch here.
+
+	// build histogram.
+	hist, err := statistics.BuildColumnWithSamples(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, int64(e.rowCount))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	hist.NDV = hist.NDV * int64(math.Round(float64(e.rowCount)/float64(e.sampCursor)))
 	return hist, nil
 }
 
@@ -849,9 +901,8 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	if e.pkInfo != nil {
 		hasPKInfo = 1
 	}
-	hasIdxInfo := len(e.idxsInfo)
 	// collect column samples and primary key samples and index samples.
-	length := len(e.colsInfo) + hasPKInfo + hasIdxInfo
+	length := len(e.colsInfo) + hasPKInfo + len(e.idxsInfo)
 	collectors := make([]*statistics.SampleCollector, length)
 	for i := range collectors {
 		collectors[i] = &statistics.SampleCollector{
@@ -881,9 +932,9 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		return nil, nil, errors.Trace(err)
 	}
 
-	hists, cms := make([]*statistics.Histogram, e.concurrency), make([]*statistics.CMSketch, e.concurrency)
+	hists, cms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length)
 	for i := 0; i < length; i++ {
-		if i == 0 && hasPKInfo > 0 {
+		if i < hasPKInfo {
 			hists[i], err = e.buildHist(e.pkInfo.ID, collectors[i], &e.pkInfo.FieldType)
 		} else if i < hasPKInfo+len(e.colsInfo) {
 			hists[i], err = e.buildHist(e.colsInfo[i-hasPKInfo].ID, collectors[i], &e.colsInfo[i-hasPKInfo].FieldType)
@@ -909,6 +960,7 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 			continue
 		}
 
+		fmt.Println("rowCount", e.rowCount)
 		// If sample region size is smaller than maxSampleSize * 2,
 		// then we trans the sample tasks to scan tasks.
 		if e.rowCount < maxSampleSize*2 {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -826,7 +827,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.DebugGetRegionProperties = &debugpb.GetRegionPropertiesResponse{
 			Props: []*debugpb.Property{{
 				Name:  "num_rows",
-				Value: string(len(scanResp.Pairs)),
+				Value: strconv.Itoa(len(scanResp.Pairs)),
 			}}}
 	default:
 		return nil, errors.Errorf("unsupport this request type %v", req.Type)

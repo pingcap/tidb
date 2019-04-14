@@ -20,9 +20,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -111,23 +114,44 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 }
 
 func (s *testSuite1) TestFastAnalyze(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(cluster),
+	)
+	c.Assert(err, IsNil)
+	var dom *domain.Domain
+	dom, err = session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("set @@global.tidb_enable_fast_analyze=1")
-	for i := 0; i < 20; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	for i := 0; i < 3000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
+	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tid := tblInfo.Meta().ID
+
+	// construct 10 regions split by {300, 600, 900, 1200, 1500, 1800, 2100, 2400, 2700}
+	splitKeys := generateTableSplitKeyForInt(tid, []int{300, 600, 900, 1200, 1500, 1800, 2100, 2400, 2700})
+	manipulateCluster(cluster, splitKeys)
 
 	tk.MustExec("analyze table t")
+
 	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
-	tbl := s.dom.StatsHandle().(tableInfo)
+	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+	fmt.Println("table after analyze: ", tbl)
 	c.Assert(tbl.Columns[1].Len(), Equals, 20)
+	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(0))
 
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
 }
 
 func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
