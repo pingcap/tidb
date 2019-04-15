@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -152,13 +153,15 @@ func (s *DescScanner) getData(bo *Backoffer) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Infof("loc.start: %v, loc.end: %v \n=========\n\n", loc.StartKey,loc.EndKey)
 
 		reqStartKey := s.startKey
 		if len(reqStartKey) > 0 && len(loc.StartKey) > 0 && bytes.Compare(loc.StartKey, reqStartKey) > 0 {
 			reqStartKey = loc.StartKey
 		}
-		log.Infof("req.start: %v, loc.end: %v \n=========\n\n", reqStartKey,s.nextEndKey)
+		if len(reqStartKey) == 0 {
+			reqStartKey = loc.StartKey
+		}
+		fmt.Printf("req.start: %v, loc.end: %v \n=========\n\n", reqStartKey,s.nextEndKey)
 
 		req := &tikvrpc.Request{
 			Type: tikvrpc.CmdScan,
@@ -212,7 +215,7 @@ func (s *DescScanner) getData(bo *Backoffer) error {
 				pair.Key = lock.Key
 			}
 		}
-		log.Infof("get kv pairs：%v", kvPairs)
+		log.Infof("get kv pairs：%v", len(kvPairs))
 
 		s.cache, s.idx = kvPairs, 0
 		if len(kvPairs) < s.batchSize {
