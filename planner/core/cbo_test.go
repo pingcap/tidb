@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handler"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -47,7 +48,7 @@ func (s *testAnalyzeSuite) loadTableStats(fileName string, dom *domain.Domain) e
 	if err != nil {
 		return err
 	}
-	statsTbl := &statistics.JSONTable{}
+	statsTbl := &handler.JSONTable{}
 	err = json.Unmarshal(bytes, statsTbl)
 	if err != nil {
 		return err
@@ -105,7 +106,7 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handler.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"HashLeftJoin_8 7.49 root inner join, inner:TableReader_15, equal:[eq(test.t1.a, test.t2.a)]",
@@ -195,7 +196,7 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handler.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 
 	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
@@ -225,12 +226,12 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handler.DumpAll)
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handler.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
 		"HashAgg_9 2.00 root group by:col_1, funcs:count(col_0)",
@@ -567,12 +568,12 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	}
 	h := dom.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handler.DumpAll)
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handler.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	statistics.RatioOfPseudoEstimate = 10.0
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(

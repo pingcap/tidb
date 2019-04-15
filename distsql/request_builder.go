@@ -169,7 +169,7 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 
 // TableRangesToKVRanges converts table ranges to "KeyRange".
 func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
-	if fb == nil || fb.Hist() == nil {
+	if fb == nil || fb.Hist == nil {
 		return tableRangesToKVRangesWithoutSplit(tid, ranges)
 	}
 	krs := make([]kv.KeyRange, 0, len(ranges))
@@ -246,7 +246,7 @@ func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
 func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
-	if fb == nil || fb.Hist() == nil {
+	if fb == nil || fb.Hist == nil {
 		return indexRangesToKVWithoutSplit(sc, tid, idxID, ranges)
 	}
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
@@ -258,7 +258,7 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 		feedbackRanges = append(feedbackRanges, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
 	}
-	feedbackRanges = fb.Hist().SplitRange(sc, feedbackRanges, true)
+	feedbackRanges = fb.Hist.SplitRange(sc, feedbackRanges, true)
 	krs := make([]kv.KeyRange, 0, len(feedbackRanges))
 	for _, ran := range feedbackRanges {
 		low, high := ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()

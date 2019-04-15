@@ -65,11 +65,11 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		b.hist.Buckets[b.bucketIdx].Count++
 		b.hist.Buckets[b.bucketIdx].Repeat++
 	} else if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
-		// The bucket still have room to store a new item, update the bucket.
+		// The bucket still have room to store a new item, Update the bucket.
 		b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1)
 		b.hist.NDV++
 	} else {
-		// All buckets are full, we should merge buckets.
+		// All buckets are full, we should Merge buckets.
 		if b.bucketIdx+1 == b.numBuckets {
 			b.hist.mergeBuckets(int(b.bucketIdx))
 			b.valuesPerBucket *= 2
@@ -80,7 +80,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 				b.lastNumber = b.hist.Buckets[b.bucketIdx-1].Count
 			}
 		}
-		// We may merge buckets, so we should check it again.
+		// We may Merge buckets, so we should check it again.
 		if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
 			b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1)
 		} else {
@@ -144,7 +144,7 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
 		} else if totalCount-float64(lastCount) <= valuesPerBucket {
-			// The bucket still have room to store a new item, update the bucket.
+			// The bucket still have room to store a new item, Update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor))
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
