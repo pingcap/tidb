@@ -16,8 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"fmt"
-
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -149,7 +147,7 @@ func (s *DescScanner) getData(bo *Backoffer) error {
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 
 	for {
-		loc, err := s.snapshot.store.regionCache.LocateEndKey(bo, s.nextEndKey)
+		loc, err := s.snapshot.store.regionCache.LocateKey(bo, s.nextEndKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -161,13 +159,14 @@ func (s *DescScanner) getData(bo *Backoffer) error {
 		if len(reqStartKey) == 0 {
 			reqStartKey = loc.StartKey
 		}
-		fmt.Printf("req.start: %v, loc.end: %v \n=========\n\n", reqStartKey,s.nextEndKey)
 
 		req := &tikvrpc.Request{
 			Type: tikvrpc.CmdScan,
 			Scan: &pb.ScanRequest{
-				StartKey: reqStartKey,
-				EndKey:   s.nextEndKey,
+				// TiKV use range [end_key, start_key) for reverse scan.
+				// So the req.StartKey actually is the end_key.
+				StartKey: s.nextEndKey,
+				EndKey: reqStartKey,
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 				KeyOnly:  s.snapshot.keyOnly,
@@ -178,6 +177,7 @@ func (s *DescScanner) getData(bo *Backoffer) error {
 				NotFillCache: s.snapshot.notFillCache,
 			},
 		}
+
 		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
