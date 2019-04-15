@@ -102,6 +102,8 @@ var (
 			Help:      "Counter of TiDB keep alive.",
 		})
 
+	PlanCacheCounterTest = false
+
 	PlanCacheCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

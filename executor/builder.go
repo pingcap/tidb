@@ -872,9 +872,11 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 		return nil
 	}
 
-	metrics.ExecutorCounter.WithLabelValues("MergeJoinExec").Inc()
+	executorCounterMergeJoinExec.Inc()
 	return e
 }
+
+var executorCounterMergeJoinExec = metrics.ExecutorCounter.WithLabelValues("MergeJoinExec")
 
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executor {
 	leftHashKey := make([]*expression.Column, 0, len(v.EqualConditions))
@@ -938,12 +940,14 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
-	metrics.ExecutorCounter.WithLabelValues("HashJoinExec").Inc()
+	executorCountHashJoinExec.Inc()
 	if e.ctx.GetSessionVars().EnableRadixJoin {
 		return &RadixHashJoinExec{HashJoinExec: e}
 	}
 	return e
 }
+
+var executorCountHashJoinExec = metrics.ExecutorCounter.WithLabelValues("HashJoinExec")
 
 func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor {
 	src := b.build(v.Children()[0])
@@ -1021,9 +1025,11 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 		}
 	}
 
-	metrics.ExecutorCounter.WithLabelValues("HashAggExec").Inc()
+	executorCounterHashAggExec.Inc()
 	return e
 }
+
+var executorCounterHashAggExec = metrics.ExecutorCounter.WithLabelValues("HashAggExec")
 
 func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Executor {
 	src := b.build(v.Children()[0])
@@ -1049,9 +1055,11 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 		}
 	}
 
-	metrics.ExecutorCounter.WithLabelValues("StreamAggExec").Inc()
+	executorStreamAggExec.Inc()
 	return e
 }
+
+var executorStreamAggExec = metrics.ExecutorCounter.WithLabelValues("StreamAggExec")
 
 func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) Executor {
 	childExec := b.build(v.Children()[0])
@@ -1143,9 +1151,11 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	metrics.ExecutorCounter.WithLabelValues("SortExec").Inc()
+	executorCounterSortExec.Inc()
 	return &sortExec
 }
+
+var executorCounterSortExec = metrics.ExecutorCounter.WithLabelValues("SortExec")
 
 func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	childExec := b.build(v.Children()[0])
@@ -1157,12 +1167,14 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	metrics.ExecutorCounter.WithLabelValues("TopNExec").Inc()
+	executorCounterTopNExec.Inc()
 	return &TopNExec{
 		SortExec: sortExec,
 		limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
 	}
 }
+
+var executorCounterTopNExec = metrics.ExecutorCounter.WithLabelValues("TopNExec")
 
 func (b *executorBuilder) buildApply(apply *plannercore.PhysicalApply) *NestedLoopApplyExec {
 	v := apply.PhysicalJoin
@@ -1197,9 +1209,11 @@ func (b *executorBuilder) buildApply(apply *plannercore.PhysicalApply) *NestedLo
 		joiner:       tupleJoiner,
 		outerSchema:  apply.OuterSchema,
 	}
-	metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec").Inc()
+	executorCounterNestedLoopApplyExec.Inc()
 	return e
 }
+
+var executorCounterNestedLoopApplyExec = metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec")
 
 func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Executor {
 	childExec := b.build(v.Children()[0])
@@ -1608,9 +1622,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = e.newFirstChunk()
-	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
+	executorCounterIndexLookUpJoin.Inc()
 	return e
 }
+
+var executorCounterIndexLookUpJoin = metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin")
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
 // so the feedback may not be accurate.
@@ -1815,12 +1831,14 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 
 	ret.ranges = is.Ranges
-	metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor").Inc()
+	executorCounterIndexLookUpExecutor.Inc()
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
 }
+
+var executorCounterIndexLookUpExecutor = metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor")
 
 // dataReaderBuilder build an executor.
 // The executor can be used to read data in the ranges which are constructed by datums.

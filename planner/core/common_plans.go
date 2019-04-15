@@ -193,6 +193,8 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	return nil
 }
 
+var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
+
 func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) (Plan, error) {
 	var cacheKey kvcache.Key
 	sessionVars := ctx.GetSessionVars()
@@ -200,7 +202,11 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
-			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			if metrics.PlanCacheCounterTest {
+				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			} else {
+				planCacheCounter.Inc()
+			}
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {

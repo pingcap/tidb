@@ -302,7 +302,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 					zap.Uint64("conn", c.connID),
 					zap.Stringer("action type", action),
 					zap.Error(e))
-				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
+				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
 			}
 		}()
 	} else {
@@ -310,6 +310,8 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 	return errors.Trace(err)
 }
+
+var tikvSecondaryLockCleanupFailureCounterCommit = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
 
 // doActionOnBatches does action to batches in parallel.
 func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseCommitAction, batches []batchKeys) error {
@@ -666,6 +668,8 @@ func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) err
 	return errors.Trace(err)
 }
 
+var tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
+
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	defer func() {
@@ -680,7 +684,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
 				err := c.cleanupKeys(NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
 				if err != nil {
-					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
+					tikvSecondaryLockCleanupFailureCounterRollback.Inc()
 					logutil.Logger(ctx).Info("2PC cleanup failed",
 						zap.Error(err),
 						zap.Uint64("txnStartTS", c.startTS))

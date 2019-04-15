@@ -105,11 +105,16 @@ func (txn *tikvTxn) Reset() {
 	txn.us.Reset()
 }
 
+var (
+	tikvTxnCmdCountWithGet     = metrics.TiKVTxnCmdCounter.WithLabelValues("get")
+	tikvTxnCmdHistogramWithGet = metrics.TiKVTxnCmdHistogram.WithLabelValues("get")
+)
+
 // Get implements transaction interface.
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("get").Inc()
+	tikvTxnCmdCountWithGet.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds()) }()
 
 	ret, err := txn.us.Get(k)
 	if kv.IsErrNotFound(err) {
@@ -170,27 +175,39 @@ func (txn *tikvTxn) String() string {
 	return fmt.Sprintf("%d", txn.StartTS())
 }
 
+var (
+	tikvTxnCmdCountWithSeek     = metrics.TiKVTxnCmdCounter.WithLabelValues("seek")
+	tikvTxnCmdHistogramWithSeek = metrics.TiKVTxnCmdHistogram.WithLabelValues("seek")
+)
+
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("seek").Inc()
+	tikvTxnCmdCountWithSeek.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("seek").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithSeek.Observe(time.Since(start).Seconds()) }()
 
 	return txn.us.Iter(k, upperBound)
 }
 
+var (
+	tikvTxnCmdCountWithSeekReverse     = metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse")
+	tikvTxnCmdHistogramWithSeekReverse = metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse")
+)
+
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse").Inc()
+	tikvTxnCmdCountWithSeekReverse.Inc()
 	start := time.Now()
 	defer func() {
-		metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse").Observe(time.Since(start).Seconds())
+		tikvTxnCmdHistogramWithSeekReverse.Observe(time.Since(start).Seconds())
 	}()
 
 	return txn.us.IterReverse(k)
 }
 
+var tikvTxnCmdCountWithDelete = metrics.TiKVTxnCmdCounter.WithLabelValues("delete")
+
 func (txn *tikvTxn) Delete(k kv.Key) error {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("delete").Inc()
+	tikvTxnCmdCountWithDelete.Inc()
 
 	txn.dirty = true
 	return txn.us.Delete(k)
@@ -214,6 +231,12 @@ func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
 }
 
+var (
+	tikvTxnCmdCountWithSet        = metrics.TiKVTxnCmdCounter.WithLabelValues("set")
+	tikvTxnCmdCountWithCommit     = metrics.TiKVTxnCmdCounter.WithLabelValues("commit")
+	tikvTxnCmdHistogramWithCommit = metrics.TiKVTxnCmdHistogram.WithLabelValues("commit")
+)
+
 func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
@@ -226,10 +249,10 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	//	return errors.New("mock commit error")
 	// }
 
-	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
-	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
+	tikvTxnCmdCountWithSet.Add(float64(txn.setCnt))
+	tikvTxnCmdCountWithCommit.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
 
 	// connID is used for log.
 	var connID uint64
@@ -284,19 +307,24 @@ func (txn *tikvTxn) close() {
 	txn.valid = false
 }
 
+var (
+	tikvTxnCmdCountWithRollback     = metrics.TiKVTxnCmdCounter.WithLabelValues("rollback")
+	tikvTxnCmdHistogramWithLockKeys = metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys")
+)
+
 func (txn *tikvTxn) Rollback() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
 	logutil.Logger(context.Background()).Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
-	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
+	tikvTxnCmdCountWithRollback.Inc()
 
 	return nil
 }
 
 func (txn *tikvTxn) LockKeys(keys ...kv.Key) error {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys").Inc()
+	tikvTxnCmdHistogramWithLockKeys.Inc()
 	txn.mu.Lock()
 	for _, key := range keys {
 		txn.lockKeys = append(txn.lockKeys, key)
