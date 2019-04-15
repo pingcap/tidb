@@ -162,6 +162,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetMemTracker(e.ctx, "TableReaderDistSQLTracker").
 		Build()
 	if err != nil {
 		return nil, err
