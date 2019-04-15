@@ -229,7 +229,6 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 		}
 		return true, nil
 	})
-
 	return res, errors.Trace(err)
 }
 
@@ -293,7 +292,6 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 	}
 
 	var field []byte
-
 	for it.Valid() {
 		if !it.Key().HasPrefix(dataPrefix) {
 			break
@@ -314,7 +312,6 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 			return errors.Trace(err)
 		}
 	}
-
 	return nil
 }
 
