@@ -375,7 +375,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 		} else {
 			t, ok := h.StatsCache.Load().(StatsCache)[fb.PhysicalID]
 			if ok {
-				err = DumpFeedbackForIndex(h, fb, t)
+				err = h.DumpFeedbackForIndex(fb, t)
 			}
 		}
 		if err != nil {
@@ -944,4 +944,135 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	}
 	q.Expected = int64(expected)
 	return nil
+}
+
+func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Range, rangeCount float64, q *statistics.QueryFeedback) error {
+	lowIsNull := ran.LowVal[0].IsNull()
+	if q.Tp == statistics.IndexType {
+		lower, err := codec.EncodeKey(sc, nil, ran.LowVal[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		upper, err := codec.EncodeKey(sc, nil, ran.HighVal[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ran.LowVal[0].SetBytes(lower)
+		ran.HighVal[0].SetBytes(upper)
+	} else {
+		if !statistics.SupportColumnType(q.Hist.Tp) {
+			return nil
+		}
+		if ran.LowVal[0].Kind() == types.KindMinNotNull {
+			ran.LowVal[0] = statistics.GetMinValue(q.Hist.Tp)
+		}
+		if ran.HighVal[0].Kind() == types.KindMaxValue {
+			ran.HighVal[0] = statistics.GetMaxValue(q.Hist.Tp)
+		}
+	}
+	ranges := q.Hist.SplitRange(sc, []*ranger.Range{ran}, q.Tp == statistics.IndexType)
+	counts := make([]float64, 0, len(ranges))
+	sum := 0.0
+	for i, r := range ranges {
+		// Though after `SplitRange`, we may have ranges like `[l, r]`, we still use
+		// `betweenRowCount` to compute the estimation since the ranges of feedback are all in `[l, r)`
+		// form, that is to say, we ignore the exclusiveness of ranges from `SplitRange` and just use
+		// its result of boundary values.
+		count := q.Hist.BetweenRowCount(r.LowVal[0], r.HighVal[0])
+		// We have to include `NullCount` of histogram for [l, r) cases where l is null because `betweenRowCount`
+		// does not include null values of lower bound.
+		if i == 0 && lowIsNull {
+			count += float64(q.Hist.NullCount)
+		}
+		sum += count
+		counts = append(counts, count)
+	}
+	if sum <= 1 {
+		return nil
+	}
+	// We assume that each part contributes the same error rate.
+	adjustFactor := rangeCount / sum
+	for i, r := range ranges {
+		q.Feedback = append(q.Feedback, statistics.Feedback{Lower: &r.LowVal[0], Upper: &r.HighVal[0], Count: int64(counts[i] * adjustFactor)})
+	}
+	return errors.Trace(h.DumpFeedbackToKV(q))
+}
+
+// DumpFeedbackForIndex dumps the feedback for index.
+// For queries that contains both equality and range query, we will split them and Update accordingly.
+func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics.Table) error {
+	idx, ok := t.Indices[q.Hist.ID]
+	if !ok {
+		return nil
+	}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	if idx.CMSketch == nil || idx.StatsVer != statistics.Version1 {
+		return h.DumpFeedbackToKV(q)
+	}
+	ranges, err := q.DecodeToRanges(true)
+	if err != nil {
+		logutil.Logger(context.Background()).Debug("decode feedback ranges fail", zap.Error(err))
+		return nil
+	}
+	for i, ran := range ranges {
+		rangePosition := statistics.GetOrdinalOfRangeCond(sc, ran)
+		// only contains range or equality query
+		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
+			continue
+		}
+
+		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
+		if err != nil {
+			logutil.Logger(context.Background()).Debug("encode keys fail", zap.Error(err))
+			continue
+		}
+		equalityCount := float64(idx.CMSketch.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
+		rang := ranger.Range{
+			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
+			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+		}
+		colName := idx.Info.Columns[rangePosition].Name.L
+		var rangeCount float64
+		rangeFB := &statistics.QueryFeedback{PhysicalID: q.PhysicalID}
+		// prefer index stats over column stats
+		if idx := t.IndexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
+			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{&rang})
+			rangeFB.Tp, rangeFB.Hist = statistics.IndexType, &idx.Histogram
+		} else if col := t.ColumnByName(colName); col != nil && col.Histogram.Len() != 0 {
+			rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{&rang})
+			rangeFB.Tp, rangeFB.Hist = statistics.ColType, &col.Histogram
+		} else {
+			continue
+		}
+		if err != nil {
+			logutil.Logger(context.Background()).Debug("get row count by ranges fail", zap.Error(err))
+			continue
+		}
+
+		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.Count), float64(q.Feedback[i].Count))
+		value := types.NewBytesDatum(bytes)
+		q.Feedback[i] = statistics.Feedback{Lower: &value, Upper: &value, Count: int64(equalityCount)}
+		err = h.dumpRangeFeedback(sc, &rang, rangeCount, rangeFB)
+		if err != nil {
+			logutil.Logger(context.Background()).Debug("dump range feedback fail", zap.Error(err))
+			continue
+		}
+	}
+	return errors.Trace(h.DumpFeedbackToKV(q))
+}
+
+// minAdjustFactor is the minimum adjust factor of each index feedback.
+// We use it to avoid adjusting too much when the assumption of independence failed.
+const minAdjustFactor = 0.7
+
+// getNewCountForIndex adjust the estimated `eqCount` and `rangeCount` according to the real count.
+// We assumes that `eqCount` and `rangeCount` contribute the same error rate.
+func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (float64, float64) {
+	estimate := (eqCount / totalCount) * (rangeCount / totalCount) * totalCount
+	if estimate <= 1 {
+		return eqCount, rangeCount
+	}
+	adjustFactor := math.Sqrt(realCount / estimate)
+	adjustFactor = math.Max(adjustFactor, minAdjustFactor)
+	return eqCount * adjustFactor, rangeCount * adjustFactor
 }

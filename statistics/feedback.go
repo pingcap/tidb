@@ -171,7 +171,7 @@ func (q *QueryFeedback) DecodeIntValues() *QueryFeedback {
 	return nq
 }
 
-// StoreRanges stores the ranges for Update.
+// StoreRanges stores the ranges for update.
 func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 	q.Feedback = make([]Feedback, 0, len(ranges))
 	for _, ran := range ranges {
@@ -196,7 +196,7 @@ func (q *QueryFeedback) Actual() int64 {
 }
 
 // Update updates the query feedback. `startKey` is the start scan key of the partial result, used to find
-// the range for Update. `counts` is the scan counts of each range, used to Update the feedback count info.
+// the range for update. `counts` is the scan counts of each range, used to update the feedback count info.
 func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 	// Older version do not have the counts info.
 	if len(counts) == 0 {
@@ -399,7 +399,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 type bucket = Feedback
 
 // splitBucket firstly splits this "BucketFeedback" to "newNumBkts" new buckets,
-// calculates the count for each new bucket, Merge the new bucket whose count
+// calculates the count for each new bucket, merge the new bucket whose count
 // is smaller than "minBucketFraction*totalCount" with the next new bucket
 // until the last new bucket.
 func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originBucketCount float64) []bucket {
@@ -501,11 +501,11 @@ const (
 	maxBucketFraction = 1 / 10.0
 )
 
-// getBucketScore gets the score for Merge this bucket with previous one.
+// getBucketScore gets the score for merge this bucket with previous one.
 // TODO: We also need to consider the bucket hit count.
 func getBucketScore(bkts []bucket, totalCount float64, id int) bucketScore {
 	preCount, count := float64(bkts[id-1].Count), float64(bkts[id].Count)
-	// do not Merge if the result bucket is too large
+	// do not merge if the result bucket is too large
 	if (preCount + count) > maxBucketFraction*totalCount {
 		return bucketScore{id, math.MaxFloat64}
 	}
@@ -514,7 +514,7 @@ func getBucketScore(bkts []bucket, totalCount float64, id int) bucketScore {
 		return bucketScore{id, 0}
 	}
 	low, mid, high := bkts[id-1].Lower, bkts[id-1].Upper, bkts[id].Upper
-	// If we choose to Merge, err is the absolute estimate error for the previous bucket.
+	// If we choose to merge, err is the absolute estimate error for the previous bucket.
 	err := calcFraction4Datums(low, high, mid)*(preCount+count) - preCount
 	return bucketScore{id, math.Abs(err / (preCount + count))}
 }
@@ -529,7 +529,7 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []buck
 	}
 	bs := make(bucketScores, 0, len(bkts))
 	for i := 1; i < len(bkts); i++ {
-		// Do not Merge the newly created buckets.
+		// Do not merge the newly created buckets.
 		if !isNewBuckets[i] && !isNewBuckets[i-1] {
 			bs = append(bs, getBucketScore(bkts, totalCount, i))
 		}
@@ -640,7 +640,7 @@ type queryFeedback struct {
 func encodePKFeedback(q *QueryFeedback) (*queryFeedback, error) {
 	pb := &queryFeedback{}
 	for _, fb := range q.Feedback {
-		// There is no need to Update the point queries.
+		// There is no need to update the point queries.
 		if bytes.Compare(kv.Key(fb.Lower.GetBytes()).PrefixNext(), fb.Upper.GetBytes()) >= 0 {
 			continue
 		}
