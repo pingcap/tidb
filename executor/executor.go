@@ -600,6 +600,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		} else {
 			chk.AppendInt64(11, 1)
 		}
+		chk.AppendString(12, slow.Digest)
 		e.cursor++
 	}
 	return nil
@@ -891,7 +892,7 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if !e.selected[e.inputRow.Idx()] {
 				continue
 			}
-			if chk.NumRows() >= chk.Capacity() {
+			if chk.IsFull() {
 				return nil
 			}
 			chk.AppendRow(e.inputRow)
@@ -1358,6 +1359,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if s != nil {
+		// execute missed stmtID uses empty sql
+		sc.OriginalSQL = s.Text()
 	}
 	vars.StmtCtx = sc
 	return
