@@ -216,6 +216,7 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	return res, errors.Trace(err)
 }
 
+// HGetLastN gets latest N fields and values in hash.
 func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 	res := make([]HashPair, 0, num)
 	err := t.iterReverseHash(key, func(field []byte, value []byte) (bool, error) {
