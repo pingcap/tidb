@@ -56,8 +56,18 @@ type AnalyzeExec struct {
 	tasks []*analyzeTask
 }
 
+var (
+	// MaxSampleSize is the size of samples for once analyze.
+	// It's public for test.
+	MaxSampleSize = 10000
+	// RandSeed is the seed for randing package.
+	// It's public for test.
+	RandSeed = int64(1)
+
+	rander = rand.New(rand.NewSource(RandSeed))
+)
+
 const (
-	maxSampleSize        = 10000
 	maxRegionSampleSize  = 1000
 	maxSketchSize        = 10000
 	defaultCMSketchDepth = 5
@@ -399,7 +409,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
 			FMSketch:      statistics.NewFMSketch(maxSketchSize),
-			MaxSampleSize: maxSampleSize,
+			MaxSampleSize: int64(MaxSampleSize),
 			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
 		}
 	}
@@ -729,13 +739,13 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
 		e.rowCount++
-		randNum := rand.Int63n(int64(e.rowCount))
-		if randNum > int64(maxSampleSize) && e.sampCursor == maxSampleSize {
+		randNum := rander.Int63n(int64(e.rowCount))
+		if randNum > int64(MaxSampleSize) && e.sampCursor == int32(MaxSampleSize) {
 			continue
 		}
 
-		p := rand.Int63n(int64(maxSampleSize))
-		if e.sampCursor < maxSampleSize {
+		p := rander.Int63n(int64(MaxSampleSize))
+		if e.sampCursor < int32(MaxSampleSize) {
 			p = int64(e.sampCursor)
 			e.sampCursor++
 			for _, c := range collectors {
@@ -847,7 +857,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 
 		keys := make([]kv.Key, 0, task.SampSize)
 		for i := 0; i < int(task.SampSize); i++ {
-			randKey := rand.Int63n(maxRowID-minRowID) + minRowID
+			randKey := rander.Int63n(maxRowID-minRowID) + minRowID
 			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, randKey))
 		}
 
@@ -908,7 +918,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
 			FMSketch:      statistics.NewFMSketch(maxSketchSize),
-			MaxSampleSize: maxSampleSize,
+			MaxSampleSize: int64(MaxSampleSize),
 			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
 		}
 	}
@@ -950,6 +960,9 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 }
 
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
+	// To set rand seed, it's for unit test.
+	rander = rand.New(rand.NewSource(RandSeed))
+
 	// Only four rebuilds for sample task are allowed.
 	for buildCnt := 0; buildCnt < 5; buildCnt++ {
 		needRebuild, err := e.buildSampTask()
@@ -961,17 +974,17 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		}
 
 		fmt.Println("rowCount", e.rowCount)
-		// If sample region size is smaller than maxSampleSize * 2,
+		// If sample region size is smaller than MaxSampleSize * 2,
 		// then we trans the sample tasks to scan tasks.
-		if e.rowCount < maxSampleSize*2 {
+		if e.rowCount < uint64(MaxSampleSize)*2 {
 			for _, task := range e.sampTasks {
 				e.scanTasks = append(e.scanTasks, task.Location)
 			}
 			e.sampTasks = e.sampTasks[:0]
 		} else {
-			randPos := make([]uint64, 0, maxSampleSize+1)
-			for i := 0; i < maxSampleSize; i++ {
-				randPos = append(randPos, uint64(rand.Int63n(int64(e.rowCount))))
+			randPos := make([]uint64, 0, MaxSampleSize+1)
+			for i := 0; i < MaxSampleSize; i++ {
+				randPos = append(randPos, uint64(rander.Int63n(int64(e.rowCount))))
 			}
 			sort.Slice(randPos, func(i, j int) bool {
 				return randPos[i] < randPos[j]
