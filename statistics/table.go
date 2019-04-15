@@ -45,6 +45,9 @@ const (
 	outOfRangeBetweenRate = 100
 )
 
+// PseudoVersion means the pseudo statistics version is 0.
+const PseudoVersion uint64 = 0
+
 // Table represents statistics for a table.
 type Table struct {
 	HistColl
