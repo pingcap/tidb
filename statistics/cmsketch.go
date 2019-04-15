@@ -246,6 +246,17 @@ func (c *CMSketch) InsertBytesN(bytes []byte, n uint64) {
 // setValue sets the count for value that hashed into (h1, h2).
 func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	oriCount := c.queryHashValue(h1, h2)
+
+	if oriCount < 2*uint32((c.count/uint64(c.width))) && c.defaultValue > 0 {
+		// This case, we should also update c.defaultValue
+		// Set default value directly will result in more error, instead, update it by 5%.
+		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05)
+		if c.defaultValue == 0 {
+			// c.defaultValue never guess 0 since we are using a sampled data, instead, return a small number, like 1.
+			c.defaultValue = 1
+		}
+	}
+
 	c.count += uint64(count) - uint64(oriCount)
 	// let it overflow naturally
 	deltaCount := count - uint32(oriCount)
