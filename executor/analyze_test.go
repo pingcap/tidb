@@ -142,7 +142,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	splitKeys := generateTableSplitKeyForInt(tid, []int{600, 1200, 1800, 2400})
 	manipulateCluster(cluster, splitKeys)
 
-	tk.MustExec("analyze table t with 10 buckets")
+	tk.MustExec("analyze table t with 5 buckets")
 
 	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -152,16 +152,11 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	c.Assert(fmt.Sprintln(tbl), Equals,
 		"Table:37 Count:3000\n"+
 			"index:1 ndv:3000\n"+
-			"num: 303 lower_bound: 0 upper_bound: 248 repeats: 1\n"+
-			"num: 303 lower_bound: 251 upper_bound: 532 repeats: 1\n"+
-			"num: 303 lower_bound: 537 upper_bound: 855 repeats: 1\n"+
-			"num: 303 lower_bound: 856 upper_bound: 1162 repeats: 1\n"+
-			"num: 303 lower_bound: 1167 upper_bound: 1480 repeats: 1\n"+
-			"num: 303 lower_bound: 1482 upper_bound: 1791 repeats: 1\n"+
-			"num: 303 lower_bound: 1796 upper_bound: 2098 repeats: 1\n"+
-			"num: 303 lower_bound: 2100 upper_bound: 2403 repeats: 1\n"+
-			"num: 303 lower_bound: 2408 upper_bound: 2731 repeats: 1\n"+
-			"num: 273 lower_bound: 2732 upper_bound: 2992 repeats: 1\n")
+			"num: 603 lower_bound: 0 upper_bound: 530 repeats: 1\n"+
+			"num: 603 lower_bound: 532 upper_bound: 1127 repeats: 1\n"+
+			"num: 603 lower_bound: 1129 upper_bound: 1748 repeats: 1\n"+
+			"num: 603 lower_bound: 1751 upper_bound: 2386 repeats: 1\n"+
+			"num: 588 lower_bound: 2388 upper_bound: 2992 repeats: 1\n")
 
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
 }

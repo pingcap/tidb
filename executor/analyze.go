@@ -534,6 +534,7 @@ type AnalyzeFastExec struct {
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
 	defer func() {
 		e.wg.Done()
+		*err = errors.Trace(*err)
 		if *needRebuild == true {
 			close(e.sampLocs)
 			for _, ok := <-e.sampLocs; ok; _, ok = <-e.sampLocs {
@@ -561,13 +562,11 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		var rpcCtx *tikv.RPCContext
 		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region)
 		if *err != nil {
-			*err = errors.Trace(*err)
 			return
 		}
 		ctx := context.Background()
 		resp, *err = client.SendRequest(ctx, rpcCtx.Addr, req, tikv.ReadTimeoutMedium)
 		if *err != nil {
-			*err = errors.Trace(*err)
 			return
 		}
 		// TODO: check the region not_found
@@ -581,7 +580,6 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 				var cnt uint64
 				cnt, *err = strconv.ParseUint(prop.Value, 10, 64)
 				if *err != nil {
-					*err = errors.Trace(*err)
 					return
 				}
 				newCount := atomic.AddUint64(&e.rowCount, cnt)
@@ -622,8 +620,6 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	// If length of KeyLocation.StartKey is 0, then the start key is infinitesimal.
 	// If length of KeyLocation.EndKey is 0, then the end kety is infinity.
 	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, loc.EndKey) {
-		fmt.Println("startKey: ", loc.StartKey)
-		fmt.Println("endKey: ", loc.EndKey)
 		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 || len(loc.StartKey) == 0 || len(loc.EndKey) == 0 {
 			e.scanTasks = append(e.scanTasks, loc)
 			if len(loc.StartKey) == 0 {
@@ -659,6 +655,36 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	return false, nil
 }
 
+func decodeValues(sValue []byte, sKey kv.Key) (values []types.Datum, err error) {
+	lastPos := int64(0)
+	for len(sValue) > 0 {
+		var offsetDatum, val types.Datum
+		sValue, offsetDatum, err = codec.DecodeOne(sValue)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if offsetDatum.Kind() != types.KindInt64 {
+			return nil, errors.Errorf("Meeting invalid type when decode values")
+		}
+		offset := offsetDatum.GetInt64()
+		if offset != lastPos+1 {
+			var key int64
+			_, key, err = tablecodec.DecodeRecordKey(sKey)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			values = append(values, types.NewIntDatum(key))
+		}
+		sValue, val, err = codec.DecodeOne(sValue)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		values = append(values, val)
+		lastPos = offset
+	}
+	return
+}
+
 func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collectors []*statistics.SampleCollector) (err error) {
 	length := int32(len(kvMap))
 	newCursor := atomic.AddInt32(&e.sampCursor, length)
@@ -670,49 +696,20 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 	for sKey, sValue := range kvMap {
 		// Decode the cols value in order.
 		var values []types.Datum
-		lastPos := int64(0)
-		for len(sValue) > 0 {
-			var offsetDatum, val types.Datum
-			sValue, offsetDatum, err = codec.DecodeOne(sValue)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if offsetDatum.Kind() != types.KindInt64 {
-				return errors.Errorf("Meeting invalid type when decode values")
-			}
-			offset := offsetDatum.GetInt64()
-			if offset != lastPos+1 {
-				var key int64
-				_, key, err = tablecodec.DecodeRecordKey(kv.Key(sKey))
-				if err != nil {
-					return errors.Trace(err)
-				}
-				values = append(values, types.NewIntDatum(key))
-			}
-			sValue, val, err = codec.DecodeOne(sValue)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			values = append(values, val)
-			lastPos = offset
+		values, err = decodeValues(sValue, kv.Key(sKey))
+		if err != nil {
+			return errors.Trace(err)
 		}
-
 		// build statistic collector.
 		if hasPKInfo > 0 {
-			collectors[0].Samples = append(collectors[0].Samples, &statistics.SampleItem{})
-			collectors[0].Samples[samplePos].Ordinal = int(samplePos)
-			collectors[0].Samples[samplePos].Value = values[e.pkInfo.Offset]
+			collectors[0].Samples = append(collectors[0].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: values[e.pkInfo.Offset]})
 			collectors[0].TotalSize += int64(len(values[e.pkInfo.Offset].GetBytes()) - 1)
 		}
 		for j, colInfo := range e.colsInfo {
-			collectors[hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{})
-			collectors[hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
-			collectors[hasPKInfo+j].Samples[samplePos].Value = values[colInfo.Offset]
+			collectors[hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: values[colInfo.Offset]})
 			collectors[hasPKInfo].TotalSize += int64(len(values[colInfo.Offset].GetBytes()) - 1)
 		}
 		for j, idxInfo := range e.idxsInfo {
-			collectors[len(e.colsInfo)+hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{})
-			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
 			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
 			for _, idxCol := range idxInfo.Columns {
 				idxVals = append(idxVals, values[idxCol.Offset])
@@ -723,7 +720,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 				return errors.Trace(err)
 			}
 			v := types.NewBytesDatum(bytes)
-			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Value = v
+			collectors[len(e.colsInfo)+hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
 			collectors[len(e.colsInfo)+hasPKInfo+j].TotalSize += int64(len(v.GetBytes()) - 1)
 		}
 		samplePos++
@@ -756,33 +753,10 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 		}
 
 		// Decode the cols value in order.
-		sValue := iter.Value()
 		var values []types.Datum
-		lastPos := int64(0)
-		for len(sValue) > 0 {
-			var offsetDatum, val types.Datum
-			sValue, offsetDatum, err = codec.DecodeOne(sValue)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if offsetDatum.Kind() != types.KindInt64 {
-				return errors.Errorf("Meeting invalid type when decode values")
-			}
-			offset := offsetDatum.GetInt64()
-			if offset != lastPos+1 {
-				var key int64
-				_, key, err = tablecodec.DecodeRecordKey(iter.Key())
-				if err != nil {
-					return errors.Trace(err)
-				}
-				values = append(values, types.NewIntDatum(key))
-			}
-			sValue, val, err = codec.DecodeOne(sValue)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			values = append(values, val)
-			lastPos = offset
+		values, err = decodeValues(iter.Value(), iter.Key())
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		// build statistic collector.
@@ -833,11 +807,13 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 }
 
 func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *error, collectors []*statistics.SampleCollector) {
-	defer e.wg.Done()
+	defer func() {
+		e.wg.Done()
+		*err = errors.Trace(*err)
+	}()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
 	if *err != nil {
-		*err = errors.Trace(*err)
 		return
 	}
 	for i := rid; i < len(e.sampTasks); i += e.concurrency {
@@ -846,12 +822,10 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 		startKey, endKey := task.Location.StartKey, task.Location.EndKey
 		tableID, minRowID, *err = tablecodec.DecodeRecordKey(startKey)
 		if *err != nil {
-			*err = errors.Trace(*err)
 			return
 		}
 		_, maxRowID, *err = tablecodec.DecodeRecordKey(endKey)
 		if *err != nil {
-			*err = errors.Trace(*err)
 			return
 		}
 
@@ -864,13 +838,11 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 		var kvMap map[string][]byte
 		kvMap, *err = snapshot.BatchGet(keys)
 		if *err != nil {
-			*err = errors.Trace(*err)
 			return
 		}
 
 		*err = e.handleBatchGetResponse(kvMap, collectors)
 		if *err != nil {
-			*err = errors.Trace(*err)
 			return
 		}
 	}
@@ -916,7 +888,6 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	collectors := make([]*statistics.SampleCollector, length)
 	for i := range collectors {
 		collectors[i] = &statistics.SampleCollector{
-			IsMerger:      true,
 			FMSketch:      statistics.NewFMSketch(maxSketchSize),
 			MaxSampleSize: int64(MaxSampleSize),
 			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
@@ -962,6 +933,11 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
 	// To set rand seed, it's for unit test.
 	rander = rand.New(rand.NewSource(RandSeed))
+	if RandSeed != 1 {
+		// If RandSeed is changed by unit test, we must keep just one thread to ensure
+		// the samples are not different.
+		e.concurrency = 1
+	}
 
 	// Only four rebuilds for sample task are allowed.
 	for buildCnt := 0; buildCnt < 5; buildCnt++ {
@@ -973,7 +949,6 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 			continue
 		}
 
-		fmt.Println("rowCount", e.rowCount)
 		// If sample region size is smaller than MaxSampleSize * 2,
 		// then we trans the sample tasks to scan tasks.
 		if e.rowCount < uint64(MaxSampleSize)*2 {
@@ -996,11 +971,7 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		}
 
 		hists, cms, err = e.runTasks()
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-
-		return hists, cms, nil
+		return hists, cms, errors.Trace(err)
 	}
 	return nil, nil, errors.Errorf("Too many rebuilds for getting sample tasks.")
 }

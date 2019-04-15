@@ -95,97 +95,11 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 	return nil
 }
 
-// BuildColumn builds histogram from samples for column.
-func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
-	count := collector.Count
-	ndv := collector.FMSketch.NDV()
+func buildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
 	if ndv > count {
 		ndv = count
 	}
 	if count == 0 || len(collector.Samples) == 0 {
-		return NewHistogram(id, ndv, collector.NullCount, 0, tp, 0, collector.TotalSize), nil
-	}
-	sc := ctx.GetSessionVars().StmtCtx
-	samples := collector.Samples
-	err := SortSampleItems(sc, samples)
-	if err != nil {
-		return nil, err
-	}
-	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets), collector.TotalSize)
-
-	sampleNum := int64(len(samples))
-	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
-	sampleFactor := float64(count) / float64(len(samples))
-	// Since bucket count is increased by sampleFactor, so the actual max values per bucket is
-	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
-	// thus we need to add a sampleFactor to avoid building too many buckets.
-	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
-	ndvFactor := float64(count) / float64(hg.NDV)
-	if ndvFactor > sampleFactor {
-		ndvFactor = sampleFactor
-	}
-	bucketIdx := 0
-	var lastCount int64
-	var corrXYSum float64
-	hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
-	for i := int64(1); i < sampleNum; i++ {
-		corrXYSum += float64(i) * float64(samples[i].Ordinal)
-		cmp, err := hg.GetUpper(bucketIdx).CompareDatum(sc, &samples[i].Value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		totalCount := float64(i+1) * sampleFactor
-		if cmp == 0 {
-			// The new item has the same value as current bucket value, to ensure that
-			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
-			// valuesPerBucket.
-			hg.Buckets[bucketIdx].Count = int64(totalCount)
-			if float64(hg.Buckets[bucketIdx].Repeat) == ndvFactor {
-				hg.Buckets[bucketIdx].Repeat = int64(2 * sampleFactor)
-			} else {
-				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
-			}
-		} else if totalCount-float64(lastCount) <= valuesPerBucket {
-			// The bucket still have room to store a new item, update the bucket.
-			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor))
-		} else {
-			lastCount = hg.Buckets[bucketIdx].Count
-			// The bucket is full, store the item in the next bucket.
-			bucketIdx++
-			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
-		}
-	}
-	// Compute column order correlation with handle.
-	if sampleNum == 1 {
-		hg.Correlation = 1
-		return hg, nil
-	}
-	// X means the ordinal of the item in original sequence, Y means the oridnal of the item in the
-	// sorted sequence, we know that X and Y value sets are both:
-	// 0, 1, ..., sampleNum-1
-	// we can simply compute sum(X) = sum(Y) =
-	//    (sampleNum-1)*sampleNum / 2
-	// and sum(X^2) = sum(Y^2) =
-	//    (sampleNum-1)*sampleNum*(2*sampleNum-1) / 6
-	// We use "Pearson correlation coefficient" to compute the order correlation of columns,
-	// the formula is based on https://en.wikipedia.org/wiki/Pearson_correlation_coefficient.
-	// Note that (itemsCount*corrX2Sum - corrXSum*corrXSum) would never be zero when sampleNum is larger than 1.
-	itemsCount := float64(sampleNum)
-	corrXSum := (itemsCount - 1) * itemsCount / 2.0
-	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
-	hg.Correlation = (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
-	return hg, nil
-}
-
-// BuildColumnWithSamples builds histogram from samples for column.
-// It was used in that collector.Count is not the entire count but the sample count.
-func BuildColumnWithSamples(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64) (*Histogram, error) {
-	ndv := collector.FMSketch.NDV() * int64(math.Round(float64(count)/float64(collector.Count)))
-	nullCount := collector.NullCount * int64(math.Round(float64(count)/float64(collector.Count)))
-	if ndv > count {
-		ndv = count
-	}
-	if count == 0 || collector.Count == 0 {
 		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
@@ -258,6 +172,19 @@ func BuildColumnWithSamples(ctx sessionctx.Context, numBuckets, id int64, collec
 	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
 	hg.Correlation = (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
 	return hg, nil
+}
+
+// BuildColumn builds histogram from samples for column.
+func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
+	return buildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
+}
+
+// BuildColumnWithSamples builds histogram from samples for column.
+// It was used in that collector.Count is not the entire count but the sample count.
+func BuildColumnWithSamples(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64) (*Histogram, error) {
+	ndv := collector.FMSketch.NDV() * int64(math.Round(float64(count)/float64(collector.Count)))
+	nullCount := collector.NullCount * int64(math.Round(float64(count)/float64(collector.Count)))
+	return buildColumnHist(ctx, numBuckets, id, collector, tp, count, ndv, nullCount)
 }
 
 // AnalyzeResult is used to represent analyze result.
