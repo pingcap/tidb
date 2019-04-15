@@ -487,7 +487,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 	return totalCount, nil
 }
 
-// GetPseudoRowCountByColumnRanges calcualte the row count by the ranges if there's no statistics information for this column.
+// GetPseudoRowCountByColumnRanges calculate the row count by the ranges if there's no statistics information for this column.
 func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
 	var rowCount float64
 	var err error
