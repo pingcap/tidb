@@ -592,6 +592,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 
 	dbt.mustExec("create database if not exists test;")
 	dbt.mustExec("use test;")
+	dbt.mustExec("set @@tidb_enable_table_partition = 1")
 	dbt.mustExec(` create table t1 (id int KEY)
 		partition by range (id) (
 		PARTITION p0 VALUES LESS THAN (3),
