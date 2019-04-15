@@ -148,7 +148,20 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	_, err = tk.Exec("create global binding for select * from t where i>99 using select * from t use index(index_t) where i>99")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+
+	hash := parser.DigestHash("select * from t where i>100")
+	bindData := s.domain.BindHandle().Get()[hash]
+	c.Check(bindData, NotNil)
+	c.Check(len(bindData), Equals, 1)
+	c.Check(bindData[0].OriginalSQL, Equals, "select * from t where i > ?")
+	c.Check(bindData[0].BindSQL, Equals, "select * from t use index(index_t) where i>99")
+	c.Check(bindData[0].Db, Equals, "test")
+	c.Check(bindData[0].Status, Equals, "using")
+	c.Check(bindData[0].Charset, NotNil)
+	c.Check(bindData[0].Collation, NotNil)
+	c.Check(bindData[0].CreateTime, NotNil)
+	c.Check(bindData[0].UpdateTime, NotNil)
 
 	bindHandle := bindinfo.NewHandle(tk.Se)
 	bindCacheUpdater := bindinfo.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser)
@@ -156,12 +169,11 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(bindHandle.Get()), Equals, 1)
 
-	hash := parser.DigestHash("select * from t where i>100")
-	bindData := bindHandle.Get()[hash]
+	bindData = bindHandle.Get()[hash]
 	c.Check(bindData, NotNil)
 	c.Check(len(bindData), Equals, 1)
 	c.Check(bindData[0].OriginalSQL, Equals, "select * from t where i > ?")
-	c.Check(bindData[0].BindSQL, Equals, "select * from t use index(index_t) where i>100")
+	c.Check(bindData[0].BindSQL, Equals, "select * from t use index(index_t) where i>99")
 	c.Check(bindData[0].Db, Equals, "test")
 	c.Check(bindData[0].Status, Equals, "using")
 	c.Check(bindData[0].Charset, NotNil)

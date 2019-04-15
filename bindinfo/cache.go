@@ -17,12 +17,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/mysql"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/terror"
@@ -52,8 +52,9 @@ type cache map[string][]*bindMeta
 // Handle holds an atomic cache.
 type Handle struct {
 	atomic.Value
-	lock *sync.Mutex
-	ctx  sessionctx.Context
+	lock             *sync.Mutex
+	ctx              sessionctx.Context
+	BindCacheUpdater *BindCacheUpdater
 }
 
 // BindCacheUpdater is used to update the global cache.
@@ -63,6 +64,7 @@ type Handle struct {
 type BindCacheUpdater struct {
 	ctx sessionctx.Context
 
+	lock           *sync.Mutex
 	parser         *parser.Parser
 	lastUpdateTime types.Time
 	globalHandle   *Handle
@@ -86,6 +88,7 @@ type bindRecord struct {
 func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.Parser) *BindCacheUpdater {
 	return &BindCacheUpdater{
 		ctx:          ctx,
+		lock:         &sync.Mutex{},
 		parser:       parser,
 		globalHandle: handle,
 	}
@@ -117,7 +120,7 @@ func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
 		return err
 	}
 	for _, row := range rows {
-		record := newBindMeta(row)
+		record := newBindRecord(row)
 		err = bc.appendNode(record, bindCacheUpdater.parser)
 		if err != nil {
 			return err
@@ -132,6 +135,8 @@ func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc cache) error {
 // Update updates the BindCacheUpdater's cache.
 // The `fullLoad` is true only when tidb first startup, otherwise it is false.
 func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
+	bindCacheUpdater.lock.Lock()
+	defer bindCacheUpdater.lock.Unlock()
 	var sql string
 	bc := bindCacheUpdater.globalHandle.Get()
 	newBc := make(map[string][]*bindMeta, len(bc))
@@ -153,7 +158,38 @@ func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	return nil
 }
 
-func newBindMeta(row chunk.Row) *bindRecord {
+func (bindCacheUpdater *BindCacheUpdater) updateOneBind(originSQL, bindSQL, defaultDB string, createTs, updateTs types.Time, status, charset, collation string) error {
+	bindCacheUpdater.lock.Lock()
+	defer bindCacheUpdater.lock.Unlock()
+
+	record := &bindRecord{
+		OriginalSQL: originSQL,
+		BindSQL:     bindSQL,
+		Db:          defaultDB,
+		Status:      status,
+		CreateTime:  createTs,
+		UpdateTime:  updateTs,
+		Charset:     charset,
+		Collation:   collation,
+	}
+
+	bc := bindCacheUpdater.globalHandle.Get()
+	newBc := make(map[string][]*bindMeta, len(bc))
+	for hash, bindDataArr := range bc {
+		newBc[hash] = append(newBc[hash], bindDataArr...)
+	}
+	bc = newBc
+	var err error
+	err = bc.appendNode(record, bindCacheUpdater.parser)
+	if err != nil {
+		return err
+	}
+	bindCacheUpdater.globalHandle.Store(newBc)
+
+	return nil
+}
+
+func newBindRecord(row chunk.Row) *bindRecord {
 	return &bindRecord{
 		OriginalSQL: row.GetString(0),
 		BindSQL:     row.GetString(1),
@@ -170,7 +206,7 @@ func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) err
 	hash := parser.DigestHash(newBindRecord.OriginalSQL)
 	if bindArr, ok := b[hash]; ok {
 		for idx, v := range bindArr {
-			if v.OriginalSQL == newBindRecord.OriginalSQL && v.Db == newBindRecord.Db {
+			if v.OriginalSQL == newBindRecord.OriginalSQL && v.Db == newBindRecord.Db && newBindRecord.UpdateTime.Compare(v.UpdateTime) > 0 {
 				b[hash] = append(b[hash][:idx], b[hash][idx+1:]...)
 				if len(b[hash]) == 0 {
 					delete(b, hash)
@@ -199,7 +235,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 	h.lock.Lock()
 	defer h.lock.Unlock()
 
-	ctx := context.TODO()
+	ctx := context.TODO() //we need a new ctx to execute a transcation
 	exec, _ := h.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(ctx, "BEGIN")
 	if err != nil {
@@ -214,48 +250,32 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 		}
 	}()
 
-	sql := fmt.Sprintf("SELECT _tidb_rowid,status FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
+	sql := fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
 		originSQL, defaultDB)
-	rs, err := exec.Execute(ctx, sql)
+	_, err = exec.Execute(ctx, sql)
 	if err != nil {
 		return err
 	}
-	if len(rs) >= 1 {
-		chkBatch := rs[0].NewRecordBatch()
-		for {
-			err = rs[0].Next(context.TODO(), chkBatch)
-			if err != nil {
-				return err
-			}
-			if chkBatch.NumRows() == 0 {
-				break
-			}
-			it := chunk.NewIterator4Chunk(chkBatch.Chunk)
-			for row := it.Begin(); row != it.End(); row = it.Next() {
-				rowID := row.GetInt64(0)
-				status := row.GetString(1)
-				if status == using {
-					return errors.New("origin sql already has binding sql")
-				}
-				sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE _tidb_rowid=%d", rowID)
-				_, err = exec.Execute(ctx, sql)
-				if err != nil {
-					return err
-				}
-			}
-		}
-	}
-
-	txn, err := h.ctx.Txn(true)
+	txn, err := h.ctx.Txn(true) //active a new txn to get startTs as bind's createTs.
 	if err != nil {
 		return err
 	}
-	ts := getTimeStringWithoutZone(oracle.GetTimeFromTS(txn.StartTS()))
+	ts := oracle.GetTimeFromTS(txn.StartTS())
+	tsStr := getTimeStringWithoutZone(ts)
 	bindSQL = getEscapeCharacter(bindSQL)
 	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
-		originSQL, bindSQL, defaultDB, using, ts, ts, charset, collation)
+		originSQL, bindSQL, defaultDB, using, tsStr, tsStr, charset, collation)
 	_, err = exec.Execute(ctx, sql)
-	return err
+	if err != nil {
+		return err
+	}
+
+	sqlTime := types.Time{
+		Time: types.FromGoTime(ts),
+		Type: mysql.TypeTimestamp,
+		Fsp:  3,
+	}
+	return h.BindCacheUpdater.updateOneBind(originSQL, bindSQL, defaultDB, sqlTime, sqlTime, using, charset, collation)
 }
 
 func getTimeStringWithoutZone(ts time.Time) string {

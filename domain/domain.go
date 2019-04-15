@@ -796,6 +796,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 	do.bindHandle = bindinfo.NewHandle(ctx)
 
 	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser)
+	do.BindHandle().BindCacheUpdater = bindCacheUpdater
 	err := bindCacheUpdater.Update(true)
 	if err != nil {
 		return err
