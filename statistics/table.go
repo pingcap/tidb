@@ -105,13 +105,13 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSke
 	selSQL2 := fmt.Sprintf("select value_id, content from mysql.stats_topnstore where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	topnrows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL2)
 	if err != nil {
-		// TODO: [cms-topn] deal witl broken data.
+		return nil, errors.Trace(err)
 	}
 	topn := make([][]byte, len(topnrows))
 	for i := range topnrows {
 		p := topnrows[i].GetInt64(0)
 		if p > int64(len(topnrows)) {
-			// TODO: [cms-topn] deal witl broken data.
+			return nil, errors.Trace()
 		}
 		topn[p] = topnrows[i].GetBytes(1)
 	}

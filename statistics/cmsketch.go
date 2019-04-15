@@ -295,7 +295,6 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 }
 
 func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
-	// [TODO/cms-topn]: better estimate.
 	vals := make([]uint32, c.depth)
 	min := uint32(math.MaxUint32)
 	for i := range c.table {
