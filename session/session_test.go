@@ -2348,6 +2348,44 @@ func (s *testSessionSuite) TestSetGroupConcatMaxLen(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testSessionSuite) TestUpdatePrivilege(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (id int);")
+	tk.MustExec("create table t2 (id int);")
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustExec("insert into t2 values (2);")
+	tk.MustExec("create user xxx;")
+	tk.MustExec("grant all on test.t1 to xxx;")
+	tk.MustExec("grant select on test.t2 to xxx;")
+	tk.MustExec("flush privileges;")
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"},
+		[]byte(""),
+		[]byte("")), IsTrue)
+
+	_, err := tk1.Exec("update t2 set id = 666 where id = 1;")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+
+	// Cover a bug that t1 and t2 both require update privilege.
+	// In fact, the privlege check for t1 should be update, and for t2 should be select.
+	_, err = tk1.Exec("update t1,t2 set t1.id = t2.id;")
+	c.Assert(err, IsNil)
+
+	// Fix issue 8911
+	tk.MustExec("create database weperk")
+	tk.MustExec("use weperk")
+	tk.MustExec("create table tb_wehub_server (id int, active_count int, used_count int)")
+	tk.MustExec("create user 'weperk'")
+	tk.MustExec("grant all privileges on weperk.* to 'weperk'@'%'")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "weperk", Hostname: "%"},
+		[]byte(""), []byte("")), IsTrue)
+	tk1.MustExec("use weperk")
+	tk1.MustExec("update tb_wehub_server a set a.active_count=a.active_count+1,a.used_count=a.used_count+1 where id=1")
+}
+
 func (s *testSessionSuite) TestTxnGoString(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists gostr;")
