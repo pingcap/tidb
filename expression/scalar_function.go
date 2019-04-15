@@ -165,6 +165,20 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 	return false
 }
 
+// ConstItem implements Expression interface.
+func (sf *ScalarFunction) ConstItem() bool {
+	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
+	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
+		return false
+	}
+	for _, arg := range sf.GetArgs() {
+		if !arg.ConstItem() {
+			return false
+		}
+	}
+	return true
+}
+
 // Decorrelate implements Expression interface.
 func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	for i, arg := range sf.GetArgs() {
