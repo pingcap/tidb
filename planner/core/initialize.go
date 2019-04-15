@@ -274,7 +274,7 @@ func (p PhysicalMergeJoin) init(ctx sessionctx.Context, stats *property.StatsInf
 	return &p
 }
 
-func (base basePhysicalAgg) init(ctx sessionctx.Context, stats *property.StatsInfo) *basePhysicalAgg {
+func (base basePhysicalAgg) Init(ctx sessionctx.Context, stats *property.StatsInfo) *basePhysicalAgg {
 	base.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeHashAgg, &base)
 	base.stats = stats
 	return &base
