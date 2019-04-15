@@ -469,6 +469,12 @@ func (s *testEvaluatorSuite) TestJSONContainsPath(c *C) {
 		// Tests invalid json document
 		{[]interface{}{invalidJSON, json.ContainsPathOne, "$.a"}, nil, false},
 		{[]interface{}{invalidJSON, json.ContainsPathAll, "$.a"}, nil, false},
+		// Tests compatible contains path
+		{[]interface{}{jsonString, "ONE", "$.c.d"}, 1, true},
+		{[]interface{}{jsonString, "ALL", "$.c.d"}, 1, true},
+		{[]interface{}{jsonString, "One", "$.a", "$.e"}, 1, true},
+		{[]interface{}{jsonString, "aLl", "$.a", "$.e"}, 0, true},
+		{[]interface{}{jsonString, "test", "$.a"}, nil, false},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.input...)
@@ -589,9 +595,10 @@ func (s *testEvaluatorSuite) TestJSONKeys(c *C) {
 		{[]interface{}{`{"a": {"c": 3}, "b": 2}`}, `["a", "b"]`, true},
 
 		// Tests with path expression
-		{[]interface{}{`{"a": 1}`, "$.a"}, nil, false},
+		{[]interface{}{`{"a": 1}`, "$.a"}, nil, true},
 		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a"}, `["c"]`, true},
-		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a.c"}, nil, false},
+		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a.c"}, nil, true},
+		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, nil}, nil, true},
 
 		// Tests path expression contains any asterisk
 		{[]interface{}{`{}`, "$.*"}, nil, false},

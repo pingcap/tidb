@@ -887,3 +887,102 @@ func BenchmarkOptimize(b *testing.B) {
 		})
 	}
 }
+
+func (s *testAnalyzeSuite) TestIssue9562(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a bigint, b bigint, c bigint)")
+	tk.MustExec("create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))")
+
+	tk.MustQuery("explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c;").Check(testkit.Rows(
+		"IndexJoin_9 12475.01 root inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
+		"├─TableReader_12 9980.01 root data:Selection_11",
+		"│ └─Selection_11 9980.01 cop not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─IndexReader_8 0.00 root index:Selection_7",
+		"  └─Selection_7 0.00 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+		"    └─IndexScan_6 10.00 cop table:t2, index:a, b, c, range: decided by [test.t1.a test.t1.c], keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
+	tk.MustQuery("explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null").Check(testkit.Rows(
+		"Projection_7 0.00 root t1.a, t1.b, t2.a, t2.b",
+		"└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, equal:[eq(t2.b, t1.b)]",
+		"  ├─TableReader_12 0.00 root data:Selection_11",
+		"  │ └─Selection_11 0.00 cop isnull(t2.b), not(isnull(t2.b))",
+		"  │   └─TableScan_10 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─TableReader_15 9990.00 root data:Selection_14",
+		"    └─Selection_14 9990.00 cop not(isnull(t1.b))",
+		"      └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+}
+
+func (s *testAnalyzeSuite) TestIssue9805(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`
+		create table t1 (
+			id bigint primary key,
+			a bigint not null,
+			b varchar(100) not null,
+			c varchar(10) not null,
+			d bigint as (a % 30) not null,
+			key (d, b, c)
+		)
+	`)
+	tk.MustExec(`
+		create table t2 (
+			id varchar(50) primary key,
+			a varchar(100) unique,
+			b datetime,
+			c varchar(45),
+			d int not null unique auto_increment
+		)
+	`)
+	rs := tk.MustQuery("explain analyze select t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
+
+	// Expected output is like:
+	//
+	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
+	// | id                             | count    | task | operator info                                                                    | execution info                   |
+	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
+	// | Projection_9                   | 10.00    | root | test.t1.id, test.t2.a                                                            | time:203.355µs, loops:1, rows:0  |
+	// | └─IndexJoin_13                 | 10.00    | root | inner join, inner:IndexLookUp_12, outer key:test.t1.a, inner key:test.t2.d       | time:199.633µs, loops:1, rows:0  |
+	// |   ├─Projection_16              | 8.00     | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                       | time:164.587µs, loops:1, rows:0  |
+	// |   │ └─Selection_17             | 8.00     | root | eq(cast(mod(test.t1.a, 30)), 4)                                                  | time:157.768µs, loops:1, rows:0  |
+	// |   │   └─TableReader_20         | 10.00    | root | data:Selection_19                                                                | time:154.61µs, loops:1, rows:0   |
+	// |   │     └─Selection_19         | 10.00    | cop  | eq(test.t1.b, "t2")                                                              | time:28.824µs, loops:1, rows:0   |
+	// |   │       └─TableScan_18       | 10000.00 | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                      | time:27.654µs, loops:1, rows:0   |
+	// |   └─IndexLookUp_12             | 10.00    | root |                                                                                  | time:0ns, loops:0, rows:0        |
+	// |     ├─IndexScan_10             | 10.00    | cop  | table:t2, index:d, range: decided by [test.t1.a], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        |
+	// |     └─TableScan_11             | 10.00    | cop  | table:t2, keep order:false, stats:pseudo                                         | time:0ns, loops:0, rows:0        |
+	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
+	// 10 rows in set (0.00 sec)
+	//
+	c.Assert(rs.Rows(), HasLen, 10)
+	hasIndexLookUp12 := false
+	for _, row := range rs.Rows() {
+		c.Assert(row, HasLen, 5)
+		if strings.HasSuffix(row[0].(string), "IndexLookUp_12") {
+			hasIndexLookUp12 = true
+			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
+		}
+	}
+	c.Assert(hasIndexLookUp12, IsTrue)
+}

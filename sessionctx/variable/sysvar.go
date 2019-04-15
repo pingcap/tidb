@@ -85,6 +85,7 @@ var (
 	ErrTruncatedWrongValue         = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 	ErrMaxPreparedStmtCountReached = terror.ClassVariable.New(CodeMaxPreparedStmtCountReached, mysql.MySQLErrName[mysql.ErrMaxPreparedStmtCountReached])
 	ErrUnsupportedValueForVar      = terror.ClassVariable.New(CodeUnknownStatusVar, "variable '%s' does not yet support value: %s")
+	ErrUnsupportedIsolationLevel   = terror.ClassVariable.New(CodeUnknownStatusVar, "The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
 )
 
 func init() {
@@ -433,7 +434,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_bin_trust_function_creators", "OFF"},
 	{ScopeNone, "innodb_write_io_threads", "4"},
 	{ScopeGlobal, "mysql_native_password_proxy_users", ""},
-	{ScopeGlobal, "read_only", "OFF"},
+	{ScopeGlobal, serverReadOnly, "0"},
 	{ScopeNone, "large_page_size", "0"},
 	{ScopeNone, "table_open_cache_instances", "1"},
 	{ScopeGlobal, "innodb_stats_persistent", "ON"},
@@ -672,6 +673,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBConstraintCheckInPlace, BoolToIntStr(DefTiDBConstraintCheckInPlace)},
 	{ScopeSession, TiDBOptimizerSelectivityLevel, strconv.Itoa(DefTiDBOptimizerSelectivityLevel)},
 	{ScopeGlobal | ScopeSession, TiDBEnableWindowFunction, BoolToIntStr(DefEnableWindowFunction)},
+	{ScopeGlobal | ScopeSession, TiDBEnableFastAnalyze, BoolToIntStr(DefTiDBUseFastAnalyze)},
+	{ScopeGlobal | ScopeSession, TiDBSkipIsolationLevelCheck, BoolToIntStr(DefTiDBSkipIsolationLevelCheck)},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},

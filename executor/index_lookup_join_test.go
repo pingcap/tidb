@@ -53,9 +53,9 @@ func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
 		"│ └─TableReader_15 9990.00 root data:Selection_14",
 		"│   └─Selection_14 9990.00 cop not(isnull(test.t1.a))",
 		"│     └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─UnionScan_10 10.00 root ",
-		"  └─TableReader_9 10.00 root data:TableScan_8",
-		"    └─TableScan_8 10.00 cop table:t2, range: decided by [test.t1.a], keep order:false, stats:pseudo",
+		"└─UnionScan_10 1.00 root ",
+		"  └─TableReader_9 1.00 root data:TableScan_8",
+		"    └─TableScan_8 1.00 cop table:t2, range: decided by [test.t1.a], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ * from t1 join t2 on t1.a = t2.id").Check(testkit.Rows(
 		"2 2 2 2 2",

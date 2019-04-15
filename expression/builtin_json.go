@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -563,6 +565,7 @@ func (b *builtinJSONContainsPathSig) evalInt(row chunk.Row) (res int64, isNull b
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	containType = strings.ToLower(containType)
 	if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
 		return res, true, json.ErrInvalidJSONContainsPathType
 	}
@@ -851,7 +854,7 @@ func (b *builtinJSONQuoteSig) Clone() builtinFunc {
 
 func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
 	DisableParseJSONFlag4Expr(args[0])
@@ -864,7 +867,7 @@ func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (res string, isNull bool
 	var j json.BinaryJSON
 	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return "", isNull, err
 	}
 	return j.Quote(), false, nil
 }
@@ -1002,7 +1005,7 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(row chunk.Row) (res json.BinaryJSON, 
 		return res, true, nil
 	}
 	if res.TypeCode != json.TypeCodeObject {
-		return res, true, json.ErrInvalidJSONData
+		return res, true, nil
 	}
 
 	return res.GetKeys(), false, nil

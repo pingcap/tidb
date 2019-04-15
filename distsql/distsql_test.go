@@ -21,7 +21,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -344,6 +343,9 @@ func (r *mockResultSubset) GetExecDetails() *execdetails.ExecDetails {
 	return &execdetails.ExecDetails{}
 }
 
+// MemSize implements kv.ResultSubset interface.
+func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
+
 func populateBuffer() []byte {
 	numCols := 4
 	numRows := 1024
@@ -369,7 +371,7 @@ func mockReadRowsData(buffer []byte, colTypes []*types.FieldType, chk *chunk.Chu
 		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
 			buffer, err = decoder.DecodeOne(buffer, colOrdinal, colTypes[colOrdinal])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}

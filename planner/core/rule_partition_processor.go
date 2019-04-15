@@ -75,7 +75,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 		for i, child := range children {
 			newChild, err := s.rewriteDataSource(child)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			children[i] = newChild
 		}
@@ -113,7 +113,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// If the select condition would never be satisified, prune that partition.
 		pruned, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if pruned {
 			continue
@@ -189,7 +189,7 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 	accessConds := ranger.ExtractAccessConditionsForColumn(conds, partCol.UniqueID)
 	r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType, types.UnspecifiedLength)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	return len(r) == 0, nil
 }

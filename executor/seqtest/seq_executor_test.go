@@ -222,11 +222,11 @@ func (s *seqTestSuite) TestShow(c *C) {
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
 		"t1", "CREATE TABLE `t1` (\n" +
-			"  `c1` tinyint(3) UNSIGNED DEFAULT NULL,\n" +
-			"  `c2` smallint(5) UNSIGNED DEFAULT NULL,\n" +
-			"  `c3` mediumint(8) UNSIGNED DEFAULT NULL,\n" +
-			"  `c4` int(10) UNSIGNED DEFAULT NULL,\n" +
-			"  `c5` bigint(20) UNSIGNED DEFAULT NULL\n" +
+			"  `c1` tinyint(3) unsigned DEFAULT NULL,\n" +
+			"  `c2` smallint(5) unsigned DEFAULT NULL,\n" +
+			"  `c3` mediumint(8) unsigned DEFAULT NULL,\n" +
+			"  `c4` int(10) unsigned DEFAULT NULL,\n" +
+			"  `c5` bigint(20) unsigned DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
@@ -344,7 +344,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`drop table if exists show_test_comment`)
 	tk.MustExec(`create table show_test_comment (id int not null default 0 comment "show_test_comment_id")`)
 	tk.MustQuery(`show full columns from show_test_comment`).Check(testutil.RowsWithSep("|",
-		"id|int(11)|binary|NO||0||select,insert,update,references|show_test_comment_id",
+		"id|int(11)|<nil>|NO||0||select,insert,update,references|show_test_comment_id",
 	))
 
 	// Test show create table with AUTO_INCREMENT option
@@ -557,7 +557,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) NOT NULL,\n"+
-			"  `val` tinyint(10) UNSIGNED ZEROFILL DEFAULT NULL,\n"+
+			"  `val` tinyint(10) unsigned zerofill DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 

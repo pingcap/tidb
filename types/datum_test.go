@@ -40,9 +40,13 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 	}
 	for _, val := range values {
 		var d Datum
+		d.SetMinNotNull()
 		d.SetValue(val)
 		x := d.GetValue()
 		c.Assert(x, DeepEquals, val)
+		d.SetCollation(d.Collation())
+		c.Assert(d.Collation(), NotNil)
+		c.Assert(d.Length(), Equals, int(d.length))
 	}
 }
 
@@ -192,6 +196,34 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	// Convert to float32 and convert back to float64, we will get a different value.
 	c.Assert(converted.GetFloat64(), Not(Equals), 281.37)
 	c.Assert(converted.GetFloat64(), Equals, datum.GetFloat64())
+}
+
+func (ts *testTypeConvertSuite) TestToFloat64(c *C) {
+	testCases := []struct {
+		d      Datum
+		errMsg string
+		result float64
+	}{
+		{NewDatum(float32(3.00)), "", 3.00},
+		{NewDatum(float64(12345.678)), "", 12345.678},
+		{NewDatum("12345.678"), "", 12345.678},
+		{NewDatum([]byte("12345.678")), "", 12345.678},
+		{NewDatum(int64(12345)), "", 12345},
+		{NewDatum(uint64(123456)), "", 123456},
+		{NewDatum(byte(123)), "cannot convert .*", 0},
+	}
+
+	sc := new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+	for _, t := range testCases {
+		converted, err := t.d.ToFloat64(sc)
+		if t.errMsg == "" {
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(err, ErrorMatches, t.errMsg)
+		}
+		c.Assert(converted, Equals, t.result)
+	}
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.

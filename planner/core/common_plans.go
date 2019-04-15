@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
@@ -82,14 +82,6 @@ type RecoverIndex struct {
 
 	Table     *ast.TableName
 	IndexName string
-}
-
-// RestoreTable is used for recover deleted files by mistake.
-type RestoreTable struct {
-	baseSchemaProducer
-	JobID  int64
-	Table  *ast.TableName
-	JobNum int64
 }
 
 // CleanupIndex is used to delete dangling index data.
@@ -176,9 +168,11 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	for i, usingVar := range e.UsingVars {
 		val, err := usingVar.Eval(chunk.Row{})
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = val
+		param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		param.Datum = val
+		param.InExecute = true
 		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
@@ -192,7 +186,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	}
 	p, err := e.getPhysicalPlan(ctx, is, prepared)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	e.Stmt = prepared.Stmt
 	e.Plan = p
@@ -210,14 +204,14 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			return plan, nil
 		}
 	}
 	p, err := OptimizeAstNode(ctx, prepared.Stmt, is)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if prepared.UseCache {
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
@@ -241,7 +235,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if pkCol != nil {
 			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		} else {
 			ts.Ranges = ranger.FullIntRange(false)
@@ -250,19 +244,19 @@ func (e *Execute) rebuildRange(p Plan) error {
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case *PointGetPlan:
 		if x.HandleParam != nil {
 			x.Handle, err = x.HandleParam.Datum.ToInt64(sc)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			return nil
 		}
@@ -276,7 +270,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	case *Insert:
@@ -402,6 +396,7 @@ type AnalyzeColumnsTask struct {
 	PhysicalTableID int64
 	PKInfo          *model.ColumnInfo
 	ColsInfo        []*model.ColumnInfo
+	Table           table.Table
 }
 
 // AnalyzeIndexTask is used for analyze index.
@@ -409,6 +404,7 @@ type AnalyzeIndexTask struct {
 	// PhysicalTableID is the id for a partition or a table.
 	PhysicalTableID int64
 	IndexInfo       *model.IndexInfo
+	Table           table.Table
 }
 
 // Analyze represents an analyze plan
@@ -490,6 +486,9 @@ func (e *Explain) prepareSchema() error {
 
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
+	if e.StmtPlan == nil {
+		return nil
+	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
@@ -541,6 +540,8 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 			row = append(row, runtimeStatsColl.GetCopStats(p.ExplainID()).String())
 		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
 			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
+		} else {
+			row = append(row, "time:0ns, loops:0, rows:0")
 		}
 	}
 	e.Rows = append(e.Rows, row)
