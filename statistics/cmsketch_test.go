@@ -169,7 +169,7 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		},
 		{
 			zipfFactor: 2,
-			avgError:   72,
+			avgError:   96,
 		},
 		// If the most data lies in a narrow range, our guess may have better result.
 		{
