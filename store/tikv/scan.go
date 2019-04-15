@@ -97,11 +97,7 @@ func (s *Scanner) Next() error {
 				s.Close()
 				return nil
 			}
-			if !s.desc {
-				err = s.getData(bo)
-			} else {
-				err = s.getDescScanData(bo)
-			}
+			err = s.getData(bo)
 			if err != nil {
 				s.Close()
 				return errors.Trace(err)
@@ -159,18 +155,32 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 func (s *Scanner) getData(bo *Backoffer) error {
 	logutil.Logger(context.Background()).Debug("txn getData",
 		zap.Binary("nextStartKey", s.nextStartKey),
+		zap.Binary("nextEndKey", s.nextEndKey),
+		zap.Bool("desc", s.desc),
 		zap.Uint64("txnStartTS", s.startTS()))
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
-
+	var reqEndKey, reqStartKey []byte
 	for {
-		loc, err := s.snapshot.store.regionCache.LocateKey(bo, s.nextStartKey)
+		locKey := s.nextStartKey
+		if s.desc {
+			locKey = s.nextEndKey
+		}
+		loc, err := s.snapshot.store.regionCache.LocateKey(bo, locKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		reqEndKey := s.endKey
-		if len(reqEndKey) > 0 && len(loc.EndKey) > 0 && bytes.Compare(loc.EndKey, reqEndKey) < 0 {
-			reqEndKey = loc.EndKey
+		if !s.desc {
+			reqEndKey = s.endKey
+			if len(reqEndKey) > 0 && len(loc.EndKey) > 0 && bytes.Compare(loc.EndKey, reqEndKey) < 0 {
+				reqEndKey = loc.EndKey
+			}
+		} else {
+			reqStartKey = s.nextStartKey
+			if len(reqStartKey) == 0 ||
+				(len(loc.StartKey) > 0 && bytes.Compare(loc.StartKey, reqStartKey) > 0) {
+				reqStartKey = loc.StartKey
+			}
 		}
 
 		req := &tikvrpc.Request{
@@ -186,6 +196,11 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				Priority:     s.snapshot.priority,
 				NotFillCache: s.snapshot.notFillCache,
 			},
+		}
+		if s.desc {
+			req.Scan.StartKey = s.nextEndKey
+			req.Scan.EndKey = reqStartKey
+			req.Scan.Reverse = true
 		}
 		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
@@ -230,8 +245,13 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if len(kvPairs) < s.batchSize {
 			// No more data in current Region. Next getData() starts
 			// from current Region's endKey.
-			s.nextStartKey = loc.EndKey
-			if len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0) {
+			if !s.desc {
+				s.nextStartKey = loc.EndKey
+			} else {
+				s.nextEndKey = reqStartKey
+			}
+			if (!s.desc && (len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0))) ||
+				(s.desc && (len(loc.StartKey) == 0 || (len(s.nextStartKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.nextEndKey)) >= 0))) {
 				// Current Region is the last one.
 				s.eof = true
 			}
@@ -242,106 +262,11 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// may get an empty response if the Region in fact does not have
 		// more data.
 		lastKey := kvPairs[len(kvPairs)-1].GetKey()
-		s.nextStartKey = kv.Key(lastKey).Next()
-		return nil
-	}
-}
-
-func (s *Scanner) getDescScanData(bo *Backoffer) error {
-	logutil.Logger(context.Background()).Debug("txn getDescScanData",
-		zap.Binary("startKey", s.nextStartKey),
-		zap.Binary("nextEndKey", s.nextEndKey),
-		zap.Uint64("txnStartTS", s.startTS()))
-	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
-
-	for {
-		loc, err := s.snapshot.store.regionCache.LocateKey(bo, s.nextEndKey)
-		if err != nil {
-			return errors.Trace(err)
+		if !s.desc {
+			s.nextStartKey = kv.Key(lastKey).Next()
+		} else {
+			s.nextEndKey = kv.Key(lastKey)
 		}
-
-		reqStartKey := s.nextStartKey
-		if len(reqStartKey) > 0 && len(loc.StartKey) > 0 && bytes.Compare(loc.StartKey, reqStartKey) > 0 {
-			reqStartKey = loc.StartKey
-		}
-		if len(reqStartKey) == 0 {
-			reqStartKey = loc.StartKey
-		}
-
-		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdScan,
-			Scan: &pb.ScanRequest{
-				// TiKV use range [end_key, start_key) for reverse scan.
-				// So the req.StartKey actually is the end_key.
-				StartKey: s.nextEndKey,
-				EndKey:   reqStartKey,
-				Limit:    uint32(s.batchSize),
-				Version:  s.startTS(),
-				KeyOnly:  s.snapshot.keyOnly,
-				Reverse:  true,
-			},
-			Context: pb.Context{
-				Priority:     s.snapshot.priority,
-				NotFillCache: s.snapshot.notFillCache,
-			},
-		}
-
-		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if regionErr != nil {
-			logutil.Logger(context.Background()).Debug("scanner getDescScanData failed",
-				zap.Stringer("regionErr", regionErr))
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-		cmdScanResp := resp.Scan
-		if cmdScanResp == nil {
-			return errors.Trace(ErrBodyMissing)
-		}
-
-		err = s.snapshot.store.CheckVisibility(s.startTS())
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		kvPairs := cmdScanResp.Pairs
-		// Check if kvPair contains error, it should be a Lock.
-		for _, pair := range kvPairs {
-			if keyErr := pair.GetError(); keyErr != nil {
-				lock, err := extractLockFromKeyErr(keyErr)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				pair.Key = lock.Key
-			}
-		}
-
-		s.cache, s.idx = kvPairs, 0
-		if len(kvPairs) < s.batchSize {
-			// No more data in current Region. Next getData() starts
-			// from current Region's nextEndKey.
-			s.nextEndKey = reqStartKey
-			if len(loc.StartKey) == 0 || (len(s.nextStartKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.nextEndKey)) >= 0) {
-				// Current Region is the last one.
-				s.eof = true
-			}
-			return nil
-		}
-		// next getData() starts from the last key in kvPairs (but skip
-		// it by appending a '\x00' to the key). Note that next getData()
-		// may get an empty response if the Region in fact does not have
-		// more data.
-		lastKey := kvPairs[len(kvPairs)-1].GetKey()
-		s.nextEndKey = kv.Key(lastKey)
 		return nil
 	}
 }
