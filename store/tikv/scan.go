@@ -159,10 +159,11 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		zap.Bool("desc", s.desc),
 		zap.Uint64("txnStartTS", s.startTS()))
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
-	var reqEndKey, reqStartKey []byte
+	var locKey, reqEndKey, reqStartKey []byte
 	for {
-		locKey := s.nextStartKey
-		if s.desc {
+		if !s.desc {
+			locKey = s.nextStartKey
+		} else {
 			locKey = s.nextEndKey
 		}
 		loc, err := s.snapshot.store.regionCache.LocateKey(bo, locKey)
