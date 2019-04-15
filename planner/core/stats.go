@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/statistics"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -77,11 +78,15 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.StatsInfo {
 	profile := &property.StatsInfo{
-		RowCount:       float64(ds.statisticTable.Count),
-		Cardinality:    make([]float64, len(ds.Columns)),
-		HistColl:       ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
-		UsePseudoStats: ds.statisticTable.Pseudo,
+		RowCount:     float64(ds.statisticTable.Count),
+		Cardinality:  make([]float64, len(ds.Columns)),
+		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
+		StatsVersion: ds.statisticTable.Version,
 	}
+	if ds.statisticTable.Pseudo {
+		profile.StatsVersion = statistics.PseudoVersion
+	}
+
 	for i, col := range ds.Columns {
 		profile.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}

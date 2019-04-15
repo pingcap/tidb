@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/tools/container/intsets"
@@ -502,7 +503,11 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	is.stats = property.NewSimpleStats(rowCount)
-	is.stats.UsePseudoStats = ds.statisticTable.Pseudo
+	is.stats.StatsVersion = ds.statisticTable.Version
+	if ds.statisticTable.Pseudo {
+		is.stats.StatsVersion = statistics.PseudoVersion
+	}
+
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if candidate.isMatchProp {
@@ -654,7 +659,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	ts.stats = property.NewSimpleStats(rowCount)
-	ts.stats.UsePseudoStats = ds.statisticTable.Pseudo
+	ts.stats.StatsVersion = ds.statisticTable.Version
+	if ds.statisticTable.Pseudo {
+		ts.stats.StatsVersion = statistics.PseudoVersion
+	}
+
 	copTask.cst = rowCount * scanFactor
 	if candidate.isMatchProp {
 		if prop.Desc {
