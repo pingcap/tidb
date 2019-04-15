@@ -170,7 +170,6 @@ func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.St
 }
 
 func (c *mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
-
 	c.RLock()
 	defer c.Unlock()
 
