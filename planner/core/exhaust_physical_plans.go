@@ -785,7 +785,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		return nil
 	}
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
-	// If all the idnex columns are covered by eq/in conditions, we don't need to consider other conditions anymore
+	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
 	if lastColPos == len(idxCols) {
 		remained = append(remained, rangeFilterCandidates...)
 		ranges, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
