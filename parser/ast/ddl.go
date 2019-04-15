@@ -1180,6 +1180,7 @@ const (
 	TableOptionRowFormat
 	TableOptionStatsPersistent
 	TableOptionShardRowID
+	TableOptionPreSplitRegion
 	TableOptionPackKeys
 )
 
@@ -1324,8 +1325,10 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 		ctx.WritePlain(" /* TableOptionStatsPersistent is not supported */ ")
 	case TableOptionShardRowID:
 		ctx.WriteKeyWord("SHARD_ROW_ID_BITS ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
+		ctx.WritePlainf("= %d", n.UintValue)
+	case TableOptionPreSplitRegion:
+		ctx.WriteKeyWord("PRE_SPLIT_REGIONS ")
+		ctx.WritePlainf("= %d", n.UintValue)
 	case TableOptionPackKeys:
 		// TODO: not support
 		ctx.WriteKeyWord("PACK_KEYS ")
