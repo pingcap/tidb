@@ -289,13 +289,13 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 
 // Iter return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	scanner, err := newScanner(s, k, upperBound, scanBatchSize)
+	scanner, err := newScanner(s, k, upperBound, scanBatchSize, false)
 	return scanner, errors.Trace(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
-	scanner, err := newDescScanner(s, nil, k, scanBatchSize)
+func (s *tikvSnapshot) IterReverse(endKey kv.Key) (kv.Iterator, error) {
+	scanner, err := newScanner(s, nil, endKey, scanBatchSize, true)
 	return scanner, errors.Trace(err)
 }
 

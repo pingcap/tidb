@@ -217,7 +217,7 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 }
 
 func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
-	res := make([]HashPair,0,num)
+	res := make([]HashPair, 0, num)
 	err := t.iterReverseHash(key, func(field []byte, value []byte) (bool, error) {
 		pair := HashPair{
 			Field: append([]byte{}, field...),
@@ -285,7 +285,7 @@ func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error)
 	return nil
 }
 
-func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte,v []byte) (bool, error) ) error {
+func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (bool, error)) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.reader.IterReverse(dataPrefix.PrefixNext())
 	if err != nil {
@@ -304,7 +304,7 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte,v []byte) (bo
 			return errors.Trace(err)
 		}
 
-		more, err := fn(field, it.Value());
+		more, err := fn(field, it.Value())
 		if !more || err != nil {
 			return errors.Trace(err)
 		}

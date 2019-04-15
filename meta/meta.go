@@ -652,7 +652,7 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 }
 
 func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
-	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey,num)
+	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey, num)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
