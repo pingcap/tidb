@@ -194,16 +194,16 @@ create table t1(a bigint, b bigint);
 create table t2(a bigint, b bigint);
 desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
 id	count	task	operator info
-Apply_15	9990.00	root	semi join, inner:Selection_19, equal:[eq(test.t1.a, test.t2.a)]
-├─TableReader_18	9990.00	root	data:Selection_17
-│ └─Selection_17	9990.00	cop	not(isnull(test.t1.a))
-│   └─TableScan_16	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─Selection_19	0.80	root	not(isnull(test.t2.a))
-  └─Limit_20	1.00	root	offset:0, count:1
-    └─TableReader_26	1.00	root	data:Limit_25
-      └─Limit_25	1.00	cop	offset:0, count:1
-        └─Selection_24	1.00	cop	gt(test.t2.b, test.t1.b)
-          └─TableScan_23	1.25	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+Apply_14	9990.00	root	semi join, inner:Selection_18, equal:[eq(test.t1.a, test.t2.a)]
+├─TableReader_17	9990.00	root	data:Selection_16
+│ └─Selection_16	9990.00	cop	not(isnull(test.t1.a))
+│   └─TableScan_15	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─Selection_18	0.80	root	not(isnull(test.t2.a))
+  └─TopN_19	1.00	root	test.t1.b:asc, offset:0, count:1
+    └─TableReader_25	1.00	root	data:TopN_24
+      └─TopN_24	1.00	cop	test.t1.b:asc, offset:0, count:1
+        └─Selection_23	8000.00	cop	gt(test.t2.b, test.t1.b)
+          └─TableScan_22	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	count	task	operator info
 Apply_17	9990.00	root	semi join, inner:Selection_21, equal:[eq(test.t1.a, x.a)]
