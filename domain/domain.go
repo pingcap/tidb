@@ -860,7 +860,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 		return nil
 	}
 	owner := do.newStatsOwner()
-	do.wg.Add(1)
 	do.SetStatsUpdating(true)
 	go do.updateStatsWorker(ctx, owner)
 	if RunAutoAnalyze {
@@ -913,18 +912,20 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	}
 	defer func() {
 		do.SetStatsUpdating(false)
-		do.wg.Done()
 	}()
 	for {
+		select {
+		case <-do.exit:
+			return
+		default:
+		}
+
 		select {
 		case <-loadTicker.C:
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("update stats info failed", zap.Error(err))
 			}
-		case <-do.exit:
-			statsHandle.FlushStats()
-			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
 			err = statsHandle.HandleDDLEvent(t)
