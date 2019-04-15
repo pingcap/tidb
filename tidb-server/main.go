@@ -63,6 +63,8 @@ import (
 const (
 	nmVersion          = "V"
 	nmConfig           = "config"
+	nmConfigCheck      = "config-check"
+	nmConfigStrict     = "config-strict"
 	nmStore            = "store"
 	nmStorePath        = "path"
 	nmHost             = "host"
@@ -76,6 +78,7 @@ const (
 	nmLogFile          = "log-file"
 	nmLogSlowQuery     = "log-slow-query"
 	nmReportStatus     = "report-status"
+	nmStatusHost       = "status-host"
 	nmStatusPort       = "status"
 	nmMetricsAddr      = "metrics-addr"
 	nmMetricsInterval  = "metrics-interval"
@@ -89,8 +92,10 @@ const (
 )
 
 var (
-	version    = flagBoolean(nmVersion, false, "print version information and exit")
-	configPath = flag.String(nmConfig, "", "config file path")
+	version      = flagBoolean(nmVersion, false, "print version information and exit")
+	configPath   = flag.String(nmConfig, "", "config file path")
+	configCheck  = flagBoolean(nmConfigCheck, false, "check config file validity and exit")
+	configStrict = flagBoolean(nmConfigStrict, false, "enforce config file validity")
 
 	// Base
 	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
@@ -100,7 +105,7 @@ var (
 	port             = flag.String(nmPort, "4000", "tidb server port")
 	cors             = flag.String(nmCors, "", "tidb server allow cors origin")
 	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
-	enableBinlog     = flag.String(nmEnableBinlog, "auto", "enable generate binlog")
+	enableBinlog     = flagBoolean(nmEnableBinlog, false, "enable generate binlog")
 	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
@@ -114,6 +119,7 @@ var (
 
 	// Status
 	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
+	statusHost      = flag.String(nmStatusHost, "0.0.0.0", "tidb server status host")
 	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
@@ -139,17 +145,26 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
-	loadConfig()
+	configWarning := loadConfig()
 	overrideConfig()
 	validateConfig()
+	if *configCheck {
+		fmt.Println("config check successful")
+		os.Exit(0)
+	}
 	setGlobalVars()
 	setupLog()
+	// If configStrict had been specified, and there had been an error, the server would already
+	// have exited by now. If configWarning is not an empty string, write it to the log now that
+	// it's been properly set up.
+	if configWarning != "" {
+		log.Warn(configWarning)
+	}
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
+	setupBinlogClient()
 	setupMetrics()
 	createStoreAndDomain()
-	// setupBinlogClient should run after bootstrap
-	setupBinlogClient()
 	createServer()
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()
@@ -188,7 +203,7 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
-	if !binloginfo.ShouldEnableBinlog() {
+	if !cfg.Binlog.Enable {
 		return
 	}
 
@@ -208,7 +223,7 @@ func setupBinlogClient() {
 	}
 
 	if len(cfg.Binlog.BinlogSocket) == 0 {
-		client, err = pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
+		client, err = pumpcli.NewPumpsClient(cfg.Path, cfg.Binlog.Strategy, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	} else {
 		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	}
@@ -286,12 +301,20 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	return flag.Bool(name, defaultVal, usage)
 }
 
-func loadConfig() {
+func loadConfig() string {
 	cfg = config.GetGlobalConfig()
 	if *configPath != "" {
 		err := cfg.Load(*configPath)
+		// This block is to accommodate an interim situation where strict config checking
+		// is not the default behavior of TiDB. The warning message must be deferred until
+		// logging has been set up. After strict config checking is the default behavior,
+		// This should all be removed.
+		if _, ok := err.(*config.ErrConfigValidationFailed); ok && !*configCheck && !*configStrict {
+			return err.Error()
+		}
 		terror.MustNil(err)
 	}
+	return ""
 }
 
 func overrideConfig() {
@@ -360,6 +383,9 @@ func overrideConfig() {
 	// Status
 	if actualFlags[nmReportStatus] {
 		cfg.Status.ReportStatus = *reportStatus
+	}
+	if actualFlags[nmStatusHost] {
+		cfg.Status.StatusHost = *statusHost
 	}
 	if actualFlags[nmStatusPort] {
 		var p int
@@ -453,7 +479,7 @@ func setGlobalVars() {
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
-	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(binloginfo.ShouldEnableBinlog())
+	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
 
 	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
 	variable.SysVars[variable.Socket].Value = cfg.Socket

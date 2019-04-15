@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
@@ -43,12 +43,12 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 
 	infoSchema := GetInfoSchema(c.Ctx)
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
@@ -76,7 +76,7 @@ func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plannercore.Plan) (expen
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
-	log.Warnf("[EXPENSIVE_QUERY] %s", sql)
+	logutil.Logger(context.Background()).Warn("EXPENSIVE_QUERY", zap.String("SQL", sql))
 	return
 }
 
@@ -241,6 +241,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "AnalyzeTable"
 	case *ast.BeginStmt:
 		return "Begin"
+	case *ast.ChangeStmt:
+		return "Change"
 	case *ast.CommitStmt:
 		return "Commit"
 	case *ast.CreateDatabaseStmt:
@@ -305,7 +307,7 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 	var is infoschema.InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(infoschema.InfoSchema)
-		log.Infof("con:%d use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
+		logutil.Logger(context.Background()).Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
 	} else {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}

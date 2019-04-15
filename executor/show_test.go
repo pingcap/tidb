@@ -170,6 +170,68 @@ func (s *testSuite2) TestShow2(c *C) {
 	// TODO: In MySQL, the result is "autocommit ON".
 	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
 
+	// TODO: Specifying the charset for national char/varchar should not be supported.
+	tk.MustExec("drop table if exists test_full_column")
+	tk.MustExec(`create table test_full_column(
+					c_int int,
+					c_float float,
+					c_bit bit,
+					c_bool bool,
+					c_char char(1) charset ascii collate ascii_bin,
+					c_nchar national char(1) charset ascii collate ascii_bin,
+					c_binary binary,
+					c_varchar varchar(1) charset ascii collate ascii_bin,
+					c_nvarchar national varchar(1) charset ascii collate ascii_bin,
+					c_varbinary varbinary(1),
+					c_year year,
+					c_date date,
+					c_time time,
+					c_datetime datetime,
+					c_timestamp timestamp,
+					c_blob blob,
+					c_tinyblob tinyblob,
+					c_mediumblob mediumblob,
+					c_longblob longblob,
+					c_text text charset ascii collate ascii_bin,
+					c_tinytext tinytext charset ascii collate ascii_bin,
+					c_mediumtext mediumtext charset ascii collate ascii_bin,
+					c_longtext longtext charset ascii collate ascii_bin,
+					c_json json,
+					c_enum enum('1') charset ascii collate ascii_bin,
+					c_set set('1') charset ascii collate ascii_bin
+				);`)
+
+	tk.MustQuery(`show full columns from test_full_column`).Check(testkit.Rows(
+		"" +
+			"c_int int(11) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_float float <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_bit bit(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_bool tinyint(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_char char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_nchar char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_binary binary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_varchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_nvarchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_varbinary varbinary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_year year(4) <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_date date <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_time time <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_datetime datetime <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_blob blob <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_longblob longblob <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_text text ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_tinytext tinytext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_mediumtext mediumtext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_longtext longtext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_json json <nil> YES  <nil>  select,insert,update,references ]\n" +
+			"[c_enum enum('1') ascii_bin YES  <nil>  select,insert,update,references ]\n" +
+			"[c_set set('1') ascii_bin YES  <nil>  select,insert,update,references "))
+
+	tk.MustExec("drop table if exists test_full_column")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
 	tk.MustExec("create or replace definer='root'@'localhost' view v as select * from t")
@@ -178,7 +240,6 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
-
 	tk.MustQuery("show tables").Check(testkit.Rows("t", "v"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE", "v VIEW"))
 	ctx := tk.Se.(sessionctx.Context)
@@ -331,9 +392,13 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
 	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS select * from t1  "))
 	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS select * from t1  "))
-
 	tk.MustExec("drop view v1")
 	tk.MustExec("drop table t1")
+
+	tk.MustExec("drop view if exists v")
+	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
+	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS select JSON_MERGE('{}', '{}') as col;  "))
+	tk.MustExec("drop view if exists v")
 
 	// For issue #9211
 	tk.MustExec("create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")

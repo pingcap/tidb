@@ -906,7 +906,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t3)->DataScan(t1)}->DataScan(t2)}->Projection}->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(t3)}->Projection}->Projection",
 		},
 	}
 	for _, tt := range tests {
@@ -1535,7 +1535,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
 		{
@@ -1618,6 +1618,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: `grant select on ttt to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", "", nil},
+				{mysql.GrantPriv, "test", "ttt", "", nil},
+			},
+		},
+		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SuperPriv, "", "", "", nil},
@@ -1631,6 +1638,37 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
 				{mysql.AllPrivMask, "test", "ttt", "", nil},
+			},
+		},
+		{
+			sql: "alter table t add column a int(4)",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t", "", nil},
+			},
+		},
+		{
+			sql: "rename table t_old to t_new",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t_old", "", nil},
+				{mysql.DropPriv, "test", "t_old", "", nil},
+				{mysql.CreatePriv, "test", "t_new", "", nil},
+				{mysql.InsertPriv, "test", "t_new", "", nil},
+			},
+		},
+		{
+			sql: "alter table t_old rename to t_new",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t_old", "", nil},
+				{mysql.DropPriv, "test", "t_old", "", nil},
+				{mysql.CreatePriv, "test", "t_new", "", nil},
+				{mysql.InsertPriv, "test", "t_new", "", nil},
+			},
+		},
+		{
+			sql: "alter table t drop partition p0;",
+			ans: []visitInfo{
+				{mysql.AlterPriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
 	}
@@ -2200,12 +2238,32 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
 		},
 		{
+			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max, min(avg(b)) over(rows between 1 preceding and 1 following) min from t group by c",
+			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_4) over(rows between 1 preceding and 1 following))->Window(min(sel_agg_5) over(rows between 1 preceding and 1 following))->Projection",
+		},
+		{
 			sql:    "select nth_value(a, 1.0) over() from t",
 			result: "[planner:1210]Incorrect arguments to nth_value",
 		},
 		{
 			sql:    "select nth_value(a, 0) over() from t",
 			result: "[planner:1210]Incorrect arguments to nth_value",
+		},
+		{
+			sql:    "select ntile(0) over() from t",
+			result: "[planner:1210]Incorrect arguments to ntile",
+		},
+		{
+			sql:    "select ntile(null) over() from t",
+			result: "TableReader(Table(t))->Window(ntile(<nil>) over())->Projection",
+		},
+		{
+			sql:    "select avg(a) over w from t window w as(partition by b)",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(partition by test.t.b))->Projection",
+		},
+		{
+			sql:    "select nth_value(i_date, 1) over() from t",
+			result: "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1) over())->Projection",
 		},
 	}
 

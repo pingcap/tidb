@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -27,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -122,7 +124,7 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *Table, tableInfo *m
 			continue
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer {
-			hg, err := h.histogramFromStorage(table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0)
+			hg, err := h.histogramFromStorage(table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -137,7 +139,7 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *Table, tableInfo *m
 	if idx != nil {
 		table.Indices[histID] = idx
 	} else {
-		log.Debugf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+		logutil.Logger(context.Background()).Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
 	}
 	return nil
 }
@@ -189,11 +191,10 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := h.histogramFromStorage(table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize)
+			hg, err := h.histogramFromStorage(table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			hg.Correlation = correlation
 			cms, err := h.cmSketchFromStorage(table.PhysicalID, 0, colInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
@@ -222,7 +223,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
 		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
 		// avoid error.
-		log.Debugf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+		logutil.Logger(context.Background()).Debug("we cannot find column in table info now. It may be deleted", zap.Int64("colID", histID), zap.String("table", tableInfo.Name.O))
 	}
 	return nil
 }
@@ -333,8 +334,6 @@ func (n *neededColumnMap) delete(col tableColumnID) {
 	n.m.Unlock()
 }
 
-var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
-
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = 0.7
@@ -347,19 +346,6 @@ func (t *Table) IsOutdated() bool {
 	return false
 }
 
-// IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
-// as need histogram.
-func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
-	if collPseudo && c.NotAccurate() {
-		return true
-	}
-	if c.NDV > 0 && c.Len() == 0 && sc != nil {
-		sc.SetHistogramsNotLoad()
-		histogramNeededColumns.insert(tableColumnID{tableID: c.PhysicalID, columnID: c.Info.ID})
-	}
-	return c.totalRowCount() == 0 || (c.NDV > 0 && c.Len() == 0)
-}
-
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
 func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
 	c, ok := t.Columns[colID]
@@ -369,7 +355,7 @@ func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.
 	return c.greaterRowCount(value) * c.getIncreaseFactor(t.Count)
 }
 
-// ColumnLessRowCount estimates the row count where the column less than value.
+// ColumnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
 func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
@@ -384,7 +370,11 @@ func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.D
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoBetweenRate
 	}
-	return c.betweenRowCount(a, b) * c.getIncreaseFactor(t.Count)
+	count := c.betweenRowCount(a, b)
+	if a.IsNull() {
+		count += float64(c.NullCount)
+	}
+	return count * c.getIncreaseFactor(t.Count)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -429,7 +419,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	if idx == nil || coll.Pseudo && idx.NotAccurate() || idx.Len() == 0 {
+	if idx == nil || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -523,13 +513,27 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 	return newColl
 }
 
+// isSingleColIdxNullRange checks if a range is [NULL, NULL] on a single-column index.
+func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
+	if len(idx.Info.Columns) > 1 {
+		return false
+	}
+	l, h := ran.LowVal[0], ran.HighVal[0]
+	if l.IsNull() && h.IsNull() {
+		return true
+	}
+	return false
+}
+
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		rangePosition := getOrdinalOfRangeCond(sc, ran)
-		// first one is range, just use the previous way to estimate
-		if rangePosition == 0 {
+		// If first one is range, just use the previous way to estimate; if it is [NULL, NULL] range
+		// on single-column index, use previous way as well, because CMSketch does not contain null
+		// values in this case.
+		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
 			count, err := idx.getRowCount(sc, []*ranger.Range{ran}, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)

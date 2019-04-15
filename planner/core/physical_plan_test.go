@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -115,7 +116,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test TopN push down in table single read.
 		{
 			sql:  "select c from t order by t.a + t.b limit 1",
-			best: "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([col_3],0,1)->Projection",
+			best: "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([col_3],0,1)->Projection->Projection",
 		},
 		// Test Limit push down in table single read.
 		{
@@ -1219,7 +1220,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// If max/min contains scalar function, we can still do transformation.
 		{
 			sql:  "select max(a+1) from t;",
-			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([col_1 true],0,1)->Projection->StreamAgg",
+			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([col_1 true],0,1)->Projection->Projection->StreamAgg",
 		},
 		// Do nothing to max+min.
 		{
@@ -1433,4 +1434,58 @@ func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
 	p, err := planner.Optimize(se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(core.ToString(p), Equals, "Apply{TableReader(Table(t))->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(t3.d,t2.g)}->StreamAgg")
+}
+
+func (s *testPlanSuite) TestUnmatchedTableInHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	tests := []struct {
+		sql     string
+		warning string
+	}{
+		{
+			sql:     "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+			warning: "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name",
+		},
+		{
+			sql:     "SELECT /*+ TIDB_HJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+			warning: "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_HJ(t3, t4) */. Maybe you can use the table alias name",
+		},
+		{
+			sql:     "SELECT /*+ TIDB_INLJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+			warning: "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ TIDB_INLJ(t3, t4) */. Maybe you can use the table alias name",
+		},
+		{
+			sql:     "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
+			warning: "",
+		},
+		{
+			sql:     "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
+			warning: "[planner:1815]There are no matching table names for (t4) in optimizer hint /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name",
+		},
+	}
+	for _, test := range tests {
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		stmt, err := s.ParseOneStmt(test.sql, "", "")
+		c.Assert(err, IsNil)
+		_, err = planner.Optimize(se, stmt, s.is)
+		c.Assert(err, IsNil)
+		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		if test.warning == "" {
+			c.Assert(len(warnings), Equals, 0)
+		} else {
+			c.Assert(len(warnings), Equals, 1)
+			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
+			c.Assert(warnings[0].Err.Error(), Equals, test.warning)
+		}
+	}
 }

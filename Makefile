@@ -13,7 +13,7 @@ export PATH := $(path_to_add):$(PATH)
 
 GO        := GO111MODULE=on go
 GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG)
-GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
+GOTEST    := CGO_ENABLED=1 $(GO) test -p 4
 OVERALLS  := CGO_ENABLED=1 GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
@@ -61,7 +61,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy check-static
+check: fmt errcheck lint tidy check-static vet
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -100,7 +100,7 @@ lint:tools/bin/revive
 
 vet:
 	@echo "vet"
-	$(GO) vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
+	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
 tidy:
 	@echo "go mod tidy"
@@ -128,8 +128,12 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
 	@export log_level=error; \
 	$(GO) get github.com/go-playground/overalls
-	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor,cmd,docs,LICENSES,ddl/failtest,ddl/testutil/,executor/esqtest' \
-			-concurrency=1 || { $(GOFAIL_DISABLE); exit 1; }
+	$(OVERALLS) -project=github.com/pingcap/tidb \
+			-covermode=count \
+			-ignore='.git,vendor,cmd,docs,LICENSES' \
+			-concurrency=2 \
+			-- -coverpkg=./... \
+			|| { $(GOFAIL_DISABLE); exit 1; }
 else
 	@echo "Running in native mode."
 	@export log_level=error; \

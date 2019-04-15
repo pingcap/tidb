@@ -50,6 +50,15 @@ func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
 	return ret
 }
 
+func (msm *mockSessionManager) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
+	for _, item := range msm.PS {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return util.ProcessInfo{}, false
+}
+
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
@@ -69,7 +78,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 		User:    "test",
 		Host:    "127.0.0.1",
 		DB:      "test",
-		Command: "select * from t",
+		Command: 't',
 		State:   1,
 		Info:    "",
 	}

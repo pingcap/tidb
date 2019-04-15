@@ -61,6 +61,9 @@ type HashJoinExec struct {
 	joinType plannercore.JoinType
 	innerIdx int
 
+	isOuterJoin  bool
+	requiredRows int64
+
 	// We build individual joiner for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	joiners []joiner
@@ -134,13 +137,13 @@ func (e *HashJoinExec) Close() error {
 	e.memTracker = nil
 
 	err := e.baseExecutor.Close()
-	return errors.Trace(err)
+	return err
 }
 
 // Open implements the Executor Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	e.prepared = false
@@ -186,9 +189,6 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 	}
 	keyBuf = keyBuf[:0]
 	keyBuf, err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, keyBuf, row, allTypes, keyColIdx)
-	if err != nil {
-		err = errors.Trace(err)
-	}
 	return false, keyBuf, err
 }
 
@@ -211,10 +211,14 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			}
 		}
 		outerResult := outerResource.chk
+		if e.isOuterJoin {
+			required := int(atomic.LoadInt64(&e.requiredRows))
+			outerResult.SetRequiredRows(required, e.maxChunkSize)
+		}
 		err := e.outerExec.Next(ctx, chunk.NewRecordBatch(outerResult))
 		if err != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{
-				err: errors.Trace(err),
+				err: err,
 			}
 			return
 		}
@@ -226,7 +230,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			jobFinished, innerErr := e.wait4Inner()
 			if innerErr != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{
-					err: errors.Trace(innerErr),
+					err: innerErr,
 				}
 				return
 			} else if jobFinished {
@@ -248,7 +252,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 		return true, nil
 	case err := <-e.innerFinished:
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 	}
 	if e.innerResult.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
@@ -397,7 +401,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 	buffer := e.hashJoinBuffers[workerID]
 	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, buffer.bytes)
 	if err != nil {
-		joinResult.err = errors.Trace(err)
+		joinResult.err = err
 		return false, joinResult
 	}
 	if hasNull {
@@ -421,13 +425,13 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 	for iter.Begin(); iter.Current() != iter.End(); {
 		matched, isNull, err := e.joiners[workerID].tryToMatch(outerRow, iter, joinResult.chk)
 		if err != nil {
-			joinResult.err = errors.Trace(err)
+			joinResult.err = err
 			return false, joinResult
 		}
 		hasMatch = hasMatch || matched
 		hasNull = hasNull || isNull
 
-		if joinResult.chk.NumRows() == e.maxChunkSize {
+		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
 			ok, joinResult := e.getNewJoinResult(workerID)
 			if !ok {
@@ -459,7 +463,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 	var err error
 	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
 	if err != nil {
-		joinResult.err = errors.Trace(err)
+		joinResult.err = err
 		return false, joinResult
 	}
 	for i := range selected {
@@ -471,7 +475,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 				return false, joinResult
 			}
 		}
-		if joinResult.chk.NumRows() == e.maxChunkSize {
+		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
 			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
@@ -497,6 +501,9 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err er
 		e.fetchOuterAndProbeHashTable(ctx)
 		e.prepared = true
 	}
+	if e.isOuterJoin {
+		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
+	}
 	req.Reset()
 	if e.joinResultCh == nil {
 		return nil
@@ -507,7 +514,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err er
 	}
 	if result.err != nil {
 		e.finished.Store(true)
-		return errors.Trace(result.err)
+		return result.err
 	}
 	req.SwapColumns(result.chk)
 	result.src <- result.chk
@@ -601,14 +608,14 @@ func (e *NestedLoopApplyExec) Close() error {
 
 	e.memTracker.Detach()
 	e.memTracker = nil
-	return errors.Trace(e.outerExec.Close())
+	return e.outerExec.Close()
 }
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	err := e.outerExec.Open(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	e.cursor = 0
 	e.innerRows = e.innerRows[:0]
@@ -631,14 +638,14 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 		if e.outerChunkCursor >= e.outerChunk.NumRows() {
 			err := e.outerExec.Next(ctx, chunk.NewRecordBatch(e.outerChunk))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if e.outerChunk.NumRows() == 0 {
 				return nil, nil
 			}
 			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerIter, e.outerSelected)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			e.outerChunkCursor = 0
 		}
@@ -649,7 +656,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 			return &outerRow, nil
 		} else if e.outer {
 			e.joiner.onMissMatch(false, outerRow, chk)
-			if chk.NumRows() == e.maxChunkSize {
+			if chk.IsFull() {
 				return nil, nil
 			}
 		}
@@ -661,14 +668,14 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	err := e.innerExec.Open(ctx)
 	defer terror.Call(e.innerExec.Close)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	e.innerList.Reset()
 	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
 	for {
 		err := e.innerExec.Next(ctx, chunk.NewRecordBatch(e.innerChunk))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if e.innerChunk.NumRows() == 0 {
 			return nil
@@ -676,7 +683,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 
 		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, innerIter, e.innerSelected)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		for row := innerIter.Begin(); row != innerIter.End(); row = innerIter.Next() {
 			if e.innerSelected[row.Idx()] {
@@ -700,7 +707,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) 
 			}
 			e.outerRow, err = e.fetchSelectedOuterRow(ctx, req.Chunk)
 			if e.outerRow == nil || err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			e.hasMatch = false
 			e.hasNull = false
@@ -710,7 +717,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) 
 			}
 			err = e.fetchAllInners(ctx)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			e.innerIter = chunk.NewIterator4List(e.innerList)
 			e.innerIter.Begin()
@@ -720,8 +727,8 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) 
 		e.hasMatch = e.hasMatch || matched
 		e.hasNull = e.hasNull || isNull
 
-		if err != nil || req.NumRows() == e.maxChunkSize {
-			return errors.Trace(err)
+		if err != nil || req.IsFull() {
+			return err
 		}
 	}
 }

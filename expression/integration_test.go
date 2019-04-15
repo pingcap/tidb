@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -558,6 +559,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	ctx := context.Background()
+	var err error
 
 	// for length
 	tk.MustExec("drop table if exists t")
@@ -899,8 +901,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 
 	// for convert
-	result = tk.MustQuery(`select convert("123" using "866"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
-	result.Check(testkit.Rows("123 123 中文 中文 中文 中文"))
+	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
+	result.Check(testkit.Rows("123 中文 中文 中文 中文"))
+	// Charset 866 does not have a default collation configured currently, so this will return error.
+	err = tk.ExecToErr(`select convert("123" using "866");`)
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: '866'")
+	// Test case in issue #4436.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(20));")
+	err = tk.ExecToErr("select convert(a using a) from t;")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'a'")
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
@@ -1515,6 +1525,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%r');")
+	result.Check(testkit.Rows("12:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('25:00:00', '%r');")
+	result.Check(testkit.Rows("01:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%l %p');")
+	result.Check(testkit.Rows("12 AM"))
 
 	// for date_format
 	result = tk.MustQuery(`SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');`)
@@ -1821,11 +1837,11 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 
 		{"\"2011-11-11\"", "\"abc1000\"", "MICROSECOND", "<nil>", "<nil>"},
 		{"\"20111111 10:10:10\"", "\"1\"", "DAY", "<nil>", "<nil>"},
-		{"\"2011-11-11\"", "\"10\"", "SECOND_MICROSECOND", "<nil>", "<nil>"},
-		{"\"2011-11-11\"", "\"10.0000\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
-		{"\"2011-11-11\"", "\"10:10:10\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
+		{"\"2011-11-11\"", "\"10\"", "SECOND_MICROSECOND", "2011-11-11 00:00:00.100000", "2011-11-10 23:59:59.900000"},
+		{"\"2011-11-11\"", "\"10.0000\"", "MINUTE_MICROSECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50"},
+		{"\"2011-11-11\"", "\"10:10:10\"", "MINUTE_MICROSECOND", "2011-11-11 00:10:10.100000", "2011-11-10 23:49:49.900000"},
 
-		{"cast(\"2011-11-11\" as datetime)", "\"10:10:10\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
+		{"cast(\"2011-11-11\" as datetime)", "\"10:10:10\"", "MINUTE_MICROSECOND", "2011-11-11 00:10:10.100000", "2011-11-10 23:49:49.900000"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "1", "DAY", "2011-11-12 00:00:00", "2011-11-10 00:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "10", "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "10", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
@@ -1836,7 +1852,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "\"10\"", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
 		{"cast(\"2011-11-11 00:00:00\" as datetime)", "\"10\"", "SECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50"},
 
-		{"cast(\"2011-11-11\" as date)", "\"10:10:10\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
+		{"cast(\"2011-11-11\" as date)", "\"10:10:10\"", "MINUTE_MICROSECOND", "2011-11-11 00:10:10.100000", "2011-11-10 23:49:49.900000"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "1", "DAY", "2011-11-12", "2011-11-10"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "10", "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "10", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
@@ -1948,6 +1964,40 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for unaryPlus
 	result = tk.MustQuery(`select +1, +0, +(-9), +(-0.001), +0.999, +null, +"aaa"`)
 	result.Check(testkit.Rows("1 0 -9 -0.001 0.999 <nil> aaa"))
+}
+
+func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (d date)")
+	tk.MustExec("set sql_mode='traditional'")
+	overflowSQLs := []string{
+		"insert into t1 (d) select date_add('2000-01-01',interval 8000 year)",
+		"insert into t1 (d) select date_sub('2000-01-01', INTERVAL 2001 YEAR)",
+		"insert into t1 (d) select date_add('9999-12-31',interval 1 year)",
+		"insert into t1 (d) select date_sub('1000-01-01', INTERVAL 1 YEAR)",
+		"insert into t1 (d) select date_add('9999-12-31',interval 1 day)",
+		"insert into t1 (d) select date_sub('1000-01-01', INTERVAL 1 day)",
+		"insert into t1 (d) select date_sub('1000-01-01', INTERVAL 1 second)",
+	}
+
+	for _, sql := range overflowSQLs {
+		_, err := tk.Exec(sql)
+		c.Assert(err.Error(), Equals, "[types:1441]Datetime function: datetime field overflow")
+	}
+
+	tk.MustExec("set sql_mode=''")
+	for _, sql := range overflowSQLs {
+		tk.MustExec(sql)
+	}
+
+	rows := make([]string, 0, len(overflowSQLs))
+	for range overflowSQLs {
+		rows = append(rows, "<nil>")
+	}
+	tk.MustQuery("select * from t1").Check(testkit.Rows(rows...))
 }
 
 func (s *testIntegrationSuite) TestBuiltin(c *C) {
@@ -2321,11 +2371,8 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("ad\x01\x00Y"))
 	result = tk.MustQuery("select char(97, null, 100, 256, 89 using ascii)")
 	result.Check(testkit.Rows("ad\x01\x00Y"))
-	charRecordSet, err := tk.Exec("select char(97, null, 100, 256, 89 using tidb)")
-	c.Assert(err, IsNil)
-	c.Assert(charRecordSet, NotNil)
-	_, err = session.GetRows4Test(ctx, tk.Se, charRecordSet)
-	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
+	err = tk.ExecToErr("select char(97, null, 100, 256, 89 using tidb)")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'tidb'")
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")
@@ -2408,6 +2455,20 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", likeTests)
+
+	// for #9838
+	result = tk.MustQuery("select cast(1 as signed) + cast(9223372036854775807 as unsigned);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast(9223372036854775807 as unsigned) + cast(1 as signed);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	err = tk.QueryToErr("select cast(9223372036854775807 as signed) + cast(9223372036854775809 as unsigned);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(9223372036854775809 as unsigned) + cast(9223372036854775807 as signed);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(-9223372036854775807 as signed) + cast(9223372036854775806 as unsigned);")
+	c.Assert(err, NotNil)
+	err = tk.QueryToErr("select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);")
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
@@ -4031,4 +4092,124 @@ func (s *testIntegrationSuite) TestIssue9325(c *C) {
 	tk.MustExec("insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01')")
 	result = tk.MustQuery("select * from t where a < timestamp'2019-02-16 14:21:00'")
 	result.Check(testkit.Rows("2019-02-16 14:19:59", "2019-02-16 14:20:01"))
+}
+
+func (s *testIntegrationSuite) TestIssue9710(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	getSAndMS := func(str string) (int, int) {
+		results := strings.Split(str, ":")
+		SAndMS := strings.Split(results[len(results)-1], ".")
+		var s, ms int
+		s, _ = strconv.Atoi(SAndMS[0])
+		if len(SAndMS) > 1 {
+			ms, _ = strconv.Atoi(SAndMS[1])
+		}
+		return s, ms
+	}
+
+	for {
+		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now())")
+		s, ms := getSAndMS(rs.Rows()[0][1].(string))
+		if ms < 500000 {
+			time.Sleep(time.Second / 10)
+			continue
+		}
+
+		s1, _ := getSAndMS(rs.Rows()[0][0].(string))
+		c.Assert(s, Equals, s1) // now() will truncate the result instead of rounding it
+
+		c.Assert(rs.Rows()[0][2], Equals, rs.Rows()[0][3]) // unix_timestamp() will truncate the result
+		break
+	}
+}
+
+// for issue #9770
+func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime(6), b timestamp)")
+	tk.MustExec("insert t values (20010101100000.123456, 20110707101112.123456)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2001-01-01 10:00:00.123456 2011-07-07 10:11:12"))
+}
+
+func (s *testIntegrationSuite) TestIssue9732(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustQuery(`select monthname(str_to_date(null, '%m')), monthname(str_to_date(null, '%m')),
+monthname(str_to_date(1, '%m')), monthname(str_to_date(0, '%m'));`).Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+
+	nullCases := []struct {
+		sql string
+		ret string
+	}{
+		{"select str_to_date(1, '%m')", "0000-01-00"},
+		{"select str_to_date(01, '%d')", "0000-00-01"},
+		{"select str_to_date(2019, '%Y')", "2019-00-00"},
+		{"select str_to_date('5,2019','%m,%Y')", "2019-05-00"},
+		{"select str_to_date('01,2019','%d,%Y')", "2019-00-01"},
+		{"select str_to_date('01,5','%d,%m')", "0000-05-01"},
+	}
+
+	for _, nullCase := range nullCases {
+		tk.MustQuery(nullCase.sql).Check(testkit.Rows("<nil>"))
+	}
+
+	// remove NO_ZERO_DATE mode
+	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+
+	for _, nullCase := range nullCases {
+		tk.MustQuery(nullCase.sql).Check(testkit.Rows(nullCase.ret))
+	}
+}
+
+func (s *testIntegrationSuite) TestDaynameArithmetic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{`select dayname("1962-03-01")+0;`, "3"},
+		{`select dayname("1962-03-02")+0;`, "4"},
+		{`select dayname("1962-03-03")+0;`, "5"},
+		{`select dayname("1962-03-04")+0;`, "6"},
+		{`select dayname("1962-03-05")+0;`, "0"},
+		{`select dayname("1962-03-06")+0;`, "1"},
+		{`select dayname("1962-03-07")+0;`, "2"},
+		{`select dayname("1962-03-08")+0;`, "3"},
+		{`select dayname("1962-03-01")+1;`, "4"},
+		{`select dayname("1962-03-01")+2;`, "5"},
+		{`select dayname("1962-03-01")+3;`, "6"},
+		{`select dayname("1962-03-01")+4;`, "7"},
+		{`select dayname("1962-03-01")+5;`, "8"},
+		{`select dayname("1962-03-01")+6;`, "9"},
+		{`select dayname("1962-03-01")+7;`, "10"},
+		{`select dayname("1962-03-01")+2333;`, "2336"},
+		{`select dayname("1962-03-01")+2.333;`, "5.333"},
+		{`select dayname("1962-03-01")>2;`, "1"},
+		{`select dayname("1962-03-01")<2;`, "0"},
+		{`select dayname("1962-03-01")=3;`, "1"},
+		{`select dayname("1962-03-01")!=3;`, "0"},
+		{`select dayname("1962-03-01")<4;`, "1"},
+		{`select dayname("1962-03-01")>4;`, "0"},
+		{`select !dayname("1962-03-01");`, "0"},
+		{`select dayname("1962-03-01")&1;`, "1"},
+		{`select dayname("1962-03-01")&3;`, "3"},
+		{`select dayname("1962-03-01")&7;`, "3"},
+		{`select dayname("1962-03-01")|1;`, "3"},
+		{`select dayname("1962-03-01")|3;`, "3"},
+		{`select dayname("1962-03-01")|7;`, "7"},
+		{`select dayname("1962-03-01")^1;`, "2"},
+		{`select dayname("1962-03-01")^3;`, "0"},
+		{`select dayname("1962-03-01")^7;`, "4"},
+	}
+
+	for _, c := range cases {
+		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
+	}
 }

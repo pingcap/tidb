@@ -23,6 +23,7 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -255,7 +256,7 @@ func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, err
 func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
 	if len(e.values) > 0 {
 		if e.values[0].commitTS >= startTS {
-			return ErrRetryable("write conflict")
+			return ErrRetryable(util.WriteConflictMarker)
 		}
 	}
 	if e.lock != nil {

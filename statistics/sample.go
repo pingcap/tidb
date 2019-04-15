@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sort"
 
@@ -42,7 +41,7 @@ type SampleItem struct {
 // SortSampleItems sorts a slice of SampleItem.
 func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	sorter := sampleItemSorter{items: items, sc: sc}
-	sort.Sort(&sorter)
+	sort.Stable(&sorter)
 	return sorter.err
 }
 
@@ -218,7 +217,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			return collectors, s.PkBuilder, nil
 		}
 		if len(s.RecordSet.Fields()) == 0 {
-			panic(fmt.Sprintf("%T", s.RecordSet))
+			return nil, nil, errors.Errorf("collect column stats failed: record set has 0 field")
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, s.RecordSet.Fields())

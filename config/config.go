@@ -16,7 +16,9 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io/ioutil"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -74,7 +76,10 @@ type Config struct {
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
-	CheckMb4ValueInUtf8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
+	// Currently not support dynamic modify, because this need to reload all old version schema.
+	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
 }
 
 // Log is the log section of config.
@@ -103,6 +108,18 @@ type Security struct {
 	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
 	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
 	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+}
+
+// The ErrConfigValidationFailed error is used so that external callers can do a type assertion
+// to defer handling of this specific error when someone does not want strict type checking.
+// This is needed only because logging hasn't been set up at the time we parse the config file.
+// This should all be ripped out once strict config checking is made the default behavior.
+type ErrConfigValidationFailed struct {
+	err string
+}
+
+func (e *ErrConfigValidationFailed) Error() string {
+	return e.err
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
@@ -143,6 +160,7 @@ func (s *Security) ToTLSConfig() (*tls.Config, error) {
 // Status is the status section of the config.
 type Status struct {
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
+	StatusHost      string `toml:"status-host" json:"status-host"`
 	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
@@ -250,13 +268,15 @@ type TiKVClient struct {
 
 // Binlog is the config for binlog.
 type Binlog struct {
-	Enable       string `toml:"enable" json:"enable"`
+	Enable       bool   `toml:"enable" json:"enable"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
 	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
 	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	// The strategy for sending binlog to pump, value can be "range" or "hash" now.
+	Strategy string `toml:"strategy" json:"strategy"`
 }
 
 // Plugin is the config for plugin
@@ -266,20 +286,21 @@ type Plugin struct {
 }
 
 var defaultConf = Config{
-	Host:                "0.0.0.0",
-	AdvertiseAddress:    "",
-	Port:                4000,
-	Cors:                "",
-	Store:               "mocktikv",
-	Path:                "/tmp/tidb",
-	RunDDL:              true,
-	SplitTable:          true,
-	Lease:               "45s",
-	TokenLimit:          1000,
-	OOMAction:           "log",
-	MemQuotaQuery:       32 << 30,
-	EnableStreaming:     false,
-	CheckMb4ValueInUtf8: true,
+	Host:                         "0.0.0.0",
+	AdvertiseAddress:             "",
+	Port:                         4000,
+	Cors:                         "",
+	Store:                        "mocktikv",
+	Path:                         "/tmp/tidb",
+	RunDDL:                       true,
+	SplitTable:                   true,
+	Lease:                        "45s",
+	TokenLimit:                   1000,
+	OOMAction:                    "log",
+	MemQuotaQuery:                32 << 30,
+	EnableStreaming:              false,
+	CheckMb4ValueInUTF8:          true,
+	TreatOldVersionUTF8AsUTF8MB4: true,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,
@@ -296,6 +317,7 @@ var defaultConf = Config{
 	},
 	Status: Status{
 		ReportStatus:    true,
+		StatusHost:      "0.0.0.0",
 		StatusPort:      10080,
 		MetricsInterval: 15,
 		RecordQPSbyDB:   false,
@@ -343,8 +365,8 @@ var defaultConf = Config{
 		BatchWaitSize:     8,
 	},
 	Binlog: Binlog{
-		Enable:       "auto",
 		WriteTimeout: "15s",
+		Strategy:     "range",
 	},
 }
 
@@ -365,11 +387,23 @@ func GetGlobalConfig() *Config {
 
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
-	_, err := toml.DecodeFile(confFile, c)
+	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit <= 0 {
 		c.TokenLimit = 1000
 	}
-	return errors.Trace(err)
+
+	// If any items in confFile file are not mapped into the Config struct, issue
+	// an error and stop the server from starting.
+	undecoded := metaData.Undecoded()
+	if len(undecoded) > 0 && err == nil {
+		var undecodedItems []string
+		for _, item := range undecoded {
+			undecodedItems = append(undecodedItems, item.String())
+		}
+		err = &ErrConfigValidationFailed{fmt.Sprintf("config file %s contained unknown configuration options: %s", confFile, strings.Join(undecodedItems, ", "))}
+	}
+
+	return err
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

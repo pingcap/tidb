@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -173,7 +172,7 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool,
 	var err error
 	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	// Batch copies selected rows to output chunk.
 	innerColOffset, outerColOffset := 0, input.NumCols()-outerColsLen
@@ -205,7 +204,7 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 		// so we ignore the nullness returned by EvalBool here.
 		matched, _, err = expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
-			return false, false, errors.Trace(err)
+			return false, false, err
 		}
 		if matched {
 			chk.AppendPartialRow(0, outer)
@@ -239,7 +238,7 @@ func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk 
 
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
-			return false, false, errors.Trace(err)
+			return false, false, err
 		}
 		if matched {
 			inners.ReachEnd()
@@ -277,7 +276,7 @@ func (j *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator,
 
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
-			return false, false, errors.Trace(err)
+			return false, false, err
 		}
 		if matched {
 			j.onMatch(outer, chk)
@@ -324,7 +323,7 @@ func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Itera
 
 		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
-			return false, false, errors.Trace(err)
+			return false, false, err
 		}
 		if matched {
 			j.onMatch(outer, chk)
@@ -365,7 +364,7 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 		chkForJoin = chk
 	}
 
-	numToAppend := j.maxChunkSize - chk.NumRows()
+	numToAppend := chk.RequiredRows() - chk.NumRows()
 	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
 		j.makeJoinRowToChunk(chkForJoin, outer, inners.Current())
 		inners.Next()
@@ -377,7 +376,7 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 	// reach here, chkForJoin is j.chk
 	matched, err := j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
-		return false, false, errors.Trace(err)
+		return false, false, err
 	}
 	return matched, false, nil
 }
@@ -403,7 +402,7 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 		chkForJoin = chk
 	}
 
-	numToAppend := j.maxChunkSize - chk.NumRows()
+	numToAppend := chk.RequiredRows() - chk.NumRows()
 	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
 		j.makeJoinRowToChunk(chkForJoin, inners.Current(), outer)
 		inners.Next()
@@ -414,7 +413,7 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 
 	matched, err := j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
-		return false, false, errors.Trace(err)
+		return false, false, err
 	}
 	return matched, false, nil
 }
@@ -438,7 +437,7 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	if len(j.conditions) == 0 {
 		chkForJoin = chk
 	}
-	inner, numToAppend := inners.Current(), j.maxChunkSize-chk.NumRows()
+	inner, numToAppend := inners.Current(), chk.RequiredRows()-chk.NumRows()
 	for ; inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
 		if j.outerIsRight {
 			j.makeJoinRowToChunk(chkForJoin, inner, outer)
@@ -453,7 +452,7 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	// reach here, chkForJoin is j.chk
 	matched, err := j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
-		return false, false, errors.Trace(err)
+		return false, false, err
 	}
 	return matched, false, nil
 }

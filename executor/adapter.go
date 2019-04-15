@@ -23,6 +23,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -35,12 +36,14 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -104,7 +107,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	err := a.executor.Next(ctx, req)
 	if err != nil {
 		a.lastErr = err
-		return errors.Trace(err)
+		return err
 	}
 	numRows := req.NumRows()
 	if numRows == 0 {
@@ -127,7 +130,8 @@ func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
-	return errors.Trace(err)
+	a.stmt.logAudit()
+	return err
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -162,15 +166,18 @@ func (a *ExecStmt) IsPrepared() bool {
 }
 
 // IsReadOnly returns true if a statement is read only.
-// It will update readOnlyCheckStmt if current ExecStmt can be conveted to
-// a plannercore.Execute. Last step is using ast.IsReadOnly function to determine
-// a statement is read only or not.
-func (a *ExecStmt) IsReadOnly() bool {
-	readOnlyCheckStmt := a.StmtNode
-	if checkPlan, ok := a.Plan.(*plannercore.Execute); ok {
-		readOnlyCheckStmt = checkPlan.Stmt
+// If current StmtNode is an ExecuteStmt, we can get its prepared stmt,
+// then using ast.IsReadOnly function to determine a statement is read only or not.
+func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
+	if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
+		s, err := getPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("getPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(s)
 	}
-	return ast.IsReadOnly(readOnlyCheckStmt)
+	return ast.IsReadOnly(a.StmtNode)
 }
 
 // RebuildPlan rebuilds current execute statement plan.
@@ -179,11 +186,11 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
@@ -200,26 +207,26 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency
 		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
-		terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
+		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
 		sctx.GetSessionVars().DistSQLScanConcurrency = 1
 		sctx.GetSessionVars().IndexSerialScanConcurrency = 1
-		terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
+		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
-			terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
 			sctx.GetSessionVars().DistSQLScanConcurrency = oriScan
 			sctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
-			terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
 		}()
 	}
 
 	e, err := a.buildExecutor(sctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
@@ -252,7 +259,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	var txnStartTS uint64
 	txn, err1 := sctx.Txn(false)
 	if err1 != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if txn.Valid() {
 		txnStartTS = txn.StartTS()
@@ -282,22 +289,23 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 	var err error
 	defer func() {
-		terror.Log(errors.Trace(e.Close()))
+		terror.Log(e.Close())
 		txnTS := uint64(0)
 		// Don't active pending txn here.
 		if txn, err1 := sctx.Txn(false); err1 != nil {
-			log.Error(err1)
+			logutil.Logger(ctx).Error("get current transaction failed", zap.Error(err))
 		} else {
 			if txn.Valid() {
 				txnTS = txn.StartTS()
 			}
 		}
 		a.LogSlowQuery(txnTS, err == nil)
+		a.logAudit()
 	}()
 
 	err = e.Next(ctx, chunk.NewRecordBatch(e.newFirstChunk()))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return nil, nil
@@ -310,10 +318,10 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		// "ExecuteExec.Build".
 		isPointGet, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if isPointGet {
-			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			logutil.Logger(context.Background()).Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else if ctx.GetSessionVars().SnapshotTS != 0 {
 			if _, ok := a.Plan.(*plannercore.CheckTable); ok {
@@ -321,7 +329,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			}
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		stmtCtx := ctx.GetSessionVars().StmtCtx
@@ -348,7 +356,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	if executorExec, ok := e.(*ExecuteExec); ok {
 		err := executorExec.Build()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
@@ -360,23 +368,41 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 // QueryReplacer replaces new line and tab for grep result including query string.
 var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
 
+func (a *ExecStmt) logAudit() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.InRestrictedSQL {
+		return
+	}
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		audit := plugin.DeclareAuditManifest(p.Manifest)
+		if audit.OnGeneralEvent != nil {
+			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
+			audit.OnGeneralEvent(context.Background(), sessVars, plugin.Log, cmd)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Error("log audit log failure", zap.Error(err))
+	}
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
+	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
-	if level < log.WarnLevel {
+	if level > zapcore.WarnLevel {
 		return
 	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.StartTime)
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	if costTime < threshold && level < log.DebugLevel {
+	if costTime < threshold && level > zapcore.DebugLevel {
 		return
 	}
 	sql := a.Text
 	if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(len(sql)) > maxQueryLen {
 		sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, len(a.Text))
 	}
-	sessVars := a.Ctx.GetSessionVars()
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
 
 	var tableIDs, indexIDs string
@@ -388,9 +414,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
-		logutil.SlowQueryLogger.Debugf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, sql))
+		_, digest := sessVars.StmtCtx.SQLDigest()
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
 	} else {
-		logutil.SlowQueryLogger.Warnf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, sql))
+		_, digest := sessVars.StmtCtx.SQLDigest()
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -400,6 +428,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
+			Digest:   digest,
 			Start:    a.StartTime,
 			Duration: costTime,
 			Detail:   sessVars.StmtCtx.GetExecDetails(),
@@ -428,7 +457,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	// check txn
 	txn, err := ctx.Txn(false)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	if txn.Valid() {
 		return false, nil

@@ -71,7 +71,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 		types.NewBytesDatum([]byte("foobar")),
 		types.NewFloat64Datum(-100.25),
 	}
-	var expectIndexValues []string
+	expectIndexValues := make([]string, 0, len(indexValues))
 	for _, v := range indexValues {
 		str, err := v.ToString()
 		if err != nil {
@@ -584,6 +584,36 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	se, err := session.CreateSession(ts.store.(kv.Storage))
 	c.Assert(err, IsNil)
 	c.Assert(dbtbl.SchemaVersion, Equals, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion())
+
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	dbt.mustExec("create database if not exists test;")
+	dbt.mustExec("use test;")
+	dbt.mustExec(` create table t1 (id int KEY)
+		partition by range (id) (
+		PARTITION p0 VALUES LESS THAN (3),
+		PARTITION p1 VALUES LESS THAN (5),
+		PARTITION p2 VALUES LESS THAN (7),
+		PARTITION p3 VALUES LESS THAN (9))`)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/test/t1"))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&t)
+	c.Assert(err, IsNil)
+	c.Assert(t.Name.L, Equals, "t1")
+
+	resp, err = http.Get(fmt.Sprintf(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID)))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&dbtbl)
+	c.Assert(err, IsNil)
+	c.Assert(dbtbl.TableInfo.Name.L, Equals, "t1")
+	c.Assert(dbtbl.DBInfo.Name.L, Equals, "test")
+	c.Assert(dbtbl.TableInfo, DeepEquals, t)
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
@@ -600,7 +630,7 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	decoder := json.NewDecoder(resp.Body)
 
 	var jobs []*model.Job
-	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
+	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().Store.(kv.Storage))
 	defer s.Close()
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
@@ -660,20 +690,20 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, true)
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, true)
 	txn1, err := dbt.db.Begin()
 	c.Assert(err, IsNil)
 	_, err = txn1.Exec("insert t2 values (unhex('F0A48BAE'));")
 	c.Assert(err, NotNil)
 	txn1.Commit()
 
-	// Disable CheckMb4ValueInUtf8.
+	// Disable CheckMb4ValueInUTF8.
 	form = make(url.Values)
 	form.Set("check_mb4_value_in_utf8", "0")
 	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, false)
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
 }
 
@@ -690,7 +720,7 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
-	log.Fatalf("Failed to get profile for %d retries in every 10 ms", retryTime)
+	zaplog.Fatal("failed to get profile for %d retries in every 10 ms", zap.Int("retryTime", retryTime))
 }
 
 func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
@@ -714,7 +744,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(info.Version, Equals, mysql.ServerVersion)
 	c.Assert(info.GitHash, Equals, printer.TiDBGitHash)
 
-	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
+	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
 	do, err := session.GetDomain(store.(kv.Storage))
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
@@ -737,7 +767,7 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(clusterInfo.IsAllServerVersionConsistent, IsTrue)
 	c.Assert(clusterInfo.ServersNum, Equals, 1)
 
-	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
+	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
 	do, err := session.GetDomain(store.(kv.Storage))
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
