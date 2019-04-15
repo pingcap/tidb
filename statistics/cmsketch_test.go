@@ -184,8 +184,7 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		c.Check(err, IsNil)
 		avg, err := averageAbsoluteError(lSketch, lMap)
 		c.Assert(err, IsNil)
-		fmt.Printf("s = %f / avgErr = %d\n", t.zipfFactor, avg)
-		// c.Check(avg, LessEqual, t.avgError)
+		c.Check(avg, LessEqual, t.avgError)
 	}
 }
 

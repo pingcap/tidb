@@ -111,7 +111,7 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSke
 	for i := range topnrows {
 		p := topnrows[i].GetInt64(0)
 		if p > int64(len(topnrows)) {
-			return nil, errors.Trace()
+			continue
 		}
 		topn[p] = topnrows[i].GetBytes(1)
 	}
