@@ -428,6 +428,7 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
 		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
+	metrics.PlanCacheCounterTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}
@@ -510,6 +511,7 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
 		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
+	metrics.PlanCacheCounterTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}
@@ -569,6 +571,7 @@ func (s *seqTestSuite) TestPreparedDelete(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
 		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
+	metrics.PlanCacheCounterTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}

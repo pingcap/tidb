@@ -66,6 +66,12 @@ func (s *tikvSnapshot) SetPriority(priority int) {
 	s.priority = pb.CommandPri(priority)
 }
 
+var (
+	tikvTxnCmdCounterWithBatchGet          = metrics.TiKVTxnCmdCounter.WithLabelValues("batch_get")
+	tikvTxnCmdHistogramWithBatchGet        = metrics.TiKVTxnCmdHistogram.WithLabelValues("batch_get")
+	tikvTxnRegionsNumHistogramWithSnapshot = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot")
+)
+
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
@@ -73,9 +79,9 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	if len(keys) == 0 {
 		return m, nil
 	}
-	metrics.TiKVTxnCmdCounter.WithLabelValues("batch_get").Inc()
+	tikvTxnCmdCounterWithBatchGet.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds()) }()
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
@@ -110,7 +116,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		return errors.Trace(err)
 	}
 
-	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot").Observe(float64(len(groups)))
+	tikvTxnRegionsNumHistogramWithSnapshot.Observe(float64(len(groups)))
 
 	var batches []batchKeys
 	for id, g := range groups {

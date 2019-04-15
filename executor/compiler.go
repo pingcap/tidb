@@ -117,6 +117,19 @@ func isPhysicalPlanExpensive(p plannercore.PhysicalPlan) bool {
 	return false
 }
 
+var (
+	stmtNodeCounterUse      = metrics.StmtNodeCounter.WithLabelValues("Use")
+	stmtNodeCounterShow     = metrics.StmtNodeCounter.WithLabelValues("Show")
+	stmtNodeCounterBegin    = metrics.StmtNodeCounter.WithLabelValues("Begin")
+	stmtNodeCounterCommit   = metrics.StmtNodeCounter.WithLabelValues("Commit")
+	stmtNodeCounterRollback = metrics.StmtNodeCounter.WithLabelValues("Rollback")
+	stmtNodeCounterInsert   = metrics.StmtNodeCounter.WithLabelValues("Insert")
+	stmtNodeCounterReplace  = metrics.StmtNodeCounter.WithLabelValues("Replace")
+	stmtNodeCounterDelete   = metrics.StmtNodeCounter.WithLabelValues("Delete")
+	stmtNodeCounterUpdate   = metrics.StmtNodeCounter.WithLabelValues("Update")
+	stmtNodeCounterSelect   = metrics.StmtNodeCounter.WithLabelValues("Select")
+)
+
 // CountStmtNode records the number of statements with the same type.
 func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	if inRestrictedSQL {
@@ -124,7 +137,30 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	}
 
 	typeLabel := GetStmtLabel(stmtNode)
-	metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
+	switch typeLabel {
+	case "Use":
+		stmtNodeCounterUse.Inc()
+	case "Show":
+		stmtNodeCounterShow.Inc()
+	case "Begin":
+		stmtNodeCounterBegin.Inc()
+	case "Commit":
+		stmtNodeCounterCommit.Inc()
+	case "Rollback":
+		stmtNodeCounterRollback.Inc()
+	case "Insert":
+		stmtNodeCounterInsert.Inc()
+	case "Replace":
+		stmtNodeCounterReplace.Inc()
+	case "Delete":
+		stmtNodeCounterDelete.Inc()
+	case "Update":
+		stmtNodeCounterUpdate.Inc()
+	case "Select":
+		stmtNodeCounterSelect.Inc()
+	default:
+		metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
+	}
 
 	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
 		return

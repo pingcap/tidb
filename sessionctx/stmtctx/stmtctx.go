@@ -269,7 +269,7 @@ func (sc *StatementContext) WarningCount() uint16 {
 
 const zero = "0"
 
-// NumWarnings gets warning and error count.
+// NumErrorWarnings gets warning and error count.
 // is set).
 func (sc *StatementContext) NumErrorWarnings() (ec, wc string) {
 	var (
