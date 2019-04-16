@@ -1771,6 +1771,7 @@ func (s *testSuite) TestSQLMode(c *C) {
 	_, err = tk.Exec("insert t values (null)")
 	c.Check(err, NotNil)
 	tk.MustExec("insert t select null")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert t values (1000)")
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0", "0", "127"))
 
