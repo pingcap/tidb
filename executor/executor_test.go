@@ -1767,6 +1767,9 @@ func (s *testSuite) TestSQLMode(c *C) {
 
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	_, err = tk.Exec("insert t values (null)")
+	c.Check(err, NotNil)
 	tk.MustExec("insert t values (1000)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0", "127"))
 
