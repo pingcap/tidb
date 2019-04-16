@@ -62,8 +62,6 @@ var (
 	// RandSeed is the seed for randing package.
 	// It's public for test.
 	RandSeed = int64(1)
-
-	rander = rand.New(rand.NewSource(RandSeed))
 )
 
 const (
