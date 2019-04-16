@@ -46,6 +46,7 @@ type Tracker struct {
 	label          string // Label of this "Tracker".
 	bytesConsumed  int64  // Consumed bytes.
 	bytesLimit     int64  // Negative value means no limit.
+	maxConsumed    int64  // max number of bytes consumed during execution.
 	actionOnExceed ActionOnExceed
 	parent         *Tracker // The parent memory tracker.
 }
@@ -139,8 +140,18 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 func (t *Tracker) Consume(bytes int64) {
 	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
-		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
+		consumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
+		if consumed >= tracker.bytesLimit && tracker.bytesLimit > 0 {
 			rootExceed = tracker
+		}
+
+		if tracker.parent == nil {
+			// since we only need a total memory usage during execution,
+			// we only record max consumed bytes in root(statement-level) for performance.
+			for maxNow := atomic.LoadInt64(&tracker.maxConsumed);
+				consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed);
+			maxNow = atomic.LoadInt64(&tracker.maxConsumed) {
+			}
 		}
 	}
 	if rootExceed != nil {
@@ -151,6 +162,11 @@ func (t *Tracker) Consume(bytes int64) {
 // BytesConsumed returns the consumed memory usage value in bytes.
 func (t *Tracker) BytesConsumed() int64 {
 	return atomic.LoadInt64(&t.bytesConsumed)
+}
+
+// MaxConsumed returns max number of bytes consumed during execution.
+func (t *Tracker) MaxConsumed() int64 {
+	return atomic.LoadInt64(&t.maxConsumed)
 }
 
 // String returns the string representation of this Tracker tree.
