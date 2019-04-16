@@ -17,14 +17,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -41,7 +40,7 @@ const (
 
 // bindMeta stores the basic bind info and bindSql astNode.
 type bindMeta struct {
-	*bindRecord
+	*BindRecord
 	ast ast.StmtNode //ast will be used to do query sql bind check
 }
 
@@ -51,7 +50,7 @@ type cache map[string][]*bindMeta
 // Handle holds an atomic cache.
 type Handle struct {
 	atomic.Value
-	lock             *sync.Mutex
+	*sync.Mutex
 	ctx              sessionctx.Context
 	BindCacheUpdater *BindCacheUpdater
 }
@@ -69,13 +68,14 @@ type BindCacheUpdater struct {
 	globalHandle   *Handle
 }
 
-type bindRecord struct {
+// BindRecord represents a sql bind record retrieved from the storage.
+type BindRecord struct {
 	OriginalSQL string
 	BindSQL     string
 	Db          string
 	// Status represents the status of the binding. It can only be one of the following values:
-	// 1. deleted: bindRecord is deleted, can not be used anymore.
-	// 2. using: bindRecord is in the normal active mode.
+	// 1. deleted: BindRecord is deleted, can not be used anymore.
+	// 2. using: BindRecord is in the normal active mode.
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
@@ -96,8 +96,7 @@ func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.
 // NewHandle creates a Handle with a cache.
 func NewHandle(ctx sessionctx.Context) *Handle {
 	handle := &Handle{
-		ctx:  ctx,
-		lock: &sync.Mutex{},
+		ctx: ctx,
 	}
 
 	return handle
@@ -157,38 +156,26 @@ func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	return nil
 }
 
-func (bindCacheUpdater *BindCacheUpdater) updateOneBind(normdOrigSQL, bindSQL, defaultDB string, createTs, updateTs types.Time, status, charset, collation string) error {
+func (bindCacheUpdater *BindCacheUpdater) updateOneBind(record *BindRecord) error {
 	bindCacheUpdater.lock.Lock()
 	defer bindCacheUpdater.lock.Unlock()
 
-	record := &bindRecord{
-		OriginalSQL: normdOrigSQL,
-		BindSQL:     bindSQL,
-		Db:          defaultDB,
-		Status:      status,
-		CreateTime:  createTs,
-		UpdateTime:  updateTs,
-		Charset:     charset,
-		Collation:   collation,
-	}
-
 	bc := bindCacheUpdater.globalHandle.Get()
-	newBc := make(map[string][]*bindMeta, len(bc))
+	newBc := make(cache, len(bc))
 	for hash, bindDataArr := range bc {
 		newBc[hash] = append(newBc[hash], bindDataArr...)
 	}
-	var err error
-	err = appendNode(newBc, record, bindCacheUpdater.parser) //avoid globalHandle store error: store of inconsistently typed value into Value
+	err := newBc.appendNode(record, bindCacheUpdater.parser)
 	if err != nil {
 		return err
 	}
-	bindCacheUpdater.globalHandle.Store(newBc)
 
+	bindCacheUpdater.globalHandle.Store(newBc)
 	return nil
 }
 
-func newBindRecord(row chunk.Row) *bindRecord {
-	return &bindRecord{
+func newBindRecord(row chunk.Row) *BindRecord {
+	return &BindRecord{
 		OriginalSQL: row.GetString(0),
 		BindSQL:     row.GetString(1),
 		Db:          row.GetString(2),
@@ -200,11 +187,11 @@ func newBindRecord(row chunk.Row) *bindRecord {
 	}
 }
 
-func appendNode(b cache, newBindRecord *bindRecord, sparser *parser.Parser) error {
+func appendNode(b cache, newBindRecord *BindRecord, sparser *parser.Parser) error {
 	return b.appendNode(newBindRecord, sparser)
 }
 
-func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) error {
+func (b cache) appendNode(newBindRecord *BindRecord, sparser *parser.Parser) error {
 	hash := parser.DigestHash(newBindRecord.OriginalSQL)
 	if bindArr, ok := b[hash]; ok {
 		for idx, v := range bindArr {
@@ -225,76 +212,77 @@ func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) err
 		return err
 	}
 	newNode := &bindMeta{
-		bindRecord: newBindRecord,
+		BindRecord: newBindRecord,
 		ast:        stmtNodes[0],
 	}
 	b[hash] = append(b[hash], newNode)
 	return nil
 }
 
-// AddGlobalBind implements GlobalBindAccessor.AddGlobalBind interface.
-func (h *Handle) AddGlobalBind(normdOrigSQL, bindSQL, defaultDB, charset, collation string) (err error) {
-	var sqlTime types.Time
-	var escapedBindSQL string
-	defer func() {
-		if err == nil {
-			err = h.BindCacheUpdater.updateOneBind(normdOrigSQL, escapedBindSQL, defaultDB, sqlTime, sqlTime, using, charset, collation)
-		}
-	}()
-
-	h.lock.Lock()
-	defer h.lock.Unlock()
-
+// AddGlobalBind add global bind for SQL.
+func (h *Handle) AddGlobalBind(record *BindRecord) (err error) {
 	ctx := context.TODO() //we need a new ctx to execute a transcation
 	exec, _ := h.ctx.(sqlexec.SQLExecutor)
+	h.Lock()
 	_, err = exec.Execute(ctx, "BEGIN")
 	if err != nil {
 		return
 	}
 	defer func() {
+		if err != nil {
+			_, err1 := exec.Execute(ctx, "ROLLBACK")
+			terror.Log(err1)
+			h.Unlock()
+			return
+		}
+		_, err = exec.Execute(ctx, "COMMIT")
+		h.Unlock()
 		if err == nil {
-			_, err = exec.Execute(ctx, "COMMIT")
-		} else {
-			_, err = exec.Execute(ctx, "ROLLBACK")
+			err = h.BindCacheUpdater.updateOneBind(record)
 		}
 	}()
 
-	sql := fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
-		normdOrigSQL, defaultDB)
-	_, err = exec.Execute(ctx, sql)
+	txn, err := h.ctx.Txn(true)
+	// remove all the unused sql binds.
+	_, err = exec.Execute(ctx, h.deleteBindInfoSQL(record.OriginalSQL, record.Db))
 	if err != nil {
-		return
+		return err
 	}
-	txn, err := h.ctx.Txn(true) //active a new txn to get startTs as bind's createTs.
-	if err != nil {
-		return
-	}
-	ts := oracle.GetTimeFromTS(txn.StartTS())
-	tsStr := getTimeStringWithoutZone(ts)
-	escapedBindSQL = getEscapeCharacter(bindSQL)
-	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
-		normdOrigSQL, escapedBindSQL, defaultDB, using, tsStr, tsStr, charset, collation)
-	_, err = exec.Execute(ctx, sql)
-	if err != nil {
-		return
-	}
-
-	sqlTime = types.Time{
-		Time: types.FromGoTime(ts),
-		Type: mysql.TypeTimestamp,
+	record.Status = using
+	record.CreateTime = types.Time{
+		Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
+		Type: mysql.TypeDatetime,
 		Fsp:  3,
 	}
-
-	return
+	record.UpdateTime = record.CreateTime
+	record.BindSQL = h.getEscapeCharacter(record.BindSQL)
+	// table schema of bind_info: (original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation).
+	_, err = exec.Execute(ctx, h.insertBindInfoSQL(record))
+	return err
 }
 
-func getTimeStringWithoutZone(ts time.Time) string {
-	tsString := ts.String()
-	strSlice := strings.Split(tsString, " ")
-	return strings.Join(strSlice[0:len(strSlice)-2], " ")
+func (h *Handle) deleteBindInfoSQL(normdOrigSQL, db string) string {
+	return fmt.Sprintf(
+		"DELETE FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
+		normdOrigSQL,
+		db,
+	)
 }
 
-func getEscapeCharacter(str string) string {
+func (h *Handle) insertBindInfoSQL(record *BindRecord) string {
+	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
+		record.OriginalSQL,
+		record.BindSQL,
+		record.Db,
+		record.Status,
+		record.CreateTime,
+		record.UpdateTime,
+		record.Charset,
+		record.Collation,
+	)
+}
+
+func (h *Handle) getEscapeCharacter(str string) string {
 	var buffer bytes.Buffer
 	for _, v := range str {
 		if v == '\'' || v == '"' || v == '\\' {

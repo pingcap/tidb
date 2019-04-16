@@ -45,7 +45,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	var needDefaultDB bool
 	switch x := stmtNode.(type) {
 	case *ast.CreateBindingStmt:
-		needDefaultDB = checkDefaultDb(x.OriginSel) || checkDefaultDb(x.HintedSel)
+		needDefaultDB = useDefaultDB(x.OriginSel) || useDefaultDB(x.HintedSel)
 	}
 
 	infoSchema := GetInfoSchema(c.Ctx)
@@ -353,12 +353,12 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 	return is
 }
 
-func checkDefaultDb(stmtNode ast.ResultSetNode) bool {
+func useDefaultDB(stmtNode ast.ResultSetNode) bool {
 	switch x := stmtNode.(type) {
 	case *ast.TableSource:
-		return checkDefaultDb(x.Source)
+		return useDefaultDB(x.Source)
 	case *ast.SelectStmt:
-		return checkDefaultDb(x.From.TableRefs)
+		return useDefaultDB(x.From.TableRefs)
 	case *ast.TableName:
 		if x.Schema.O == "" {
 			return true
@@ -366,10 +366,10 @@ func checkDefaultDb(stmtNode ast.ResultSetNode) bool {
 	case *ast.Join:
 		var need bool
 		if x.Left != nil {
-			need = checkDefaultDb(x.Left)
+			need = useDefaultDB(x.Left)
 			if !need {
 				if x.Right != nil {
-					return checkDefaultDb(x.Right)
+					return useDefaultDB(x.Right)
 				}
 			}
 		}

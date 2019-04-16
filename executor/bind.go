@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/bindinfo"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -39,12 +40,16 @@ type SQLBindExec struct {
 func (e *SQLBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	req.Reset()
 	handle := domain.GetDomain(e.ctx).BindHandle()
-	if handle == nil {
-		return errors.New("bind manager is nil")
-	}
 	if e.isGlobal {
-		return handle.AddGlobalBind(e.normdOrigSQL, e.bindSQL, e.defaultDB, e.charset, e.collation)
+		bindRecord := &bindinfo.BindRecord{
+			OriginalSQL: e.normdOrigSQL,
+			BindSQL:     e.bindSQL,
+			Db:          e.defaultDB,
+			Charset:     e.charset,
+			Collation:   e.collation,
+		}
+		return handle.AddGlobalBind(bindRecord)
 	}
 
-	return errors.New("non global sql bind not support")
+	return errors.New("Create non global sql bind is not supported.")
 }

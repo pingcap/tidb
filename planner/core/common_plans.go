@@ -335,7 +335,7 @@ type Set struct {
 }
 
 const (
-	// OpSQLBindCreate represents create a bind info.
+	// OpSQLBindCreate represents the operation to create a SQL bind.
 	OpSQLBindCreate = 0
 )
 
