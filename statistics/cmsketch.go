@@ -524,5 +524,5 @@ func (c *CMSketch) Copy() *CMSketch {
 			ntopn[k] = newSlice
 		}
 	}
-	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, topnindex: ntopn}
+	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, topnindex: ntopn, defaultValue: c.defaultValue}
 }

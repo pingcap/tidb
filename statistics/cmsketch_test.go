@@ -164,6 +164,10 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 	}{
 		// If no significant most items, TopN may will produce results worse than normal algorithm.
 		{
+			zipfFactor: 1.0000001,
+			avgError:   48,
+		},
+		{
 			zipfFactor: 1.1,
 			avgError:   48,
 		},
@@ -186,7 +190,30 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		avg, err := averageAbsoluteError(lSketch, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
+		rSketch := lSketch.Copy()
+		c.Check(rSketch.Equal(lSketch), IsTrue)
 	}
+}
+
+func (s *testStatisticsSuite) TestCMSketchTopNUniqueData(c *C) {
+	d, w := int32(5), int32(2048)
+	total := uint64(1000000)
+	mp := make(map[int64]uint32)
+	vals := make([]*types.Datum, 0)
+	for i := uint64(0); i < total; i++ {
+		val := types.NewIntDatum(int64(i))
+		mp[val.GetInt64()]++
+		if i < uint64(1000) {
+			vals = append(vals, &val)
+		}
+	}
+	cms, err := insertTopN(d, w, vals, uint32(20), total)
+	c.Assert(err, IsNil)
+	avg, err := averageAbsoluteError(cms, mp)
+	c.Assert(err, IsNil)
+	c.Check(cms.defaultValue, Equals, uint64(1))
+	c.Check(avg, Equals, uint64(0))
+	c.Check(len(cms.topnindex), Equals, 0)
 }
 
 func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
