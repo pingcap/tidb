@@ -203,11 +203,11 @@ func (s *testSuite) TestMaxConsumed(c *C) {
 	cc1.AttachTo(c1)
 
 	ts := []*Tracker{r, c1, c2, cc1}
-	var consumed , maxConsumed int64
+	var consumed, maxConsumed int64
 	for i := 0; i < 10; i++ {
 		t := ts[rand.Intn(len(ts))]
 		b := rand.Int63n(1000) - 500
-		if consumed + b < 0 {
+		if consumed+b < 0 {
 			b = -consumed
 		}
 		consumed += b

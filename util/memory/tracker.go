@@ -148,9 +148,7 @@ func (t *Tracker) Consume(bytes int64) {
 		if tracker.parent == nil {
 			// since we only need a total memory usage during execution,
 			// we only record max consumed bytes in root(statement-level) for performance.
-			for maxNow := atomic.LoadInt64(&tracker.maxConsumed);
-				consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed);
-			maxNow = atomic.LoadInt64(&tracker.maxConsumed) {
+			for maxNow := atomic.LoadInt64(&tracker.maxConsumed); consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed); maxNow = atomic.LoadInt64(&tracker.maxConsumed) {
 			}
 		}
 	}
