@@ -124,8 +124,8 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			innerKeys:       []*expression.Column{dsSchema.Columns[0], dsSchema.Columns[2]},
 			pushedDownConds: "",
 			otherConds:      "",
-			ranges:          "[]",
-			idxOff2KeyOff:   "[]",
+			ranges:          "[[NULL,NULL]]",
+			idxOff2KeyOff:   "[0 -1 -1 -1]",
 			accesses:        "[]",
 			remained:        "[]",
 			compareFilters:  "<nil>",
@@ -212,14 +212,14 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			innerKeys:       []*expression.Column{dsSchema.Columns[0], dsSchema.Columns[2]},
 			pushedDownConds: "b > 1",
 			otherConds:      "",
-			ranges:          "[]",
-			idxOff2KeyOff:   "[]",
-			accesses:        "[]",
+			ranges:          "[(NULL 1,NULL +inf]]",
+			idxOff2KeyOff:   "[0 -1 -1 -1]",
+			accesses:        "[gt(test.t.b, 1)]",
 			remained:        "[]",
 			compareFilters:  "<nil>",
 		},
 	}
-	for _, tt := range tests {
+	for i, tt := range tests {
 		pushed, err := s.rewriteSimpleExpr(tt.pushedDownConds, dsSchema)
 		c.Assert(err, IsNil)
 		dataSourceNode.pushedDownConds = pushed
@@ -229,7 +229,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil}
 		err = helper.analyzeLookUpFilters(idxInfo, dataSourceNode, tt.innerKeys)
 		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%v", helper.chosenRanges), Equals, tt.ranges)
+		c.Assert(fmt.Sprintf("%v", helper.chosenRanges), Equals, tt.ranges, Commentf("test case: #%v", i))
 		c.Assert(fmt.Sprintf("%v", helper.idxOff2KeyOff), Equals, tt.idxOff2KeyOff)
 		c.Assert(fmt.Sprintf("%v", helper.chosenAccess), Equals, tt.accesses)
 		c.Assert(fmt.Sprintf("%v", helper.chosenRemained), Equals, tt.remained)

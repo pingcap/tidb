@@ -669,21 +669,22 @@ func (cwc *ColWithCmpFuncManager) String() string {
 	return buffer.String()
 }
 
-func (ijHelper *indexJoinBuildHelper) checkIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int) {
+func (ijHelper *indexJoinBuildHelper) checkIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int) bool {
 	tmpSchema := expression.NewSchema(innerKeys...)
 	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
-	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
 	ijHelper.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
 	ijHelper.curNotUsedColLens = make([]int, 0, len(idxCols))
+	keyMatched := false
 	for i, idxCol := range idxCols {
 		ijHelper.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
 		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
-			ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCol)
+			keyMatched = true
 			continue
 		}
 		ijHelper.curNotUsedIndexCols = append(ijHelper.curNotUsedIndexCols, idxCol)
 		ijHelper.curNotUsedColLens = append(ijHelper.curNotUsedColLens, colLens[i])
 	}
+	return keyMatched
 }
 
 // findUsefulEqAndInFilters analyzes the pushedDownConds held by inner child and split them to three parts.
@@ -754,36 +755,55 @@ loopOtherConds:
 	return lastColAccesses
 }
 
+func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(
+	idxCols []*expression.Column,
+	notKeyEqAndIn []expression.Expression) (
+	usefulEqAndIn, uselessOnes []expression.Expression,
+) {
+	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
+	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {
+		if ijHelper.curIdxOff2KeyOff[idxColPos] != -1 {
+			ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCols[idxColPos])
+			continue
+		}
+		if notKeyColPos < len(notKeyEqAndIn) && ijHelper.curNotUsedIndexCols[notKeyColPos].Equal(nil, idxCols[idxColPos]) {
+			notKeyColPos++
+			continue
+		}
+		for i := idxColPos + 1; i < len(idxCols); i++ {
+			ijHelper.curIdxOff2KeyOff[i] = -1
+		}
+		remained := make([]expression.Expression, 0, len(notKeyEqAndIn)-notKeyColPos)
+		remained = append(remained, notKeyEqAndIn[notKeyColPos:]...)
+		notKeyEqAndIn = notKeyEqAndIn[:notKeyColPos]
+		return notKeyEqAndIn, remained
+	}
+	return notKeyEqAndIn, nil
+}
+
 func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) error {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.schema.Columns, indexInfo)
 	if len(idxCols) == 0 {
 		return nil
 	}
 	accesses := make([]expression.Expression, 0, len(idxCols))
-	ijHelper.checkIndex(innerJoinKeys, idxCols, colLengths)
-	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
 	// If no index column appears in join key, we just break.
 	// TODO: It may meet this case: There's no join key condition, but have compare filters.
 	//  e.g. select * from t1, t2 on t1.a=t2.a and t2.b > t1.b-10 and t2.b < t1.b where t1.a=1 and t2.a=1.
 	//       After constant propagation. The t1.a=t2.a is removed. And if we have index (t2.a, t2.b). It can apply index join
 	//       to speed up.
+	if !ijHelper.checkIndex(innerJoinKeys, idxCols, colLengths) {
+		return nil
+	}
+	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
+	var remainedEqAndIn []expression.Expression
+	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(idxCols, notKeyEqAndIn)
+	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
 	if matchedKeyCnt <= 0 {
 		return nil
 	}
-	keyMatchedLen := len(idxCols)
-	for ; keyMatchedLen > 0; keyMatchedLen-- {
-		if ijHelper.curIdxOff2KeyOff[keyMatchedLen-1] != -1 {
-			break
-		}
-	}
-	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
 	accesses = append(accesses, notKeyEqAndIn...)
-	// We hope that the index cols appeared in the join keys can all be used to build range. If it cannot be satisfied,
-	// we'll mark this index as cannot be used for index join.
-	// So we should make sure that all columns before the keyMatchedLen is join key or has eq/in function.
-	if len(notKeyEqAndIn) < keyMatchedLen-matchedKeyCnt {
-		return nil
-	}
+	remained = append(remained, remainedEqAndIn...)
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
 	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
 	if lastColPos == len(idxCols) {
