@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -151,28 +152,33 @@ func handlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType
 		return val, err
 	}
 
-	isBinary := mysql.HasBinaryFlag(ft.Flag) // || ft.Collate == charset.CollationBin
+	hasBinaryFlag := mysql.HasBinaryFlag(ft.Flag)
 	isVarchar := ft.Tp == mysql.TypeVarString || ft.Tp == mysql.TypeVarchar
 	isChar := ft.Tp == mysql.TypeString
+	isBinary := ft.Tp == mysql.TypeString && ft.Collate == charset.CollationBin
+	isVarBinary := ft.Tp == mysql.TypeString && ft.Collate == charset.CollationBin
 	switch {
-	case isVarchar && isBinary:
+	case isBinary || isVarBinary:
+		val.SetString(targetStr)
+		return val, nil
+	case isVarchar && hasBinaryFlag:
 		noTrailingSpace := strings.TrimRight(targetStr, " ")
 		if numSpacesToFill := ft.Flen - len(noTrailingSpace); numSpacesToFill > 0 {
 			noTrailingSpace += strings.Repeat(" ", numSpacesToFill)
 		}
 		val.SetString(noTrailingSpace)
 		return val, nil
-	case isVarchar && !isBinary:
+	case isVarchar && !hasBinaryFlag:
 		val.SetString(targetStr)
 		return val, nil
-	case isChar && isBinary:
+	case isChar && hasBinaryFlag:
 		noTrailingSpace := strings.TrimRight(targetStr, " ")
 		val.SetString(noTrailingSpace)
 		return val, nil
-	case isChar && !isBinary && !sc.PadCharToFullLength:
+	case isChar && !hasBinaryFlag && !sc.PadCharToFullLength:
 		val.SetString(targetStr)
 		return val, nil
-	case isChar && !isBinary && sc.PadCharToFullLength:
+	case isChar && !hasBinaryFlag && sc.PadCharToFullLength:
 		if len(targetStr) != ft.Flen {
 			// return kv.ErrNotExist to indicate that this value can not match any
 			// (key, value) pair in tikv storage.

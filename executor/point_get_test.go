@@ -114,6 +114,63 @@ func (s *testSuite1) TestPointGetCharPK(c *C) {
 	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows(` `))
 }
 
+func (s *testSuite1) TestIndexLookupCharPK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a char(2) primary key, b char(2));`)
+	tk.MustExec(`insert into t values("aa", "bb");`)
+
+	// Test truncate without sql mode `PAD_CHAR_TO_FULL_LENGTH`.
+	tk.MustExec(`set @@sql_mode="";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb`))
+	tk.MustIndexLookup(`select * from t tmp where a = "aab";`).Check(testkit.Rows())
+
+	// Test truncate with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
+	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb`))
+	tk.MustIndexLookup(`select * from t tmp where a = "aab";`).Check(testkit.Rows())
+
+	tk.MustExec(`truncate table t;`)
+	tk.MustExec(`insert into t values("a ", "b ");`)
+
+	// Test trailing spaces without sql mode `PAD_CHAR_TO_FULL_LENGTH`.
+	tk.MustExec(`set @@sql_mode="";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+
+	// Test trailing spaces with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
+	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+
+	// // Test CHAR BINARY.
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a char(2) binary primary key, b char(2));`)
+	tk.MustExec(`insert into t values("  ", "  ");`)
+	tk.MustExec(`insert into t values("a ", "b ");`)
+
+	// Test trailing spaces without sql mode `PAD_CHAR_TO_FULL_LENGTH`.
+	tk.MustExec(`set @@sql_mode="";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = " ";`).Check(testkit.Rows(` `))
+	tk.MustIndexLookup(`select * from t tmp where a = "  ";`).Check(testkit.Rows(` `))
+	tk.MustIndexLookup(`select * from t tmp where a = "   ";`).Check(testkit.Rows(` `))
+
+	// Test trailing spaces with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
+	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = " ";`).Check(testkit.Rows(` `))
+	tk.MustIndexLookup(`select * from t tmp where a = "  ";`).Check(testkit.Rows(` `))
+	tk.MustIndexLookup(`select * from t tmp where a = "   ";`).Check(testkit.Rows(` `))
+}
+
 func (s *testSuite1) TestPointGetVarcharPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
@@ -175,4 +232,66 @@ func (s *testSuite1) TestPointGetVarcharPK(c *C) {
 	tk.MustPointGet(`select * from t where a = " ";`).Check(testkit.Rows(`     `))
 	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows(`     `))
 	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows(`     `))
+}
+
+func (s *testSuite1) TestPointGetBinaryPK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a binary(2) primary key, b binary(2));`)
+	tk.MustExec(`insert into t values("a", "b");`)
+
+	tk.MustExec(`set @@sql_mode="";`)
+	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00"))
+
+	// `PAD_CHAR_TO_FULL_LENGTH` should not affect the result.
+	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
+	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00"))
+
+	tk.MustExec(`insert into t values("a ", "b ");`)
+	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+
+	// `PAD_CHAR_TO_FULL_LENGTH` should not affect the result.
+	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+}
+
+func (s *testSuite1) TestIndexLookupBinaryPK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a binary(2) primary key, b binary(2));`)
+	tk.MustExec(`insert into t values("a", "b");`)
+
+	tk.MustExec(`set @@sql_mode="";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00"))
+
+	// `PAD_CHAR_TO_FULL_LENGTH` should not affect the result.
+	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00"))
+
+	tk.MustExec(`insert into t values("a ", "b ");`)
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a  b `))
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+
+	// `PAD_CHAR_TO_FULL_LENGTH` should not affect the result.
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a  b `))
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 }
