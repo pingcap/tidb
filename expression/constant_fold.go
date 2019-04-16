@@ -117,7 +117,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 					constArgs[i] = One
 				}
 			}
-			dummyScalarFunc, err := newFunctionImpl(x.GetCtx(), false, x.FuncName.L, x.GetType(), constArgs...)
+			dummyScalarFunc, err := NewFunctionBase(x.GetCtx(), x.FuncName.L, x.GetType(), constArgs...)
 			if err != nil {
 				return expr, isDeferredConst
 			}
