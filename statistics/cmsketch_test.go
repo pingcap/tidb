@@ -165,16 +165,17 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		// If no significant most items, TopN may will produce results worse than normal algorithm.
 		{
 			zipfFactor: 1.1,
-			avgError:   36,
+			avgError:   48,
 		},
 		{
 			zipfFactor: 2,
-			avgError:   96,
+			avgError:   128,
 		},
 		// If the most data lies in a narrow range, our guess may have better result.
+		// The error mainly comes from huge numbers.
 		{
 			zipfFactor: 5,
-			avgError:   512,
+			avgError:   256,
 		},
 	}
 	d, w := int32(5), int32(2048)

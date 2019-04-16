@@ -82,6 +82,7 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 
 	counter := make(map[uint64][]cmscount)
 	ndv := uint32(0)
+	onlyOnceItems := uint32(0)
 
 	for k := range data {
 		h1, h2 := murmur3.Sum128(data[k])
@@ -108,6 +109,9 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 
 	for _, sl := range counter {
 		for i := range sl {
+			if sl[i].count == 1 {
+				onlyOnceItems++
+			}
 			sorted[seq] = sl[i].count
 			seq++
 		}
@@ -126,17 +130,48 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 	realTopN := n
 
 	for i := n; i < ndv && i < n*2; i++ {
-		if sorted[i]*2 < topnCountThreshold {
+		if sorted[i]*3 < topnCountThreshold*2 {
 			break
 		}
 		newTopN = sorted[i]
 		realTopN = i
 	}
 
+	estimateNDV := uint64(0)
+
+	if uint64(ndv) == sampleSize {
+		// Assume this is a unique column
+		ratio = 1
+		estimateNDV = total
+	} else if onlyOnceItems == 0 && ndv == realTopN {
+		// Assume data only consists of sampled data
+		// Nothing to do, no change with ratio
+		estimateNDV = uint64(ndv)
+	} else {
+		// PostgreSQL uses the following fomular to calculate global ndv
+		// n*d / (n - f1 + f1*n/N)
+		// f1 : onlyOnceItems
+		// n  : sampleSize
+		// N  : totalSize
+		// d  : ndv of sample
+
+		f1 := float64(onlyOnceItems)
+		n := float64(sampleSize)
+		N := float64(total)
+		d := float64(ndv)
+
+		estimateNDV = uint64(math.Sqrt(N/n)*f1 + d - f1 + 0.5)
+
+		if estimateNDV < uint64(ndv) {
+			estimateNDV = uint64(ndv)
+		}
+		if estimateNDV > total {
+			estimateNDV = total
+		}
+	}
+
 	topnCountThreshold = newTopN
-
 	topn := make([]cmscount, realTopN)
-
 	topncount := uint64(0)
 
 	seq = 0
@@ -164,26 +199,14 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 	// Interesting, seems we have collected all distinct values.
 	// These three tests tests if all divisions are legal.
 	// They also tests if we sampled all possible data.
-	countWithoutTopN := total - topncount*ratio
+	countWithoutTopN := total - (sampleSize-uint64(onlyOnceItems))*ratio
 	if total < topncount*ratio {
 		c.defaultValue = 1
-		return
-	}
-
-	ndvWithoutTopN := ndv - realTopN
-	sampleSizeWithoutTopN := sampleSize - topncount
-	if sampleSizeWithoutTopN == 0 {
+	} else if estimateNDV <= uint64(realTopN) {
 		c.defaultValue = 1
-		return
+	} else {
+		c.defaultValue = countWithoutTopN / (estimateNDV - uint64(ndv-onlyOnceItems))
 	}
-
-	estimateNDV := uint64(ndvWithoutTopN) * countWithoutTopN / sampleSizeWithoutTopN
-	if estimateNDV == 0 {
-		c.defaultValue = 1
-		return
-	}
-
-	c.defaultValue = countWithoutTopN / estimateNDV
 }
 
 func (c *CMSketch) buildTopNMap(topn []cmscount) {
@@ -250,7 +273,8 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	if oriCount < 2*(c.count/uint64(c.width)) && c.defaultValue > 0 {
 		// This case, we should also update c.defaultValue
 		// Set default value directly will result in more error, instead, update it by 5%.
-		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05)
+		// This should make estimate better, if defaultValue becomes 0 frequently, commit this line.
+		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05 + 0.5)
 		if c.defaultValue == 0 {
 			// c.defaultValue never guess 0 since we are using a sampled data, instead, return a small number, like 1.
 			c.defaultValue = 1
