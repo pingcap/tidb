@@ -367,7 +367,7 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	p := &SQLBindPlan{
-		BindType:     OpSQLBindCreate,
+		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
 		BindSQL:      v.HintedSel.Text(),
 		IsGlobal:     v.GlobalScope,

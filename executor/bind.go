@@ -15,11 +15,13 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/bindinfo"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -27,6 +29,7 @@ import (
 type SQLBindExec struct {
 	baseExecutor
 
+	sqlBindOp    plannercore.SQLBindOpType
 	normdOrigSQL string
 	bindSQL      string
 	defaultDB    string
@@ -38,18 +41,31 @@ type SQLBindExec struct {
 
 // Next implements the Executor Next interface.
 func (e *SQLBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	req.Reset()
-	handle := domain.GetDomain(e.ctx).BindHandle()
-	if e.isGlobal {
-		bindRecord := &bindinfo.BindRecord{
-			OriginalSQL: e.normdOrigSQL,
-			BindSQL:     e.bindSQL,
-			Db:          e.defaultDB,
-			Charset:     e.charset,
-			Collation:   e.collation,
-		}
-		return handle.AddGlobalBind(bindRecord)
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("SQLBindExec.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
 	}
 
-	return errors.New("Create non global sql bind is not supported.")
+	req.Reset()
+	switch e.sqlBindOp {
+	case plannercore.OpSQLBindCreate:
+		return e.createSQLBind()
+	default:
+		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
+	}
+}
+
+func (e *SQLBindExec) createSQLBind() error {
+	if !e.isGlobal {
+		return errors.New("Create non-global sql bind is not supported.")
+	}
+
+	bindRecord := &bindinfo.BindRecord{
+		OriginalSQL: e.normdOrigSQL,
+		BindSQL:     e.bindSQL,
+		Db:          e.defaultDB,
+		Charset:     e.charset,
+		Collation:   e.collation,
+	}
+	return domain.GetDomain(e.ctx).BindHandle().AddGlobalBind(bindRecord)
 }
