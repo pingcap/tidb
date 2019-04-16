@@ -296,11 +296,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-//<<<<<<< HEAD
-//	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
-//=======
-	e.result, err = e.SelectResult(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
-//>>>>>>> 435a08140... executor: control Chunk size for TableReader&IndexReader&IndexLookup (#9452)
+	e.result, err = e.SelectResult(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -365,11 +361,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-//<<<<<<< HEAD
-//	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
-//=======
-	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
-//>>>>>>> 435a08140... executor: control Chunk size for TableReader&IndexReader&IndexLookup (#9452)
+	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -421,17 +413,12 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
-// startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
-//<<<<<<< HEAD
-//func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask) error {
-//=======
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 
-//>>>>>>> 435a08140... executor: control Chunk size for TableReader&IndexReader&IndexLookup (#9452)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -553,16 +540,12 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
-//<<<<<<< HEAD
-//	chk.Reset()
-//=======
 	if !e.workerStarted {
-		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
+		if err := e.startWorkers(ctx, chk.RequiredRows()); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	req.Reset()
-//>>>>>>> 435a08140... executor: control Chunk size for TableReader&IndexReader&IndexLookup (#9452)
+	chk.Reset()
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
@@ -574,11 +557,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		for resultTask.cursor < len(resultTask.rows) {
 			chk.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-//<<<<<<< HEAD
-//			if chk.NumRows() >= e.maxChunkSize {
-//=======
-			if req.IsFull() {
-//>>>>>>> 435a08140... executor: control Chunk size for TableReader&IndexReader&IndexLookup (#9452)
+			if chk.IsFull() {
 				return nil
 			}
 		}
