@@ -64,7 +64,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
 	outerSchema := expression.NewSchema(col0)
 	outerExec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, outerSchema, "", nil),
+		baseExecutor: newBaseExecutor(sctx, outerSchema, "", 0, nil),
 		Rows: []chunk.MutRow{
 			chunk.MutRowFromDatums(types.MakeDatums(1)),
 			chunk.MutRowFromDatums(types.MakeDatums(2)),
@@ -75,7 +75,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		}}
 	innerSchema := expression.NewSchema(col1)
 	innerExec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, innerSchema, "", nil),
+		baseExecutor: newBaseExecutor(sctx, innerSchema, "", 0, nil),
 		Rows: []chunk.MutRow{
 			chunk.MutRowFromDatums(types.MakeDatums(1)),
 			chunk.MutRowFromDatums(types.MakeDatums(2)),
@@ -91,7 +91,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.retTypes(), innerExec.retTypes())
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(sctx, joinSchema, "", nil),
+		baseExecutor: newBaseExecutor(sctx, joinSchema, "", 0, nil),
 		outerExec:    outerExec,
 		innerExec:    innerExec,
 		outerFilter:  []expression.Expression{outerFilter},
@@ -122,7 +122,7 @@ func prepareOneColChildExec(sctx sessionctx.Context, rowCount int) Executor {
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	schema := expression.NewSchema(col0)
 	exec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, schema, "", nil),
+		baseExecutor: newBaseExecutor(sctx, schema, "", 0, nil),
 		Rows:         make([]chunk.MutRow, rowCount)}
 	for i := 0; i < len(exec.Rows); i++ {
 		exec.Rows[i] = chunk.MutRowFromDatums(types.MakeDatums(i % 10))
@@ -138,7 +138,7 @@ func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *RadixHashJo
 	col1 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	joinSchema := expression.NewSchema(col0, col1)
 	hashJoinExec := &HashJoinExec{
-		baseExecutor:   newBaseExecutor(sctx, joinSchema, stringutil.StringerStr("HashJoin"), nil, childExec0, childExec1),
+		baseExecutor:   newBaseExecutor(sctx, joinSchema, stringutil.StringerStr("HashJoin"), 0, nil, childExec0, childExec1),
 		concurrency:    4,
 		joinType:       0, // InnerJoin
 		innerIdx:       0,

@@ -129,7 +129,7 @@ type PSTMTPlanCacheValue struct {
 
 // Delete implements Value interface.
 func (value *PSTMTPlanCacheValue) Delete() {
-	value.Chunks = make(map[string]*chunk.Chunk)
+	value.Chunks = nil
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
@@ -140,18 +140,14 @@ func NewPSTMTPlanCacheValue(plan Plan) *PSTMTPlanCacheValue {
 	}
 }
 
-type planCacheKey struct {
-	hash []byte
-}
+type planCacheKey []byte
 
 // Hash implements Key interface.
-func (key *planCacheKey) Hash() []byte {
-	return key.hash
+func (key planCacheKey) Hash() []byte {
+	return []byte(key)
 }
 
 // ConvertPlanCacheKey converts the physical plan key to the plan cache key
 func ConvertPlanCacheKey(key []byte) kvcache.Key {
-	return &planCacheKey{
-		hash: key,
-	}
+	return planCacheKey(key)
 }

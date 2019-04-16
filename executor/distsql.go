@@ -525,6 +525,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			buildTblReader: e.buildTableReader,
 			keepOrder:      e.keepOrder,
 			handleIdx:      e.handleIdx,
+			seqNo:          i,
 			isCheckOp:      e.isCheckOp,
 			memTracker:     memory.NewTracker(tableWorkerLabel, -1),
 		}
@@ -540,7 +541,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" }), e.planKey),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" }), e.seqNo, e.planKey),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		streaming:      e.tableStreaming,
@@ -739,6 +740,7 @@ type tableWorker struct {
 	buildTblReader func(ctx context.Context, handles []int64) (Executor, error)
 	keepOrder      bool
 	handleIdx      int
+	seqNo          int
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker

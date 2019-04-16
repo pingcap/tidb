@@ -66,6 +66,7 @@ type PointGetExecutor struct {
 	done     bool
 
 	id           string
+	seqNo        int
 	noChunksUsed int
 	hashBuf      []byte
 	planKey      []byte
@@ -267,7 +268,7 @@ func (e *PointGetExecutor) retTypes() []*types.FieldType {
 
 // hash returns the signature of the executor
 func (e *PointGetExecutor) getHash() []byte {
-	return computeHashImpl(e.hashBuf, e.id, e.noChunksUsed)
+	return computeHashImpl(e.hashBuf, e.id, e.seqNo, e.noChunksUsed)
 }
 
 func (e *PointGetExecutor) newFirstChunk() *chunk.Chunk {

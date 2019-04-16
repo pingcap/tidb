@@ -87,6 +87,7 @@ type baseExecutor struct {
 	retFieldTypes []*types.FieldType
 	runtimeStats  *execdetails.RuntimeStats
 
+	seqNo        int
 	noChunksUsed int
 	hashBuf      []byte
 	planKey      []byte
@@ -140,19 +141,20 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 // hash returns the signature of the executor
 func (e *baseExecutor) getHash() []byte {
-	return computeHashImpl(e.hashBuf, e.id, e.noChunksUsed)
+	return computeHashImpl(e.hashBuf, e.id, e.seqNo, e.noChunksUsed)
 }
 
-func computeHashImpl(hashBuf []byte, id string, noChunksUsed int) []byte {
+func computeHashImpl(hashBuf []byte, id string, seqNo int, noChunksUsed int) []byte {
 	var (
 		eid        = hack.Slice(id)
-		bufferSize = len(eid) + 1*8
+		bufferSize = len(eid) + 2*8
 	)
-	if cap(hashBuf) < bufferSize {
+	if hashBuf == nil || cap(hashBuf) < bufferSize {
 		hashBuf = make([]byte, bufferSize)
 	}
 	hashBuf = hashBuf[:0]
 	hashBuf = append(hashBuf, eid...)
+	hashBuf = codec.EncodeInt(hashBuf, int64(seqNo))
 	hashBuf = codec.EncodeInt(hashBuf, int64(noChunksUsed))
 	return hashBuf
 }
@@ -179,7 +181,7 @@ func reuseChunkImpl(ctx sessionctx.Context, planKey []byte, hash []byte, rt []*t
 	return chunk.New(rt, cap, sz)
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, planKey []byte, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, seqNo int, planKey []byte, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -187,7 +189,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
-		hashBuf:      make([]byte, 0, 40),
+		seqNo:        seqNo,
 		planKey:      planKey,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
@@ -223,7 +225,6 @@ type Executor interface {
 
 	retTypes() []*types.FieldType
 	newFirstChunk() *chunk.Chunk
-	getHash() []byte
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
