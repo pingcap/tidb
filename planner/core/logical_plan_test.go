@@ -1604,8 +1604,8 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "update t a1 set a1.a = a1.a + 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.UpdatePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
 			},
 		},
 		{
