@@ -226,6 +226,7 @@ func (h *Handle) AddGlobalBind(record *BindRecord) (err error) {
 	h.Lock()
 	_, err = exec.Execute(ctx, "BEGIN")
 	if err != nil {
+		h.Unlock()
 		return
 	}
 	defer func() {
