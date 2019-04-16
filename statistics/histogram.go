@@ -464,13 +464,14 @@ func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 	return lessCountB - lessCountA
 }
 
-func (hg *Histogram) totalRowCount() float64 {
+// TotalRowCount is the total row count in the histogram.
+func (hg *Histogram) TotalRowCount() float64 {
 	return hg.notNullCount() + float64(hg.NullCount)
 }
 
 // notNullCount indicates the count of non-null values in column histogram and single-column index histogram,
 // for multi-column index histogram, since we cannot define null for the row, we treat all rows as non-null, that means,
-// notNullCount would return same value as totalRowCount for multi-column index histograms.
+// notNullCount would return same value as `TotalRowCount` for multi-column index histograms.
 func (hg *Histogram) notNullCount() float64 {
 	if hg.Len() == 0 {
 		return 0
@@ -501,7 +502,7 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 
 // getIncreaseFactor will return a factor of data increasing after the last analysis.
 func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
-	columnCount := hg.totalRowCount()
+	columnCount := hg.TotalRowCount()
 	if columnCount == 0 {
 		// avoid dividing by 0
 		return 1.0
@@ -766,7 +767,7 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 		sc.SetHistogramsNotLoad()
 		histogramNeededColumns.insert(tableColumnID{tableID: c.PhysicalID, columnID: c.Info.ID})
 	}
-	return c.totalRowCount() == 0 || (c.NDV > 0 && c.Len() == 0)
+	return c.TotalRowCount() == 0 || (c.NDV > 0 && c.Len() == 0)
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
@@ -834,8 +835,8 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		}
 		rowCount += cnt
 	}
-	if rowCount > c.totalRowCount() {
-		rowCount = c.totalRowCount()
+	if rowCount > c.TotalRowCount() {
+		rowCount = c.TotalRowCount()
 	} else if rowCount < 0 {
 		rowCount = 0
 	}
@@ -857,7 +858,7 @@ func (idx *Index) String() string {
 
 // IsInvalid checks if this index is invalid.
 func (idx *Index) IsInvalid(collPseudo bool) bool {
-	return (collPseudo && idx.NotAccurate()) || idx.totalRowCount() == 0
+	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
@@ -921,8 +922,8 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 			totalCount += float64(idx.NullCount)
 		}
 	}
-	if totalCount > idx.totalRowCount() {
-		totalCount = idx.totalRowCount()
+	if totalCount > idx.TotalRowCount() {
+		totalCount = idx.TotalRowCount()
 	}
 	return totalCount, nil
 }
@@ -933,7 +934,7 @@ type countByRangeFunc = func(*stmtctx.StatementContext, int64, []*ranger.Range) 
 // TODO: Datum is not efficient, try to avoid using it here.
 //  Also, there're redundant calculation with Selectivity(). We need to reduce it too.
 func newHistogramBySelectivity(sc *stmtctx.StatementContext, histID int64, oldHist, newHist *Histogram, ranges []*ranger.Range, cntByRangeFunc countByRangeFunc) error {
-	cntPerVal := int64(oldHist.AvgCountPerNotNullValue(int64(oldHist.totalRowCount())))
+	cntPerVal := int64(oldHist.AvgCountPerNotNullValue(int64(oldHist.TotalRowCount())))
 	var totCnt int64
 	for boundIdx, ranIdx, highRangeIdx := 0, 0, 0; boundIdx < oldHist.Bounds.NumRows() && ranIdx < len(ranges); boundIdx, ranIdx = boundIdx+2, highRangeIdx {
 		for highRangeIdx < len(ranges) && chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &ranges[highRangeIdx].HighVal[0]) >= 0 {

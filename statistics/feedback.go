@@ -566,7 +566,7 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 		}
 		// Distribute the total split count to bucket based on number of bucket feedback.
 		newBktNums := splitCount * len(bktFB.feedback) / numTotalFBs
-		bkts := bktFB.splitBucket(newBktNums, h.totalRowCount(), float64(h.bucketCount(i)))
+		bkts := bktFB.splitBucket(newBktNums, h.TotalRowCount(), float64(h.bucketCount(i)))
 		buckets = append(buckets, bkts...)
 		if len(bkts) == 1 {
 			isNewBuckets = append(isNewBuckets, false)
@@ -590,7 +590,7 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 	hist := buildNewHistogram(h, buckets)
 	// Update the NDV of primary key column.
 	if feedback.tp == pkType {
-		hist.NDV = int64(hist.totalRowCount())
+		hist.NDV = int64(hist.TotalRowCount())
 	}
 	return hist
 }

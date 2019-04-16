@@ -1462,6 +1462,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			e.tasks = append(e.tasks, &analyzeTask{
 				taskType: colTask,
 				colExec:  b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets),
+				job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze columns"},
 			})
 		}
 		if b.err != nil {
@@ -1475,6 +1476,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			e.tasks = append(e.tasks, &analyzeTask{
 				taskType: idxTask,
 				idxExec:  b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets),
+				job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze index " + task.IndexInfo.Name.O},
 			})
 		}
 		if b.err != nil {

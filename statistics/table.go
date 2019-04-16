@@ -204,7 +204,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 				Histogram:  *hg,
 				Info:       colInfo,
 				CMSketch:   cms,
-				Count:      int64(hg.totalRowCount()),
+				Count:      int64(hg.TotalRowCount()),
 				ErrorRate:  errorRate,
 				isHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
@@ -553,13 +553,13 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			// so we use heuristic methods to estimate the selectivity.
 			if idx.NDV > 0 && len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal) {
 				// for equality queries
-				selectivity = float64(coll.ModifyCount) / float64(idx.NDV) / idx.totalRowCount()
+				selectivity = float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
 			} else {
 				// for range queries
-				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.totalRowCount()
+				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
 			}
 		} else {
-			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.totalRowCount())
+			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
 		}
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {
@@ -587,12 +587,12 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = selectivity * count / float64(idx.totalRowCount())
+			selectivity = selectivity * count / float64(idx.TotalRowCount())
 		}
-		totalCount += selectivity * float64(idx.totalRowCount())
+		totalCount += selectivity * float64(idx.TotalRowCount())
 	}
-	if totalCount > idx.totalRowCount() {
-		totalCount = idx.totalRowCount()
+	if totalCount > idx.TotalRowCount() {
+		totalCount = idx.TotalRowCount()
 	}
 	return totalCount, nil
 }

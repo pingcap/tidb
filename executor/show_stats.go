@@ -221,3 +221,26 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 		healthy,
 	})
 }
+
+func (e *ShowExec) fetchShowAnalyzeStatus() {
+	h := domain.GetDomain(e.ctx).StatsHandle()
+	for _, job := range h.GetAllAnalyzeJobs() {
+		job.Lock()
+		var startTime interface{}
+		if job.StartTime.IsZero() {
+			startTime = nil
+		} else {
+			startTime = types.Time{Time: types.FromGoTime(job.StartTime), Type: mysql.TypeDatetime}
+		}
+		e.appendRow([]interface{}{
+			job.DBName,
+			job.TableName,
+			job.PartitionName,
+			job.JobInfo,
+			job.RowCount,
+			startTime,
+			job.State,
+		})
+		job.Unlock()
+	}
+}

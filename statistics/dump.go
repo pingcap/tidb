@@ -204,7 +204,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				continue
 			}
 			hist := HistogramFromProto(jsonCol.Histogram)
-			count := int64(hist.totalRowCount())
+			count := int64(hist.TotalRowCount())
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {

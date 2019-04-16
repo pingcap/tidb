@@ -398,7 +398,7 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(h.NDV, Equals, t.ndv)
 		c.Assert(h.Len(), Equals, t.bucketNum)
-		c.Assert(int64(h.totalRowCount()), Equals, t.leftNum+t.rightNum)
+		c.Assert(int64(h.TotalRowCount()), Equals, t.leftNum+t.rightNum)
 		expectLower := types.NewIntDatum(t.leftLower)
 		cmp, err := h.GetLower(0).CompareDatum(sc, &expectLower)
 		c.Assert(err, IsNil)
@@ -455,7 +455,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
 	tbl := &Table{
 		HistColl: HistColl{
-			Count:   int64(col.totalRowCount()),
+			Count:   int64(col.TotalRowCount()),
 			Columns: make(map[int64]*Column),
 		},
 	}
@@ -524,7 +524,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
 	tbl := &Table{
 		HistColl: HistColl{
-			Count:   int64(col.totalRowCount()),
+			Count:   int64(col.TotalRowCount()),
 			Columns: make(map[int64]*Column),
 		},
 	}
@@ -616,7 +616,7 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 	tbl := &Table{
 		HistColl: HistColl{
-			Count:   int64(idx.totalRowCount()),
+			Count:   int64(idx.TotalRowCount()),
 			Indices: make(map[int64]*Index),
 		},
 	}
