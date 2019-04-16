@@ -16,7 +16,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math/rand"
 	"runtime"
 	"sort"
@@ -521,7 +520,6 @@ type AnalyzeFastExec struct {
 	idxsInfo        []*model.IndexInfo
 	concurrency     int
 	maxNumBuckets   uint64
-	table           table.Table
 	cache           *tikv.RegionCache
 	wg              *sync.WaitGroup
 	sampLocs        chan *tikv.KeyLocation
@@ -569,9 +567,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		if *err != nil {
 			return
 		}
-		// TODO: check the region not_found
-		if ctx.Err() != nil {
-			fmt.Println(ctx.Err().Error())
+		if resp.DebugGetRegionProperties == nil || len(resp.DebugGetRegionProperties.Props) == 0 {
 			*needRebuild = true
 			return
 		}
@@ -655,34 +651,25 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	return false, nil
 }
 
-func decodeValues(sValue []byte, sKey kv.Key) (values []types.Datum, err error) {
-	lastPos := int64(0)
-	for len(sValue) > 0 {
-		var offsetDatum, val types.Datum
-		sValue, offsetDatum, err = codec.DecodeOne(sValue)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if offsetDatum.Kind() != types.KindInt64 {
-			return nil, errors.Errorf("Meeting invalid type when decode values")
-		}
-		offset := offsetDatum.GetInt64()
-		if offset != lastPos+1 {
-			var key int64
-			_, key, err = tablecodec.DecodeRecordKey(sKey)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			values = append(values, types.NewIntDatum(key))
-		}
-		sValue, val, err = codec.DecodeOne(sValue)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		values = append(values, val)
-		lastPos = offset
+func (e *AnalyzeFastExec) decodeValues(sValue []byte) (values map[int64]types.Datum, err error) {
+	colID2FieldTypes := make(map[int64]*types.FieldType, len(e.colsInfo))
+	if e.pkInfo != nil {
+		colID2FieldTypes[e.pkInfo.ID] = &e.pkInfo.FieldType
 	}
-	return
+	for _, col := range e.colsInfo {
+		// fmt.Println("colInfo ", *col)
+		colID2FieldTypes[col.ID] = &col.FieldType
+	}
+	values, err = tablecodec.DecodeRow(sValue, colID2FieldTypes, e.ctx.GetSessionVars().Location())
+	return values, errors.Trace(err)
+}
+
+func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[int64]types.Datum) (types.Datum, error) {
+	val, ok := values[colInfo.ID]
+	if !ok {
+		return table.GetColOriginDefaultValue(e.ctx, colInfo)
+	}
+	return val, nil
 }
 
 func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collectors []*statistics.SampleCollector) (err error) {
@@ -695,24 +682,44 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 	samplePos := newCursor - length
 	for sKey, sValue := range kvMap {
 		// Decode the cols value in order.
-		var values []types.Datum
-		values, err = decodeValues(sValue, kv.Key(sKey))
+		var values map[int64]types.Datum
+		values, err = e.decodeValues(sValue)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// build statistic collector.
 		if hasPKInfo > 0 {
-			collectors[0].Samples = append(collectors[0].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: values[e.pkInfo.Offset]})
-			collectors[0].TotalSize += int64(len(values[e.pkInfo.Offset].GetBytes()) - 1)
+			v, ok := values[e.pkInfo.ID]
+			if !ok {
+				var key int64
+				_, key, err = tablecodec.DecodeRecordKey(kv.Key(sKey))
+				if err != nil {
+					return errors.Trace(err)
+				}
+				v = types.NewIntDatum(key)
+			}
+			collectors[0].Samples = append(collectors[0].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
 		}
 		for j, colInfo := range e.colsInfo {
-			collectors[hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: values[colInfo.Offset]})
-			collectors[hasPKInfo].TotalSize += int64(len(values[colInfo.Offset].GetBytes()) - 1)
+			v, err := e.getValueByInfo(colInfo, values)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			collectors[hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
 		}
 		for j, idxInfo := range e.idxsInfo {
 			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
 			for _, idxCol := range idxInfo.Columns {
-				idxVals = append(idxVals, values[idxCol.Offset])
+				for _, colInfo := range e.colsInfo {
+					if colInfo.Name == idxCol.Name {
+						v, err := e.getValueByInfo(colInfo, values)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						idxVals = append(idxVals, v)
+						break
+					}
+				}
 			}
 			var bytes []byte
 			bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
@@ -721,7 +728,6 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 			}
 			v := types.NewBytesDatum(bytes)
 			collectors[len(e.colsInfo)+hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
-			collectors[len(e.colsInfo)+hasPKInfo+j].TotalSize += int64(len(v.GetBytes()) - 1)
 		}
 		samplePos++
 	}
@@ -733,6 +739,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 	if e.pkInfo != nil {
 		hasPKInfo = 1
 	}
+	rander := rand.New(rand.NewSource(RandSeed + int64(e.rowCount)))
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
 		e.rowCount++
@@ -748,41 +755,56 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 			for _, c := range collectors {
 				item := &statistics.SampleItem{}
 				c.Samples = append(c.Samples, item)
-				c.TotalSize += int64(len(item.Value.GetBytes()) - 1)
 			}
 		}
 
 		// Decode the cols value in order.
-		var values []types.Datum
-		values, err = decodeValues(iter.Value(), iter.Key())
+		var values map[int64]types.Datum
+		values, err = e.decodeValues(iter.Value())
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		// build statistic collector.
 		if hasPKInfo > 0 {
-			collectors[0].TotalSize -= int64(len(collectors[0].Samples[p].Value.GetBytes()) - 1)
-			collectors[0].Samples[p].Value = values[e.pkInfo.Offset]
-			collectors[0].TotalSize += int64(len(collectors[0].Samples[p].Value.GetBytes()) - 1)
+			v, ok := values[e.pkInfo.ID]
+			if !ok {
+				var key int64
+				_, key, err = tablecodec.DecodeRecordKey(iter.Key())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				v = types.NewIntDatum(key)
+			}
+			collectors[0].Samples[p].Value = v
 		}
 		for j, colInfo := range e.colsInfo {
-			collectors[hasPKInfo+j].TotalSize -= int64(len(collectors[hasPKInfo+j].Samples[p].Value.GetBytes()) - 1)
-			collectors[hasPKInfo+j].Samples[p].Value = values[colInfo.Offset]
-			collectors[hasPKInfo+j].TotalSize += int64(len(collectors[hasPKInfo+j].Samples[p].Value.GetBytes()) - 1)
+			v, err := e.getValueByInfo(colInfo, values)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			collectors[hasPKInfo+j].Samples[p].Value = v
 		}
 		for j, idxInfo := range e.idxsInfo {
 			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
 			for _, idxCol := range idxInfo.Columns {
-				idxVals = append(idxVals, values[idxCol.Offset])
+				for _, colInfo := range e.colsInfo {
+					if colInfo.Name == idxCol.Name {
+						v, err := e.getValueByInfo(colInfo, values)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						idxVals = append(idxVals, v)
+						break
+					}
+				}
 			}
 			var bytes []byte
 			bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			collectors[len(e.colsInfo)+hasPKInfo+j].TotalSize -= int64(len(collectors[len(e.colsInfo)+hasPKInfo+j].Samples[p].Value.GetBytes()) - 1)
 			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[p].Value = types.NewBytesDatum(bytes)
-			collectors[len(e.colsInfo)+hasPKInfo+j].TotalSize += int64(len(collectors[len(e.colsInfo)+hasPKInfo+j].Samples[p].Value.GetBytes()) - 1)
 		}
 	}
 	return errors.Trace(err)
@@ -813,6 +835,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 	}()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
+	rander := rand.New(rand.NewSource(RandSeed + int64(rid)))
 	if *err != nil {
 		return
 	}
@@ -850,6 +873,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 
 func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
 	// build collector properties.
+	collector.UpdateTotalSize()
 	collector.Count = int64(len(collector.Samples))
 	for _, sample := range collector.Samples {
 		if sample.Value.IsNull() {
@@ -932,12 +956,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
 	// To set rand seed, it's for unit test.
-	rander = rand.New(rand.NewSource(RandSeed))
-	if RandSeed != 1 {
-		// If RandSeed is changed by unit test, we must keep just one thread to ensure
-		// the samples are not different.
-		e.concurrency = 1
-	}
+	rander := rand.New(rand.NewSource(RandSeed))
 
 	// Only four rebuilds for sample task are allowed.
 	for buildCnt := 0; buildCnt < 5; buildCnt++ {

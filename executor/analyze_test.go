@@ -131,6 +131,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	for i := 0; i < 3000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
@@ -153,12 +154,11 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 		"Table:37 Count:3000\n"+
 			"index:1 ndv:3000\n"+
 			"num: 603 lower_bound: 0 upper_bound: 530 repeats: 1\n"+
-			"num: 603 lower_bound: 532 upper_bound: 1127 repeats: 1\n"+
-			"num: 603 lower_bound: 1129 upper_bound: 1748 repeats: 1\n"+
-			"num: 603 lower_bound: 1751 upper_bound: 2386 repeats: 1\n"+
-			"num: 588 lower_bound: 2388 upper_bound: 2992 repeats: 1\n")
+			"num: 603 lower_bound: 532 upper_bound: 1164 repeats: 1\n"+
+			"num: 603 lower_bound: 1166 upper_bound: 1750 repeats: 1\n"+
+			"num: 603 lower_bound: 1758 upper_bound: 2390 repeats: 1\n"+
+			"num: 588 lower_bound: 2391 upper_bound: 2997 repeats: 1\n")
 
-	tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
 }
 
 func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {

@@ -173,6 +173,14 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 	return nil
 }
 
+// UpdateTotalSize is to calculate total size based on samples.
+func (c *SampleCollector) UpdateTotalSize() {
+	c.TotalSize = 0
+	for _, item := range c.Samples {
+		c.TotalSize += int64(len(item.Value.GetBytes()) - 1)
+	}
+}
+
 // SampleBuilder is used to build samples for columns.
 // Also, if primary key is handle, it will directly build histogram for it.
 type SampleBuilder struct {
