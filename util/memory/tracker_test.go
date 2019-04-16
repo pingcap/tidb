@@ -14,12 +14,12 @@
 package memory
 
 import (
-	"github.com/cznic/mathutil"
 	"math/rand"
 	"os"
 	"sync"
 	"testing"
 
+	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
