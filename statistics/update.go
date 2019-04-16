@@ -544,7 +544,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		if ok && idx.Histogram.Len() > 0 {
 			idxHist := idx.Histogram
 			hist = &idxHist
-			cms = idx.CMSketch.Copy()
+			cms = idx.CMSketch.copy()
 		}
 	} else {
 		col, ok := tbl.Columns[histID]

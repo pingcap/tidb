@@ -427,7 +427,7 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 	if c == nil || rc == nil {
 		return c == nil && rc == nil
 	}
-	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count || c.defaultValue != rc.defaultValue {
+	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count {
 		return false
 	}
 	for i := range c.table {
@@ -437,36 +437,10 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 			}
 		}
 	}
-	if len(rc.topnindex) > 0 || len(c.topnindex) > 0 {
-		if len(rc.topnindex) != len(c.topnindex) {
-			return false
-		}
-		for k, v := range c.topnindex {
-			v2, ok := rc.topnindex[k]
-			if !ok || len(v) != len(v2) {
-				return false
-			}
-			for i := range v {
-				hasMatch := false
-				for j := range v2 {
-					if v[i].h2 == v2[j].h2 && bytes.Equal(v[i].data, v2[j].data) && v[i].count == v2[j].count {
-						hasMatch = true
-						break
-					}
-				}
-				if !hasMatch {
-					return false
-				}
-			}
-		}
-	}
 	return true
 }
 
-// Copy makes a deepcopy of CMSketch
-// This function should not used outside this package
-// Make it public for handle_test
-func (c *CMSketch) Copy() *CMSketch {
+func (c *CMSketch) copy() *CMSketch {
 	if c == nil {
 		return nil
 	}
@@ -475,17 +449,5 @@ func (c *CMSketch) Copy() *CMSketch {
 		tbl[i] = make([]uint32, c.width)
 		copy(tbl[i], c.table[i])
 	}
-	var ntopn map[uint64][]cmscount
-	if c.topnindex != nil {
-		ntopn = make(map[uint64][]cmscount)
-		for k, v := range c.topnindex {
-			newSlice := make([]cmscount, len(v))
-			for i := range v {
-				newSlice[i] = cmscount{v[i].h1, v[i].h2, make([]byte, len(v[i].data)), v[i].count}
-				copy(newSlice[i].data, v[i].data)
-			}
-			ntopn[k] = newSlice
-		}
-	}
-	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, topnindex: ntopn, defaultValue: c.defaultValue}
+	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl}
 }

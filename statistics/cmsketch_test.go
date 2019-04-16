@@ -188,8 +188,6 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		avg, err := averageAbsoluteError(lSketch, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
-		rSketch := lSketch.Copy()
-		c.Check(rSketch.Equal(lSketch), IsTrue)
 	}
 }
 
