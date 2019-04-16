@@ -50,7 +50,7 @@ type cache map[string][]*bindMeta
 // Handle holds an atomic cache.
 type Handle struct {
 	atomic.Value
-	*sync.Mutex
+	sync.Mutex
 	ctx              sessionctx.Context
 	BindCacheUpdater *BindCacheUpdater
 }
@@ -106,9 +106,9 @@ func NewHandle(ctx sessionctx.Context) *Handle {
 func (h *Handle) Get() cache {
 	bc := h.Load()
 	if bc != nil {
-		return bc.(map[string][]*bindMeta)
+		return bc.(cache)
 	}
-	return make(map[string][]*bindMeta)
+	return make(cache)
 }
 
 // LoadDiff is used to load new bind info to cache bc.
@@ -137,7 +137,7 @@ func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	defer bindCacheUpdater.lock.Unlock()
 	var sql string
 	bc := bindCacheUpdater.globalHandle.Get()
-	newBc := make(map[string][]*bindMeta, len(bc))
+	newBc := make(cache, len(bc))
 	for hash, bindDataArr := range bc {
 		newBc[hash] = append(newBc[hash], bindDataArr...)
 	}
@@ -185,10 +185,6 @@ func newBindRecord(row chunk.Row) *BindRecord {
 		Charset:     row.GetString(6),
 		Collation:   row.GetString(7),
 	}
-}
-
-func appendNode(b cache, newBindRecord *BindRecord, sparser *parser.Parser) error {
-	return b.appendNode(newBindRecord, sparser)
 }
 
 func (b cache) appendNode(newBindRecord *BindRecord, sparser *parser.Parser) error {
