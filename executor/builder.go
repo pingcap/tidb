@@ -2015,6 +2015,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 
 	e := &SQLBindExec{
 		baseExecutor: base,
+		sqlBindOp:    v.SQLBindOp,
 		normdOrigSQL: v.NormdOrigSQL,
 		bindSQL:      v.BindSQL,
 		defaultDB:    v.DefaultDB,

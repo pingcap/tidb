@@ -334,16 +334,18 @@ type Set struct {
 	VarAssigns []*expression.VarAssignment
 }
 
+type SQLBindOpType int
+
 const (
 	// OpSQLBindCreate represents the operation to create a SQL bind.
-	OpSQLBindCreate = 0
+	OpSQLBindCreate SQLBindOpType = iota
 )
 
 // SQLBindPlan represents a plan for SQL bind.
 type SQLBindPlan struct {
 	baseSchemaProducer
 
-	BindType     int
+	SQLBindOp    SQLBindOpType
 	NormdOrigSQL string
 	BindSQL      string
 	DefaultDB    string
