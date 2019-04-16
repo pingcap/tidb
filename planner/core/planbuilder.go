@@ -367,13 +367,13 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	p := &SQLBindPlan{
-		BindType:            OpSQLBindCreate,
-		NormalizedOriginSQL: parser.Normalize(v.OriginSel.Text()),
-		BindSQL:             v.HintedSel.Text(),
-		IsGlobal:            v.GlobalScope,
-		BindStmt:            v.HintedSel,
-		Charset:             charSet,
-		Collation:           collation,
+		BindType:     OpSQLBindCreate,
+		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
+		BindSQL:      v.HintedSel.Text(),
+		IsGlobal:     v.GlobalScope,
+		BindStmt:     v.HintedSel,
+		Charset:      charSet,
+		Collation:    collation,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil

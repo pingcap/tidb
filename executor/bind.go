@@ -26,13 +26,13 @@ import (
 type SQLBindExec struct {
 	baseExecutor
 
-	normalizedOriginSQL string
-	bindSQL             string
-	defaultDB           string
-	charset             string
-	collation           string
-	isGlobal            bool
-	bindAst             ast.StmtNode
+	normdOrigSQL string
+	bindSQL      string
+	defaultDB    string
+	charset      string
+	collation    string
+	isGlobal     bool
+	bindAst      ast.StmtNode
 }
 
 // Next implements the Executor Next interface.
@@ -43,7 +43,7 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		return errors.New("bind manager is nil")
 	}
 	if e.isGlobal {
-		return handle.AddGlobalBind(e.normalizedOriginSQL, e.bindSQL, e.defaultDB, e.charset, e.collation)
+		return handle.AddGlobalBind(e.normdOrigSQL, e.bindSQL, e.defaultDB, e.charset, e.collation)
 	}
 
 	return errors.New("non global sql bind not support")

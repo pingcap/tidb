@@ -343,14 +343,14 @@ const (
 type SQLBindPlan struct {
 	baseSchemaProducer
 
-	BindType            int
-	NormalizedOriginSQL string
-	BindSQL             string
-	DefaultDB           string
-	IsGlobal            bool
-	BindStmt            ast.StmtNode
-	Charset             string
-	Collation           string
+	BindType     int
+	NormdOrigSQL string
+	BindSQL      string
+	DefaultDB    string
+	IsGlobal     bool
+	BindStmt     ast.StmtNode
+	Charset      string
+	Collation    string
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.

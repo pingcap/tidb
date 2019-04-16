@@ -158,12 +158,12 @@ func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	return nil
 }
 
-func (bindCacheUpdater *BindCacheUpdater) updateOneBind(normalizedOriginSQL, bindSQL, defaultDB string, createTs, updateTs types.Time, status, charset, collation string) error {
+func (bindCacheUpdater *BindCacheUpdater) updateOneBind(normdOrigSQL, bindSQL, defaultDB string, createTs, updateTs types.Time, status, charset, collation string) error {
 	bindCacheUpdater.lock.Lock()
 	defer bindCacheUpdater.lock.Unlock()
 
 	record := &bindRecord{
-		OriginalSQL: normalizedOriginSQL,
+		OriginalSQL: normdOrigSQL,
 		BindSQL:     bindSQL,
 		Db:          defaultDB,
 		Status:      status,
@@ -174,12 +174,12 @@ func (bindCacheUpdater *BindCacheUpdater) updateOneBind(normalizedOriginSQL, bin
 	}
 
 	bc := bindCacheUpdater.globalHandle.Get()
-	newBc := cache(make(map[string][]*bindMeta, len(bc)))
+	newBc := make(map[string][]*bindMeta, len(bc))
 	for hash, bindDataArr := range bc {
 		newBc[hash] = append(newBc[hash], bindDataArr...)
 	}
 	var err error
-	err = newBc.appendNode(record, bindCacheUpdater.parser)
+	err = appendNode(newBc, record, bindCacheUpdater.parser) //avoid globalHandle store error: store of inconsistently typed value into Value
 	if err != nil {
 		return err
 	}
@@ -199,6 +199,10 @@ func newBindRecord(row chunk.Row) *bindRecord {
 		Charset:     row.GetString(6),
 		Collation:   row.GetString(7),
 	}
+}
+
+func appendNode(b cache, newBindRecord *bindRecord, sparser *parser.Parser) error {
+	return b.appendNode(newBindRecord, sparser)
 }
 
 func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) error {
@@ -230,7 +234,7 @@ func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) err
 }
 
 // AddGlobalBind implements GlobalBindAccessor.AddGlobalBind interface.
-func (h *Handle) AddGlobalBind(normalizedOriginSQL, bindSQL, defaultDB, charset, collation string) error {
+func (h *Handle) AddGlobalBind(normdOrigSQL, bindSQL, defaultDB, charset, collation string) error {
 	h.lock.Lock()
 	defer h.lock.Unlock()
 
@@ -250,7 +254,7 @@ func (h *Handle) AddGlobalBind(normalizedOriginSQL, bindSQL, defaultDB, charset,
 	}()
 
 	sql := fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
-		normalizedOriginSQL, defaultDB)
+		normdOrigSQL, defaultDB)
 	_, err = exec.Execute(ctx, sql)
 	if err != nil {
 		return err
@@ -263,7 +267,7 @@ func (h *Handle) AddGlobalBind(normalizedOriginSQL, bindSQL, defaultDB, charset,
 	tsStr := getTimeStringWithoutZone(ts)
 	bindSQL = getEscapeCharacter(bindSQL)
 	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
-		normalizedOriginSQL, bindSQL, defaultDB, using, tsStr, tsStr, charset, collation)
+		normdOrigSQL, bindSQL, defaultDB, using, tsStr, tsStr, charset, collation)
 	_, err = exec.Execute(ctx, sql)
 	if err != nil {
 		return err
@@ -274,7 +278,7 @@ func (h *Handle) AddGlobalBind(normalizedOriginSQL, bindSQL, defaultDB, charset,
 		Type: mysql.TypeTimestamp,
 		Fsp:  3,
 	}
-	return h.BindCacheUpdater.updateOneBind(normalizedOriginSQL, bindSQL, defaultDB, sqlTime, sqlTime, using, charset, collation)
+	return h.BindCacheUpdater.updateOneBind(normdOrigSQL, bindSQL, defaultDB, sqlTime, sqlTime, using, charset, collation)
 }
 
 func getTimeStringWithoutZone(ts time.Time) string {

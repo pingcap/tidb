@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -147,6 +148,8 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 
 	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	c.Assert(err, IsNil, Commentf("err %v", err))
+
+	time.Sleep(time.Second * 1)
 	_, err = tk.Exec("create global binding for select * from t where i>99 using select * from t use index(index_t) where i>99")
 	c.Assert(err, IsNil)
 
