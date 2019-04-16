@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -234,22 +233,29 @@ func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) err
 }
 
 // AddGlobalBind implements GlobalBindAccessor.AddGlobalBind interface.
-func (h *Handle) AddGlobalBind(normdOrigSQL, bindSQL, defaultDB, charset, collation string) error {
+func (h *Handle) AddGlobalBind(normdOrigSQL, bindSQL, defaultDB, charset, collation string) (err error) {
+	var sqlTime types.Time
+	var escapedBindSQL string
+	defer func() {
+		if err == nil {
+			err = h.BindCacheUpdater.updateOneBind(normdOrigSQL, escapedBindSQL, defaultDB, sqlTime, sqlTime, using, charset, collation)
+		}
+	}()
+
 	h.lock.Lock()
 	defer h.lock.Unlock()
 
 	ctx := context.TODO() //we need a new ctx to execute a transcation
 	exec, _ := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(ctx, "BEGIN")
+	_, err = exec.Execute(ctx, "BEGIN")
 	if err != nil {
-		return err
+		return
 	}
 	defer func() {
 		if err == nil {
 			_, err = exec.Execute(ctx, "COMMIT")
 		} else {
-			_, rbErr := exec.Execute(ctx, "ROLLBACK")
-			terror.Log(rbErr)
+			_, err = exec.Execute(ctx, "ROLLBACK")
 		}
 	}()
 
@@ -257,28 +263,29 @@ func (h *Handle) AddGlobalBind(normdOrigSQL, bindSQL, defaultDB, charset, collat
 		normdOrigSQL, defaultDB)
 	_, err = exec.Execute(ctx, sql)
 	if err != nil {
-		return err
+		return
 	}
 	txn, err := h.ctx.Txn(true) //active a new txn to get startTs as bind's createTs.
 	if err != nil {
-		return err
+		return
 	}
 	ts := oracle.GetTimeFromTS(txn.StartTS())
 	tsStr := getTimeStringWithoutZone(ts)
-	bindSQL = getEscapeCharacter(bindSQL)
+	escapedBindSQL = getEscapeCharacter(bindSQL)
 	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
-		normdOrigSQL, bindSQL, defaultDB, using, tsStr, tsStr, charset, collation)
+		normdOrigSQL, escapedBindSQL, defaultDB, using, tsStr, tsStr, charset, collation)
 	_, err = exec.Execute(ctx, sql)
 	if err != nil {
-		return err
+		return
 	}
 
-	sqlTime := types.Time{
+	sqlTime = types.Time{
 		Time: types.FromGoTime(ts),
 		Type: mysql.TypeTimestamp,
 		Fsp:  3,
 	}
-	return h.BindCacheUpdater.updateOneBind(normdOrigSQL, bindSQL, defaultDB, sqlTime, sqlTime, using, charset, collation)
+
+	return
 }
 
 func getTimeStringWithoutZone(ts time.Time) string {
