@@ -827,6 +827,9 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 			return
 		}
 
+		if task.SampSize == 0 {
+			continue
+		}
 		keys := make([]kv.Key, 0, task.SampSize)
 		for i := 0; i < int(task.SampSize); i++ {
 			randKey := rander.Int63n(maxRowID-minRowID) + minRowID
@@ -858,12 +861,6 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			var valString string
-			valString, err = sample.Value.ToString()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			collector.CMSketch.InsertBytes([]byte(valString))
 		}
 	}
 	// TODO: build collector's CMSketch here.
@@ -919,7 +916,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		} else if i < hasPKInfo+len(e.colsInfo) {
 			hists[i], err = e.buildHist(e.colsInfo[i-hasPKInfo].ID, collectors[i], &e.colsInfo[i-hasPKInfo].FieldType)
 		} else {
-			hists[i], err = e.buildHist(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)].ID, collectors[i], types.NewFieldType(mysql.TypeString))
+			hists[i], err = e.buildHist(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)].ID, collectors[i], types.NewFieldType(mysql.TypeBlob))
 		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -950,6 +947,7 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 				e.scanTasks = append(e.scanTasks, task.Location)
 			}
 			e.sampTasks = e.sampTasks[:0]
+			e.rowCount = 0
 		} else {
 			randPos := make([]uint64, 0, MaxSampleSize+1)
 			for i := 0; i < MaxSampleSize; i++ {

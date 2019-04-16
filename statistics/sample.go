@@ -177,7 +177,7 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 func (c *SampleCollector) UpdateTotalSize() {
 	c.TotalSize = 0
 	for _, item := range c.Samples {
-		c.TotalSize += int64(len(item.Value.GetBytes()) - 1)
+		c.TotalSize += int64(len(item.Value.GetBytes()))
 	}
 }
 
