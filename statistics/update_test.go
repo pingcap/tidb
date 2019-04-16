@@ -992,7 +992,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
 	c.Assert(err, IsNil)
 
-	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint32(2))
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint64(2))
 
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
 		"num: 2 lower_bound: -inf upper_bound: 2 repeats: 0\n"+
@@ -1061,7 +1061,7 @@ func (h *logHook) field2String(field zapcore.Field) string {
 	switch field.Type {
 	case zapcore.StringType:
 		return field.String
-	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type:
+	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type, zapcore.Uint64Type:
 		return fmt.Sprintf("%v", field.Integer)
 	case zapcore.Float64Type:
 		return fmt.Sprintf("%v", math.Float64frombits(uint64(field.Integer)))
@@ -1328,7 +1328,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 		}
 		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
 		c.Assert(err, IsNil)
-		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)
+		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, uint64(t.eqCount))
 	}
 }
 
@@ -1395,7 +1395,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 		c.Assert(tbl.Columns[t.rangeID].ToString(0), Equals, tests[i].hist)
 		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
 		c.Assert(err, IsNil)
-		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)
+		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, uint64(t.eqCount))
 	}
 }
 
