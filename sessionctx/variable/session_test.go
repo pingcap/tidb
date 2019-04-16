@@ -14,12 +14,12 @@
 package variable_test
 
 import (
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 )
