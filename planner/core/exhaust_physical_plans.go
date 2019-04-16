@@ -15,6 +15,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 
@@ -27,9 +28,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -439,7 +441,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		indexInfo := path.index
 		err := helper.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
 		if err != nil {
-			log.Warnf("[planner]: error happened when build index join: %v", err)
+			logutil.Logger(context.Background()).Warn("build index join failed", zap.Error(err))
 		}
 	}
 	if helper.chosenIndexInfo != nil {
