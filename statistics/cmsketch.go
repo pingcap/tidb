@@ -148,12 +148,10 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 		// Nothing to do, no change with ratio
 		estimateNDV = uint64(ndv)
 	} else {
-		// PostgreSQL uses the following fomular to calculate global ndv
-		// n*d / (n - f1 + f1*n/N)
-		// f1 : onlyOnceItems
-		// n  : sampleSize
-		// N  : totalSize
-		// d  : ndv of sample
+		// Charikar, Moses, et al. "Towards estimation error guarantees for distinct values."
+		// Proceedings of the nineteenth ACM SIGMOD-SIGACT-SIGART symposium on Principles of database systems. ACM, 2000.
+		// estimateNDV = sqrt(N/n) f_1 + sum_2..inf f_i
+		// f_i = number of elements occurred i times in sample
 
 		f1 := float64(onlyOnceItems)
 		n := float64(sampleSize)
