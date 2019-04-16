@@ -659,24 +659,32 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 }
 
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, job *model.Job, schemaID int64, tableName string) error {
-	// Try to use memory schema info to check first.
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
-	}
-	is := d.infoHandle.Get()
-	if is.SchemaMetaVersion() == currVer {
-		// Check this table's database.
-		schema, ok := is.SchemaByID(schemaID)
-		if !ok {
-			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+	// d.infoHandle maybe nil in some test.
+	if d.infoHandle != nil {
+		// Try to use memory schema info to check first.
+		currVer, err := t.GetSchemaVersion()
+		if err != nil {
+			return err
 		}
-		if is.TableExists(schema.Name, model.NewCIStr(tableName)) {
-			return infoschema.ErrTableExists.GenWithStackByArgs(tableName)
+		is := d.infoHandle.Get()
+		if is.SchemaMetaVersion() == currVer {
+			// Check this table's database.
+			schema, ok := is.SchemaByID(schemaID)
+			if !ok {
+				return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+			}
+			if is.TableExists(schema.Name, model.NewCIStr(tableName)) {
+				return infoschema.ErrTableExists.GenWithStackByArgs(tableName)
+			}
+			return nil
 		}
-		return nil
 	}
-	// Load schema info from store.
+
+	return checkTableNotExistsFromStore(t, job, schemaID, tableName)
+}
+
+func checkTableNotExistsFromStore(t *meta.Meta, job *model.Job, schemaID int64, tableName string) error {
+	// Check this table's database.
 	tables, err := t.ListTables(schemaID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
