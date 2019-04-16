@@ -655,7 +655,6 @@ func (e *AnalyzeFastExec) decodeValues(sValue []byte) (values map[int64]types.Da
 		colID2FieldTypes[e.pkInfo.ID] = &e.pkInfo.FieldType
 	}
 	for _, col := range e.colsInfo {
-		// fmt.Println("colInfo ", *col)
 		colID2FieldTypes[col.ID] = &col.FieldType
 	}
 	values, err = tablecodec.DecodeRow(sValue, colID2FieldTypes, e.ctx.GetSessionVars().Location())
@@ -670,6 +669,72 @@ func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[i
 	return val, nil
 }
 
+func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.SampleCollector, sValue []byte, sKey kv.Key, samplePos int32, hasPKInfo int) (err error) {
+	// Decode the cols value in order.
+	var values map[int64]types.Datum
+	values, err = e.decodeValues(sValue)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Update the primary key collector.
+	if hasPKInfo > 0 {
+		v, ok := values[e.pkInfo.ID]
+		if !ok {
+			var key int64
+			_, key, err = tablecodec.DecodeRecordKey(sKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			v = types.NewIntDatum(key)
+		}
+		if int(samplePos) >= len(collectors[0].Samples) {
+			collectors[0].Samples = append(collectors[0].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
+		} else {
+			collectors[0].Samples[samplePos].Value = v
+		}
+	}
+	// Update the columns' collectors.
+	for j, colInfo := range e.colsInfo {
+		v, err := e.getValueByInfo(colInfo, values)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if int(samplePos) >= len(collectors[hasPKInfo+j].Samples) {
+			collectors[hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
+		} else {
+			collectors[hasPKInfo+j].Samples[samplePos].Value = v
+		}
+	}
+	// Update the indexes' collectors.
+	for j, idxInfo := range e.idxsInfo {
+		idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
+		for _, idxCol := range idxInfo.Columns {
+			for _, colInfo := range e.colsInfo {
+				if colInfo.Name == idxCol.Name {
+					v, err := e.getValueByInfo(colInfo, values)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					idxVals = append(idxVals, v)
+					break
+				}
+			}
+		}
+		var bytes []byte
+		bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		v := types.NewBytesDatum(bytes)
+		if int(samplePos) >= len(collectors[len(e.colsInfo)+hasPKInfo+j].Samples) {
+			collectors[len(e.colsInfo)+hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
+		} else {
+			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
+		}
+	}
+	return nil
+}
+
 func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collectors []*statistics.SampleCollector) (err error) {
 	length := int32(len(kvMap))
 	newCursor := atomic.AddInt32(&e.sampCursor, length)
@@ -679,53 +744,9 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 	}
 	samplePos := newCursor - length
 	for sKey, sValue := range kvMap {
-		// Decode the cols value in order.
-		var values map[int64]types.Datum
-		values, err = e.decodeValues(sValue)
+		err = e.updateCollectorSamples(collectors, sValue, kv.Key(sKey), samplePos, hasPKInfo)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		// build statistic collector.
-		if hasPKInfo > 0 {
-			v, ok := values[e.pkInfo.ID]
-			if !ok {
-				var key int64
-				_, key, err = tablecodec.DecodeRecordKey(kv.Key(sKey))
-				if err != nil {
-					return errors.Trace(err)
-				}
-				v = types.NewIntDatum(key)
-			}
-			collectors[0].Samples = append(collectors[0].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
-		}
-		for j, colInfo := range e.colsInfo {
-			v, err := e.getValueByInfo(colInfo, values)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			collectors[hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
-		}
-		for j, idxInfo := range e.idxsInfo {
-			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
-			for _, idxCol := range idxInfo.Columns {
-				for _, colInfo := range e.colsInfo {
-					if colInfo.Name == idxCol.Name {
-						v, err := e.getValueByInfo(colInfo, values)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						idxVals = append(idxVals, v)
-						break
-					}
-				}
-			}
-			var bytes []byte
-			bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			v := types.NewBytesDatum(bytes)
-			collectors[len(e.colsInfo)+hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
 		}
 		samplePos++
 	}
@@ -746,9 +767,9 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 			continue
 		}
 
-		p := rander.Int63n(int64(MaxSampleSize))
+		p := rander.Int31n(int32(MaxSampleSize))
 		if e.sampCursor < int32(MaxSampleSize) {
-			p = int64(e.sampCursor)
+			p = e.sampCursor
 			e.sampCursor++
 			for _, c := range collectors {
 				item := &statistics.SampleItem{}
@@ -756,53 +777,9 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 			}
 		}
 
-		// Decode the cols value in order.
-		var values map[int64]types.Datum
-		values, err = e.decodeValues(iter.Value())
+		err = e.updateCollectorSamples(collectors, iter.Value(), iter.Key(), p, hasPKInfo)
 		if err != nil {
 			return errors.Trace(err)
-		}
-
-		// build statistic collector.
-		if hasPKInfo > 0 {
-			v, ok := values[e.pkInfo.ID]
-			if !ok {
-				var key int64
-				_, key, err = tablecodec.DecodeRecordKey(iter.Key())
-				if err != nil {
-					return errors.Trace(err)
-				}
-				v = types.NewIntDatum(key)
-			}
-			collectors[0].Samples[p].Value = v
-		}
-		for j, colInfo := range e.colsInfo {
-			v, err := e.getValueByInfo(colInfo, values)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			collectors[hasPKInfo+j].Samples[p].Value = v
-		}
-		for j, idxInfo := range e.idxsInfo {
-			idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
-			for _, idxCol := range idxInfo.Columns {
-				for _, colInfo := range e.colsInfo {
-					if colInfo.Name == idxCol.Name {
-						v, err := e.getValueByInfo(colInfo, values)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						idxVals = append(idxVals, v)
-						break
-					}
-				}
-			}
-			var bytes []byte
-			bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[p].Value = types.NewBytesDatum(bytes)
 		}
 	}
 	return errors.Trace(err)

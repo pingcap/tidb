@@ -153,11 +153,11 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	c.Assert(fmt.Sprintln(tbl), Equals,
 		"Table:37 Count:3000\n"+
 			"index:1 ndv:3000\n"+
-			"num: 603 lower_bound: 0 upper_bound: 530 repeats: 1\n"+
-			"num: 603 lower_bound: 532 upper_bound: 1164 repeats: 1\n"+
-			"num: 603 lower_bound: 1166 upper_bound: 1750 repeats: 1\n"+
-			"num: 603 lower_bound: 1758 upper_bound: 2390 repeats: 1\n"+
-			"num: 588 lower_bound: 2391 upper_bound: 2997 repeats: 1\n")
+			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
+			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
+			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
+			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
+			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n")
 
 }
 
