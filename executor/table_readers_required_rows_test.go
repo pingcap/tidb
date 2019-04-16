@@ -102,7 +102,7 @@ func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRe
 }
 
 func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (distsql.SelectResult, error) {
 	totalRows, expectedRowsRet := mockDistsqlSelectCtxGet(ctx)
 	return &requiredRowsSelectResult{
 		retTypes:        fieldTypes,
@@ -112,7 +112,7 @@ func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Re
 }
 
 func mockSelectResultWithoutCheck(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (distsql.SelectResult, error) {
 	return &requiredRowsSelectResult{retTypes: fieldTypes}, nil
 }
 
@@ -181,7 +181,7 @@ func (s *testExecSuite) TestTableReaderRequiredRows(c *C) {
 		chk := exec.newFirstChunk()
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
@@ -233,7 +233,7 @@ func (s *testExecSuite) TestIndexReaderRequiredRows(c *C) {
 		chk := exec.newFirstChunk()
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(exec.Close(), IsNil)
