@@ -49,9 +49,11 @@ type cache map[string][]*bindMeta
 
 // Handle holds an atomic cache.
 type Handle struct {
+	mu struct {
+		sync.Mutex
+		sctx sessionctx.Context
+	}
 	atomic.Value
-	sync.Mutex
-	ctx              sessionctx.Context
 	BindCacheUpdater *BindCacheUpdater
 }
 
@@ -95,9 +97,8 @@ func NewBindCacheUpdater(ctx sessionctx.Context, handle *Handle, parser *parser.
 
 // NewHandle creates a Handle with a cache.
 func NewHandle(ctx sessionctx.Context) *Handle {
-	handle := &Handle{
-		ctx: ctx,
-	}
+	handle := &Handle{}
+	handle.mu.sctx = ctx
 
 	return handle
 }
@@ -218,8 +219,8 @@ func (b cache) appendNode(newBindRecord *BindRecord, sparser *parser.Parser) err
 // AddGlobalBind add global bind for SQL.
 func (h *Handle) AddGlobalBind(record *BindRecord) (err error) {
 	ctx := context.TODO() //we need a new ctx to execute a transcation
-	exec, _ := h.ctx.(sqlexec.SQLExecutor)
-	h.Lock()
+	exec, _ := h.mu.sctx.(sqlexec.SQLExecutor)
+	h.mu.Lock()
 	_, err = exec.Execute(ctx, "BEGIN")
 	if err != nil {
 		return
@@ -228,17 +229,17 @@ func (h *Handle) AddGlobalBind(record *BindRecord) (err error) {
 		if err != nil {
 			_, err1 := exec.Execute(ctx, "ROLLBACK")
 			terror.Log(err1)
-			h.Unlock()
+			h.mu.Unlock()
 			return
 		}
 		_, err = exec.Execute(ctx, "COMMIT")
-		h.Unlock()
+		h.mu.Unlock()
 		if err == nil {
 			err = h.BindCacheUpdater.updateOneBind(record)
 		}
 	}()
 
-	txn, err := h.ctx.Txn(true)
+	txn, err := h.mu.sctx.Txn(true)
 	// remove all the unused sql binds.
 	_, err = exec.Execute(ctx, h.deleteBindInfoSQL(record.OriginalSQL, record.Db))
 	if err != nil {
