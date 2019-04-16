@@ -226,7 +226,7 @@ const (
 		update_time timestamp(3) NOT NULL,
 		charset text NOT NULL,
 		collation text NOT NULL,
-		INDEX primary_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
+		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -777,7 +777,7 @@ func upgradeToVer28(s Session) {
 func upgradeToVer29(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change create_time create_time timestamp(3)")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change update_time update_time timestamp(3)")
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info modify create_time primary_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info add index sql_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

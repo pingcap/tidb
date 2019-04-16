@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/parser/mysql"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -158,12 +158,12 @@ func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	return nil
 }
 
-func (bindCacheUpdater *BindCacheUpdater) updateOneBind(originSQL, bindSQL, defaultDB string, createTs, updateTs types.Time, status, charset, collation string) error {
+func (bindCacheUpdater *BindCacheUpdater) updateOneBind(normalizedOriginSQL, bindSQL, defaultDB string, createTs, updateTs types.Time, status, charset, collation string) error {
 	bindCacheUpdater.lock.Lock()
 	defer bindCacheUpdater.lock.Unlock()
 
 	record := &bindRecord{
-		OriginalSQL: originSQL,
+		OriginalSQL: normalizedOriginSQL,
 		BindSQL:     bindSQL,
 		Db:          defaultDB,
 		Status:      status,
@@ -174,13 +174,12 @@ func (bindCacheUpdater *BindCacheUpdater) updateOneBind(originSQL, bindSQL, defa
 	}
 
 	bc := bindCacheUpdater.globalHandle.Get()
-	newBc := make(map[string][]*bindMeta, len(bc))
+	newBc := cache(make(map[string][]*bindMeta, len(bc)))
 	for hash, bindDataArr := range bc {
 		newBc[hash] = append(newBc[hash], bindDataArr...)
 	}
-	bc = newBc
 	var err error
-	err = bc.appendNode(record, bindCacheUpdater.parser)
+	err = newBc.appendNode(record, bindCacheUpdater.parser)
 	if err != nil {
 		return err
 	}
@@ -231,7 +230,7 @@ func (b cache) appendNode(newBindRecord *bindRecord, sparser *parser.Parser) err
 }
 
 // AddGlobalBind implements GlobalBindAccessor.AddGlobalBind interface.
-func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation string) error {
+func (h *Handle) AddGlobalBind(normalizedOriginSQL, bindSQL, defaultDB, charset, collation string) error {
 	h.lock.Lock()
 	defer h.lock.Unlock()
 
@@ -251,7 +250,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 	}()
 
 	sql := fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
-		originSQL, defaultDB)
+		normalizedOriginSQL, defaultDB)
 	_, err = exec.Execute(ctx, sql)
 	if err != nil {
 		return err
@@ -264,7 +263,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 	tsStr := getTimeStringWithoutZone(ts)
 	bindSQL = getEscapeCharacter(bindSQL)
 	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
-		originSQL, bindSQL, defaultDB, using, tsStr, tsStr, charset, collation)
+		normalizedOriginSQL, bindSQL, defaultDB, using, tsStr, tsStr, charset, collation)
 	_, err = exec.Execute(ctx, sql)
 	if err != nil {
 		return err
@@ -275,7 +274,7 @@ func (h *Handle) AddGlobalBind(originSQL, bindSQL, defaultDB, charset, collation
 		Type: mysql.TypeTimestamp,
 		Fsp:  3,
 	}
-	return h.BindCacheUpdater.updateOneBind(originSQL, bindSQL, defaultDB, sqlTime, sqlTime, using, charset, collation)
+	return h.BindCacheUpdater.updateOneBind(normalizedOriginSQL, bindSQL, defaultDB, sqlTime, sqlTime, using, charset, collation)
 }
 
 func getTimeStringWithoutZone(ts time.Time) string {

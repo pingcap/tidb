@@ -2014,14 +2014,14 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 	base.initCap = chunk.ZeroCapacity
 
 	e := &SQLBindExec{
-		baseExecutor: base,
-		originSQL:    v.OriginSQL,
-		bindSQL:      v.BindSQL,
-		defaultDB:    v.DefaultDB,
-		charset:      v.Charset,
-		collation:    v.Collation,
-		isGlobal:     v.IsGlobal,
-		bindAst:      v.BindStmt,
+		baseExecutor:        base,
+		normalizedOriginSQL: v.NormalizedOriginSQL,
+		bindSQL:             v.BindSQL,
+		defaultDB:           v.DefaultDB,
+		charset:             v.Charset,
+		collation:           v.Collation,
+		isGlobal:            v.IsGlobal,
+		bindAst:             v.BindStmt,
 	}
 	return e
 }
