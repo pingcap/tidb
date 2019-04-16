@@ -379,6 +379,8 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.touched = 0
 	sc.mu.message = ""
 	sc.mu.warnings = nil
+	sc.mu.execDetails = execdetails.ExecDetails{}
+	sc.mu.allExecDetails = make([]*execdetails.ExecDetails, 0, 4)
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexIDs = sc.IndexIDs[:0]
