@@ -897,6 +897,8 @@ const (
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
 	// SlowLogStatsInfoStr is plan stats info.
 	SlowLogStatsInfoStr = "Stats"
+	// SlowLogCopTasks includes some useful information about cop-tasks.
+	SlowLogCopTasks = "Cop_tasks"
 )
 
 // SlowLogFormat uses for formatting slow log.
@@ -912,8 +914,10 @@ const (
 // # Is_internal: false
 // # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 // # Stats: t1:1,t2:2
+// # Cop_tasks:
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string, statsInfos map[string]uint64, sql string) string {
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
+	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
 	buf.WriteString(SlowLogRowPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
@@ -956,6 +960,9 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 			}
 		}
 		buf.WriteString("\n")
+	}
+	if copTasks != nil {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopTasks + SlowLogSpaceMarkStr + copTasks.String() + "\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"

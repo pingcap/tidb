@@ -14,6 +14,7 @@
 package variable_test
 
 import (
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -106,6 +107,17 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	}
 	statsInfos := make(map[string]uint64)
 	statsInfos["t1"] = 0
+	copTasks := &stmtctx.CopTasksDetails{
+		NumCopTasks:       10,
+		AvgProcessTime:    time.Second,
+		P90ProcessTime:    time.Second * 2,
+		MaxProcessAddress: "10.6.131.78",
+		MaxProcessTime:    time.Second * 3,
+		AvgWaitTime:       time.Millisecond * 10,
+		P90WaitTime:       time.Millisecond * 20,
+		MaxWaitTime:       time.Millisecond * 30,
+		MaxWaitAddress:    "10.6.131.79",
+	}
 	resultString := `# Txn_start_ts: 406649736972468225
 # User: root@192.168.0.1
 # Conn_ID: 1
@@ -116,9 +128,10 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Stats: t1:pseudo
+# Cop_tasks: Num_tasks: 10 Avg_process_time 1s P90_process_time 2s Max_process_time 3sMax_process_address 10.6.131.78 Avg_wait_time 10ms P90_wait_time 20ms Max_wait_time 30ms Max_wait_address 10.6.131.79
 select * from t;`
 	sql := "select * from t"
 	digest := parser.DigestHash(sql)
-	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", digest, statsInfos, sql)
+	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", digest, statsInfos, copTasks, sql)
 	c.Assert(logString, Equals, resultString)
 }

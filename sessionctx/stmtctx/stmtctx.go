@@ -14,6 +14,7 @@
 package stmtctx
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -432,25 +433,26 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	n := len(sc.mu.allExecDetails)
-	d := &CopTasksDetails{
-		NumCopTasks:    n,
-		AvgProcessTime: sc.mu.execDetails.ProcessTime / time.Duration(n),
-		AvgWaitTime:    sc.mu.execDetails.WaitTime / time.Duration(n),
+	d := &CopTasksDetails{NumCopTasks: n}
+	if n == 0 {
+		return d
 	}
+	d.AvgProcessTime = sc.mu.execDetails.ProcessTime / time.Duration(n)
+	d.AvgWaitTime = sc.mu.execDetails.WaitTime / time.Duration(n)
 
 	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
 		return sc.mu.allExecDetails[i].ProcessTime < sc.mu.allExecDetails[j].ProcessTime
 	})
-	d.P99ProcessTime = sc.mu.allExecDetails[n*9/10].ProcessTime
+	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].ProcessTime
 	d.MaxProcessTime = sc.mu.allExecDetails[n-1].ProcessTime
 	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
 	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
 		return sc.mu.allExecDetails[i].WaitTime < sc.mu.allExecDetails[j].WaitTime
 	})
-	d.P99WaitTime = sc.mu.allExecDetails[n*9/10].WaitTime
-	d.MaxProcessTime = sc.mu.allExecDetails[n-1].WaitTime
-	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].WaitTime
+	d.MaxWaitTime = sc.mu.allExecDetails[n-1].WaitTime
+	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 	return d
 }
 
@@ -459,12 +461,21 @@ type CopTasksDetails struct {
 	NumCopTasks int
 
 	AvgProcessTime    time.Duration
-	P99ProcessTime    time.Duration
+	P90ProcessTime    time.Duration
 	MaxProcessAddress string
 	MaxProcessTime    time.Duration
 
 	AvgWaitTime    time.Duration
-	P99WaitTime    time.Duration
+	P90WaitTime    time.Duration
 	MaxWaitAddress string
 	MaxWaitTime    time.Duration
+}
+
+// String implements the fmt.Stringer interface.
+func (d CopTasksDetails) String() string {
+	// formatted like slow log
+	return fmt.Sprintf("Num_tasks: %d Avg_process_time %v P90_process_time %v Max_process_time %v"+
+		"Max_process_address %s Avg_wait_time %v P90_wait_time %v Max_wait_time %v Max_wait_address %s",
+		d.NumCopTasks, d.AvgProcessTime, d.P90ProcessTime, d.MaxProcessTime, d.MaxProcessAddress,
+		d.AvgWaitTime, d.P90WaitTime, d.MaxWaitTime, d.MaxWaitAddress)
 }
