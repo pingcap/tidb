@@ -10,7 +10,7 @@ IndexJoin_16	5.00	root	inner join, inner:IndexLookUp_15, outer key:test.t2.a, in
 ├─IndexLookUp_15	0.00	root	
 │ ├─Selection_14	0.00	cop	not(isnull(test.t1.a))
 │ │ └─IndexScan_12	5.00	cop	table:t1, index:a, range: decided by [test.t2.a], keep order:false
-│ └─TableScan_13	0.00	cop	table:t1, keep order:false
+│ └─TableScan_13	0.00	cop	table:t1, keep order:false, stats:pseudo
 └─TableReader_19	1.00	root	data:Selection_18
   └─Selection_18	1.00	cop	not(isnull(test.t2.a))
     └─TableScan_17	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
@@ -24,4 +24,4 @@ Projection_6	5.00	root	test.t1.a, test.t1.b, test.t2.a, test.t2.b
   └─IndexLookUp_11	0.00	root	
     ├─Selection_10	0.00	cop	not(isnull(test.t1.a))
     │ └─IndexScan_8	5.00	cop	table:t1, index:a, range: decided by [test.t2.a], keep order:false
-    └─TableScan_9	0.00	cop	table:t1, keep order:false
+    └─TableScan_9	0.00	cop	table:t1, keep order:false, stats:pseudo
