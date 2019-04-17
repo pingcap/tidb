@@ -70,7 +70,7 @@ func NewCMSketchWithTopN(d, w int32, data [][]byte, n uint32, total uint64) *CMS
 	return c
 }
 
-func countElements(data [][]byte) map[uint64][]cmscount {
+func groupElements(data [][]byte) map[uint64][]cmscount {
 	counter := make(map[uint64][]cmscount)
 
 	for k := range data {
@@ -100,7 +100,7 @@ func countElements(data [][]byte) map[uint64][]cmscount {
 // Not exactly n elements, will add a few elements, the number of which is close to the n-th most element.
 func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint64) {
 	sampleSize := uint64(len(data))
-	counter := countElements(data)
+	counter := groupElements(data)
 	sorted := make([]uint64, 0)
 
 	for _, sl := range counter {
@@ -108,13 +108,11 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 			sorted = append(sorted, sl[i].count)
 		}
 	}
-
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i] > sorted[j]
 	})
 
 	ndv := uint32(len(sorted))
-
 	if n > ndv {
 		n = ndv
 	}
@@ -148,7 +146,6 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 			}
 		}
 	}
-
 	if enableTopN {
 		c.buildTopNMap(topn)
 	}
@@ -231,7 +228,7 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 		// This case, we should also update c.defaultValue
 		// Set default value directly will result in more error, instead, update it by 5%.
 		// This should make estimate better, if defaultValue becomes 0 frequently, commit this line.
-		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05 + 0.5)
+		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05)
 		if c.defaultValue == 0 {
 			// c.defaultValue never guess 0 since we are using a sampled data, instead, return a small number, like 1.
 			c.defaultValue = 1
