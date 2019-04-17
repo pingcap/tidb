@@ -147,10 +147,10 @@ func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
 			lSketch.table[i][j] = math.MaxUint32
 		}
 	}
-	bytes, err := encodeCMSketch(lSketch)
+	bytes, err := EncodeCMSketch(lSketch)
 	c.Assert(err, IsNil)
 	c.Assert(len(bytes), Equals, 61455)
-	rSketch, err := decodeCMSketch(bytes)
+	rSketch, err := DecodeCMSketch(bytes)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }

@@ -68,7 +68,7 @@ type dbRecord struct {
 	User       string
 	Privileges mysql.PrivilegeType
 
-	// patChars is compiled from Host and DB, cached for pattern match performance.
+	// hostPatChars is compiled from Host and DB, cached for pattern match performance.
 	hostPatChars []byte
 	hostPatTypes []byte
 
@@ -105,7 +105,19 @@ type columnsPrivRecord struct {
 	patTypes []byte
 }
 
-// RoleGraphEdgesTable is used to cache relationship between and role.
+// defaultRoleRecord is used to cache mysql.default_roles
+type defaultRoleRecord struct {
+	Host            string
+	User            string
+	DefaultRoleUser string
+	DefaultRoleHost string
+
+	// patChars is compiled from Host, cached for pattern match performance.
+	patChars []byte
+	patTypes []byte
+}
+
+// roleGraphEdgesTable is used to cache relationship between and role.
 type roleGraphEdgesTable struct {
 	roleList map[string]bool
 }
@@ -125,11 +137,12 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
-	User        []UserRecord
-	DB          []dbRecord
-	TablesPriv  []tablesPrivRecord
-	ColumnsPriv []columnsPrivRecord
-	RoleGraph   map[string]roleGraphEdgesTable
+	User         []UserRecord
+	DB           []dbRecord
+	TablesPriv   []tablesPrivRecord
+	ColumnsPriv  []columnsPrivRecord
+	DefaultRoles []defaultRoleRecord
+	RoleGraph    map[string]roleGraphEdgesTable
 }
 
 // FindRole is used to detect whether there is edges between users and roles.
@@ -164,6 +177,14 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 			return errors.Trace(err)
 		}
 		log.Warn("mysql.tables_priv missing")
+	}
+
+	err = p.LoadDefaultRoles(ctx)
+	if err != nil {
+		if !noSuchTable(err) {
+			return errors.Trace(err)
+		}
+		log.Warn("mysql.default_roles missing")
 	}
 
 	err = p.LoadColumnsPrivTable(ctx)
@@ -316,6 +337,11 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv from mysql.columns_priv", p.decodeColumnsPrivTableRow)
 }
 
+// LoadDefaultRoles loads the mysql.columns_priv table from database.
+func (p *MySQLPrivilege) LoadDefaultRoles(ctx sessionctx.Context) error {
+	return p.loadTable(ctx, "select HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER from mysql.default_roles", p.decodeDefaultRoleTableRow)
+}
+
 func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	decodeTableRow func(chunk.Row, []*ast.ResultField) error) error {
 	ctx := context.Background()
@@ -455,6 +481,25 @@ func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*ast.ResultFie
 	return nil
 }
 
+func (p *MySQLPrivilege) decodeDefaultRoleTableRow(row chunk.Row, fs []*ast.ResultField) error {
+	var value defaultRoleRecord
+	for i, f := range fs {
+		switch {
+		case f.ColumnAsName.L == "host":
+			value.Host = row.GetString(i)
+			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
+		case f.ColumnAsName.L == "user":
+			value.User = row.GetString(i)
+		case f.ColumnAsName.L == "default_role_host":
+			value.DefaultRoleHost = row.GetString(i)
+		case f.ColumnAsName.L == "default_role_user":
+			value.DefaultRoleUser = row.GetString(i)
+		}
+	}
+	p.DefaultRoles = append(p.DefaultRoles, value)
+	return nil
+}
+
 func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value columnsPrivRecord
 	for i, f := range fs {
@@ -520,6 +565,10 @@ func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 		strings.EqualFold(record.TableName, table) &&
 		strings.EqualFold(record.ColumnName, col) &&
 		patternMatch(host, record.patChars, record.patTypes)
+}
+
+func (record *defaultRoleRecord) match(user, host string) bool {
+	return record.User == user && patternMatch(host, record.patChars, record.patTypes)
 }
 
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
@@ -764,6 +813,16 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]typ
 		}
 	}
 	return rows
+}
+
+func (p *MySQLPrivilege) getDefaultRoles(user, host string) []*auth.RoleIdentity {
+	ret := make([]*auth.RoleIdentity, 0)
+	for _, r := range p.DefaultRoles {
+		if r.match(user, host) {
+			ret = append(ret, &auth.RoleIdentity{Username: r.DefaultRoleUser, Hostname: r.DefaultRoleHost})
+		}
+	}
+	return ret
 }
 
 // Handle wraps MySQLPrivilege providing thread safe access.

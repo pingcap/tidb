@@ -18,24 +18,129 @@ import (
 	"math"
 	"os"
 	"runtime/pprof"
+	"strings"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const eps = 1e-9
+
+var _ = Suite(&testStatsSuite{})
+
+type testStatsSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+	hook  *logHook
+}
+
+func (s *testStatsSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	s.registerHook()
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap(0)
+	c.Assert(err, IsNil)
+}
+
+func (s *testStatsSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
+func (s *testStatsSuite) registerHook() {
+	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	_, r, _ := log.InitLogger(conf)
+	s.hook = &logHook{r.Core, ""}
+	lg := zap.New(s.hook)
+	log.ReplaceGlobals(lg, r)
+}
+
+type logHook struct {
+	zapcore.Core
+	results string
+}
+
+func (h *logHook) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	message := entry.Message
+	if idx := strings.Index(message, "[stats"); idx != -1 {
+		h.results = h.results + message
+		for _, f := range fields {
+			h.results = h.results + ", " + f.Key + "=" + h.field2String(f)
+		}
+	}
+	return nil
+}
+
+func (h *logHook) field2String(field zapcore.Field) string {
+	switch field.Type {
+	case zapcore.StringType:
+		return field.String
+	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type:
+		return fmt.Sprintf("%v", field.Integer)
+	case zapcore.Float64Type:
+		return fmt.Sprintf("%v", math.Float64frombits(uint64(field.Integer)))
+	case zapcore.StringerType:
+		return field.Interface.(fmt.Stringer).String()
+	}
+	return "not support"
+}
+
+func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if h.Enabled(e.Level) {
+		return ce.AddCore(e, h)
+	}
+	return ce
+}
+
+func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {
+	store, err := mockstore.NewMockTikvStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	session.SetSchemaLease(0)
+	session.SetStatsLease(statsLease)
+	domain.RunAutoAnalyze = false
+	do, err := session.BootstrapSession(store)
+	do.SetStatsUpdating(true)
+	return store, do, errors.Trace(err)
+}
+
+func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+	tk.MustExec("delete from mysql.stats_meta")
+	tk.MustExec("delete from mysql.stats_histograms")
+	tk.MustExec("delete from mysql.stats_buckets")
+	do.StatsHandle().Clear()
+}
 
 // generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
 // If dimension is x, num is y, the total number of datum is y^x. And This slice is sorted.
@@ -242,12 +347,12 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 	h := s.do.StatsHandle()
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	testKit.MustExec("analyze table t")
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
 	}
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -369,7 +474,7 @@ func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
 	testKit.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
 	testKit.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null);")
 	h := s.do.StatsHandle()
-	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery(`explain select b from t where b is null`).Check(testkit.Rows(
 		"IndexReader_6 4.00 root index:IndexScan_5",
