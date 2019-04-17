@@ -352,3 +352,32 @@ select * from t_slim;`))
 	re = tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|select * from t_slim;"))
 }
+
+func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("insert into t values (1,2),(3,4)")
+	tk.MustExec("analyze table t")
+
+	result := tk.MustQuery("select * from information_schema.analyze_status").Sort()
+
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][0], Equals, "test")
+	c.Assert(result.Rows()[0][1], Equals, "t")
+	c.Assert(result.Rows()[0][2], Equals, "")
+	c.Assert(result.Rows()[0][3], Equals, "analyze columns")
+	c.Assert(result.Rows()[0][4], Equals, "2")
+	c.Assert(result.Rows()[0][5], NotNil)
+	c.Assert(result.Rows()[0][6], Equals, "succeed")
+
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[1][0], Equals, "test")
+	c.Assert(result.Rows()[1][1], Equals, "t")
+	c.Assert(result.Rows()[1][2], Equals, "")
+	c.Assert(result.Rows()[1][3], Equals, "analyze index idx")
+	c.Assert(result.Rows()[1][4], Equals, "2")
+	c.Assert(result.Rows()[1][5], NotNil)
+	c.Assert(result.Rows()[1][6], Equals, "succeed")
+}

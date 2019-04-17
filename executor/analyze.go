@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -66,15 +65,15 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	for i := 0; i < concurrency; i++ {
 		go e.analyzeWorker(taskCh, resultCh)
 	}
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	statsHandle.ClearHistoryJobs()
+	statistics.ClearHistoryJobs()
 	for _, task := range e.tasks {
-		statsHandle.AddNewAnalyzeJob(task.job)
+		statistics.AddNewAnalyzeJob(task.job)
 	}
 	for _, task := range e.tasks {
 		taskCh <- task
 	}
 	close(taskCh)
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for i, panicCnt := 0, 0; i < len(e.tasks) && panicCnt < concurrency; i++ {
 		result := <-resultCh
 		if result.Err != nil {
@@ -99,7 +98,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		result.job.Finish(false)
 	}
 	for _, task := range e.tasks {
-		statsHandle.MoveToHistory(task.job)
+		statistics.MoveToHistory(task.job)
 	}
 	if err != nil {
 		return err
@@ -130,7 +129,7 @@ type analyzeTask struct {
 	idxExec  *AnalyzeIndexExec
 	colExec  *AnalyzeColumnsExec
 	fastExec *AnalyzeFastExec
-	job      *handle.AnalyzeJob
+	job      *statistics.AnalyzeJob
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
@@ -196,7 +195,7 @@ type AnalyzeIndexExec struct {
 	result          distsql.SelectResult
 	countNullRes    distsql.SelectResult
 	maxNumBuckets   uint64
-	job             *handle.AnalyzeJob
+	job             *statistics.AnalyzeJob
 }
 
 // fetchAnalyzeResult builds and dispatches the `kv.Request` from given ranges, and stores the `SelectResult`
@@ -344,7 +343,7 @@ type AnalyzeColumnsExec struct {
 	analyzePB       *tipb.AnalyzeReq
 	resultHandler   *tableResultHandler
 	maxNumBuckets   uint64
-	job             *handle.AnalyzeJob
+	job             *statistics.AnalyzeJob
 }
 
 func (e *AnalyzeColumnsExec) open() error {
@@ -554,5 +553,5 @@ type analyzeResult struct {
 	Count           int64
 	IsIndex         int
 	Err             error
-	job             *handle.AnalyzeJob
+	job             *statistics.AnalyzeJob
 }

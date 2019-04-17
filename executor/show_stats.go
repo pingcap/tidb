@@ -223,8 +223,7 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus() {
-	h := domain.GetDomain(e.ctx).StatsHandle()
-	for _, job := range h.GetAllAnalyzeJobs() {
+	for _, job := range statistics.GetAllAnalyzeJobs() {
 		job.Lock()
 		var startTime interface{}
 		if job.StartTime.IsZero() {

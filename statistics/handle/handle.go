@@ -55,12 +55,6 @@ type Handle struct {
 		schemaVersion int64
 	}
 
-	analyzeJobs struct {
-		sync.Mutex
-		jobs    map[*AnalyzeJob]struct{}
-		history map[*AnalyzeJob]struct{}
-	}
-
 	restrictedExec sqlexec.RestrictedSQLExecutor
 
 	StatsCache atomic.Value
@@ -113,8 +107,6 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.StatsCache.Store(StatsCache{})
-	handle.analyzeJobs.jobs = make(map[*AnalyzeJob]struct{})
-	handle.analyzeJobs.history = make(map[*AnalyzeJob]struct{})
 	return handle
 }
 
@@ -647,86 +639,4 @@ func (h *Handle) columnCountFromStorage(tableID, colID int64) (int64, error) {
 		return 0, nil
 	}
 	return rows[0].GetMyDecimal(0).ToInt()
-}
-
-// AnalyzeJob is used to represent the status of one analyze job.
-type AnalyzeJob struct {
-	sync.Mutex
-	DBName        string
-	TableName     string
-	PartitionName string
-	JobInfo       string
-	RowCount      int64
-	StartTime     time.Time
-	State         string
-}
-
-const (
-	pending = "pending"
-	running = "running"
-	succeed = "succeed"
-	failed  = "failed"
-)
-
-// AddNewAnalyzeJob adds new analyze job.
-func (h *Handle) AddNewAnalyzeJob(job *AnalyzeJob) {
-	job.State = pending
-	h.analyzeJobs.Lock()
-	h.analyzeJobs.jobs[job] = struct{}{}
-	h.analyzeJobs.Unlock()
-}
-
-// MoveToHistory moves the analyze job to history.
-func (h *Handle) MoveToHistory(job *AnalyzeJob) {
-	h.analyzeJobs.Lock()
-	delete(h.analyzeJobs.jobs, job)
-	h.analyzeJobs.history[job] = struct{}{}
-	h.analyzeJobs.Unlock()
-}
-
-// ClearHistoryJobs clears all history jobs.
-func (h *Handle) ClearHistoryJobs() {
-	h.analyzeJobs.Lock()
-	h.analyzeJobs.history = make(map[*AnalyzeJob]struct{})
-	h.analyzeJobs.Unlock()
-}
-
-// GetAllAnalyzeJobs gets all analyze jobs.
-func (h *Handle) GetAllAnalyzeJobs() []*AnalyzeJob {
-	h.analyzeJobs.Lock()
-	jobs := make([]*AnalyzeJob, 0, len(h.analyzeJobs.jobs)+len(h.analyzeJobs.history))
-	for job := range h.analyzeJobs.jobs {
-		jobs = append(jobs, job)
-	}
-	for job := range h.analyzeJobs.history {
-		jobs = append(jobs, job)
-	}
-	h.analyzeJobs.Unlock()
-	return jobs
-}
-
-// Start marks status of the analyze job as running and update the start time.
-func (job *AnalyzeJob) Start() {
-	job.Mutex.Lock()
-	job.State = running
-	job.StartTime = time.Now()
-	job.Mutex.Unlock()
-}
-
-// Update updates the row count of analyze job.
-func (job *AnalyzeJob) Update(rowCount int64) {
-	job.Mutex.Lock()
-	job.RowCount += rowCount
-	job.Mutex.Unlock()
-}
-
-// Finish update the status of analyze job to succeed or failed according to `meetError`.
-func (job *AnalyzeJob) Finish(meetError bool) {
-	job.Mutex.Lock()
-	if meetError {
-		job.State = failed
-	} else {
-		job.State = succeed
-	}
-	job.Mutex.Unlock()
 }
