@@ -903,8 +903,8 @@ const (
 	SlowLogCopProcessStr = "Cop_process"
 	// SlowLogCopWaitStr includes some useful information about cop-tasks' wait time.
 	SlowLogCopWaitStr = "Cop_wait"
-	// SlowLogMemUse is the number bytes of memory used in this statement.
-	SlowLogMemUse = "Mem_use"
+	// SlowLogMemMax is the max number bytes of memory used in this statement.
+	SlowLogMemMax = "Mem_max"
 )
 
 // SlowLogFormat uses for formatting slow log.
@@ -921,9 +921,10 @@ const (
 // # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 // # Stats: t1:1,t2:2
 // # Cop_tasks:
+// # Memory_max: 4096
 // select * from t_slim;
 func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
-	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails,  memUse int64, sql string) string {
+	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails,  memMax int64, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
 	buf.WriteString(SlowLogRowPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
@@ -976,8 +977,8 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_Addr: %v", copTasks.AvgWaitTime,
 				copTasks.P90WaitTime, copTasks.MaxWaitTime, copTasks.MaxWaitAddress) + "\n")
 	}
-	if memUse > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemUse + SlowLogSpaceMarkStr + strconv.FormatInt(memUse, 10) + "\n")
+	if memMax > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"
