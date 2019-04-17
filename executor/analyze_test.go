@@ -131,7 +131,6 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	for i := 0; i < 3000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
@@ -153,11 +152,11 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	c.Assert(fmt.Sprintln(tbl), Equals,
 		"Table:37 Count:3000\n"+
 			"index:1 ndv:3000\n"+
-			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n")
+			"num: 603 lower_bound: 0 upper_bound: 658 repeats: 1\n"+
+			"num: 603 lower_bound: 663 upper_bound: 1248 repeats: 1\n"+
+			"num: 603 lower_bound: 1250 upper_bound: 1823 repeats: 1\n"+
+			"num: 603 lower_bound: 1830 upper_bound: 2379 repeats: 1\n"+
+			"num: 588 lower_bound: 2380 upper_bound: 2998 repeats: 1\n")
 
 }
 

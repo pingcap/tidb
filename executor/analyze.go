@@ -687,11 +687,11 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 			}
 			v = types.NewIntDatum(key)
 		}
-		if int(samplePos) >= len(collectors[0].Samples) {
-			collectors[0].Samples = append(collectors[0].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
-		} else {
-			collectors[0].Samples[samplePos].Value = v
+		if collectors[0].Samples[samplePos] == nil {
+			collectors[0].Samples[samplePos] = &statistics.SampleItem{}
 		}
+		collectors[0].Samples[samplePos].Ordinal = int(samplePos)
+		collectors[0].Samples[samplePos].Value = v
 	}
 	// Update the columns' collectors.
 	for j, colInfo := range e.colsInfo {
@@ -699,11 +699,11 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if int(samplePos) >= len(collectors[hasPKInfo+j].Samples) {
-			collectors[hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
-		} else {
-			collectors[hasPKInfo+j].Samples[samplePos].Value = v
+		if collectors[hasPKInfo+j].Samples[samplePos] == nil {
+			collectors[hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
 		}
+		collectors[hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
+		collectors[hasPKInfo+j].Samples[samplePos].Value = v
 	}
 	// Update the indexes' collectors.
 	for j, idxInfo := range e.idxsInfo {
@@ -725,12 +725,11 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 		if err != nil {
 			return errors.Trace(err)
 		}
-		v := types.NewBytesDatum(bytes)
-		if int(samplePos) >= len(collectors[len(e.colsInfo)+hasPKInfo+j].Samples) {
-			collectors[len(e.colsInfo)+hasPKInfo+j].Samples = append(collectors[hasPKInfo+j].Samples, &statistics.SampleItem{Ordinal: int(samplePos), Value: v})
-		} else {
-			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
+		if collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] == nil {
+			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
 		}
+		collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
+		collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
 	}
 	return nil
 }
@@ -854,6 +853,7 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	// build collector properties.
 	collector.UpdateTotalSize()
 	collector.Count = int64(len(collector.Samples))
+	collector.Samples = collector.Samples[:e.sampCursor]
 	for _, sample := range collector.Samples {
 		if sample.Value.IsNull() {
 			collector.NullCount++
@@ -888,6 +888,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 			FMSketch:      statistics.NewFMSketch(maxSketchSize),
 			MaxSampleSize: int64(MaxSampleSize),
 			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
+			Samples:       make([]*statistics.SampleItem, MaxSampleSize),
 		}
 	}
 
