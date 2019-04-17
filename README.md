@@ -17,7 +17,7 @@
 - [**Blog**](https://www.pingcap.com/blog/)
 - [**For support, please contact PingCAP**](http://bit.ly/contact_us_via_github)
 
-## What is TiDB?
+## What is TiDB??
 
 TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports Hybrid Transactional and Analytical Processing (HTAP) workloads. It is MySQL compatible and features horizontal scalability, strong consistency, and high availability.
 
