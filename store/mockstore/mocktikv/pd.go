@@ -115,5 +115,5 @@ func (c *pdClient) ScatterRegion(ctx context.Context, regionID uint64) error {
 }
 
 func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
-	return nil, nil
+	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }

@@ -76,7 +76,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 
 		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-			go preSplitTableRegion(d.store, tbInfo)
+			preSplitTableRegion(d.store, tbInfo)
 		}
 
 		// Finish this job.
@@ -326,7 +326,7 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 
 type splitableStore interface {
 	SplitRegion(splitKey kv.Key) error
-	SplitRegionAndScatter(splitKey kv.Key) error
+	SplitRegionAndScatter(splitKey kv.Key, waitFinish bool) error
 }
 
 func splitTableRegion(store kv.Storage, tableID int64) {
@@ -355,7 +355,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
 		recordID := p << (64 - tblInfo.ShardRowIDBits)
 		recordPrefix := tablecodec.GenTableRecordPrefix(tblInfo.ID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
-		if err := s.SplitRegionAndScatter(key); err != nil {
+		if err := s.SplitRegionAndScatter(key, true); err != nil {
 			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID), zap.Error(err))
 		}
 	}
@@ -363,7 +363,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
 	// Split index region.
 	for _, idx := range tblInfo.Indices {
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
-		if err := s.SplitRegionAndScatter(indexPrefix); err != nil {
+		if err := s.SplitRegionAndScatter(indexPrefix, true); err != nil {
 			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table index region failed", zap.String("index", idx.Name.L), zap.Error(err))
 		}
 	}

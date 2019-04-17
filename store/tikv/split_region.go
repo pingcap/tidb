@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
@@ -77,15 +78,12 @@ func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 	}
 }
 
-func (s *tikvStore) scatterRegion(left *metapb.Region) error {
-	if left == nil {
-		return nil
-	}
+func (s *tikvStore) scatterRegion(regionID uint64, waitFinish bool) error {
 	logutil.Logger(context.Background()).Info("start scatter region",
-		zap.Uint64("regionID", left.Id))
+		zap.Uint64("regionID", regionID))
 	bo := NewBackoffer(context.Background(), scatterRegionBackoff)
 	for {
-		err := s.pdClient.ScatterRegion(context.Background(), left.Id)
+		err := s.pdClient.ScatterRegion(context.Background(), regionID)
 		if err != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
 			if err != nil {
@@ -93,16 +91,52 @@ func (s *tikvStore) scatterRegion(left *metapb.Region) error {
 			}
 			continue
 		}
-		logutil.Logger(context.Background()).Info("scatter region complete",
-			zap.Uint64("regionID", left.Id))
+		break
+	}
+	logutil.Logger(context.Background()).Info("scatter region complete",
+		zap.Uint64("regionID", regionID))
+	if !waitFinish {
 		return nil
 	}
+	return s.waitScatterRegionFinish(regionID)
 }
 
-func (s *tikvStore) SplitRegionAndScatter(splitKey kv.Key) error {
+func (s *tikvStore) waitScatterRegionFinish(regionID uint64) error {
+	logutil.Logger(context.Background()).Info("wait scatter region",
+		zap.Uint64("regionID", regionID))
+	bo := NewBackoffer(context.Background(), scatterRegionBackoff)
+	for {
+		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
+		if err == nil && resp != nil {
+			if !bytes.Equal(resp.Desc, []byte("scatter-region")) || resp.Status != pdpb.OperatorStatus_RUNNING {
+				logutil.Logger(context.Background()).Info("wait scatter region finished",
+					zap.Uint64("regionID", regionID))
+				return nil
+			}
+			logutil.Logger(context.Background()).Info("wait scatter region",
+				zap.Uint64("regionID", regionID),
+				zap.String("desc", string(resp.Desc)),
+				zap.String("status", pdpb.OperatorStatus_name[int32(resp.Status)]))
+		}
+		if err != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
+		} else {
+			err = bo.Backoff(BoRegionMiss, errors.New("wait scatter region"))
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+}
+
+func (s *tikvStore) SplitRegionAndScatter(splitKey kv.Key, waitFinish bool) error {
 	left, err := s.splitRegion(splitKey)
 	if err != nil {
 		return err
 	}
-	return s.scatterRegion(left)
+	if left == nil {
+		return nil
+	}
+	return s.scatterRegion(left.Id, waitFinish)
 }
