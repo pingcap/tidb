@@ -1602,6 +1602,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: "update t a1 set a1.a = a1.a + 1",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", ""},
