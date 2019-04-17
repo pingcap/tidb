@@ -51,11 +51,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, err
 	}
 
-	err = c.setDefaultDB4BindPlan(finalPlan)
-	if err != nil {
-		return nil, err
-	}
-
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
 	isExpensive := logExpensiveQuery(stmtNode, finalPlan)
 
@@ -68,16 +63,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		StmtNode:   stmtNode,
 		Ctx:        c.Ctx,
 	}, nil
-}
-
-func (c *Compiler) setDefaultDB4BindPlan(finalPlan plannercore.Plan) error {
-	bindPlan, ok := finalPlan.(*plannercore.SQLBindPlan)
-	if !ok {
-		return nil
-	}
-
-	bindPlan.DefaultDB = c.Ctx.GetSessionVars().CurrentDB
-	return nil
 }
 
 func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plannercore.Plan) (expensive bool) {

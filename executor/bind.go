@@ -32,7 +32,6 @@ type SQLBindExec struct {
 	sqlBindOp    plannercore.SQLBindOpType
 	normdOrigSQL string
 	bindSQL      string
-	defaultDB    string
 	charset      string
 	collation    string
 	isGlobal     bool
@@ -63,7 +62,7 @@ func (e *SQLBindExec) createSQLBind() error {
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
 		BindSQL:     e.bindSQL,
-		Db:          e.defaultDB,
+		Db:          e.ctx.GetSessionVars().CurrentDB,
 		Charset:     e.charset,
 		Collation:   e.collation,
 	}

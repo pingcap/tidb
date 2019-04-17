@@ -349,7 +349,6 @@ type SQLBindPlan struct {
 	SQLBindOp    SQLBindOpType
 	NormdOrigSQL string
 	BindSQL      string
-	DefaultDB    string
 	IsGlobal     bool
 	BindStmt     ast.StmtNode
 	Charset      string

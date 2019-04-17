@@ -2018,7 +2018,6 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		sqlBindOp:    v.SQLBindOp,
 		normdOrigSQL: v.NormdOrigSQL,
 		bindSQL:      v.BindSQL,
-		defaultDB:    v.DefaultDB,
 		charset:      v.Charset,
 		collation:    v.Collation,
 		isGlobal:     v.IsGlobal,
