@@ -14,7 +14,6 @@
 package stmtctx
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -471,13 +470,4 @@ type CopTasksDetails struct {
 	P90WaitTime    time.Duration
 	MaxWaitAddress string
 	MaxWaitTime    time.Duration
-}
-
-// String implements the fmt.Stringer interface.
-func (d CopTasksDetails) String() string {
-	// formatted like slow log
-	return fmt.Sprintf("Num_tasks: %d Avg_process_time %v P90_process_time %v Max_process_time %v"+
-		"Max_process_address %s Avg_wait_time %v P90_wait_time %v Max_wait_time %v Max_wait_address %s",
-		d.NumCopTasks, d.AvgProcessTime, d.P90ProcessTime, d.MaxProcessTime, d.MaxProcessAddress,
-		d.AvgWaitTime, d.P90WaitTime, d.MaxWaitTime, d.MaxWaitAddress)
 }
