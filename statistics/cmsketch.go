@@ -70,19 +70,8 @@ func NewCMSketchWithTopN(d, w int32, data [][]byte, n uint32, total uint64) *CMS
 	return c
 }
 
-// BuildTopN builds table of top N elements.
-// elements in data should not be modified after this call.
-// Not exactly n elements, will add a few elements, the number of which is close to the n-th most element.
-func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint64) {
-	sampleSize := uint64(len(data))
-	ratio := total / uint64(sampleSize)
-	if total < sampleSize {
-		ratio = 1
-	}
-
+func countElements(data [][]byte) map[uint64][]cmscount {
 	counter := make(map[uint64][]cmscount)
-	ndv := uint32(0)
-	onlyOnceItems := uint32(0)
 
 	for k := range data {
 		h1, h2 := murmur3.Sum128(data[k])
@@ -99,21 +88,24 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 		}
 		if !exists {
 			sl = append(sl, cmscount{h1, h2, data[k], 1})
-			ndv++
 		}
 		counter[h1] = sl
 	}
 
-	sorted := make([]uint64, ndv)
-	seq := 0
+	return counter
+}
+
+// BuildTopN builds table of top N elements.
+// elements in data should not be modified after this call.
+// Not exactly n elements, will add a few elements, the number of which is close to the n-th most element.
+func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint64) {
+	sampleSize := uint64(len(data))
+	counter := countElements(data)
+	sorted := make([]uint64, 0)
 
 	for _, sl := range counter {
 		for i := range sl {
-			if sl[i].count == 1 {
-				onlyOnceItems++
-			}
-			sorted[seq] = sl[i].count
-			seq++
+			sorted = append(sorted, sl[i].count)
 		}
 	}
 
@@ -121,76 +113,43 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 		return sorted[i] > sorted[j]
 	})
 
+	ndv := uint32(len(sorted))
+
 	if n > ndv {
 		n = ndv
 	}
 
 	topnCountThreshold := sorted[n-1]
-	newTopN := topnCountThreshold
+	newTopN := sorted[n-1]
 	realTopN := n
+	topncount := uint64(0)
 
 	for i := n; i < ndv && i < n*2; i++ {
-		if sorted[i]*3 < topnCountThreshold*2 {
+		if sorted[i]*3 < topnCountThreshold*2 && newTopN != sorted[i] {
 			break
 		}
 		newTopN = sorted[i]
+		topncount += sorted[i]
 		realTopN = i
 	}
 
-	estimateNDV := uint64(0)
+	estimateNDV, ratio, onlyOnceItems := calculateEstimateNDV(sorted, total)
 
-	if uint64(ndv) == sampleSize {
-		// Assume this is a unique column
-		ratio = 1
-		estimateNDV = total
-	} else if onlyOnceItems == 0 && ndv == realTopN {
-		// Assume data only consists of sampled data
-		// Nothing to do, no change with ratio
-		estimateNDV = uint64(ndv)
-	} else {
-		// Charikar, Moses, et al. "Towards estimation error guarantees for distinct values."
-		// Proceedings of the nineteenth ACM SIGMOD-SIGACT-SIGART symposium on Principles of database systems. ACM, 2000.
-		// estimateNDV = sqrt(N/n) f_1 + sum_2..inf f_i
-		// f_i = number of elements occurred i times in sample
-
-		f1 := float64(onlyOnceItems)
-		n := float64(sampleSize)
-		N := float64(total)
-		d := float64(ndv)
-
-		estimateNDV = uint64(math.Sqrt(N/n)*f1 + d - f1 + 0.5)
-
-		if estimateNDV < uint64(ndv) {
-			estimateNDV = uint64(ndv)
-		}
-		if estimateNDV > total {
-			estimateNDV = total
-		}
-	}
-
+	enableTopN := (sampleSize/uint64(topnThreshold) <= topncount)
 	topnCountThreshold = newTopN
 	topn := make([]cmscount, realTopN)
-	topncount := uint64(0)
 
-	seq = 0
 	for _, sl := range counter {
 		for i := range sl {
-			if uint32(seq) < realTopN && sl[i].count >= topnCountThreshold {
-				topn[seq] = sl[i]
-				topn[seq].count *= ratio
-				topncount += sl[i].count
-				seq++
+			if enableTopN && sl[i].count >= topnCountThreshold {
+				topn = append(topn, cmscount{data: sl[i].data, count: sl[i].count * ratio})
 			} else {
 				c.InsertBytesN(sl[i].data, sl[i].count*ratio)
 			}
 		}
 	}
 
-	if sampleSize/uint64(topnThreshold) > topncount {
-		for i := range topn {
-			c.InsertBytesN(topn[i].data, topn[i].count*ratio)
-		}
-	} else {
+	if enableTopN {
 		c.buildTopNMap(topn)
 	}
 
@@ -203,7 +162,7 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 	} else if estimateNDV <= uint64(realTopN) {
 		c.defaultValue = 1
 	} else {
-		c.defaultValue = countWithoutTopN / (estimateNDV - uint64(ndv-onlyOnceItems))
+		c.defaultValue = countWithoutTopN / (estimateNDV - uint64(ndv) + onlyOnceItems)
 	}
 }
 
