@@ -15,6 +15,7 @@ package handler_test
 
 import (
 	"fmt"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -31,6 +32,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk := testkit.NewTestKit(c, store)
