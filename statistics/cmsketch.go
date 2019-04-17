@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sort"
 
@@ -97,7 +98,7 @@ func groupElements(data [][]byte) map[uint64][]cmsCount {
 
 // BuildTopN builds table of top N elements.
 // elements in data should not be modified after this call.
-func (c *CMSketch) BuildTopN(data [][]byte, top, topnThreshold uint32, total uint64) {
+func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uint64) {
 	sampleSize := uint64(len(data))
 	counter := groupElements(data)
 	sorted := make([]uint64, 0)
@@ -121,9 +122,9 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topnThreshold uint32, total uin
 	sumTopN := uint64(0)
 
 	// Add a few elements, the number of which is close to the n-th most element.
-	for i := top; i < ndv && i < top*2; i++ {
+	for i := uint32(0); i < ndv && i < top*2; i++ {
 		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2
-		if sorted[i]*3 < NthValue*2 && newNthValue != sorted[i] {
+		if i >= top && sorted[i]*3 < NthValue*2 && newNthValue != sorted[i] {
 			break
 		}
 		// sumTopN might be smaller than sum of final sum of elements in topnindex.
@@ -134,13 +135,15 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topnThreshold uint32, total uin
 
 	estimateNDV, ratio, onlyOnceItems := calculateEstimateNDV(sorted, total)
 
-	enableTopN := (sampleSize/uint64(topnThreshold) <= sumTopN)
+	enableTopN := (sampleSize/uint64(topNThreshold) <= sumTopN)
 	topN := make([]cmsCount, 0)
+	sumTopN = 0
 
 	for _, vals := range counter {
 		for i := range vals {
 			if enableTopN && vals[i].count >= newNthValue {
 				topN = append(topN, cmsCount{data: vals[i].data, count: vals[i].count * ratio})
+				sumTopN += vals[i].count * ratio
 			} else {
 				c.InsertBytesN(vals[i].data, vals[i].count*ratio)
 			}
@@ -155,13 +158,20 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topnThreshold uint32, total uin
 	// These three tests tests if all divisions are legal.
 	// They also tests if we sampled all possible data.
 	countWithoutTopN := total - (sampleSize-uint64(onlyOnceItems))*ratio
-	if total < uint64(top)*ratio {
+
+	if total <= sumTopN {
 		c.defaultValue = 1
 	} else if estimateNDV <= uint64(top) {
 		c.defaultValue = 1
 	} else {
-		c.defaultValue = countWithoutTopN / (estimateNDV - uint64(ndv) + onlyOnceItems)
+		if estimateNDV+onlyOnceItems <= uint64(ndv) {
+			c.defaultValue = 1
+		} else {
+			c.defaultValue = countWithoutTopN / (estimateNDV - uint64(ndv) + onlyOnceItems)
+		}
 	}
+
+	fmt.Printf("estNDV=%d ndv=%d onlyOnce=%d sumTopN=%d top=%d defaultValue=%d enableTopN=%v\n", estimateNDV, ndv, onlyOnceItems, sumTopN, top, c.defaultValue, enableTopN)
 }
 
 func (c *CMSketch) buildTopNMap(topn []cmsCount) {
