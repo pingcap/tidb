@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
 
@@ -75,25 +77,23 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	h.bindInfo.Lock()
 	newCache := h.bindInfo.Value.Load().(cache).copy()
 	defer func() {
-		if err == nil {
 			h.bindInfo.Value.Store(newCache)
 			h.bindInfo.Unlock()
-		}
 	}()
 
 	for _, row := range rows {
 		hash, meta, err := h.newBindMeta(newBindRecord(row))
-		if err != nil {
-			return err
-		}
-
-		newCache.removeStaleBindMetas(hash, meta)
-		newCache[hash] = append(newCache[hash], meta)
-
 		// Update lastUpdateTime to the newest one.
 		if meta.UpdateTime.Compare(h.lastUpdateTime) > 0 {
 			h.lastUpdateTime = meta.UpdateTime
 		}
+		if err != nil {
+			logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
+			continue
+		}
+
+		newCache.removeStaleBindMetas(hash, meta)
+		newCache[hash] = append(newCache[hash], meta)
 	}
 	return nil
 }
