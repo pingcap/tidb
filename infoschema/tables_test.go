@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
@@ -137,22 +137,22 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 17 51 3"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("4 17 68 4"))
 	tk.MustExec("delete from t where c >= 3")
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 17 34 2"))
 	tk.MustExec("delete from t where c=3")
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 17 34 2"))
@@ -339,6 +339,7 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 # DB: test
 # Is_internal: false
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Stats: t1:1,t2:2
 select * from t_slim;`))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(err, IsNil)
@@ -346,8 +347,8 @@ select * from t_slim;`))
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|select * from t_slim;"))
 }

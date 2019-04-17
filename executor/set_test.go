@@ -328,6 +328,17 @@ func (s *testSuite2) TestSetVar(c *C) {
 	// test skip isolation level check: reset
 	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
+
+	tk.MustExec("set global read_only = 0")
+	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("0"))
+	tk.MustExec("set global read_only = off")
+	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("0"))
+	tk.MustExec("set global read_only = 1")
+	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
+	tk.MustExec("set global read_only = on")
+	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
+	_, err = tk.Exec("set global read_only = abc")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {

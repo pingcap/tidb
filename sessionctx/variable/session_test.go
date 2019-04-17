@@ -104,6 +104,8 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		TotalKeys:     10000,
 		ProcessedKeys: 20001,
 	}
+	statsInfos := make(map[string]uint64)
+	statsInfos["t1"] = 0
 	resultString := `# Txn_start_ts: 406649736972468225
 # User: root@192.168.0.1
 # Conn_ID: 1
@@ -113,9 +115,10 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Index_ids: [1,2]
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Stats: t1:pseudo
 select * from t;`
 	sql := "select * from t"
 	digest := parser.DigestHash(sql)
-	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", digest, sql)
+	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", digest, statsInfos, sql)
 	c.Assert(logString, Equals, resultString)
 }
