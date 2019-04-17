@@ -852,8 +852,8 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
 	// build collector properties.
 	collector.UpdateTotalSize()
-	collector.Count = int64(len(collector.Samples))
 	collector.Samples = collector.Samples[:e.sampCursor]
+	collector.Count = int64(e.sampCursor)
 	for _, sample := range collector.Samples {
 		if sample.Value.IsNull() {
 			collector.NullCount++
