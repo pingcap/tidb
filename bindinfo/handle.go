@@ -77,8 +77,8 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	h.bindInfo.Lock()
 	newCache := h.bindInfo.Value.Load().(cache).copy()
 	defer func() {
-			h.bindInfo.Value.Store(newCache)
-			h.bindInfo.Unlock()
+		h.bindInfo.Value.Store(newCache)
+		h.bindInfo.Unlock()
 	}()
 
 	for _, row := range rows {
