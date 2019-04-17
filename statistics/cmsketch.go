@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"sort"
 
@@ -170,8 +169,6 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uin
 			c.defaultValue = countWithoutTopN / (estimateNDV - uint64(ndv) + onlyOnceItems)
 		}
 	}
-
-	fmt.Printf("estNDV=%d ndv=%d onlyOnce=%d sumTopN=%d top=%d defaultValue=%d enableTopN=%v\n", estimateNDV, ndv, onlyOnceItems, sumTopN, top, c.defaultValue, enableTopN)
 }
 
 func (c *CMSketch) buildTopNMap(topn []cmsCount) {
