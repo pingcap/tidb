@@ -97,15 +97,14 @@ func groupElements(data [][]byte) map[uint64][]cmsCount {
 
 // BuildTopN builds table of top N elements.
 // elements in data should not be modified after this call.
-// Not exactly n elements, will add a few elements, the number of which is close to the n-th most element.
 func (c *CMSketch) BuildTopN(data [][]byte, top, topnThreshold uint32, total uint64) {
 	sampleSize := uint64(len(data))
 	counter := groupElements(data)
 	sorted := make([]uint64, 0)
 
-	for _, sl := range counter {
-		for i := range sl {
-			sorted = append(sorted, sl[i].count)
+	for _, vals := range counter {
+		for i := range vals {
+			sorted = append(sorted, vals[i].count)
 		}
 	}
 	sort.Slice(sorted, func(i, j int) bool {
@@ -121,6 +120,7 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topnThreshold uint32, total uin
 	newNthValue := sorted[top-1]
 	sumTopN := uint64(0)
 
+	// Add a few elements, the number of which is close to the n-th most element.
 	for i := top; i < ndv && i < top*2; i++ {
 		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2
 		if sorted[i]*3 < NthValue*2 && newNthValue != sorted[i] {
