@@ -169,8 +169,8 @@ type FrameItem struct {
 
 // RegionFrameRange contains a frame range info which the region covered.
 type RegionFrameRange struct {
-	first  *FrameItem        // start frame of the region
-	last   *FrameItem        // end frame of the region
+	First  *FrameItem        // start frame of the region
+	Last   *FrameItem        // end frame of the region
 	region *tikv.KeyLocation // the region
 }
 
@@ -266,8 +266,8 @@ func NewRegionFrameRange(region *tikv.KeyLocation) (idxRange *RegionFrameRange, 
 
 	idxRange = &RegionFrameRange{
 		region: region,
-		first:  first,
-		last:   last,
+		First:  first,
+		Last:   last,
 	}
 	return idxRange, nil
 }
@@ -319,16 +319,16 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 // GetRecordFrame returns the record frame of a table. If the table's records
 // are not covered by this frame range, it returns nil.
 func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName string) *FrameItem {
-	if tableID == r.first.TableID && r.first.IsRecord {
-		r.first.DBName, r.first.TableName = dbName, tableName
-		return r.first
+	if tableID == r.First.TableID && r.First.IsRecord {
+		r.First.DBName, r.First.TableName = dbName, tableName
+		return r.First
 	}
-	if tableID == r.last.TableID && r.last.IsRecord {
-		r.last.DBName, r.last.TableName = dbName, tableName
-		return r.last
+	if tableID == r.Last.TableID && r.Last.IsRecord {
+		r.Last.DBName, r.Last.TableName = dbName, tableName
+		return r.Last
 	}
 
-	if tableID >= r.first.TableID && tableID < r.last.TableID {
+	if tableID >= r.First.TableID && tableID < r.Last.TableID {
 		return &FrameItem{
 			DBName:    dbName,
 			TableName: tableName,
@@ -342,17 +342,17 @@ func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName strin
 // GetIndexFrame returns the indnex frame of a table. If the table's indices are
 // not covered by this frame range, it returns nil.
 func (r *RegionFrameRange) GetIndexFrame(tableID, indexID int64, dbName, tableName, indexName string) *FrameItem {
-	if tableID == r.first.TableID && !r.first.IsRecord && indexID == r.first.IndexID {
-		r.first.DBName, r.first.TableName, r.first.IndexName = dbName, tableName, indexName
-		return r.first
+	if tableID == r.First.TableID && !r.First.IsRecord && indexID == r.First.IndexID {
+		r.First.DBName, r.First.TableName, r.First.IndexName = dbName, tableName, indexName
+		return r.First
 	}
-	if tableID == r.last.TableID && indexID == r.last.IndexID {
-		r.last.DBName, r.last.TableName, r.last.IndexName = dbName, tableName, indexName
-		return r.last
+	if tableID == r.Last.TableID && indexID == r.Last.IndexID {
+		r.Last.DBName, r.Last.TableName, r.Last.IndexName = dbName, tableName, indexName
+		return r.Last
 	}
 
-	greaterThanFirst := tableID > r.first.TableID || (tableID == r.first.TableID && !r.first.IsRecord && indexID > r.first.IndexID)
-	lessThanLast := tableID < r.last.TableID || (tableID == r.last.TableID && (r.last.IsRecord || indexID < r.last.IndexID))
+	greaterThanFirst := tableID > r.First.TableID || (tableID == r.First.TableID && !r.First.IsRecord && indexID > r.First.IndexID)
+	lessThanLast := tableID < r.Last.TableID || (tableID == r.Last.TableID && (r.Last.IsRecord || indexID < r.Last.IndexID))
 	if greaterThanFirst && lessThanLast {
 		return &FrameItem{
 			DBName:    dbName,
