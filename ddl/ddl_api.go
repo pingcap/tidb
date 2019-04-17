@@ -441,7 +441,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
 			case ast.ColumnOptionFulltext:
-				// TODO: Support this type.
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			}
 		}
 	}
@@ -967,6 +967,11 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 					continue
 				}
 			}
+		}
+		if constr.Tp == ast.ConstraintFulltext {
+			sc := ctx.GetSessionVars().StmtCtx
+			sc.AppendWarning(ErrTableCantHandleFt)
+			continue
 		}
 		// build index info.
 		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
@@ -1563,6 +1568,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if tbInfo.ShardRowIDBits > shardRowIDBitsMax {
 				tbInfo.ShardRowIDBits = shardRowIDBitsMax
 			}
+			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		}
 	}
 
@@ -1709,6 +1715,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
 				err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("add")
+			case ast.ConstraintFulltext:
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			default:
 				// Nothing to do now.
 			}
@@ -1803,6 +1811,14 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	ok, _ := hasAutoIncrementColumn(t.Meta())
 	if ok && uVal != 0 {
 		return errUnsupportedShardRowIDBits
+	}
+	if uVal == t.Meta().ShardRowIDBits {
+		// Nothing need to do.
+		return nil
+	}
+	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
+	if err != nil {
+		return err
 	}
 	job := &model.Job{
 		Type:       model.ActionShardRowID,
