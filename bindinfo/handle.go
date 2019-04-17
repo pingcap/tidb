@@ -1,3 +1,16 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package bindinfo
 
 import (
@@ -63,7 +76,7 @@ func NewBindHandle(ctx sessionctx.Context, parser *parser.Parser) *BindHandle {
 func (h *BindHandle) Update(fullLoad bool) (err error) {
 	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
 	if !fullLoad {
-		sql += " where update_time > \"" + h.lastUpdateTime.String() + "\""
+		sql += " where update_time >= \"" + h.lastUpdateTime.String() + "\""
 	}
 
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
@@ -234,7 +247,7 @@ func (c cache) copy() cache {
 // isStale checks whether this bindMeta is stale compared with the other bindMeta.
 func (m *bindMeta) isStale(other *bindMeta) bool {
 	return m.OriginalSQL == other.OriginalSQL && m.Db == other.Db &&
-		m.UpdateTime.Compare(other.UpdateTime) < 0
+		m.UpdateTime.Compare(other.UpdateTime) <= 0
 }
 
 func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db string) string {
