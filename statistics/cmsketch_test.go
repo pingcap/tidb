@@ -161,6 +161,7 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		avgError   uint64
 	}{
 		// If no significant most items, TopN may will produce results worse than normal algorithm.
+		// The first two tests produces almost same avg.
 		{
 			zipfFactor: 1.0000001,
 			avgError:   48,

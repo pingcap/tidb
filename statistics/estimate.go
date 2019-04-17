@@ -16,7 +16,7 @@ package statistics
 import "math"
 
 // calculateEstimateNDV calculates the estimate ndv of a sampled data from a multisize with size total.
-// dist[i] equals to the number of i-th elements occurs.
+// count[i] stores the count of the i-th element.
 // onlyOnceItems is the number of elements that occurred only once.
 func calculateEstimateNDV(count []uint64, total uint64) (ndv uint64, ratio uint64, onlyOnceItems uint64) {
 	sampleSize := uint64(0)

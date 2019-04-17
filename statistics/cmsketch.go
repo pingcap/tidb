@@ -38,7 +38,7 @@ type CMSketch struct {
 	count        uint64 // TopN is not counted in count
 	defaultValue uint64 // In sampled data, if cmsketch returns a small value (less than avg value / 2), then this will returned.
 	table        [][]uint32
-	topnindex    map[uint64][]cmsCount
+	topNIndex    map[uint64][]cmsCount
 }
 
 type cmsCount struct {
@@ -126,8 +126,8 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uin
 		if i >= top && sorted[i]*3 < NthValue*2 && newNthValue != sorted[i] {
 			break
 		}
-		// sumTopN might be smaller than sum of final sum of elements in topnindex.
-		// These two values are only used for build topnindex, and they are not used in counting defaultValue.
+		// sumTopN might be smaller than sum of final sum of elements in topNIndex.
+		// These two values are only used for build topNIndex, and they are not used in counting defaultValue.
 		newNthValue = sorted[i]
 		sumTopN += sorted[i]
 	}
@@ -144,7 +144,7 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uin
 				topN = append(topN, cmsCount{data: vals[i].data, count: vals[i].count * ratio})
 				sumTopN += vals[i].count * ratio
 			} else {
-				c.InsertBytesN(vals[i].data, vals[i].count*ratio)
+				c.insertBytesN(vals[i].data, vals[i].count*ratio)
 			}
 		}
 	}
@@ -153,9 +153,6 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uin
 		c.buildTopNMap(topN)
 	}
 
-	// Interesting, seems we have collected all distinct values.
-	// These three tests tests if all divisions are legal.
-	// They also tests if we sampled all possible data.
 	countWithoutTopN := total - (sampleSize-uint64(onlyOnceItems))*ratio
 
 	if total <= sumTopN {
@@ -172,28 +169,28 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uin
 }
 
 func (c *CMSketch) buildTopNMap(topn []cmsCount) {
-	c.topnindex = make(map[uint64][]cmsCount)
+	c.topNIndex = make(map[uint64][]cmsCount)
 	for i := range topn {
 		if topn[i].data == nil {
 			continue
 		}
 		h1, h2 := murmur3.Sum128(topn[i].data)
-		vals, ok := c.topnindex[h1]
+		vals, ok := c.topNIndex[h1]
 		if !ok {
 			vals = make([]cmsCount, 0)
 		}
 		vals = append(vals, cmsCount{h1, h2, topn[i].data, topn[i].count})
-		c.topnindex[h1] = vals
+		c.topNIndex[h1] = vals
 	}
 }
 
-// queryAddTopN TopN adds count to CMSketch.topnindex if exists, and returns the count of such elements after insert
+// queryAddTopN TopN adds count to CMSketch.topNIndex if exists, and returns the count of such elements after insert
 // if such elements does not in topn elements, nothing will happen and false will be returned.
 func (c *CMSketch) queryAddTopN(h1, h2, count uint64, d []byte) (uint64, bool) {
-	if c.topnindex == nil {
+	if c.topNIndex == nil {
 		return 0, false
 	}
-	cnt, ok := c.topnindex[h1]
+	cnt, ok := c.topNIndex[h1]
 	if !ok {
 		return 0, false
 	}
@@ -212,11 +209,11 @@ func (c *CMSketch) queryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
 
 // InsertBytes inserts the bytes value into the CM Sketch.
 func (c *CMSketch) InsertBytes(bytes []byte) {
-	c.InsertBytesN(bytes, 1)
+	c.insertBytesN(bytes, 1)
 }
 
-// InsertBytesN adds the bytes value into the CM Sketch by n.
-func (c *CMSketch) InsertBytesN(bytes []byte, n uint64) {
+// insertBytesN adds the bytes value into the CM Sketch by n.
+func (c *CMSketch) insertBytesN(bytes []byte, n uint64) {
 	h1, h2 := murmur3.Sum128(bytes)
 	if _, ok := c.queryAddTopN(h1, h2, n, bytes); ok {
 		return
@@ -314,7 +311,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
-	if c.topnindex != nil || rc.topnindex != nil {
+	if c.topNIndex != nil || rc.topNIndex != nil {
 		return errors.New("CMSketch with top n does not supports merge")
 	}
 	c.count += rc.count
