@@ -816,6 +816,10 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 	}
 	for i := rid; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
+		if task.SampSize == 0 {
+			continue
+		}
+
 		var tableID, minRowID, maxRowID int64
 		startKey, endKey := task.Location.StartKey, task.Location.EndKey
 		tableID, minRowID, *err = tablecodec.DecodeRecordKey(startKey)
@@ -827,9 +831,6 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 			return
 		}
 
-		if task.SampSize == 0 {
-			continue
-		}
 		keys := make([]kv.Key, 0, task.SampSize)
 		for i := 0; i < int(task.SampSize); i++ {
 			randKey := rander.Int63n(maxRowID-minRowID) + minRowID
