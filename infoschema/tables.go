@@ -15,8 +15,6 @@ package infoschema
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/table"
 	"sort"
 	"sync"
 	"time"
@@ -29,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
