@@ -1622,7 +1622,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			filter:   outerFilter,
 		},
 		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{innerPlan, b},
+			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 			rowTypes:      innerTypes,
 		},
 		workerWg:      new(sync.WaitGroup),
@@ -1851,6 +1851,8 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 type dataReaderBuilder struct {
 	plannercore.Plan
 	*executorBuilder
+
+	selectResultHook // for testing
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, datums [][]types.Datum,
@@ -1892,7 +1894,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	e.resultHandler = &tableResultHandler{}
-	result, err := distsql.Select(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback)
+	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1921,11 +1923,11 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	kvRanges, err := buildKvRangesForIndexJoin(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, values, indexRanges, keyOff2IdxOff)
+	e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = e.open(ctx, kvRanges)
+	err = e.open(ctx)
 	return e, errors.Trace(err)
 }
 
