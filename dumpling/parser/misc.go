@@ -469,6 +469,7 @@ var tokenMap = map[string]int{
 	"STATS_META":               statsMeta,
 	"STATS_PERSISTENT":         statsPersistent,
 	"STATUS":                   status,
+	"OPEN":                     open,
 	"STD":                      stddevPop,
 	"STDDEV":                   stddevPop,
 	"STDDEV_POP":               stddevPop,
