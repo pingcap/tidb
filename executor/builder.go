@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
@@ -1462,7 +1463,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			e.tasks = append(e.tasks, &analyzeTask{
 				taskType: colTask,
 				colExec:  b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets),
-				job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze columns"},
+				job:      &handle.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze columns"},
 			})
 		}
 		if b.err != nil {
@@ -1476,7 +1477,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			e.tasks = append(e.tasks, &analyzeTask{
 				taskType: idxTask,
 				idxExec:  b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets),
-				job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze index " + task.IndexInfo.Name.O},
+				job:      &handle.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze index " + task.IndexInfo.Name.O},
 			})
 		}
 		if b.err != nil {

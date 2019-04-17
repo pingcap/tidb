@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -129,7 +130,7 @@ type analyzeTask struct {
 	idxExec  *AnalyzeIndexExec
 	colExec  *AnalyzeColumnsExec
 	fastExec *AnalyzeFastExec
-	job      *statistics.AnalyzeJob
+	job      *handle.AnalyzeJob
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
@@ -195,7 +196,7 @@ type AnalyzeIndexExec struct {
 	result          distsql.SelectResult
 	countNullRes    distsql.SelectResult
 	maxNumBuckets   uint64
-	job             *statistics.AnalyzeJob
+	job             *handle.AnalyzeJob
 }
 
 // fetchAnalyzeResult builds and dispatches the `kv.Request` from given ranges, and stores the `SelectResult`
@@ -343,7 +344,7 @@ type AnalyzeColumnsExec struct {
 	analyzePB       *tipb.AnalyzeReq
 	resultHandler   *tableResultHandler
 	maxNumBuckets   uint64
-	job             *statistics.AnalyzeJob
+	job             *handle.AnalyzeJob
 }
 
 func (e *AnalyzeColumnsExec) open() error {
@@ -553,5 +554,5 @@ type analyzeResult struct {
 	Count           int64
 	IsIndex         int
 	Err             error
-	job             *statistics.AnalyzeJob
+	job             *handle.AnalyzeJob
 }

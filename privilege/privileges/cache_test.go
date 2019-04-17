@@ -134,6 +134,25 @@ func (s *testCacheSuite) TestLoadColumnsPrivTable(c *C) {
 	c.Assert(p.ColumnsPriv[1].ColumnPriv, Equals, mysql.SelectPriv)
 }
 
+func (s *testCacheSuite) TestLoadDefaultRoleTable(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "use mysql;")
+	mustExec(c, se, "truncate table default_roles")
+
+	mustExec(c, se, `INSERT INTO mysql.default_roles VALUES ("%", "test_default_roles", "localhost", "r_1")`)
+	mustExec(c, se, `INSERT INTO mysql.default_roles VALUES ("%", "test_default_roles", "localhost", "r_2")`)
+	var p privileges.MySQLPrivilege
+	err = p.LoadDefaultRoles(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.DefaultRoles[0].Host, Equals, `%`)
+	c.Assert(p.DefaultRoles[0].User, Equals, "test_default_roles")
+	c.Assert(p.DefaultRoles[0].DefaultRoleHost, Equals, "localhost")
+	c.Assert(p.DefaultRoles[0].DefaultRoleUser, Equals, "r_1")
+	c.Assert(p.DefaultRoles[1].DefaultRoleHost, Equals, "localhost")
+}
+
 func (s *testCacheSuite) TestPatternMatch(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
