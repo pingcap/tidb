@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -152,7 +152,7 @@ type session struct {
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
-	statsCollector *statistics.SessionStatsCollector
+	statsCollector *handle.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
 }
@@ -1196,6 +1196,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt)
 	if success {
 		s.sessionVars.User = user
+		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
 	} else if user.Hostname == variable.DefHostname {
 		logutil.Logger(context.Background()).Error("user connection verification failed",
@@ -1213,6 +1214,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 				AuthUsername: u,
 				AuthHostname: h,
 			}
+			s.sessionVars.ActiveRoles = pm.GetDefaultRoles(u, h)
 			return true
 		}
 	}

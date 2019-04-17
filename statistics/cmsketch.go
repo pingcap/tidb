@@ -145,7 +145,8 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 	return c
 }
 
-func encodeCMSketch(c *CMSketch) ([]byte, error) {
+// EncodeCMSketch encodes the given CMSketch to byte slice.
+func EncodeCMSketch(c *CMSketch) ([]byte, error) {
 	if c == nil || c.count == 0 {
 		return nil, nil
 	}
@@ -153,7 +154,8 @@ func encodeCMSketch(c *CMSketch) ([]byte, error) {
 	return p.Marshal()
 }
 
-func decodeCMSketch(data []byte) (*CMSketch, error) {
+// DecodeCMSketch decode a CMSketch from the given byte slice.
+func DecodeCMSketch(data []byte) (*CMSketch, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -191,7 +193,8 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 	return true
 }
 
-func (c *CMSketch) copy() *CMSketch {
+// Copy makes a copy for current CMSketch.
+func (c *CMSketch) Copy() *CMSketch {
 	if c == nil {
 		return nil
 	}
