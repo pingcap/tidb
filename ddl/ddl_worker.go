@@ -487,7 +487,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	switch job.Type {
 	case model.ActionCreateSchema:
-		ver, err = onCreateSchema(t, job)
+		ver, err = onCreateSchema(d, t, job)
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(t, job)
 	case model.ActionCreateTable:
