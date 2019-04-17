@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handler"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -347,12 +347,12 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 	h := s.do.StatsHandle()
-	h.DumpStatsDeltaToKV(handler.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	testKit.MustExec("analyze table t")
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
 	}
-	h.DumpStatsDeltaToKV(handler.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -474,7 +474,7 @@ func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
 	testKit.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
 	testKit.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null);")
 	h := s.do.StatsHandle()
-	c.Assert(h.DumpStatsDeltaToKV(handler.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery(`explain select b from t where b is null`).Check(testkit.Rows(
 		"IndexReader_6 4.00 root index:IndexScan_5",

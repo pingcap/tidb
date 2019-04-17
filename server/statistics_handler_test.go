@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics/handler"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
@@ -120,11 +120,11 @@ func (ds *testDumpStatsSuite) prepareData(c *C) {
 	h.HandleDDLEvent(<-h.DDLEventCh())
 	dbt.mustExec("create index c on test (a, b)")
 	dbt.mustExec("insert test values (1, 's')")
-	c.Assert(h.DumpStatsDeltaToKV(handler.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	dbt.mustExec("analyze table test")
 	dbt.mustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
 	is := ds.sh.do.InfoSchema()
-	c.Assert(h.DumpStatsDeltaToKV(handler.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 }
 

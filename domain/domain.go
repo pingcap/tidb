@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics/handler"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -822,13 +822,13 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 }
 
 // StatsHandle returns the statistic handle.
-func (do *Domain) StatsHandle() *handler.Handle {
-	return (*handler.Handle)(atomic.LoadPointer(&do.statsHandle))
+func (do *Domain) StatsHandle() *handle.Handle {
+	return (*handle.Handle)(atomic.LoadPointer(&do.statsHandle))
 }
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(handler.NewHandle(ctx, do.statsLease)))
+	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(handle.NewHandle(ctx, do.statsLease)))
 }
 
 // StatsUpdating checks if the stats worker is updating.
@@ -853,7 +853,7 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle := handler.NewHandle(ctx, do.statsLease)
+	statsHandle := handle.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
 	if do.statsLease <= 0 {
@@ -877,7 +877,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	if do.etcdClient == nil {
 		statsOwner = owner.NewMockManager(id, cancelFunc)
 	} else {
-		statsOwner = owner.NewOwnerManager(do.etcdClient, handler.StatsPrompt, id, handler.StatsOwnerKey, cancelFunc)
+		statsOwner = owner.NewOwnerManager(do.etcdClient, handle.StatsPrompt, id, handle.StatsOwnerKey, cancelFunc)
 	}
 	// TODO: Need to do something when err is not nil.
 	err := statsOwner.CampaignOwner(cancelCtx)
@@ -932,7 +932,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				logutil.Logger(context.Background()).Debug("handle ddl event failed", zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
-			err = statsHandle.DumpStatsDeltaToKV(handler.DumpDelta)
+			err = statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("dump stats delta failed", zap.Error(err))
 			}

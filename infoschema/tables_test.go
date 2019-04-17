@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics/handler"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
@@ -137,22 +137,22 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
-	h.DumpStatsDeltaToKV(handler.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 17 51 3"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
-	h.DumpStatsDeltaToKV(handler.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("4 17 68 4"))
 	tk.MustExec("delete from t where c >= 3")
-	h.DumpStatsDeltaToKV(handler.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 17 34 2"))
 	tk.MustExec("delete from t where c=3")
-	h.DumpStatsDeltaToKV(handler.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 17 34 2"))

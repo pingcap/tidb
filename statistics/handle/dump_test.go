@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handler_test
+package handle_test
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handler"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -35,14 +35,14 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	tk.MustExec("insert into t(a,b) values (1, 1),(3, 1),(5, 10)")
 	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	h.DumpStatsDeltaToKV(handler.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	h.Update(is)
 
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta())
 	c.Assert(err, IsNil)
-	loadTbl, err := handler.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
+	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
 	c.Assert(err, IsNil)
 
 	tbl := h.GetTableStats(tableInfo.Meta())

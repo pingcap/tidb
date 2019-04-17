@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handler"
+	"github.com/pingcap/tidb/statistics/handle"
 	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
@@ -465,7 +465,7 @@ func setGlobalVars() {
 	session.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
-	handler.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
+	handle.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
 	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
