@@ -38,10 +38,10 @@ type CMSketch struct {
 	count        uint64 // TopN is not counted in count
 	defaultValue uint64 // In sampled data, if cmsketch returns a small value (less than avg value / 2), then this will returned.
 	table        [][]uint32
-	topnindex    map[uint64][]cmscount
+	topnindex    map[uint64][]cmsCount
 }
 
-type cmscount struct {
+type cmsCount struct {
 	h1    uint64
 	h2    uint64
 	data  []byte
@@ -70,26 +70,26 @@ func NewCMSketchWithTopN(d, w int32, data [][]byte, n uint32, total uint64) *CMS
 	return c
 }
 
-func groupElements(data [][]byte) map[uint64][]cmscount {
-	counter := make(map[uint64][]cmscount)
+func groupElements(data [][]byte) map[uint64][]cmsCount {
+	counter := make(map[uint64][]cmsCount)
 
 	for k := range data {
 		h1, h2 := murmur3.Sum128(data[k])
-		sl, ok := counter[h1]
+		vals, ok := counter[h1]
 		if !ok {
-			sl = make([]cmscount, 0)
+			vals = make([]cmsCount, 0)
 		}
 		exists := false
-		for i := range sl {
-			if sl[i].h2 == h2 && bytes.Equal(sl[i].data, data[k]) {
+		for i := range vals {
+			if vals[i].h2 == h2 && bytes.Equal(vals[i].data, data[k]) {
 				exists = true
-				sl[i].count++
+				vals[i].count++
 			}
 		}
 		if !exists {
-			sl = append(sl, cmscount{h1, h2, data[k], 1})
+			vals = append(vals, cmsCount{h1, h2, data[k], 1})
 		}
-		counter[h1] = sl
+		counter[h1] = vals
 	}
 
 	return counter
@@ -98,7 +98,7 @@ func groupElements(data [][]byte) map[uint64][]cmscount {
 // BuildTopN builds table of top N elements.
 // elements in data should not be modified after this call.
 // Not exactly n elements, will add a few elements, the number of which is close to the n-th most element.
-func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint64) {
+func (c *CMSketch) BuildTopN(data [][]byte, top, topnThreshold uint32, total uint64) {
 	sampleSize := uint64(len(data))
 	counter := groupElements(data)
 	sorted := make([]uint64, 0)
@@ -113,69 +113,70 @@ func (c *CMSketch) BuildTopN(data [][]byte, n, topnThreshold uint32, total uint6
 	})
 
 	ndv := uint32(len(sorted))
-	if n > ndv {
-		n = ndv
+	if top > ndv {
+		top = ndv
 	}
 
-	topnCountThreshold := sorted[n-1]
-	newTopN := sorted[n-1]
-	realTopN := n
-	topncount := uint64(0)
+	NthValue := sorted[top-1]
+	newNthValue := sorted[top-1]
+	sumTopN := uint64(0)
 
-	for i := n; i < ndv && i < n*2; i++ {
-		if sorted[i]*3 < topnCountThreshold*2 && newTopN != sorted[i] {
+	for i := top; i < ndv && i < top*2; i++ {
+		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2
+		if sorted[i]*3 < NthValue*2 && newNthValue != sorted[i] {
 			break
 		}
-		newTopN = sorted[i]
-		topncount += sorted[i]
-		realTopN = i
+		// sumTopN might be smaller than sum of final sum of elements in topnindex.
+		// These two values are only used for build topnindex, and they are not used in counting defaultValue.
+		newNthValue = sorted[i]
+		sumTopN += sorted[i]
 	}
 
 	estimateNDV, ratio, onlyOnceItems := calculateEstimateNDV(sorted, total)
 
-	enableTopN := (sampleSize/uint64(topnThreshold) <= topncount)
-	topnCountThreshold = newTopN
-	topn := make([]cmscount, realTopN)
+	enableTopN := (sampleSize/uint64(topnThreshold) <= sumTopN)
+	topN := make([]cmsCount, 0)
 
-	for _, sl := range counter {
-		for i := range sl {
-			if enableTopN && sl[i].count >= topnCountThreshold {
-				topn = append(topn, cmscount{data: sl[i].data, count: sl[i].count * ratio})
+	for _, vals := range counter {
+		for i := range vals {
+			if enableTopN && vals[i].count >= newNthValue {
+				topN = append(topN, cmsCount{data: vals[i].data, count: vals[i].count * ratio})
 			} else {
-				c.InsertBytesN(sl[i].data, sl[i].count*ratio)
+				c.InsertBytesN(vals[i].data, vals[i].count*ratio)
 			}
 		}
 	}
+	top = uint32(len(topN))
 	if enableTopN {
-		c.buildTopNMap(topn)
+		c.buildTopNMap(topN)
 	}
 
 	// Interesting, seems we have collected all distinct values.
 	// These three tests tests if all divisions are legal.
 	// They also tests if we sampled all possible data.
 	countWithoutTopN := total - (sampleSize-uint64(onlyOnceItems))*ratio
-	if total < topncount*ratio {
+	if total < uint64(top)*ratio {
 		c.defaultValue = 1
-	} else if estimateNDV <= uint64(realTopN) {
+	} else if estimateNDV <= uint64(top) {
 		c.defaultValue = 1
 	} else {
 		c.defaultValue = countWithoutTopN / (estimateNDV - uint64(ndv) + onlyOnceItems)
 	}
 }
 
-func (c *CMSketch) buildTopNMap(topn []cmscount) {
-	c.topnindex = make(map[uint64][]cmscount)
+func (c *CMSketch) buildTopNMap(topn []cmsCount) {
+	c.topnindex = make(map[uint64][]cmsCount)
 	for i := range topn {
 		if topn[i].data == nil {
 			continue
 		}
 		h1, h2 := murmur3.Sum128(topn[i].data)
-		sl, ok := c.topnindex[h1]
+		vals, ok := c.topnindex[h1]
 		if !ok {
-			sl = make([]cmscount, 0)
+			vals = make([]cmsCount, 0)
 		}
-		sl = append(sl, cmscount{h1, h2, topn[i].data, topn[i].count})
-		c.topnindex[h1] = sl
+		vals = append(vals, cmsCount{h1, h2, topn[i].data, topn[i].count})
+		c.topnindex[h1] = vals
 	}
 }
 

@@ -17,13 +17,13 @@ import "math"
 
 // calculateEstimateNDV calculates the estimate ndv of a sampled data from a multisize with size total.
 // dist[i] equals to the number of i-th elements occurs.
-// f1 is the number of elements that occurred only once.
-func calculateEstimateNDV(dist []uint64, total uint64) (ndv uint64, ratio uint64, f1 uint64) {
+// onlyOnceItems is the number of elements that occurred only once.
+func calculateEstimateNDV(count []uint64, total uint64) (ndv uint64, ratio uint64, onlyOnceItems uint64) {
 	sampleSize := uint64(0)
-	sampleNDV := uint64(len(dist))
-	for _, v := range dist {
+	sampleNDV := uint64(len(count))
+	for _, v := range count {
 		if v == 1 {
-			f1++
+			onlyOnceItems++
 		}
 		sampleSize += v
 	}
@@ -33,11 +33,11 @@ func calculateEstimateNDV(dist []uint64, total uint64) (ndv uint64, ratio uint64
 		ratio = 1
 	}
 
-	if f1 == uint64(len(dist)) {
+	if onlyOnceItems == uint64(len(count)) {
 		// Assume this is a unique column
 		ratio = 1
 		ndv = total
-	} else if f1 == 0 {
+	} else if onlyOnceItems == 0 {
 		// Assume data only consists of sampled data
 		// Nothing to do, no change with ratio
 		ndv = sampleNDV
@@ -47,12 +47,12 @@ func calculateEstimateNDV(dist []uint64, total uint64) (ndv uint64, ratio uint64
 		// estimateNDV = sqrt(N/n) f_1 + sum_2..inf f_i
 		// f_i = number of elements occurred i times in sample
 
-		ff1 := float64(f1)
+		f1 := float64(onlyOnceItems)
 		n := float64(sampleSize)
 		N := float64(total)
 		d := float64(sampleNDV)
 
-		ndv = uint64(math.Sqrt(N/n)*ff1 + d - ff1 + 0.5)
+		ndv = uint64(math.Sqrt(N/n)*f1 + d - f1 + 0.5)
 
 		if ndv < sampleNDV {
 			ndv = sampleNDV
@@ -61,5 +61,5 @@ func calculateEstimateNDV(dist []uint64, total uint64) (ndv uint64, ratio uint64
 			ndv = total
 		}
 	}
-	return ndv, ratio, f1
+	return ndv, ratio, onlyOnceItems
 }
