@@ -1197,6 +1197,14 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
+		// do pre-split and scatter.
+		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
+			if tbInfo.WaitSplitFinish {
+				preSplitTableRegion(d.store, tbInfo)
+			} else {
+				go preSplitTableRegion(d.store, tbInfo)
+			}
+		}
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1571,6 +1579,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			tbInfo.PreSplitRegions = op.UintValue
+		case ast.TableOptionWaitSplitFinish:
+			tbInfo.WaitSplitFinish = op.UintValue == 1
 		}
 	}
 	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
