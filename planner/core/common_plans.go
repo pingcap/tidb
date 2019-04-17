@@ -334,6 +334,7 @@ type Set struct {
 	VarAssigns []*expression.VarAssignment
 }
 
+// SQLBindOpType repreents the SQL bind type
 type SQLBindOpType int
 
 const (

@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -42,12 +41,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		defer span1.Finish()
 	}
 
-	var needDefaultDB bool
-	switch x := stmtNode.(type) {
-	case *ast.CreateBindingStmt:
-		needDefaultDB = useDefaultDB(x.OriginSel) || useDefaultDB(x.HintedSel)
-	}
-
 	infoSchema := GetInfoSchema(c.Ctx)
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
 		return nil, err
@@ -58,18 +51,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, err
 	}
 
-	if needDefaultDB {
-		switch x := finalPlan.(type) {
-		case *plannercore.SQLBindPlan:
-			if c.Ctx.GetSessionVars().CurrentDB != "" {
-				x.DefaultDB = c.Ctx.GetSessionVars().CurrentDB
-			} else {
-				err = errors.Trace(plannercore.ErrNoDB)
-			}
-		}
-		if err != nil {
-			return nil, err
-		}
+	err = c.setDefaultDB4BindPlan(finalPlan)
+	if err != nil {
+		return nil, err
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
@@ -84,6 +68,16 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		StmtNode:   stmtNode,
 		Ctx:        c.Ctx,
 	}, nil
+}
+
+func (c *Compiler) setDefaultDB4BindPlan(finalPlan plannercore.Plan) error {
+	bindPlan, ok := finalPlan.(*plannercore.SQLBindPlan)
+	if !ok {
+		return nil
+	}
+
+	bindPlan.DefaultDB = c.Ctx.GetSessionVars().CurrentDB
+	return nil
 }
 
 func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plannercore.Plan) (expensive bool) {
@@ -351,29 +345,4 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 	return is
-}
-
-func useDefaultDB(stmtNode ast.ResultSetNode) bool {
-	switch x := stmtNode.(type) {
-	case *ast.TableSource:
-		return useDefaultDB(x.Source)
-	case *ast.SelectStmt:
-		return useDefaultDB(x.From.TableRefs)
-	case *ast.TableName:
-		if x.Schema.O == "" {
-			return true
-		}
-	case *ast.Join:
-		var need bool
-		if x.Left != nil {
-			need = useDefaultDB(x.Left)
-			if !need {
-				if x.Right != nil {
-					return useDefaultDB(x.Right)
-				}
-			}
-		}
-		return need
-	}
-	return false
 }

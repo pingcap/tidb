@@ -57,15 +57,15 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 func (e *SQLBindExec) createSQLBind() error {
 	if !e.isGlobal {
-		return errors.New("Create non-global sql bind is not supported.")
+		return errors.New("create non-global sql bind is not supported")
 	}
 
-	bindRecord := &bindinfo.BindRecord{
+	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
 		BindSQL:     e.bindSQL,
 		Db:          e.defaultDB,
 		Charset:     e.charset,
 		Collation:   e.collation,
 	}
-	return domain.GetDomain(e.ctx).BindHandle().AddGlobalBind(bindRecord)
+	return domain.GetDomain(e.ctx).BindHandle().AddBindRecord(record)
 }
