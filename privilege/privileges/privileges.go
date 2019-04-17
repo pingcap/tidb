@@ -206,3 +206,21 @@ func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.Ro
 	ctx.GetSessionVars().ActiveRoles = roleList
 	return true, ""
 }
+
+// FindEdge implements privilege.Manager FindRelationship interface.
+func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool {
+	mysqlPrivilege := p.Handle.Get()
+	ok := mysqlPrivilege.FindRole(user.Username, user.Hostname, role)
+	if !ok {
+		logutil.Logger(context.Background()).Error("find role failed", zap.Stringer("role", role))
+		return false
+	}
+	return true
+}
+
+// GetDefaultRoles returns all default roles for certain user.
+func (p *UserPrivileges) GetDefaultRoles(user, host string) []*auth.RoleIdentity {
+	mysqlPrivilege := p.Handle.Get()
+	ret := mysqlPrivilege.getDefaultRoles(user, host)
+	return ret
+}
