@@ -177,6 +177,20 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(bindData.CreateTime, NotNil)
 	c.Check(bindData.UpdateTime, NotNil)
 
+	_, err = tk.Exec("DROP global binding for select * from t where i>100")
+	c.Check(err, IsNil)
+	bindData = s.domain.BindHandle().GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, IsNil)
+
+	bindHandle = bindinfo.NewBindHandle(tk.Se, s.Parser)
+	err = bindHandle.Update(true)
+	c.Check(err, IsNil)
+	c.Check(bindHandle.Size(), Equals, 0)
+
+	time.Sleep(time.Second * 6) // wait domain's bindUpdateLoop load deleted bind info.
+	bindData = bindHandle.GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, IsNil)
+
 	_, err = tk.Exec("delete from mysql.bind_info")
 	c.Assert(err, IsNil)
 

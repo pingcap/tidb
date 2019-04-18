@@ -340,6 +340,8 @@ type SQLBindOpType int
 const (
 	// OpSQLBindCreate represents the operation to create a SQL bind.
 	OpSQLBindCreate SQLBindOpType = iota
+	// OpSQLBindDrop represents the operation to drop a SQL bind.
+	OpSQLBindDrop
 )
 
 // SQLBindPlan represents a plan for SQL bind.

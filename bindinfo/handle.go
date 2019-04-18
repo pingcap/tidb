@@ -106,7 +106,9 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		}
 
 		newCache.removeStaleBindMetas(hash, meta)
-		newCache[hash] = append(newCache[hash], meta)
+		if meta.Status == using {
+			newCache[hash] = append(newCache[hash], meta)
+		}
 	}
 	return nil
 }
@@ -169,6 +171,53 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 	return err
 }
 
+// DropBindRecord drops a BindRecord to the storage and bindMeta int the cache.
+func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
+	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
+	h.sctx.Lock()
+
+	_, err = exec.Execute(context.TODO(), "BEGIN")
+	if err != nil {
+		h.sctx.Unlock()
+		return
+	}
+
+	defer func() {
+		if err != nil {
+			_, err1 := exec.Execute(context.TODO(), "ROLLBACK")
+			h.sctx.Unlock()
+			terror.Log(err1)
+			return
+		}
+
+		_, err = exec.Execute(context.TODO(), "COMMIT")
+		h.sctx.Unlock()
+		if err != nil {
+			return
+		}
+
+		hash := parser.DigestHash(record.OriginalSQL)
+		hash, meta := h.newBindMetaWithoutAst(record)
+		h.removeBindMeta(hash, meta)
+	}()
+
+	txn, err1 := h.sctx.Context.Txn(true)
+	if err1 != nil {
+		return err1
+	}
+
+	updateTs := types.Time{
+		Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
+		Type: mysql.TypeDatetime,
+		Fsp:  3,
+	}
+	record.Status = deleted
+	record.UpdateTime = updateTs
+
+	_, err = exec.Execute(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, updateTs))
+	return err
+}
+
 // Size return the size of bind info cache.
 func (h *BindHandle) Size() int {
 	size := 0
@@ -202,6 +251,12 @@ func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *bindMet
 	return hash, meta, nil
 }
 
+func (h *BindHandle) newBindMetaWithoutAst(record *BindRecord) (hash string, meta *bindMeta) {
+	hash = parser.DigestHash(record.OriginalSQL)
+	meta = &bindMeta{BindRecord: record}
+	return hash, meta
+}
+
 // appendBindMeta addes the bindMeta to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
 func (h *BindHandle) appendBindMeta(hash string, meta *bindMeta) {
@@ -215,6 +270,36 @@ func (h *BindHandle) appendBindMeta(hash string, meta *bindMeta) {
 
 	newCache.removeStaleBindMetas(hash, meta)
 	newCache[hash] = append(newCache[hash], meta)
+}
+
+// removeBindMeta removes the bindMeta from the cache.
+func (h *BindHandle) removeBindMeta(hash string, meta *bindMeta) {
+	h.bindInfo.Lock()
+	newCache := h.bindInfo.Value.Load().(cache).copy()
+	defer func() {
+		h.bindInfo.Value.Store(newCache)
+		h.bindInfo.Unlock()
+	}()
+
+	newCache.removeDeletedBindMeta(hash, meta)
+}
+
+// removeDeletedBindMeta removes all the bindMeta which originSQL and db are the same with the parameter's meta.
+func (c cache) removeDeletedBindMeta(hash string, meta *bindMeta) {
+	metas, ok := c[hash]
+	if !ok {
+		return
+	}
+
+	for i := len(metas) - 1; i >= 0; i-- {
+		if meta.isSame(meta) {
+			metas = append(metas[:i], metas[i+1:]...)
+			if len(metas) == 0 {
+				delete(c, hash)
+				return
+			}
+		}
+	}
 }
 
 // removeStaleBindMetas removes all the stale bindMeta in the cache.
@@ -250,6 +335,10 @@ func (m *bindMeta) isStale(other *bindMeta) bool {
 		m.UpdateTime.Compare(other.UpdateTime) <= 0
 }
 
+func (m *bindMeta) isSame(other *bindMeta) bool {
+	return m.OriginalSQL == other.OriginalSQL && m.Db == other.Db
+}
+
 func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db string) string {
 	return fmt.Sprintf(
 		"DELETE FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
@@ -269,6 +358,14 @@ func (h *BindHandle) insertBindInfoSQL(record *BindRecord) string {
 		record.Charset,
 		record.Collation,
 	)
+}
+
+func (h *BindHandle) logicalDeleteBindInfoSQL(normdOrigSQL, db string, updateTs types.Time) string {
+	return fmt.Sprintf(`UPDATE mysql.bind_info SET status='%s',update_time='%s' WHERE original_sql='%s' and default_db='%s'`,
+		deleted,
+		updateTs,
+		normdOrigSQL,
+		db)
 }
 
 func (h *BindHandle) getEscapeCharacter(str string) string {
