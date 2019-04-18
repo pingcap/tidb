@@ -22,7 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
@@ -58,7 +58,7 @@ type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
-	bindHandle      *bindinfo.Handle
+	bindHandle      *bindinfo.BindHandle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
 	statsUpdating   sync2.AtomicInt32
@@ -778,7 +778,7 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 }
 
 // BindHandle returns domain's bindHandle.
-func (do *Domain) BindHandle() *bindinfo.Handle {
+func (do *Domain) BindHandle() *bindinfo.BindHandle {
 	return do.bindHandle
 }
 
@@ -786,10 +786,8 @@ func (do *Domain) BindHandle() *bindinfo.Handle {
 // be called only once in BootstrapSession.
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewHandle()
-
-	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser)
-	err := bindCacheUpdater.Update(true)
+	do.bindHandle = bindinfo.NewBindHandle(ctx, parser)
+	err := do.bindHandle.Update(true)
 	if err != nil {
 		return err
 	}
@@ -805,7 +803,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 				return
 			case <-time.After(duration):
 			}
-			err = bindCacheUpdater.Update(false)
+			err = do.bindHandle.Update(false)
 			if err != nil {
 				logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
 			}
