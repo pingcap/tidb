@@ -5868,14 +5868,14 @@ CharsetName:
 	StringName
 	{
 		// Validate input charset name to keep the same behavior as parser of MySQL.
-		_, _, err := charset.GetCharsetInfo($1.(string))
+		name, _, err := charset.GetCharsetInfo($1.(string))
 		if err != nil {
 			yylex.AppendError(ErrUnknownCharacterSet.GenWithStackByArgs($1))
 			return 1
 		}
-		// Use $1 instead of charset name returned from charset.GetCharsetInfo(),
-		// to keep upper-lower case of input for restore.
-		$$ = $1
+		// Use charset name returned from charset.GetCharsetInfo(),
+		// to keep lower case of input for generated column restore.
+		$$ = name
 	}
 |	binaryType
 	{
