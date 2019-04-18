@@ -150,15 +150,35 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(fmt.Sprintln(tbl), Equals,
-		"Table:37 Count:3000\n"+
-			"column:1 ndv:3000 totColSize:0\n"+
+	sTbl := fmt.Sprintln(tbl)
+	matched := false
+	if sTbl == "Table:37 Count:3000\n"+
+		"column:1 ndv:3000 totColSize:0\n"+
+		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
+		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
+		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
+		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
+		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
+		"column:2 ndv:3000 totColSize:0\n"+
+		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
+		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
+		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
+		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
+		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
+		"index:1 ndv:3000\n"+
+		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
+		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
+		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
+		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
+		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" ||
+		sTbl == "Table:37 Count:3000\n"+
+			"column:2 ndv:3000 totColSize:0\n"+
 			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
 			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
 			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
 			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
 			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
-			"column:2 ndv:3000 totColSize:0\n"+
+			"column:1 ndv:3000 totColSize:0\n"+
 			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
 			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
 			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
@@ -169,8 +189,10 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
 			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
 			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n")
-
+			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" {
+		matched = true
+	}
+	c.Assert(matched, Equals, true)
 }
 
 func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
