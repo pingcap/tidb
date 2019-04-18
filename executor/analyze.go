@@ -616,10 +616,10 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, loc.EndKey) {
 		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 || len(loc.StartKey) == 0 || len(loc.EndKey) == 0 {
 			e.scanTasks = append(e.scanTasks, loc)
-			if len(loc.StartKey) == 0 {
+			if len(loc.StartKey) == 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
 				loc.StartKey = startKey
 			}
-			if len(loc.EndKey) == 0 {
+			if len(loc.EndKey) == 0 || bytes.Compare(endKey, loc.EndKey) < 0 {
 				loc.EndKey = endKey
 				break
 			}
@@ -786,16 +786,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 		return errors.Trace(err)
 	}
 	for _, t := range e.scanTasks {
-		var tableID, minRowID, maxRowID int64
-		tableID, minRowID, err = tablecodec.DecodeRecordKey(t.StartKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		_, maxRowID, err = tablecodec.DecodeRecordKey(t.EndKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		iter, err := snapshot.Iter(tablecodec.EncodeRowKeyWithHandle(tableID, minRowID), tablecodec.EncodeRowKeyWithHandle(tableID, maxRowID))
+		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
