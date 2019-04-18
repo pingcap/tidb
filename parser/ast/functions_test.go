@@ -84,8 +84,8 @@ func (ts *testFunctionsSuite) TestFuncCallExprRestore(c *C) {
 func (ts *testFunctionsSuite) TestFuncCastExprRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"CONVERT('Müller' USING UtF8Mb4)", "CONVERT('Müller' USING UTF8MB4)"},
-		{"CONVERT('Müller', CHAR(32) CHARACTER SET UtF8)", "CONVERT('Müller', CHAR(32) CHARACTER SET UtF8)"},
-		{"CAST('test' AS CHAR CHARACTER SET UtF8)", "CAST('test' AS CHAR CHARACTER SET UtF8)"},
+		{"CONVERT('Müller', CHAR(32) CHARACTER SET UtF8)", "CONVERT('Müller', CHAR(32) CHARSET UTF8)"},
+		{"CAST('test' AS CHAR CHARACTER SET UtF8)", "CAST('test' AS CHAR CHARSET UTF8)"},
 		{"BINARY 'New York'", "BINARY 'New York'"},
 	}
 	extractNodeFunc := func(node Node) Node {
@@ -132,7 +132,7 @@ func (ts *testFunctionsSuite) TestConvert(c *C) {
 		ErrorMessage string
 	}{
 		{`SELECT CONVERT("abc" USING "latin1")`, "latin1", ""},
-		{`SELECT CONVERT("abc" USING laTiN1)`, "laTiN1", ""},
+		{`SELECT CONVERT("abc" USING laTiN1)`, "latin1", ""},
 		{`SELECT CONVERT("abc" USING "binary")`, "binary", ""},
 		{`SELECT CONVERT("abc" USING biNaRy)`, "binary", ""},
 		{`SELECT CONVERT(a USING a)`, "", `[parser:1115]Unknown character set: 'a'`}, // TiDB issue #4436.
@@ -161,7 +161,7 @@ func (ts *testFunctionsSuite) TestChar(c *C) {
 		ErrorMessage string
 	}{
 		{`SELECT CHAR("abc" USING "latin1")`, "latin1", ""},
-		{`SELECT CHAR("abc" USING laTiN1)`, "laTiN1", ""},
+		{`SELECT CHAR("abc" USING laTiN1)`, "latin1", ""},
 		{`SELECT CHAR("abc" USING "binary")`, "binary", ""},
 		{`SELECT CHAR("abc" USING binary)`, "binary", ""},
 		{`SELECT CHAR(a USING a)`, "", `[parser:1115]Unknown character set: 'a'`},

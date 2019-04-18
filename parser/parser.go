@@ -11568,14 +11568,14 @@ yynewstate:
 	case 1088:
 		{
 			// Validate input charset name to keep the same behavior as parser of MySQL.
-			_, _, err := charset.GetCharsetInfo(yyS[yypt-0].item.(string))
+			name, _, err := charset.GetCharsetInfo(yyS[yypt-0].item.(string))
 			if err != nil {
 				yylex.AppendError(ErrUnknownCharacterSet.GenWithStackByArgs(yyS[yypt-0].item))
 				return 1
 			}
-			// Use $1 instead of charset name returned from charset.GetCharsetInfo(),
-			// to keep upper-lower case of input for restore.
-			parser.yyVAL.item = yyS[yypt-0].item
+			// Use charset name returned from charset.GetCharsetInfo(),
+			// to keep lower case of input for generated column restore.
+			parser.yyVAL.item = name
 		}
 	case 1089:
 		{
