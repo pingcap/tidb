@@ -16,8 +16,6 @@ package expression
 import (
 	"strings"
 
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"

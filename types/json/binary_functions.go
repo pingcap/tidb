@@ -846,11 +846,6 @@ type extractCallbackFn func(fullpath PathExpression, bj BinaryJSON) (stop bool, 
 // extractToCallback: callback alternative of extractTo
 //     would be more effective when walk through the whole JSON is unnecessary
 // NOTICE: path [0] & [*] for JSON object other than array is INVALID, which is different from extractTo.
-//         Due to the difference between JSON_SEARCH and JSON_EXTRACT.
-//            SELECT JSON_EXTRACT('{"a":"1", "b":2}', '$.a');                       ==> "1"
-//            SELECT JSON_EXTRACT('{"a":"1", "b":2}', '$[0].a');                    ==> "1"
-//            SELECT  JSON_SEARCH('{"a":"1", "b":2}', 'all', '1', NULL, '$.a');     ==> "$.a"
-//            SELECT  JSON_SEARCH('{"a":"1", "b":2}', 'all', '1', NULL, '$[0].a');  ==> NULL
 func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extractCallbackFn, fullpath PathExpression) (stop bool, err error) {
 	if len(pathExpr.legs) == 0 {
 		return callbackFn(fullpath, bj)
