@@ -770,10 +770,6 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 		if e.sampCursor < int32(MaxSampleSize) {
 			p = e.sampCursor
 			e.sampCursor++
-			for _, c := range collectors {
-				item := &statistics.SampleItem{}
-				c.Samples = append(c.Samples, item)
-			}
 		}
 
 		err = e.updateCollectorSamples(collectors, iter.Value(), iter.Key(), p, hasPKInfo)
@@ -790,7 +786,16 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 		return errors.Trace(err)
 	}
 	for _, t := range e.scanTasks {
-		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
+		var tableID, minRowID, maxRowID int64
+		tableID, minRowID, err = tablecodec.DecodeRecordKey(t.StartKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, maxRowID, err = tablecodec.DecodeRecordKey(t.EndKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		iter, err := snapshot.Iter(tablecodec.EncodeRowKeyWithHandle(tableID, minRowID), tablecodec.EncodeRowKeyWithHandle(tableID, maxRowID))
 		if err != nil {
 			return errors.Trace(err)
 		}
