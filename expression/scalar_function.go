@@ -72,6 +72,15 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 
 // NewFunction creates a new scalar function or constant.
 func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunction(ctx, true, funcName, retType, args...)
+}
+
+// NewFunctionBase creates a new scalar function or constant without constant fold
+func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunction(ctx, false, funcName, retType, args...)
+}
+
+func newFunction(ctx sessionctx.Context, fold bool, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
@@ -96,7 +105,10 @@ func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldTy
 		RetType:  retType,
 		Function: f,
 	}
-	return FoldConstant(sf), nil
+	if fold {
+		return FoldConstant(sf), nil
+	}
+	return sf, nil
 }
 
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
