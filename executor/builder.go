@@ -1453,6 +1453,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	e := &AnalyzeExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
+		wg:           &sync.WaitGroup{},
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	for _, task := range v.ColTasks {

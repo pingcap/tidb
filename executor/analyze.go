@@ -53,6 +53,7 @@ var _ Executor = &AnalyzeExec{}
 type AnalyzeExec struct {
 	baseExecutor
 	tasks []*analyzeTask
+	wg    *sync.WaitGroup
 }
 
 var (
@@ -79,16 +80,21 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultCh := make(chan statistics.AnalyzeResult, len(e.tasks))
+	e.wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
-		go e.analyzeWorker(taskCh, resultCh)
+		go e.analyzeWorker(taskCh, resultCh, i == 0)
 	}
 	for _, task := range e.tasks {
 		taskCh <- task
 	}
 	close(taskCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	for i, panicCnt := 0, 0; i < len(e.tasks) && panicCnt < concurrency; i++ {
-		result := <-resultCh
+	panicCnt := 0
+	for panicCnt < concurrency {
+		result, ok := <-resultCh
+		if !ok {
+			break
+		}
 		if result.Err != nil {
 			err = result.Err
 			if err == errAnalyzeWorkerPanic {
@@ -140,7 +146,7 @@ type analyzeTask struct {
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
+func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult, isCloseChanThread bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -153,7 +159,11 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			}
 		}
 	}()
-	for task := range taskCh {
+	for {
+		task, ok := <-taskCh
+		if !ok {
+			break
+		}
 		switch task.taskType {
 		case colTask:
 			resultCh <- analyzeColumnsPushdown(task.colExec)
@@ -164,6 +174,11 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 				resultCh <- result
 			}
 		}
+	}
+	e.wg.Done()
+	e.wg.Wait()
+	if isCloseChanThread {
+		close(resultCh)
 	}
 }
 
