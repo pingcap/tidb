@@ -14,10 +14,12 @@
 package memory
 
 import (
+	"math/rand"
 	"os"
 	"sync"
 	"testing"
 
+	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
@@ -188,6 +190,33 @@ func (s *testSuite) TestToString(c *C) {
   }
 }
 `)
+}
+
+func (s *testSuite) TestMaxConsumed(c *C) {
+	r := NewTracker("root", -1)
+	c1 := NewTracker("child 1", -1)
+	c2 := NewTracker("child 2", -1)
+	cc1 := NewTracker("child of child 1", -1)
+
+	c1.AttachTo(r)
+	c2.AttachTo(r)
+	cc1.AttachTo(c1)
+
+	ts := []*Tracker{r, c1, c2, cc1}
+	var consumed, maxConsumed int64
+	for i := 0; i < 10; i++ {
+		t := ts[rand.Intn(len(ts))]
+		b := rand.Int63n(1000) - 500
+		if consumed+b < 0 {
+			b = -consumed
+		}
+		consumed += b
+		t.Consume(b)
+		maxConsumed = mathutil.MaxInt64(maxConsumed, consumed)
+
+		c.Assert(r.BytesConsumed(), Equals, consumed)
+		c.Assert(r.MaxConsumed(), Equals, maxConsumed)
+	}
 }
 
 func BenchmarkConsume(b *testing.B) {
