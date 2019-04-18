@@ -435,6 +435,7 @@ func CutColumnID(b []byte) (remain []byte, n int64, err error) {
 	if len(b) < 1 {
 		return nil, 0, errors.New("invalid encoded key")
 	}
+	// skip the flag
 	b = b[1:]
 	return DecodeVarint(b)
 }
