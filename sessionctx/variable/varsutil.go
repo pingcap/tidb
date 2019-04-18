@@ -351,7 +351,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
-		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace:
+		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace, serverReadOnly:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
@@ -429,7 +429,21 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		switch upVal {
 		case "SERIALIZABLE", "READ-UNCOMMITTED":
-			return "", ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
+			skipIsolationLevelCheck, err := GetSessionSystemVar(vars, TiDBSkipIsolationLevelCheck)
+			returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(value)
+			if err != nil {
+				returnErr = err
+			}
+			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
+				return "", returnErr
+			}
+			//SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
+			// 1. tx_isolation
+			// 2. transaction_isolation
+			// The following if condition is used to deduplicate two same warnings.
+			if name == "transaction_isolation" {
+				vars.StmtCtx.AppendWarning(returnErr)
+			}
 		}
 		return upVal, nil
 	case TiDBInitChunkSize:
