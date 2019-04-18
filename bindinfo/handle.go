@@ -196,7 +196,6 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 			return
 		}
 
-		hash := parser.DigestHash(record.OriginalSQL)
 		hash, meta := h.newBindMetaWithoutAst(record)
 		h.removeBindMeta(hash, meta)
 	}()
