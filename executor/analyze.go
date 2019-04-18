@@ -148,6 +148,11 @@ var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult, isCloseChanThread bool) {
 	defer func() {
+		e.wg.Done()
+		e.wg.Wait()
+		if isCloseChanThread {
+			close(resultCh)
+		}
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
@@ -174,11 +179,6 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 				resultCh <- result
 			}
 		}
-	}
-	e.wg.Done()
-	e.wg.Wait()
-	if isCloseChanThread {
-		close(resultCh)
 	}
 }
 
