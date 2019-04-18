@@ -220,7 +220,7 @@ tools/bin/goword: tools/check/go.mod
 
 tools/bin/gometalinter: tools/check/go.mod
 	cd tools/check; \
-	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v2
+	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v3
 
 tools/bin/gosec: tools/check/go.mod
 	cd tools/check; \
