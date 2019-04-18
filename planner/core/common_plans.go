@@ -334,6 +334,27 @@ type Set struct {
 	VarAssigns []*expression.VarAssignment
 }
 
+// SQLBindOpType repreents the SQL bind type
+type SQLBindOpType int
+
+const (
+	// OpSQLBindCreate represents the operation to create a SQL bind.
+	OpSQLBindCreate SQLBindOpType = iota
+)
+
+// SQLBindPlan represents a plan for SQL bind.
+type SQLBindPlan struct {
+	baseSchemaProducer
+
+	SQLBindOp    SQLBindOpType
+	NormdOrigSQL string
+	BindSQL      string
+	IsGlobal     bool
+	BindStmt     ast.StmtNode
+	Charset      string
+	Collation    string
+}
+
 // Simple represents a simple statement plan which doesn't need any optimization.
 type Simple struct {
 	baseSchemaProducer
@@ -396,6 +417,7 @@ type AnalyzeColumnsTask struct {
 	PhysicalTableID int64
 	PKInfo          *model.ColumnInfo
 	ColsInfo        []*model.ColumnInfo
+	Table           table.Table
 	Incremental     bool
 }
 
@@ -404,6 +426,7 @@ type AnalyzeIndexTask struct {
 	// PhysicalTableID is the id for a partition or a table.
 	PhysicalTableID int64
 	IndexInfo       *model.IndexInfo
+	Table           table.Table
 	Incremental     bool
 }
 

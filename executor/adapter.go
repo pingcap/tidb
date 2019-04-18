@@ -413,12 +413,14 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		indexIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
+	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
+	statsInfos := a.getStatsInfo()
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, sql))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -442,6 +444,28 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			Internal: sessVars.InRestrictedSQL,
 		})
 	}
+}
+
+func (a *ExecStmt) getStatsInfo() map[string]uint64 {
+	var physicalPlan plannercore.PhysicalPlan
+	switch p := a.Plan.(type) {
+	case *plannercore.Insert:
+		physicalPlan = p.SelectPlan
+	case *plannercore.Update:
+		physicalPlan = p.SelectPlan
+	case *plannercore.Delete:
+		physicalPlan = p.SelectPlan
+	case plannercore.PhysicalPlan:
+		physicalPlan = p
+	}
+
+	if physicalPlan == nil {
+		return nil
+	}
+
+	statsInfos := make(map[string]uint64)
+	statsInfos = plannercore.CollectPlanStatsVersion(physicalPlan, statsInfos)
+	return statsInfos
 }
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:

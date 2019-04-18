@@ -18,6 +18,7 @@ import (
 	"math"
 	"runtime"
 	"strconv"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -111,6 +114,7 @@ type taskType int
 const (
 	colTask taskType = iota
 	idxTask
+	fastTask
 	pkIncrementalTask
 	idxIncrementalTask
 )
@@ -119,6 +123,7 @@ type analyzeTask struct {
 	taskType           taskType
 	idxExec            *AnalyzeIndexExec
 	colExec            *AnalyzeColumnsExec
+	fastExec           *AnalyzeFastExec
 	idxIncrementalExec *analyzeIndexIncrementalExec
 	colIncrementalEXec *analyzePKIncrementalExec
 }
@@ -144,6 +149,10 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			resultCh <- analyzeColumnsPushdown(task.colExec)
 		case idxTask:
 			resultCh <- analyzeIndexPushdown(task.idxExec)
+		case fastTask:
+			for _, result := range analyzeFastExec(task.fastExec) {
+				resultCh <- result
+			}
 		case pkIncrementalTask:
 			resultCh <- analyzePKIncremental(task.colIncrementalEXec)
 		case idxIncrementalTask:
@@ -445,6 +454,77 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		cms = append(cms, collectors[i].CMSketch)
 	}
 	return hists, cms, nil
+}
+
+func analyzeFastExec(exec *AnalyzeFastExec) []statistics.AnalyzeResult {
+	hists, cms, err := exec.buildStats()
+	if err != nil {
+		return []statistics.AnalyzeResult{{Err: err}}
+	}
+	var results []statistics.AnalyzeResult
+	hasIdxInfo := len(exec.idxsInfo)
+	hasPKInfo := 0
+	if exec.pkInfo != nil {
+		hasPKInfo = 1
+	}
+	if hasIdxInfo > 0 {
+		for i := hasPKInfo + len(exec.colsInfo); i < len(hists); i++ {
+			idxResult := statistics.AnalyzeResult{
+				PhysicalTableID: exec.PhysicalTableID,
+				Hist:            []*statistics.Histogram{hists[i]},
+				Cms:             []*statistics.CMSketch{cms[i]},
+				IsIndex:         1,
+				Count:           hists[i].NullCount,
+			}
+			if hists[i].Len() > 0 {
+				idxResult.Count += hists[i].Buckets[hists[i].Len()-1].Count
+			}
+			results = append(results, idxResult)
+		}
+	}
+	hist := hists[0]
+	colResult := statistics.AnalyzeResult{
+		PhysicalTableID: exec.PhysicalTableID,
+		Hist:            hists[:hasPKInfo+len(exec.colsInfo)],
+		Cms:             cms[:hasPKInfo+len(exec.colsInfo)],
+		Count:           hist.NullCount,
+	}
+	if hist.Len() > 0 {
+		colResult.Count += hist.Buckets[hist.Len()-1].Count
+	}
+	results = append(results, colResult)
+	return results
+}
+
+// AnalyzeFastTask is the task for build stats.
+type AnalyzeFastTask struct {
+	Location  *tikv.KeyLocation
+	SampSize  uint64
+	LRowCount uint64
+	RRowCount uint64
+}
+
+// AnalyzeFastExec represents Fast Analyze executor.
+type AnalyzeFastExec struct {
+	ctx             sessionctx.Context
+	PhysicalTableID int64
+	pkInfo          *model.ColumnInfo
+	colsInfo        []*model.ColumnInfo
+	idxsInfo        []*model.IndexInfo
+	concurrency     int
+	maxNumBuckets   uint64
+	table           table.Table
+	cache           *tikv.RegionCache
+	wg              *sync.WaitGroup
+	sampLocs        chan *tikv.KeyLocation
+	sampLocRowCount uint64
+	tasks           chan *AnalyzeFastTask
+	scanTasks       []*tikv.KeyLocation
+}
+
+func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
+	// TODO: do fast analyze.
+	return nil, nil, nil
 }
 
 type analyzeIndexIncrementalExec struct {

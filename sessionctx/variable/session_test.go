@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -104,6 +105,19 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		TotalKeys:     10000,
 		ProcessedKeys: 20001,
 	}
+	statsInfos := make(map[string]uint64)
+	statsInfos["t1"] = 0
+	copTasks := &stmtctx.CopTasksDetails{
+		NumCopTasks:       10,
+		AvgProcessTime:    time.Second,
+		P90ProcessTime:    time.Second * 2,
+		MaxProcessAddress: "10.6.131.78",
+		MaxProcessTime:    time.Second * 3,
+		AvgWaitTime:       time.Millisecond * 10,
+		P90WaitTime:       time.Millisecond * 20,
+		MaxWaitTime:       time.Millisecond * 30,
+		MaxWaitAddress:    "10.6.131.79",
+	}
 	resultString := `# Txn_start_ts: 406649736972468225
 # User: root@192.168.0.1
 # Conn_ID: 1
@@ -113,9 +127,13 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Index_ids: [1,2]
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Stats: t1:pseudo
+# Num_cop_tasks: 10
+# Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s Max_addr: 10.6.131.78
+# Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
 select * from t;`
 	sql := "select * from t"
 	digest := parser.DigestHash(sql)
-	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", digest, sql)
+	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", digest, statsInfos, copTasks, sql)
 	c.Assert(logString, Equals, resultString)
 }
