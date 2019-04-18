@@ -44,6 +44,7 @@ func calculateEstimateNDV(count []uint64, total uint64) (ndv uint64, ratio uint6
 	} else {
 		// Charikar, Moses, et al. "Towards estimation error guarantees for distinct values."
 		// Proceedings of the nineteenth ACM SIGMOD-SIGACT-SIGART symposium on Principles of database systems. ACM, 2000.
+		// This is GEE in that paper.
 		// estimateNDV = sqrt(N/n) f_1 + sum_2..inf f_i
 		// f_i = number of elements occurred i times in sample
 

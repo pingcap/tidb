@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sort"
 
@@ -97,8 +98,7 @@ func groupElements(data [][]byte) map[uint64][]cmsCount {
 
 // BuildTopN builds table of top N elements.
 // elements in data should not be modified after this call.
-func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uint64) {
-	sampleSize := uint64(len(data))
+func (c *CMSketch) BuildTopN(data [][]byte, numTop, topNThreshold uint32, total uint64) {
 	counter := groupElements(data)
 	sorted := make([]uint64, 0)
 
@@ -111,19 +111,19 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uin
 		return sorted[i] > sorted[j]
 	})
 
-	ndv := uint32(len(sorted))
-	if top > ndv {
-		top = ndv
+	sampleNDV := uint32(len(sorted))
+	if numTop > sampleNDV {
+		numTop = sampleNDV
 	}
 
-	NthValue := sorted[top-1]
-	newNthValue := sorted[top-1]
+	NthValue := sorted[numTop-1]
+	newNthValue := sorted[numTop-1]
 	sumTopN := uint64(0)
 
 	// Add a few elements, the number of which is close to the n-th most element.
-	for i := uint32(0); i < ndv && i < top*2; i++ {
+	for i := uint32(0); i < sampleNDV && i < numTop*2; i++ {
 		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2
-		if i >= top && sorted[i]*3 < NthValue*2 && newNthValue != sorted[i] {
+		if i >= numTop && sorted[i]*3 < NthValue*2 && newNthValue != sorted[i] {
 			break
 		}
 		// sumTopN might be smaller than sum of final sum of elements in topNIndex.
@@ -134,7 +134,8 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uin
 
 	estimateNDV, ratio, onlyOnceItems := calculateEstimateNDV(sorted, total)
 
-	enableTopN := (sampleSize/uint64(topNThreshold) <= sumTopN)
+	sampleSize := uint64(len(data))
+	enableTopN := sampleSize/uint64(topNThreshold) <= sumTopN
 	topN := make([]cmsCount, 0)
 	sumTopN = 0
 
@@ -148,7 +149,7 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uin
 			}
 		}
 	}
-	top = uint32(len(topN))
+	numTop = uint32(len(topN))
 	if enableTopN {
 		c.buildTopNMap(topN)
 	}
@@ -157,15 +158,17 @@ func (c *CMSketch) BuildTopN(data [][]byte, top, topNThreshold uint32, total uin
 
 	if total <= sumTopN {
 		c.defaultValue = 1
-	} else if estimateNDV <= uint64(top) {
+	} else if estimateNDV <= uint64(numTop) {
 		c.defaultValue = 1
 	} else {
-		if estimateNDV+onlyOnceItems <= uint64(ndv) {
+		if estimateNDV+onlyOnceItems <= uint64(sampleNDV) {
 			c.defaultValue = 1
 		} else {
-			c.defaultValue = countWithoutTopN / (estimateNDV - uint64(ndv) + onlyOnceItems)
+			c.defaultValue = countWithoutTopN / (estimateNDV - uint64(sampleNDV) + onlyOnceItems)
 		}
 	}
+
+	fmt.Printf("sampleNDV=%d onlyOnceItems=%d c.defaultValue=%d estimateNDV=%d ratio=%d\n", sampleNDV, onlyOnceItems, c.defaultValue, estimateNDV, ratio)
 }
 
 func (c *CMSketch) buildTopNMap(topn []cmsCount) {
@@ -196,7 +199,10 @@ func (c *CMSketch) queryAddTopN(h1, h2, count uint64, d []byte) (uint64, bool) {
 	}
 	for k := range cnt {
 		if cnt[k].h2 == h2 && bytes.Equal(d, cnt[k].data) {
-			cnt[k].count += count
+			if count != 0 {
+				// Avoid potential data race
+				cnt[k].count += count
+			}
 			return cnt[k].count, true
 		}
 	}
