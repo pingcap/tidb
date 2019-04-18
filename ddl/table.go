@@ -322,7 +322,8 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 
 type splitableStore interface {
 	SplitRegion(splitKey kv.Key) error
-	SplitRegionAndScatter(splitKey kv.Key, waitFinish bool) error
+	SplitRegionAndScatter(splitKey kv.Key) (uint64, error)
+	WaitScatterRegionFinish(regionID uint64) error
 }
 
 func splitTableRegion(store kv.Storage, tableID int64) {
@@ -342,6 +343,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
 	if !ok {
 		return
 	}
+	regionIDs := make([]uint64, 0, 1<<(tblInfo.PreSplitRegions-1)+len(tblInfo.Indices))
 	// Split table region.
 	step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions))
 	// The highest bit is the symbol bit， and alloc _tidb_rowid will always be positive number.
@@ -351,16 +353,31 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
 		recordID := p << (64 - tblInfo.ShardRowIDBits)
 		recordPrefix := tablecodec.GenTableRecordPrefix(tblInfo.ID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
-		if err := s.SplitRegionAndScatter(key, tblInfo.WaitSplitFinish); err != nil {
+		regionID, err := s.SplitRegionAndScatter(key)
+		if err != nil {
 			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table region failed", zap.Int64("recordID", recordID), zap.Error(err))
+		} else {
+			regionIDs = append(regionIDs, regionID)
 		}
 	}
 
 	// Split index region.
 	for _, idx := range tblInfo.Indices {
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
-		if err := s.SplitRegionAndScatter(indexPrefix, tblInfo.WaitSplitFinish); err != nil {
+		regionID, err := s.SplitRegionAndScatter(indexPrefix)
+		if err != nil {
 			logutil.Logger(ddlLogCtx).Warn("[ddl] pre split table index region failed", zap.String("index", idx.Name.L), zap.Error(err))
+		} else {
+			regionIDs = append(regionIDs, regionID)
+		}
+	}
+	if !tblInfo.WaitSplitFinish {
+		return
+	}
+	for _, regionID := range regionIDs {
+		err := s.WaitScatterRegionFinish(regionID)
+		if err != nil {
+			logutil.Logger(ddlLogCtx).Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 		}
 	}
 }
