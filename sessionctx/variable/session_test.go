@@ -118,6 +118,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		MaxWaitTime:       time.Millisecond * 30,
 		MaxWaitAddress:    "10.6.131.79",
 	}
+	var memMax int64 = 2333
 	resultString := `# Txn_start_ts: 406649736972468225
 # User: root@192.168.0.1
 # Conn_ID: 1
@@ -131,9 +132,10 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Num_cop_tasks: 10
 # Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s Max_addr: 10.6.131.78
 # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
+# Mem_max: 2333
 select * from t;`
 	sql := "select * from t"
 	digest := parser.DigestHash(sql)
-	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", digest, statsInfos, copTasks, sql)
+	logString := seVar.SlowLogFormat(txnTS, costTime, execDetail, "[1,2]", digest, statsInfos, copTasks, memMax, sql)
 	c.Assert(logString, Equals, resultString)
 }
