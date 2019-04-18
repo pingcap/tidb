@@ -149,6 +149,67 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	return
 }
 
+// quoteString escapes interior quote and other characters for JSON_QUOTE
+// https://dev.mysql.com/doc/refman/5.7/en/json-creation-functions.html#function_json-quote
+// TODO: add JSON_QUOTE builtin
+func quoteString(s string) string {
+	var escapeByteMap = map[byte]string{
+		'\\': "\\\\",
+		'"':  "\\\"",
+		'\b': "\\b",
+		'\f': "\\f",
+		'\n': "\\n",
+		'\r': "\\r",
+		'\t': "\\t",
+	}
+
+	ret := new(bytes.Buffer)
+	ret.WriteByte('"')
+
+	start := 0
+	hasEscaped := false
+
+	for i := 0; i < len(s); {
+		if b := s[i]; b < utf8.RuneSelf {
+			escaped, ok := escapeByteMap[b]
+			if ok {
+				if start < i {
+					ret.WriteString(s[start:i])
+				}
+				hasEscaped = true
+				ret.WriteString(escaped)
+				i++
+				start = i
+			} else {
+				i++
+			}
+		} else {
+			c, size := utf8.DecodeRune([]byte(s[i:]))
+			if c == utf8.RuneError && size == 1 { // refer to codes of `binary.marshalStringTo`
+				if start < i {
+					ret.WriteString(s[start:i])
+				}
+				hasEscaped = true
+				ret.WriteString(`\ufffd`)
+				i += size
+				start = i
+				continue
+			}
+			i += size
+		}
+	}
+
+	if start < len(s) {
+		ret.WriteString(s[start:])
+	}
+
+	if hasEscaped {
+		ret.WriteByte('"')
+		return ret.String()
+	}
+	return ret.String()[1:]
+}
+
 // Extract receives several path expressions as arguments, matches them in bj, and returns:
 //  ret: target JSON matched any path expressions. maybe autowrapped as an array.
 //  found: true if any path expressions matched.
@@ -777,4 +838,149 @@ func (bj BinaryJSON) GetElemDepth() int {
 	default:
 		return 1
 	}
+}
+
+// extractCallbackFn: the type of CALLBACK function for extractToCallback
+type extractCallbackFn func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error)
+
+// extractToCallback: callback alternative of extractTo
+//     would be more effective when walk through the whole JSON is unnecessary
+// NOTICE: path [0] & [*] for JSON object other than array is INVALID, which is different from extractTo.
+func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extractCallbackFn, fullpath PathExpression) (stop bool, err error) {
+	if len(pathExpr.legs) == 0 {
+		return callbackFn(fullpath, bj)
+	}
+
+	currentLeg, subPathExpr := pathExpr.popOneLeg()
+	if currentLeg.typ == pathLegIndex && bj.TypeCode == TypeCodeArray {
+		elemCount := bj.GetElemCount()
+		if currentLeg.arrayIndex == arrayIndexAsterisk {
+			for i := 0; i < elemCount; i++ {
+				//buf = bj.arrayGetElem(i).extractTo(buf, subPathExpr)
+				path := fullpath.pushBackOneIndexLeg(i)
+				stop, err = bj.arrayGetElem(i).extractToCallback(subPathExpr, callbackFn, path)
+				if stop || err != nil {
+					return
+				}
+			}
+		} else if currentLeg.arrayIndex < elemCount {
+			//buf = bj.arrayGetElem(currentLeg.arrayIndex).extractTo(buf, subPathExpr)
+			path := fullpath.pushBackOneIndexLeg(currentLeg.arrayIndex)
+			stop, err = bj.arrayGetElem(currentLeg.arrayIndex).extractToCallback(subPathExpr, callbackFn, path)
+			if stop || err != nil {
+				return
+			}
+		}
+	} else if currentLeg.typ == pathLegKey && bj.TypeCode == TypeCodeObject {
+		elemCount := bj.GetElemCount()
+		if currentLeg.dotKey == "*" {
+			for i := 0; i < elemCount; i++ {
+				//buf = bj.objectGetVal(i).extractTo(buf, subPathExpr)
+				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
+				stop, err = bj.objectGetVal(i).extractToCallback(subPathExpr, callbackFn, path)
+				if stop || err != nil {
+					return
+				}
+			}
+		} else {
+			child, ok := bj.objectSearchKey(hack.Slice(currentLeg.dotKey))
+			if ok {
+				//buf = child.extractTo(buf, subPathExpr)
+				path := fullpath.pushBackOneKeyLeg(currentLeg.dotKey)
+				stop, err = child.extractToCallback(subPathExpr, callbackFn, path)
+				if stop || err != nil {
+					return
+				}
+			}
+		}
+	} else if currentLeg.typ == pathLegDoubleAsterisk {
+		//buf = bj.extractTo(buf, subPathExpr)
+		stop, err = bj.extractToCallback(subPathExpr, callbackFn, fullpath)
+		if stop || err != nil {
+			return
+		}
+
+		if bj.TypeCode == TypeCodeArray {
+			elemCount := bj.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				//buf = bj.arrayGetElem(i).extractTo(buf, pathExpr)
+				path := fullpath.pushBackOneIndexLeg(i)
+				stop, err = bj.arrayGetElem(i).extractToCallback(pathExpr, callbackFn, path)
+				if stop || err != nil {
+					return
+				}
+			}
+		} else if bj.TypeCode == TypeCodeObject {
+			elemCount := bj.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				//buf = bj.objectGetVal(i).extractTo(buf, pathExpr)
+				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
+				stop, err = bj.objectGetVal(i).extractToCallback(pathExpr, callbackFn, path)
+				if stop || err != nil {
+					return
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+// BinaryJSONWalkFunc is used as callback function for BinaryJSON.Walk
+type BinaryJSONWalkFunc func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error)
+
+// Walk traverse BinaryJSON objects
+func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...PathExpression) (err error) {
+	pathSet := make(map[string]bool)
+
+	var doWalk extractCallbackFn
+	doWalk = func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error) {
+		pathStr := fullpath.String()
+		if _, ok := pathSet[pathStr]; ok {
+			return false, nil
+		}
+
+		stop, err = walkFn(fullpath, bj)
+		pathSet[pathStr] = true
+		if stop || err != nil {
+			return
+		}
+
+		if bj.TypeCode == TypeCodeArray {
+			elemCount := bj.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				path := fullpath.pushBackOneIndexLeg(i)
+				stop, err = doWalk(path, bj.arrayGetElem(i))
+				if stop || err != nil {
+					return
+				}
+			}
+		} else if bj.TypeCode == TypeCodeObject {
+			elemCount := bj.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
+				stop, err = doWalk(path, bj.objectGetVal(i))
+				if stop || err != nil {
+					return
+				}
+			}
+		}
+		return false, nil
+	}
+
+	fullpath := PathExpression{legs: make([]pathLeg, 0, 32), flags: pathExpressionFlag(0)}
+	if len(pathExprList) > 0 {
+		for _, pathExpr := range pathExprList {
+			var stop bool
+			stop, err = bj.extractToCallback(pathExpr, doWalk, fullpath)
+			if stop || err != nil {
+				return err
+			}
+		}
+	} else {
+		_, err = doWalk(fullpath, bj)
+		if err != nil {
+			return
+		}
+	}
+	return nil
 }
