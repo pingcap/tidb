@@ -15,6 +15,7 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	typ "github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -63,7 +65,12 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 	if planIDs == nil {
 		response, err = Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	} else {
-		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs)
+		var planIDFuncs []fmt.Stringer
+		for i := range planIDs {
+			idx := i
+			planIDFuncs = append(planIDFuncs, typ.InstantStr(planIDs[idx]))
+		}
+		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs)
 	}
 
 	c.Assert(err, IsNil)
@@ -115,7 +122,7 @@ func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
 		c.Fatal("invalid copPlanIDs")
 	}
 	for i := range planIDs {
-		if response.copPlanIDs[i] != planIDs[i] {
+		if response.copPlanIDs[i].String() != planIDs[i] {
 			c.Fatal("invalid copPlanIDs")
 		}
 	}

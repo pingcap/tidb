@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
+	typ "github.com/pingcap/tidb/util/types"
 )
 
 // List holds a slice of chunks, use to append rows with max chunk size properly handled.
@@ -45,7 +46,7 @@ func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *Li
 		fieldTypes:    fieldTypes,
 		initChunkSize: initChunkSize,
 		maxChunkSize:  maxChunkSize,
-		memTracker:    memory.NewTracker("chunk.List", -1),
+		memTracker:    memory.NewTracker(typ.InstantStr("chunk.List"), -1),
 		consumedIdx:   -1,
 	}
 	return l

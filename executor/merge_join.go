@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/types"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -221,7 +222,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
 	}
 
-	e.innerTable.memTracker = memory.NewTracker("innerTable", -1)
+	e.innerTable.memTracker = memory.NewTracker(types.InstantStr("innerTable"), -1)
 	e.innerTable.memTracker.AttachTo(e.memTracker)
 
 	return nil
