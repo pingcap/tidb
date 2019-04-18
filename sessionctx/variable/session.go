@@ -897,6 +897,14 @@ const (
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
 	// SlowLogStatsInfoStr is plan stats info.
 	SlowLogStatsInfoStr = "Stats"
+	// SlowLogNumCopTasksStr is the number of cop-tasks.
+	SlowLogNumCopTasksStr = "Num_cop_tasks"
+	// SlowLogCopProcessStr includes some useful information about cop-tasks' process time.
+	SlowLogCopProcessStr = "Cop_process"
+	// SlowLogCopWaitStr includes some useful information about cop-tasks' wait time.
+	SlowLogCopWaitStr = "Cop_wait"
+	// SlowLogMemMax is the max number bytes of memory used in this statement.
+	SlowLogMemMax = "Mem_max"
 )
 
 // SlowLogFormat uses for formatting slow log.
@@ -912,8 +920,13 @@ const (
 // # Is_internal: false
 // # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 // # Stats: t1:1,t2:2
+// # Num_cop_tasks: 10
+// # Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s Max_addr: 10.6.131.78
+// # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
+// # Memory_max: 4096
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string, statsInfos map[string]uint64, sql string) string {
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
+	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
 	buf.WriteString(SlowLogRowPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
@@ -956,6 +969,18 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 			}
 		}
 		buf.WriteString("\n")
+	}
+	if copTasks != nil {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopProcessStr + SlowLogSpaceMarkStr +
+			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_addr: %v", copTasks.AvgProcessTime,
+				copTasks.P90ProcessTime, copTasks.MaxProcessTime, copTasks.MaxProcessAddress) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopWaitStr + SlowLogSpaceMarkStr +
+			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_Addr: %v", copTasks.AvgWaitTime,
+				copTasks.P90WaitTime, copTasks.MaxWaitTime, copTasks.MaxWaitAddress) + "\n")
+	}
+	if memMax > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"

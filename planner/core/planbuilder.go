@@ -20,6 +20,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -268,10 +269,12 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
-		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt:
+		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
+	case *ast.CreateBindingStmt:
+		return b.buildCreateBindPlan(x)
 	case *ast.ChangeStmt:
 		return b.buildChange(x)
 	}
@@ -358,6 +361,21 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
+	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSQLBindCreate,
+		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
+		BindSQL:      v.HintedSel.Text(),
+		IsGlobal:     v.GlobalScope,
+		BindStmt:     v.HintedSel,
+		Charset:      charSet,
+		Collation:    collation,
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }
 
@@ -1095,7 +1113,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 		}
-	case *ast.AlterUserStmt:
+	case *ast.AlterUserStmt, *ast.SetDefaultRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
