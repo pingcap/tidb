@@ -185,7 +185,7 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 
 // FindAllRole is used to find all roles grant to this user.
 func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
-	queue, head := make([]*auth.RoleIdentity, 0), 0
+	queue, head := make([]*auth.RoleIdentity, 0, len(activeRoles)), 0
 	for _, r := range activeRoles {
 		queue = append(queue, r)
 	}
@@ -689,9 +689,9 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 
 	var userPriv, dbPriv, tablePriv, columnPriv mysql.PrivilegeType
 	for _, r := range roleList {
-		record1 := p.matchUser(r.Username, r.Hostname)
-		if record1 != nil {
-			userPriv |= record1.Privileges
+		userRecord := p.matchUser(r.Username, r.Hostname)
+		if userRecord != nil {
+			userPriv |= userRecord.Privileges
 		}
 	}
 	if userPriv&priv > 0 {
@@ -699,9 +699,9 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	}
 
 	for _, r := range roleList {
-		record2 := p.matchDB(r.Username, r.Hostname, db)
-		if record2 != nil {
-			dbPriv |= record2.Privileges
+		dbRecord := p.matchDB(r.Username, r.Hostname, db)
+		if dbRecord != nil {
+			dbPriv |= dbRecord.Privileges
 		}
 	}
 	if dbPriv&priv > 0 {
@@ -709,11 +709,11 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 	}
 
 	for _, r := range roleList {
-		record3 := p.matchTables(r.Username, r.Hostname, db, table)
-		if record3 != nil {
-			tablePriv |= record3.TablePriv
+		tableRecord := p.matchTables(r.Username, r.Hostname, db, table)
+		if tableRecord != nil {
+			tablePriv |= tableRecord.TablePriv
 			if column != "" {
-				columnPriv |= record3.ColumnPriv
+				columnPriv |= tableRecord.ColumnPriv
 			}
 		}
 	}
@@ -723,9 +723,9 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 
 	columnPriv = 0
 	for _, r := range roleList {
-		record4 := p.matchColumns(r.Username, r.Hostname, db, table, column)
-		if record4 != nil {
-			columnPriv |= record4.ColumnPriv
+		columnRecord := p.matchColumns(r.Username, r.Hostname, db, table, column)
+		if columnRecord != nil {
+			columnPriv |= columnRecord.ColumnPriv
 		}
 	}
 	if columnPriv&priv > 0 {
