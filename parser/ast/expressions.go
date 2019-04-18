@@ -158,8 +158,14 @@ func (n *BinaryOperationExpr) Restore(ctx *RestoreCtx) error {
 	if err := n.L.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.L")
 	}
+	if ctx.Flags.HasSpacesAroundBinaryOperationFlag() {
+		ctx.WritePlain(" ")
+	}
 	if err := n.Op.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.Op")
+	}
+	if ctx.Flags.HasSpacesAroundBinaryOperationFlag() {
+		ctx.WritePlain(" ")
 	}
 	if err := n.R.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.R")

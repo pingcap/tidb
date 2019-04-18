@@ -1003,7 +1003,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"create table t (row int)", false, ""},
 
 		// for cast with charset
-		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true, "SELECT *,CAST(`data` AS CHAR CHARACTER SET utf8) FROM `t`"},
+		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true, "SELECT *,CAST(`data` AS CHAR CHARSET UTF8) FROM `t`"},
 
 		// for cast as JSON
 		{"SELECT *, CAST(data AS JSON) FROM t;", true, "SELECT *,CAST(`data` AS JSON) FROM `t`"},
@@ -1198,7 +1198,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select from_unixtime(1447430881.1234567, "%Y %D %M %h:%i:%s %x")`, true, "SELECT FROM_UNIXTIME(1447430881.1234567, '%Y %D %M %h:%i:%s %x')"},
 
 		// for issue 224
-		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true, "SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8)"},
+		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true, "SELECT CAST('test collated returns' AS CHAR CHARSET UTF8)"},
 
 		// for string functions
 		// trim

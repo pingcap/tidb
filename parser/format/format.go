@@ -216,6 +216,8 @@ const (
 	RestoreNameLowercase
 	RestoreNameDoubleQuotes
 	RestoreNameBackQuotes
+
+	RestoreSpacesAroundBinaryOperation
 )
 
 const (
@@ -269,6 +271,11 @@ func (rf RestoreFlags) HasNameDoubleQuotesFlag() bool {
 // HasNameBackQuotesFlag returns a boolean indicating whether `rf` has `RestoreNameBackQuotes` flag.
 func (rf RestoreFlags) HasNameBackQuotesFlag() bool {
 	return rf.has(RestoreNameBackQuotes)
+}
+
+// HasSpacesAroundBinaryOperationFlag returns a boolean indicating whether `rf` has `RestoreSpacesAroundBinaryOperation` flag.
+func (rf RestoreFlags) HasSpacesAroundBinaryOperationFlag() bool {
+	return rf.has(RestoreSpacesAroundBinaryOperation)
 }
 
 // RestoreCtx is `Restore` context to hold flags and writer.
