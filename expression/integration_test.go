@@ -4213,3 +4213,25 @@ func (s *testIntegrationSuite) TestDaynameArithmetic(c *C) {
 		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
 	}
 }
+
+func (s *testIntegrationSuite) TestIssue10156(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `t1` (`period_name` varchar(24) DEFAULT NULL ,`period_id` bigint(20) DEFAULT NULL ,`starttime` bigint(20) DEFAULT NULL)")
+	tk.MustExec("CREATE TABLE `t2` (`bussid` bigint(20) DEFAULT NULL,`ct` bigint(20) DEFAULT NULL)")
+	q := `
+select
+    a.period_name,
+    b.date8
+from
+    (select * from t1) a
+left join
+    (select bussid,date(from_unixtime(ct)) date8 from t2) b
+on 
+    a.period_id = b.bussid
+where 
+    datediff(b.date8, date(from_unixtime(a.starttime))) >= 0`
+	tk.MustQuery(q)
+}
