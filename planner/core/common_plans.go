@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -457,6 +458,14 @@ type LoadStats struct {
 	baseSchemaProducer
 
 	Path string
+}
+
+type SplitIndexRegion struct {
+	baseSchemaProducer
+
+	Table      table.Table
+	IndexInfo  *model.IndexInfo
+	ValueLists [][]types.Datum
 }
 
 // DDL represents a DDL statement plan.

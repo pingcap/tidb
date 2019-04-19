@@ -371,9 +371,9 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
 			regionIDs = append(regionIDs, regionID)
 		}
 	}
-	if !tblInfo.WaitSplitFinish {
-		return
-	}
+	//if !tblInfo.WaitSplitFinish {
+	//	return
+	//}
 	for _, regionID := range regionIDs {
 		err := s.WaitScatterRegionFinish(regionID)
 		if err != nil {
