@@ -187,7 +187,6 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(err, IsNil)
 	c.Check(bindHandle.Size(), Equals, 0)
 
-	time.Sleep(time.Second * 6) // wait domain's bindUpdateLoop load deleted bind info.
 	bindData = bindHandle.GetBindRecord("select * from t where i > ?", "test")
 	c.Check(bindData, IsNil)
 
