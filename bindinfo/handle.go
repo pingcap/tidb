@@ -240,6 +240,15 @@ func (h *BindHandle) GetBindRecord(normdOrigSQL, db string) *bindMeta {
 	return nil
 }
 
+// GetAllBindRecord return all bind record in cache.
+func (h *BindHandle) GetAllBindRecord() (bindRecords []*bindMeta) {
+	bindRecordMap := h.bindInfo.Load().(cache)
+	for _, bindRecord := range bindRecordMap {
+		bindRecords = append(bindRecords, bindRecord...)
+	}
+	return bindRecords
+}
+
 func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *bindMeta, err error) {
 	hash = parser.DigestHash(record.OriginalSQL)
 	stmtNodes, _, err := h.parser.Parse(record.BindSQL, record.Charset, record.Collation)
