@@ -14,12 +14,12 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/util/chunk"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"

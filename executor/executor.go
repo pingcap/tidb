@@ -181,7 +181,7 @@ func reuseChunkImpl(ctx sessionctx.Context, planKey []byte, hash []byte, rt []*t
 	return chunk.New(rt, cap, sz)
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, seqNo int, planKey []byte, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, planKey []byte, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -189,7 +189,6 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
-		seqNo:        seqNo,
 		planKey:      planKey,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {

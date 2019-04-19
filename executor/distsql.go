@@ -19,6 +19,7 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -525,7 +526,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			buildTblReader: e.buildTableReader,
 			keepOrder:      e.keepOrder,
 			handleIdx:      e.handleIdx,
-			seqNo:          i,
+			workerIdx:      i,
 			isCheckOp:      e.isCheckOp,
 			memTracker:     memory.NewTracker(tableWorkerLabel, -1),
 		}
@@ -539,9 +540,9 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	}
 }
 
-func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
+func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, id int, handles []int64) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" }), e.seqNo, e.planKey),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader_" + strconv.Itoa(id) }), e.planKey),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		streaming:      e.tableStreaming,
@@ -737,10 +738,10 @@ type tableWorker struct {
 	idxLookup      *IndexLookUpExecutor
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
-	buildTblReader func(ctx context.Context, handles []int64) (Executor, error)
+	buildTblReader func(ctx context.Context, id int, handles []int64) (Executor, error)
 	keepOrder      bool
 	handleIdx      int
-	seqNo          int
+	workerIdx      int
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
@@ -782,7 +783,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
-	tableReader, err := w.buildTblReader(ctx, task.handles)
+	tableReader, err := w.buildTblReader(ctx, w.workerIdx, task.handles)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err
