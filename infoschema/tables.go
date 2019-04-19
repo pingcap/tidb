@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -28,8 +29,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -68,6 +72,7 @@ const (
 	tableProcesslist                        = "PROCESSLIST"
 	tableTiDBIndexes                        = "TIDB_INDEXES"
 	tableSlowLog                            = "SLOW_QUERY"
+	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
 	tableAnalyzeStatus                      = "ANALYZE_STATUS"
 )
 
@@ -544,6 +549,18 @@ var tableTiDBIndexesCols = []columnInfo{
 	{"SUB_PART", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"INDEX_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
 	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var tableTiDBHotRegionsCols = []columnInfo{
+	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"MAX_HOT_DEGREE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"FLOW_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
 var tableAnalyzeStatusCols = []columnInfo{
@@ -1430,6 +1447,52 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
+func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
+	}
+	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, dataForHotRegionByMetrics(metrics, "read")...)
+	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, dataForHotRegionByMetrics(metrics, "write")...)
+	return records, nil
+}
+
+func dataForHotRegionByMetrics(metrics map[helper.TblIndex]helper.RegionMetric, tp string) [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(metrics))
+	for tblIndex, regionMetric := range metrics {
+		row := make([]types.Datum, len(tableTiDBHotRegionsCols))
+		if tblIndex.IndexName != "" {
+			row[1].SetInt64(tblIndex.IndexID)
+			row[4].SetString(tblIndex.IndexName)
+		} else {
+			row[1].SetNull()
+			row[4].SetNull()
+		}
+		row[0].SetInt64(tblIndex.TableID)
+		row[2].SetString(tblIndex.DbName)
+		row[3].SetString(tblIndex.TableName)
+		row[5].SetString(tp)
+		row[6].SetInt64(int64(regionMetric.MaxHotDegree))
+		row[7].SetInt64(int64(regionMetric.Count))
+		row[8].SetUint64(regionMetric.FlowBytes)
+		rows = append(rows, row)
+	}
+	return rows
+}
+
 func dataForAnalyzeStatus() (rows [][]types.Datum) {
 	for _, job := range statistics.GetAllAnalyzeJobs() {
 		job.Lock()
@@ -1487,6 +1550,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableProcesslist:                        tableProcesslistCols,
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
 	tableSlowLog:                            slowQueryCols,
+	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
 	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
 }
 
@@ -1581,6 +1645,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForProcesslist(ctx)
 	case tableSlowLog:
 		fullRows, err = dataForSlowLog(ctx)
+	case tableTiDBHotRegions:
+		fullRows, err = dataForTiDBHotRegions(ctx)
 	case tableAnalyzeStatus:
 		fullRows = dataForAnalyzeStatus()
 	}

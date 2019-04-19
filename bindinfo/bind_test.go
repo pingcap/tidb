@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -115,22 +116,83 @@ func (s *testSuite) TestBindParse(c *C) {
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s')`,
 		originSQL, bindSQL, defaultDb, status, charset, collation)
 	tk.MustExec(sql)
-	bindHandle := bindinfo.NewHandle()
-	bindCacheUpdater := bindinfo.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser)
-	err := bindCacheUpdater.Update(true)
+	bindHandle := bindinfo.NewBindHandle(tk.Se, s.Parser)
+	err := bindHandle.Update(true)
 	c.Check(err, IsNil)
-	c.Check(len(bindHandle.Get()), Equals, 1)
+	c.Check(bindHandle.Size(), Equals, 1)
 
-	hash := parser.DigestHash("select * from t")
-	bindData := bindHandle.Get()[hash]
+	bindData := bindHandle.GetBindRecord("select * from t", "test")
 	c.Check(bindData, NotNil)
-	c.Check(len(bindData), Equals, 1)
-	c.Check(bindData[0].OriginalSQL, Equals, "select * from t")
-	c.Check(bindData[0].BindSQL, Equals, "select * from t use index(index_t)")
-	c.Check(bindData[0].Db, Equals, "test")
-	c.Check(bindData[0].Status, Equals, "using")
-	c.Check(bindData[0].Charset, Equals, "utf8mb4")
-	c.Check(bindData[0].Collation, Equals, "utf8mb4_bin")
-	c.Check(bindData[0].CreateTime, NotNil)
-	c.Check(bindData[0].UpdateTime, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t")
+	c.Check(bindData.BindSQL, Equals, "select * from t use index(index_t)")
+	c.Check(bindData.Db, Equals, "test")
+	c.Check(bindData.Status, Equals, "using")
+	c.Check(bindData.Charset, Equals, "utf8mb4")
+	c.Check(bindData.Collation, Equals, "utf8mb4_bin")
+	c.Check(bindData.CreateTime, NotNil)
+	c.Check(bindData.UpdateTime, NotNil)
+}
+
+func (s *testSuite) TestGlobalBinding(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(i int, s varchar(20))")
+	tk.MustExec("create table t1(i int, s varchar(20))")
+	tk.MustExec("create index index_t on t(i,s)")
+
+	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
+	c.Assert(err, IsNil, Commentf("err %v", err))
+
+	time.Sleep(time.Second * 1)
+	_, err = tk.Exec("create global binding for select * from t where i>99 using select * from t use index(index_t) where i>99")
+	c.Assert(err, IsNil)
+
+	bindData := s.domain.BindHandle().GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
+	c.Check(bindData.BindSQL, Equals, "select * from t use index(index_t) where i>99")
+	c.Check(bindData.Db, Equals, "test")
+	c.Check(bindData.Status, Equals, "using")
+	c.Check(bindData.Charset, NotNil)
+	c.Check(bindData.Collation, NotNil)
+	c.Check(bindData.CreateTime, NotNil)
+	c.Check(bindData.UpdateTime, NotNil)
+
+	bindHandle := bindinfo.NewBindHandle(tk.Se, s.Parser)
+	err = bindHandle.Update(true)
+	c.Check(err, IsNil)
+	c.Check(bindHandle.Size(), Equals, 1)
+
+	bindData = bindHandle.GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
+	c.Check(bindData.BindSQL, Equals, "select * from t use index(index_t) where i>99")
+	c.Check(bindData.Db, Equals, "test")
+	c.Check(bindData.Status, Equals, "using")
+	c.Check(bindData.Charset, NotNil)
+	c.Check(bindData.Collation, NotNil)
+	c.Check(bindData.CreateTime, NotNil)
+	c.Check(bindData.UpdateTime, NotNil)
+
+	_, err = tk.Exec("DROP global binding for select * from t where i>100")
+	c.Check(err, IsNil)
+	bindData = s.domain.BindHandle().GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, IsNil)
+
+	bindHandle = bindinfo.NewBindHandle(tk.Se, s.Parser)
+	err = bindHandle.Update(true)
+	c.Check(err, IsNil)
+	c.Check(bindHandle.Size(), Equals, 0)
+
+	bindData = bindHandle.GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, IsNil)
+
+	_, err = tk.Exec("delete from mysql.bind_info")
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec("create global binding for select * from t using select * from t1 use index for join(index_t)")
+	c.Assert(err, NotNil, Commentf("err %v", err))
 }
