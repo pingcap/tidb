@@ -258,6 +258,19 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(gs, HasLen, 5)
 	mustExec(c, se, `DROP ROLE 'r1', 'r2'`)
 	mustExec(c, se, `DROP USER 'testrole'@'localhost'`)
+	mustExec(c, se, `CREATE ROLE 'r1', 'r2'`)
+	mustExec(c, se, `GRANT SELECT ON test.* TO 'r2'`)
+	mustExec(c, se, `CREATE USER 'testrole'@'localhost' IDENTIFIED BY 'u1pass'`)
+	mustExec(c, se, `GRANT 'r1' TO 'testrole'@'localhost'`)
+	mustExec(c, se, `GRANT 'r2' TO 'r1'`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 2)
+	roles = make([]*auth.RoleIdentity, 0)
+	roles = append(roles, &auth.RoleIdentity{Username: "r1", Hostname: "%"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, roles)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 3)
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {

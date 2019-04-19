@@ -119,7 +119,7 @@ type defaultRoleRecord struct {
 
 // roleGraphEdgesTable is used to cache relationship between and role.
 type roleGraphEdgesTable struct {
-	roleList map[string]bool
+	roleList map[string]*auth.RoleIdentity
 }
 
 // Find method is used to find role from table
@@ -143,6 +143,33 @@ type MySQLPrivilege struct {
 	ColumnsPriv  []columnsPrivRecord
 	DefaultRoles []defaultRoleRecord
 	RoleGraph    map[string]roleGraphEdgesTable
+}
+
+// FindAllRole is used to find all roles grant to this user.
+func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
+	queue, head := make([]*auth.RoleIdentity, 0, len(activeRoles)), 0
+	for _, r := range activeRoles {
+		queue = append(queue, r)
+	}
+	// Using breadth first search to find all roles grant to this user.
+	visited, ret := make(map[string]bool), make([]*auth.RoleIdentity, 0)
+	for head < len(queue) {
+		role := queue[head]
+		if _, ok := visited[role.String()]; !ok {
+			visited[role.String()] = true
+			ret = append(ret, role)
+			key := role.Username + "@" + role.Hostname
+			if edgeTable, ok := p.RoleGraph[key]; ok {
+				for _, v := range edgeTable.roleList {
+					if _, ok := visited[v.String()]; !ok {
+						queue = append(queue, v)
+					}
+				}
+			}
+		}
+		head += 1
+	}
+	return ret
 }
 
 // FindRole is used to detect whether there is edges between users and roles.
@@ -474,10 +501,10 @@ func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*ast.ResultFie
 	toKey := toUser + "@" + toHost
 	roleGraph, ok := p.RoleGraph[toKey]
 	if !ok {
-		roleGraph = roleGraphEdgesTable{roleList: make(map[string]bool)}
+		roleGraph = roleGraphEdgesTable{roleList: make(map[string]*auth.RoleIdentity)}
 		p.RoleGraph[toKey] = roleGraph
 	}
-	roleGraph.roleList[fromKey] = true
+	roleGraph.roleList[fromKey] = &auth.RoleIdentity{Username: fromUser, Hostname: fromHost}
 	return nil
 }
 
@@ -703,6 +730,9 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
 	var gs []string
 	var hasGlobalGrant bool = false
+	// Some privileges may granted from role inheritance.
+	// We should find these inheritance relationship.
+	allRoles := p.FindAllRole(roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
 	var g string
@@ -711,7 +741,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			hasGlobalGrant = true
 			currentPriv |= record.Privileges
 		} else {
-			for _, r := range roles {
+			for _, r := range allRoles {
 				if record.User == r.Username && record.Host == r.Hostname {
 					hasGlobalGrant = true
 					currentPriv |= record.Privileges
@@ -741,7 +771,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 				dbPrivTable[record.DB] = record.Privileges
 			}
 		} else {
-			for _, r := range roles {
+			for _, r := range allRoles {
 				if record.User == r.Username && record.Host == r.Hostname {
 					if _, ok := dbPrivTable[record.DB]; ok {
 						dbPrivTable[record.DB] |= record.Privileges
@@ -771,7 +801,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 				tablePrivTable[recordKey] = record.TablePriv
 			}
 		} else {
-			for _, r := range roles {
+			for _, r := range allRoles {
 				if record.User == r.Username && record.Host == r.Hostname {
 					if _, ok := dbPrivTable[record.DB]; ok {
 						tablePrivTable[recordKey] |= record.TablePriv
