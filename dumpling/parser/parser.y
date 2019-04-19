@@ -6321,6 +6321,20 @@ ShowStmt:
 			Tp: ast.ShowPrivileges,
 		}
 	}
+|	"SHOW" "ANALYZE" "STATUS" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowAnalyzeStatus,
+		}
+		if $4 != nil {
+			if x, ok := $4.(*ast.PatternLikeExpr); ok && x.Expr == nil {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $4.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
 
 UsingRoles:
 	{
