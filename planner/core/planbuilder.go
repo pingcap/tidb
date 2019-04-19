@@ -2014,6 +2014,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 	case ast.ShowPrivileges:
 		names = []string{"Privilege", "Context", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowBindings:
+		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
