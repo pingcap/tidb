@@ -49,9 +49,23 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	switch e.sqlBindOp {
 	case plannercore.OpSQLBindCreate:
 		return e.createSQLBind()
+	case plannercore.OpSQLBindDrop:
+		return e.dropSQLBind()
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
+}
+
+func (e *SQLBindExec) dropSQLBind() error {
+	if !e.isGlobal {
+		return errors.New("drop non-global sql bind is not supported")
+	}
+
+	record := &bindinfo.BindRecord{
+		OriginalSQL: e.normdOrigSQL,
+		Db:          e.ctx.GetSessionVars().CurrentDB,
+	}
+	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(record)
 }
 
 func (e *SQLBindExec) createSQLBind() error {
