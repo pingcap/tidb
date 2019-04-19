@@ -343,7 +343,7 @@ type AnalyzeColumnsExec struct {
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := splitRanges(ranges, true)
+	firstPartRanges, secondPartRanges := splitRanges(ranges, true, false)
 	firstResult, err := e.buildResp(firstPartRanges)
 	if err != nil {
 		return err
