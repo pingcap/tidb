@@ -2775,6 +2775,8 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t partition a with 4 buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH 4 BUCKETS"},
 		{"analyze table t partition a index b", true, "ANALYZE TABLE `t` PARTITION `a` INDEX `b`"},
 		{"analyze table t partition a index b with 4 buckets", true, "ANALYZE TABLE `t` PARTITION `a` INDEX `b` WITH 4 BUCKETS"},
+		{"analyze incremental table t index", true, "ANALYZE INCREMENTAL TABLE `t` INDEX"},
+		{"analyze incremental table t index idx", true, "ANALYZE INCREMENTAL TABLE `t` INDEX `idx`"},
 	}
 	s.RunTest(c, table)
 }
