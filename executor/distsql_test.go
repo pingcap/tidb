@@ -207,3 +207,15 @@ func (s *testSuite) TestUniqueKeyNullValueSelect(c *C) {
 	res = tk.MustQuery("select * from t where id is null;")
 	res.Check(testkit.Rows("<nil> a", "<nil> b", "<nil> c"))
 }
+
+// TestIssue10178 contains tests for https://github.com/pingcap/tidb/issues/10178 .
+func (s *testSuite3) TestIssue10178(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned primary key)")
+	tk.MustExec("insert into t values(9223372036854775807), (18446744073709551615)")
+	tk.MustQuery("select max(a) from t").Check(testkit.Rows("18446744073709551615"))
+	tk.MustQuery("select * from t where a > 9223372036854775807").Check(testkit.Rows("18446744073709551615"))
+	tk.MustQuery("select * from t where a < 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+}

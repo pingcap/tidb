@@ -324,7 +324,7 @@ func (e *AnalyzeColumnsExec) open() error {
 		ranges = ranger.FullIntRange(false)
 	}
 	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := splitRanges(ranges, e.keepOrder)
+	firstPartRanges, secondPartRanges := splitRanges(ranges, e.keepOrder, false)
 	firstResult, err := e.buildResp(firstPartRanges)
 	if err != nil {
 		return errors.Trace(err)
