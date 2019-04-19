@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
@@ -170,6 +171,28 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowMasterStatus()
 	case ast.ShowPrivileges:
 		return e.fetchShowPrivileges()
+	case ast.ShowBindings:
+		return e.fetchShowBind()
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowBind() error {
+	if !e.GlobalScope {
+		return errors.New("show non-global bind sql is not supported")
+	}
+	bindRecords := domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
+	for _, bindData := range bindRecords {
+		e.appendRow([]interface{}{
+			bindData.OriginalSQL,
+			bindData.BindSQL,
+			bindData.Db,
+			bindData.Status,
+			bindData.CreateTime,
+			bindData.UpdateTime,
+			bindData.Charset,
+			bindData.Collation,
+		})
 	}
 	return nil
 }
