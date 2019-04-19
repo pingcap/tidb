@@ -293,6 +293,7 @@ var tokenMap = map[string]int{
 	"IF":                       ifKwd,
 	"IGNORE":                   ignore,
 	"IN":                       in,
+	"INCREMENTAL":              incremental,
 	"INDEX":                    index,
 	"INDEXES":                  indexes,
 	"INFILE":                   infile,
