@@ -103,7 +103,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		// EncodeInt don't need *statement.Context.
 		e.ranges = e.feedback.Hist.SplitRange(nil, e.ranges, false)
 	}
-	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder)
+	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -176,10 +176,12 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 }
 
 type tableResultHandler struct {
-	// If the pk is unsigned and we have KeepOrder=true.
-	// optionalResult handles the request whose range is in signed int range.
-	// result handles the request whose range is exceed signed int range.
-	// Otherwise, we just set optionalFinished true and the result handles the whole ranges.
+	// If the pk is unsigned and we have KeepOrder=true and want ascending order,
+	// `optionalResult` will handles the request whose range is in signed int range, and
+	// `result` will handle the request whose range is exceed signed int range.
+	// If we want descending order, `optionalResult` will handles the request whose range is exceed signed, and
+	// the `result` will handle the request whose range is in signed.
+	// Otherwise, we just set `optionalFinished` true and the `result` handles the whole ranges.
 	optionalResult distsql.SelectResult
 	result         distsql.SelectResult
 

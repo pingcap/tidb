@@ -123,6 +123,13 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	return s, nil
 }
 
+// EtcdBackend is used for judging a storage is a real TiKV.
+type EtcdBackend interface {
+	EtcdAddrs() []string
+	TLSConfig() *tls.Config
+	StartGCWorker() error
+}
+
 // update oracle's lastTS every 2000ms.
 var oracleUpdateInterval = 2000
 

@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1267,7 +1268,6 @@ func CreateSession(store kv.Storage) (Session, error) {
 		Handle: do.PrivilegeHandle(),
 	}
 	privilege.BindPrivilegeManager(s, pm)
-
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
@@ -1365,7 +1365,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	if raw, ok := store.(domain.EtcdBackend); ok {
+	if raw, ok := store.(tikv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
 			return nil, err
@@ -1452,7 +1452,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 28
+	currentBootstrapVersion = 29
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

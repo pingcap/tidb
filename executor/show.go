@@ -137,6 +137,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowStatus()
 	case ast.ShowTables:
 		return e.fetchShowTables()
+	case ast.ShowOpenTables:
+		return e.fetchShowOpenTables()
 	case ast.ShowTableStatus:
 		return e.fetchShowTableStatus()
 	case ast.ShowTriggers:
@@ -239,6 +241,12 @@ func (e *ShowExec) fetchShowProcessList() error {
 		row := pi.ToRow(e.Full)
 		e.appendRow(row)
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowOpenTables() error {
+	// TiDB has no concept like mysql's "table cache" and "open table"
+	// For simplicity, we just return an empty result with the same structure as MySQL's SHOW OPEN TABLES
 	return nil
 }
 

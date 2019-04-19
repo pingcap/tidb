@@ -15,7 +15,6 @@ package domain
 
 import (
 	"context"
-	"crypto/tls"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -23,7 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -58,7 +58,7 @@ type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
-	bindHandle      *bindinfo.Handle
+	bindHandle      *bindinfo.BindHandle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
 	statsUpdating   sync2.AtomicInt32
@@ -563,13 +563,6 @@ func (c *ddlCallback) OnChanged(err error) error {
 	return nil
 }
 
-// EtcdBackend is used for judging a storage is a real TiKV.
-type EtcdBackend interface {
-	EtcdAddrs() []string
-	TLSConfig() *tls.Config
-	StartGCWorker() error
-}
-
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
@@ -589,7 +582,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
-	if ebd, ok := do.store.(EtcdBackend); ok {
+	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
@@ -785,7 +778,7 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 }
 
 // BindHandle returns domain's bindHandle.
-func (do *Domain) BindHandle() *bindinfo.Handle {
+func (do *Domain) BindHandle() *bindinfo.BindHandle {
 	return do.bindHandle
 }
 
@@ -793,10 +786,8 @@ func (do *Domain) BindHandle() *bindinfo.Handle {
 // be called only once in BootstrapSession.
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewHandle()
-
-	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser)
-	err := bindCacheUpdater.Update(true)
+	do.bindHandle = bindinfo.NewBindHandle(ctx, parser)
+	err := do.bindHandle.Update(true)
 	if err != nil {
 		return err
 	}
@@ -812,7 +803,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 				return
 			case <-time.After(duration):
 			}
-			err = bindCacheUpdater.Update(false)
+			err = do.bindHandle.Update(false)
 			if err != nil {
 				logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
 			}

@@ -413,13 +413,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		indexIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
+	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := a.getStatsInfo()
+	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, sql))
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, sql))
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
