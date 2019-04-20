@@ -89,7 +89,7 @@ func init() {
 }
 
 func usage() {
-	log.Printf("Usage: %s --pkg-dir [plugin source pkg folder] --outDir-dir [outDir-dir]\n", path.Base(os.Args[0]))
+	log.Printf("Usage: %s --pkg-dir [plugin source pkg folder] --out-dir [plugin packaged folder path]\n", path.Base(os.Args[0]))
 	flag.PrintDefaults()
 	os.Exit(1)
 }
