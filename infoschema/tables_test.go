@@ -86,6 +86,12 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("30002"))
 
+	// Test auto_increment for table without auto_increment column
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (d int)")
+	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("<nil>"))
+
 	tk.MustExec("create user xxx")
 	tk.MustExec("flush privileges")
 
