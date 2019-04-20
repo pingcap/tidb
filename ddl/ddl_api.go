@@ -1793,7 +1793,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	// If has 2 TiDB-server, TiDB-A: 0 ~ 30000, TiDB-B: 30001 ~ 60000,
 	// if user send SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and TiDB-B do nothing and just return here,
-	// then TiDB-A is possible to do allocated 99 for auto_increment column, this is not reasonable for the user.
+	// then TiDB-A is possible to allocate 99 for auto_increment column, this is not reasonable for the user.
 	newBase = mathutil.MaxInt64(newBase, autoIncID)
 	job := &model.Job{
 		SchemaID:   schema.ID,
