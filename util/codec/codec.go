@@ -429,6 +429,17 @@ func CutOne(b []byte) (data []byte, remain []byte, err error) {
 	return b[:l], b[l:], nil
 }
 
+// CutColumnID cuts the column ID from b.
+// It will return the remains as byte slice and column ID
+func CutColumnID(b []byte) (remain []byte, n int64, err error) {
+	if len(b) < 1 {
+		return nil, 0, errors.New("invalid encoded key")
+	}
+	// skip the flag
+	b = b[1:]
+	return DecodeVarint(b)
+}
+
 // SetRawValues set raw datum values from a row data.
 func SetRawValues(data []byte, values []types.Datum) error {
 	for i := 0; i < len(values); i++ {
