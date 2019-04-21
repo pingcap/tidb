@@ -777,6 +777,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 					PhysicalTableID: id,
 					IndexInfo:       idx,
+					TblInfo:         tbl.TableInfo,
 				})
 			}
 		}
@@ -786,6 +787,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 					PhysicalTableID: id,
 					PKInfo:          pkInfo,
 					ColsInfo:        colInfo,
+					TblInfo:         tbl.TableInfo,
 				})
 			}
 		}
@@ -806,7 +808,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
 		for _, id := range physicalIDs {
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -822,7 +824,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, erro
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			for _, id := range physicalIDs {
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx, TblInfo: tblInfo})
 			}
 		}
 	}
