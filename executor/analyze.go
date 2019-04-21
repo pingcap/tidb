@@ -868,20 +868,20 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	collector.Count = int64(e.sampCursor)
 	data := make([][]byte, 0, len(collector.Samples))
 	for _, sample := range collector.Samples {
-		data = append(data, sample.Value.GetBytes())
+		bytes, err := sample.Value.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		data = append(data, []byte(bytes))
 		if sample.Value.IsNull() {
 			collector.NullCount++
-		} else {
-			err := collector.FMSketch.InsertValue(e.ctx.GetSessionVars().StmtCtx, sample.Value)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
 		}
 	}
 	rowCount := domain.GetDomain(e.ctx).StatsHandle().GetTableStats(e.tblInfo).Count
-	// build CMSketch
+	if int64(e.rowCount) < rowCount {
+		rowCount = int64(e.rowCount)
+	}
 	collector.CMSketch = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, uint32(e.sampCursor), uint64(rowCount))
-	// build histogram
 	hist, err := statistics.BuildColumnWithSamples(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, rowCount)
 	if err != nil {
 		return nil, errors.Trace(err)

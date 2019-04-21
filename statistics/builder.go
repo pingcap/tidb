@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"math"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -185,7 +184,11 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 func BuildColumnWithSamples(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64) (*Histogram, error) {
 	data := make([][]byte, 0, len(collector.Samples))
 	for _, sample := range collector.Samples {
-		data = append(data, sample.Value.GetBytes())
+		bytes, err := sample.Value.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		data = append(data, []byte(bytes))
 	}
 	groupCount := make([]uint64, 0)
 	for _, cmsCounts := range groupElements(data) {
@@ -193,7 +196,6 @@ func BuildColumnWithSamples(ctx sessionctx.Context, numBuckets, id int64, collec
 			groupCount = append(groupCount, c.count)
 		}
 	}
-	sort.Slice(groupCount, func(i, j int) bool { return groupCount[i] > groupCount[j] })
 	ndv, _, _ := calculateEstimateNDV(groupCount, uint64(count))
 	nullCount := collector.NullCount * int64(math.Round(float64(count)/float64(collector.Count)))
 	return buildColumnHist(ctx, numBuckets, id, collector, tp, count, int64(ndv), nullCount)
