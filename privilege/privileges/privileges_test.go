@@ -147,34 +147,34 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	mustExec(c, se, `GRANT Index ON *.* TO  'show'@'localhost';`)
 	pc := privilege.GetPrivilegeManager(se)
 
-	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT Index ON *.* TO 'show'@'localhost'`)
 
 	mustExec(c, se, `GRANT Select ON *.* TO  'show'@'localhost';`)
-	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT Select,Index ON *.* TO 'show'@'localhost'`)
 
 	// The order of privs is the same with AllGlobalPrivs
 	mustExec(c, se, `GRANT Update ON *.* TO  'show'@'localhost';`)
-	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT Select,Update,Index ON *.* TO 'show'@'localhost'`)
 
 	// All privileges
 	mustExec(c, se, `GRANT ALL ON *.* TO  'show'@'localhost';`)
-	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
 
 	// Add db scope privileges
 	mustExec(c, se, `GRANT Select ON test.* TO  'show'@'localhost';`)
-	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 2)
 	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -182,7 +182,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	mustExec(c, se, `GRANT Index ON test1.* TO  'show'@'localhost';`)
-	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -191,7 +191,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	mustExec(c, se, `GRANT ALL ON test1.* TO  'show'@'localhost';`)
-	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -201,7 +201,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 
 	// Add table scope privileges
 	mustExec(c, se, `GRANT Update ON test.test TO  'show'@'localhost';`)
-	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 4)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -215,7 +215,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	mustExec(c, se, `REVOKE Select on test.* FROM 'show'@'localhost'`)
 	mustExec(c, se, `REVOKE ALL ON test1.* FROM 'show'@'localhost'`)
 	mustExec(c, se, `REVOKE UPDATE on test.test FROM 'show'@'localhost'`)
-	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT USAGE ON *.* TO 'show'@'localhost'`)
@@ -226,11 +226,51 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	mustExec(c, se, `DROP USER 'show'@'localhost'`)
 
 	// This should now return an error
-	_, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	_, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, NotNil)
 	// cant show grants for non-existent
 	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
 	c.Assert(terror.ErrorEqual(err, errNonexistingGrant), IsTrue)
+
+	// Test SHOW GRANTS with USING roles.
+	mustExec(c, se, `CREATE ROLE 'r1', 'r2'`)
+	mustExec(c, se, `GRANT SELECT ON test.* TO 'r1'`)
+	mustExec(c, se, `GRANT INSERT, UPDATE ON test.* TO 'r2'`)
+	mustExec(c, se, `CREATE USER 'testrole'@'localhost' IDENTIFIED BY 'u1pass'`)
+	mustExec(c, se, `GRANT 'r1', 'r2' TO 'testrole'@'localhost'`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 2)
+	roles := make([]*auth.RoleIdentity, 0)
+	roles = append(roles, &auth.RoleIdentity{Username: "r2", Hostname: "%"})
+	mustExec(c, se, `GRANT DELETE ON test.* TO 'testrole'@'localhost'`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, roles)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 3)
+	roles = append(roles, &auth.RoleIdentity{Username: "r1", Hostname: "%"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, roles)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 3)
+	mustExec(c, se, `GRANT INSERT, DELETE ON test.test TO 'r2'`)
+	mustExec(c, se, `GRANT UPDATE ON a.b TO 'testrole'@'localhost'`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, roles)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 5)
+	mustExec(c, se, `DROP ROLE 'r1', 'r2'`)
+	mustExec(c, se, `DROP USER 'testrole'@'localhost'`)
+	mustExec(c, se, `CREATE ROLE 'r1', 'r2'`)
+	mustExec(c, se, `GRANT SELECT ON test.* TO 'r2'`)
+	mustExec(c, se, `CREATE USER 'testrole'@'localhost' IDENTIFIED BY 'u1pass'`)
+	mustExec(c, se, `GRANT 'r1' TO 'testrole'@'localhost'`)
+	mustExec(c, se, `GRANT 'r2' TO 'r1'`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 2)
+	roles = make([]*auth.RoleIdentity, 0)
+	roles = append(roles, &auth.RoleIdentity{Username: "r1", Hostname: "%"})
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, roles)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 3)
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
@@ -492,6 +532,29 @@ func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
 	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
 	pc := privilege.GetPrivilegeManager(se)
 	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
+}
+
+func (s *testPrivilegeSuite) TestDefaultRoles(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'testdefault'@'localhost';`)
+	mustExec(c, rootSe, `CREATE ROLE 'testdefault_r1'@'localhost', 'testdefault_r2'@'localhost';`)
+	mustExec(c, rootSe, `GRANT 'testdefault_r1'@'localhost', 'testdefault_r2'@'localhost' TO 'testdefault'@'localhost';`)
+
+	se := newSession(c, s.store, s.dbName)
+	pc := privilege.GetPrivilegeManager(se)
+
+	ret := pc.GetDefaultRoles("testdefault", "localhost")
+	c.Assert(len(ret), Equals, 0)
+
+	mustExec(c, rootSe, `SET DEFAULT ROLE ALL TO 'testdefault'@'localhost';`)
+	mustExec(c, rootSe, `flush privileges;`)
+	ret = pc.GetDefaultRoles("testdefault", "localhost")
+	c.Assert(len(ret), Equals, 2)
+
+	mustExec(c, rootSe, `SET DEFAULT ROLE NONE TO 'testdefault'@'localhost';`)
+	mustExec(c, rootSe, `flush privileges;`)
+	ret = pc.GetDefaultRoles("testdefault", "localhost")
+	c.Assert(len(ret), Equals, 0)
 }
 
 func mustExec(c *C, se session.Session, sql string) {
