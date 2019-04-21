@@ -494,6 +494,29 @@ func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
 	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
 }
 
+func (s *testPrivilegeSuite) TestDefaultRoles(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'testdefault'@'localhost';`)
+	mustExec(c, rootSe, `CREATE ROLE 'testdefault_r1'@'localhost', 'testdefault_r2'@'localhost';`)
+	mustExec(c, rootSe, `GRANT 'testdefault_r1'@'localhost', 'testdefault_r2'@'localhost' TO 'testdefault'@'localhost';`)
+
+	se := newSession(c, s.store, s.dbName)
+	pc := privilege.GetPrivilegeManager(se)
+
+	ret := pc.GetDefaultRoles("testdefault", "localhost")
+	c.Assert(len(ret), Equals, 0)
+
+	mustExec(c, rootSe, `SET DEFAULT ROLE ALL TO 'testdefault'@'localhost';`)
+	mustExec(c, rootSe, `flush privileges;`)
+	ret = pc.GetDefaultRoles("testdefault", "localhost")
+	c.Assert(len(ret), Equals, 2)
+
+	mustExec(c, rootSe, `SET DEFAULT ROLE NONE TO 'testdefault'@'localhost';`)
+	mustExec(c, rootSe, `flush privileges;`)
+	ret = pc.GetDefaultRoles("testdefault", "localhost")
+	c.Assert(len(ret), Equals, 0)
+}
+
 func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)

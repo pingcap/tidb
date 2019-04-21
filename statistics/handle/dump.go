@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics
+package handle
 
 import (
 	"time"
@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -44,15 +45,15 @@ type jsonColumn struct {
 	LastUpdateVersion uint64          `json:"last_update_version"`
 }
 
-func dumpJSONCol(hist *Histogram, CMSketch *CMSketch) *jsonColumn {
+func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch) *jsonColumn {
 	jsonCol := &jsonColumn{
-		Histogram:         HistogramToProto(hist),
+		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
 		TotColSize:        hist.TotColSize,
 		LastUpdateVersion: hist.LastUpdateVersion,
 	}
 	if CMSketch != nil {
-		jsonCol.CMSketch = CMSketchToProto(CMSketch)
+		jsonCol.CMSketch = statistics.CMSketchToProto(CMSketch)
 	}
 	return jsonCol
 }
@@ -170,16 +171,16 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 }
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
-func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) (*Table, error) {
-	newHistColl := HistColl{
+func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) (*statistics.Table, error) {
+	newHistColl := statistics.HistColl{
 		PhysicalID:     physicalID,
 		HavePhysicalID: true,
 		Count:          jsonTbl.Count,
 		ModifyCount:    jsonTbl.ModifyCount,
-		Columns:        make(map[int64]*Column, len(jsonTbl.Columns)),
-		Indices:        make(map[int64]*Index, len(jsonTbl.Indices)),
+		Columns:        make(map[int64]*statistics.Column, len(jsonTbl.Columns)),
+		Indices:        make(map[int64]*statistics.Index, len(jsonTbl.Indices)),
 	}
-	tbl := &Table{
+	tbl := &statistics.Table{
 		HistColl: newHistColl,
 	}
 	for id, jsonIdx := range jsonTbl.Indices {
@@ -187,11 +188,11 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			if idxInfo.Name.L != id {
 				continue
 			}
-			hist := HistogramFromProto(jsonIdx.Histogram)
+			hist := statistics.HistogramFromProto(jsonIdx.Histogram)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion
-			idx := &Index{
+			idx := &statistics.Index{
 				Histogram: *hist,
-				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),
+				CMSketch:  statistics.CMSketchFromProto(jsonIdx.CMSketch),
 				Info:      idxInfo,
 			}
 			tbl.Indices[idx.ID] = idx
@@ -203,21 +204,21 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			if colInfo.Name.L != id {
 				continue
 			}
-			hist := HistogramFromProto(jsonCol.Histogram)
-			count := int64(hist.totalRowCount())
+			hist := statistics.HistogramFromProto(jsonCol.Histogram)
+			count := int64(hist.TotalRowCount())
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize
-			col := &Column{
+			col := &statistics.Column{
 				PhysicalID: physicalID,
 				Histogram:  *hist,
-				CMSketch:   CMSketchFromProto(jsonCol.CMSketch),
+				CMSketch:   statistics.CMSketchFromProto(jsonCol.CMSketch),
 				Info:       colInfo,
 				Count:      count,
-				isHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			tbl.Columns[col.ID] = col
 		}
