@@ -29,7 +29,7 @@ func (k keyType) String() string {
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
-	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) ([]string, error)
+	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
 	// GetEncodedPassword shows the encoded password for user.
 	GetEncodedPassword(user, host string) string
