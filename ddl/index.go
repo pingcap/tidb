@@ -863,8 +863,6 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	return result
 }
 
-var gofailMockAddindexErrOnceGuard bool
-
 func (w *addIndexWorker) run(d *ddlCtx) {
 	logutil.Logger(ddlLogCtx).Info("[ddl] add index worker start", zap.Int("workerID", w.id))
 	defer func() {
@@ -883,9 +881,8 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		}
 
 		logutil.Logger(ddlLogCtx).Debug("[ddl] add index worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
-		failpoint.Inject("mockAddIndexErr", func(val failpoint.Value) {
-			if w.id == 0 && val.(bool) && !gofailMockAddindexErrOnceGuard {
-				gofailMockAddindexErrOnceGuard = true
+		failpoint.Inject("mockAddIndexErr", func() {
+			if w.id == 0 {
 				result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
 				w.resultCh <- result
 				failpoint.Continue()

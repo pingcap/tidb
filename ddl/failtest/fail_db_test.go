@@ -186,7 +186,7 @@ func (s *testFailDBSuite) TestInitializeOffsetAndState(c *C) {
 }
 
 func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `1*return`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle"), IsNil)
 	}()
@@ -203,7 +203,7 @@ func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
 }
 
 func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `1*return`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr"), IsNil)
 	}()
