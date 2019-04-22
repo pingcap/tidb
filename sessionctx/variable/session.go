@@ -765,7 +765,7 @@ func SetLocalSystemVar(name string, val string) {
 // special session variables.
 const (
 	SQLModeVar           = "sql_mode"
-	AutocommitVar        = "autocommit"
+	AutocommitVar        = AutoCommit
 	CharacterSetResults  = "character_set_results"
 	MaxAllowedPacket     = "max_allowed_packet"
 	TimeZone             = "time_zone"
