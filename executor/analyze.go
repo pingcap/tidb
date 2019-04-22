@@ -545,23 +545,18 @@ type AnalyzeFastExec struct {
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
 	defer func() {
 		e.wg.Done()
-		*err = errors.Trace(*err)
 		if *needRebuild == true {
 			close(e.sampLocs)
-			for _, ok := <-e.sampLocs; ok; _, ok = <-e.sampLocs {
-				// do nothing
+			for ok := true; ok; _, ok = <-e.sampLocs {
+				// Do nothing, just clear the channel.
 			}
 		}
 	}()
 	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for {
-		var loc *tikv.KeyLocation
-		select {
-		case location, ok := <-e.sampLocs:
-			if !ok {
-				return
-			}
-			loc = location
+		loc, ok := <-e.sampLocs
+		if !ok {
+			return
 		}
 		req := &tikvrpc.Request{
 			Type: tikvrpc.CmdDebugGetRegionProperties,
@@ -643,13 +638,13 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 		}
 	}
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	close(e.sampLocs)
 	e.wg.Wait()
 	for i := 0; i < e.concurrency; i++ {
 		if errs[i] != nil {
-			return false, errors.Trace(errs[i])
+			return false, errs[i]
 		}
 	}
 	for i := 0; i < e.concurrency; i++ {
@@ -672,8 +667,7 @@ func (e *AnalyzeFastExec) decodeValues(sValue []byte) (values map[int64]types.Da
 	for _, col := range e.colsInfo {
 		colID2FieldTypes[col.ID] = &col.FieldType
 	}
-	values, err = tablecodec.DecodeRow(sValue, colID2FieldTypes, e.ctx.GetSessionVars().Location())
-	return values, errors.Trace(err)
+	return tablecodec.DecodeRow(sValue, colID2FieldTypes, e.ctx.GetSessionVars().Location())
 }
 
 func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[int64]types.Datum) (types.Datum, error) {
@@ -689,7 +683,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 	var values map[int64]types.Datum
 	values, err = e.decodeValues(sValue)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	// Update the primary key collector.
 	if hasPKInfo > 0 {
@@ -698,7 +692,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 			var key int64
 			_, key, err = tablecodec.DecodeRecordKey(sKey)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			v = types.NewIntDatum(key)
 		}
@@ -712,7 +706,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 	for j, colInfo := range e.colsInfo {
 		v, err := e.getValueByInfo(colInfo, values)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if collectors[hasPKInfo+j].Samples[samplePos] == nil {
 			collectors[hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
@@ -728,7 +722,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 				if colInfo.Name == idxCol.Name {
 					v, err := e.getValueByInfo(colInfo, values)
 					if err != nil {
-						return errors.Trace(err)
+						return err
 					}
 					idxVals = append(idxVals, v)
 					break
@@ -738,7 +732,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 		var bytes []byte
 		bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] == nil {
 			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
@@ -760,7 +754,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 	for sKey, sValue := range kvMap {
 		err = e.updateCollectorSamples(collectors, sValue, kv.Key(sKey), samplePos, hasPKInfo)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		samplePos++
 	}
@@ -789,25 +783,25 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 
 		err = e.updateCollectorSamples(collectors, iter.Value(), iter.Key(), p, hasPKInfo)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*statistics.SampleCollector) error {
 	snapshot, err := e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = e.handleScanIter(iter, collectors)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -816,7 +810,6 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *error, collectors []*statistics.SampleCollector) {
 	defer func() {
 		e.wg.Done()
-		*err = errors.Trace(*err)
 	}()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
@@ -839,6 +832,9 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 		_, maxRowID, *err = tablecodec.DecodeRecordKey(endKey)
 		if *err != nil {
 			return
+		}
+		if maxRowID <= minRowID {
+			continue
 		}
 
 		keys := make([]kv.Key, 0, task.SampSize)
@@ -891,15 +887,14 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	e.wg.Wait()
 	for _, err := range errs {
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 	}
 
-	var err error
 	bo := tikv.NewBackoffer(context.Background(), 500)
-	err = e.handleScanTasks(bo, collectors)
+	err := e.handleScanTasks(bo, collectors)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 
 	hists, cms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length)
@@ -912,7 +907,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 			hists[i], err = e.buildHist(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)].ID, collectors[i], types.NewFieldType(mysql.TypeBlob))
 		}
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		cms[i] = collectors[i].CMSketch
 	}
@@ -927,7 +922,7 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 	for buildCnt := 0; buildCnt < 5; buildCnt++ {
 		needRebuild, err := e.buildSampTask()
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		if needRebuild {
 			continue
@@ -956,7 +951,7 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		}
 
 		hists, cms, err = e.runTasks()
-		return hists, cms, errors.Trace(err)
+		return hists, cms, err
 	}
 	return nil, nil, errors.Errorf("Too many rebuilds for getting sample tasks.")
 }
