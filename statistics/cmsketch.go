@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"bytes"
 	"math"
 	"sort"
 
@@ -38,11 +39,13 @@ type CMSketch struct {
 	count        uint64 // TopN is not counted in count
 	defaultValue uint64 // In sampled data, if cmsketch returns a small value (less than avg value / 2), then this will returned.
 	table        [][]uint32
-	topNIndex    map[hack.MutableString]uint64
+	topNIndex    map[uint64][]dataCount
 }
 
 // dataCount is a simple counter used by BuildTopN
 type dataCount struct {
+	h1    uint64
+	h2    uint64
 	data  []byte
 	count uint64
 }
@@ -146,31 +149,45 @@ func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
 }
 
 func (c *CMSketch) buildTopNMap(topn []dataCount) {
-	c.topNIndex = make(map[hack.MutableString]uint64)
+	c.topNIndex = make(map[uint64][]dataCount)
 	for i := range topn {
 		if topn[i].data == nil {
 			continue
 		}
-		c.topNIndex[hack.String(topn[i].data)] = topn[i].count
+		h1, h2 := murmur3.Sum128(topn[i].data)
+		vals, ok := c.topNIndex[h1]
+		if !ok {
+			vals = make([]dataCount, 0)
+		}
+		vals = append(vals, dataCount{h1, h2, topn[i].data, topn[i].count})
+		c.topNIndex[h1] = vals
 	}
 }
 
 // queryAddTopN TopN adds count to CMSketch.topNIndex if exists, and returns the count of such elements after insert
 // if such elements does not in topn elements, nothing will happen and false will be returned.
-func (c *CMSketch) queryAddTopN(d []byte, count uint64) (uint64, bool) {
+func (c *CMSketch) queryAddTopN(h1, h2, count uint64, d []byte) (uint64, bool) {
 	if c.topNIndex == nil {
 		return 0, false
 	}
-	cnt, ok := c.topNIndex[hack.String(d)]
-	if count == 0 {
-		return cnt, ok
+	cnt, ok := c.topNIndex[h1]
+	if !ok {
+		return 0, false
 	}
-	c.topNIndex[hack.String(d)] = cnt + count
+	for k := range cnt {
+		if cnt[k].h2 == h2 && bytes.Equal(d, cnt[k].data) {
+			if count != 0 {
+				// Avoid potential data race
+				cnt[k].count += count
+			}
+			return cnt[k].count, true
+		}
+	}
 	return 0, false
 }
 
-func (c *CMSketch) queryTopN(d []byte) (uint64, bool) {
-	return c.queryAddTopN(d, 0)
+func (c *CMSketch) queryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
+	return c.queryAddTopN(h1, h2, 0, d)
 }
 
 // InsertBytes inserts the bytes value into the CM Sketch.
@@ -181,7 +198,7 @@ func (c *CMSketch) InsertBytes(bytes []byte) {
 // insertBytesN adds the bytes value into the CM Sketch by n.
 func (c *CMSketch) insertBytesN(bytes []byte, n uint64) {
 	h1, h2 := murmur3.Sum128(bytes)
-	if _, ok := c.queryAddTopN(bytes, n); ok {
+	if _, ok := c.queryAddTopN(h1, h2, n, bytes); ok {
 		return
 	}
 	c.count += n
@@ -218,9 +235,9 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 // setValue sets the count for value that hashed into (h1, h2).
 func (c *CMSketch) setValueBytes(d []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := c.queryTopN(d); ok {
+	if oriCount, ok := c.queryTopN(h1, h2, d); ok {
 		deltaCount := count - oriCount
-		c.queryAddTopN(d, deltaCount)
+		c.queryAddTopN(h1, h2, deltaCount, d)
 	} else {
 		c.setValue(h1, h2, uint32(count))
 	}
@@ -237,7 +254,7 @@ func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (ui
 // QueryBytes is used to query the count of specified bytes.
 func (c *CMSketch) QueryBytes(d []byte) uint64 {
 	h1, h2 := murmur3.Sum128(d)
-	if count, ok := c.queryTopN(d); ok {
+	if count, ok := c.queryTopN(h1, h2, d); ok {
 		return count
 	}
 	return c.queryHashValue(h1, h2)
