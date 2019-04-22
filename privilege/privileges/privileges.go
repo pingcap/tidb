@@ -175,7 +175,7 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
-func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) (grants []string, err error) {
+func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
 	mysqlPrivilege := p.Handle.Get()
 	u := user.Username
 	h := user.Hostname
@@ -183,7 +183,7 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	grants = mysqlPrivilege.showGrants(u, h)
+	grants = mysqlPrivilege.showGrants(u, h, roles)
 	if len(grants) == 0 {
 		err = errNonexistingGrant.GenWithStackByArgs(u, h)
 	}
