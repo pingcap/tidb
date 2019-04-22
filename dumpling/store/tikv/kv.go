@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -341,6 +341,18 @@ func (s *tikvStore) GetClient() kv.Client {
 
 func (s *tikvStore) GetOracle() oracle.Oracle {
 	return s.oracle
+}
+
+func (s *tikvStore) Name() string {
+	return "TiKV"
+}
+
+func (s *tikvStore) Describe() string {
+	return "TiKV is a distributed transactional key-value database"
+}
+
+func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, kv.ErrNotImplemented
 }
 
 func (s *tikvStore) SupportDeleteRange() (supported bool) {
