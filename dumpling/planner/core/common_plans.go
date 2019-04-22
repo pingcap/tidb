@@ -554,15 +554,16 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
-	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
+	explainID := p.ExplainID().String()
+	row := []string{e.prettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
-		if runtimeStatsColl.ExistsCopStats(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.GetCopStats(p.ExplainID()).String())
-		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
+		if runtimeStatsColl.ExistsCopStats(explainID) {
+			row = append(row, runtimeStatsColl.GetCopStats(explainID).String())
+		} else if runtimeStatsColl.ExistsRootStats(explainID) {
+			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
 		} else {
 			row = append(row, "time:0ns, loops:0, rows:0")
 		}

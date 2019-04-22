@@ -16,12 +16,14 @@ package core
 import (
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -34,7 +36,7 @@ type Plan interface {
 	// Get the ID.
 	ID() int
 	// Get the ID in explain statement
-	ExplainID() string
+	ExplainID() fmt.Stringer
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
@@ -258,8 +260,10 @@ func (p *basePlan) statsInfo() *property.StatsInfo {
 	return p.stats
 }
 
-func (p *basePlan) ExplainID() string {
-	return fmt.Sprintf("%s_%d", p.tp, p.id)
+func (p *basePlan) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return p.tp + "_" + strconv.Itoa(p.id)
+	})
 }
 
 // Schema implements Plan Schema interface.
