@@ -20,12 +20,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -111,88 +108,6 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tk.MustExec("analyze table t with 4 buckets")
 	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(tbl.Columns[1].Len(), Equals, 4)
-}
-
-func (s *testSuite1) TestFastAnalyze(c *C) {
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-	)
-	c.Assert(err, IsNil)
-	var dom *domain.Domain
-	dom, err = session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	executor.MaxSampleSize = 1000
-	executor.RandSeed = 123
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
-	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
-	for i := 0; i < 3000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
-	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tid := tblInfo.Meta().ID
-
-	// construct 5 regions split by {600, 1200, 1800, 2400}
-	splitKeys := generateTableSplitKeyForInt(tid, []int{600, 1200, 1800, 2400})
-	manipulateCluster(cluster, splitKeys)
-
-	tk.MustExec("analyze table t with 5 buckets")
-
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := table.Meta()
-	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	sTbl := fmt.Sprintln(tbl)
-	matched := false
-	if sTbl == "Table:37 Count:3000\n"+
-		"column:1 ndv:3000 totColSize:0\n"+
-		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
-		"column:2 ndv:3000 totColSize:0\n"+
-		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
-		"index:1 ndv:3000\n"+
-		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" ||
-		sTbl == "Table:37 Count:3000\n"+
-			"column:2 ndv:3000 totColSize:0\n"+
-			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
-			"column:1 ndv:3000 totColSize:0\n"+
-			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
-			"index:1 ndv:3000\n"+
-			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" {
-		matched = true
-	}
-	c.Assert(matched, Equals, true)
 }
 
 func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {

@@ -861,28 +861,8 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 }
 
 func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
-	// build collector properties.
-	collector.UpdateTotalSize()
-	collector.Samples = collector.Samples[:e.sampCursor]
-	collector.Count = int64(e.sampCursor)
-	for _, sample := range collector.Samples {
-		if sample.Value.IsNull() {
-			collector.NullCount++
-		} else {
-			err := collector.FMSketch.InsertValue(e.ctx.GetSessionVars().StmtCtx, sample.Value)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-	}
-	// TODO: build collector's CMSketch here.
-
-	// build histogram.
-	hist, err := statistics.BuildColumnWithSamples(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, int64(e.rowCount))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return hist, nil
+	// TODO: build histogram and cmsketch here for one collector.
+	return nil, nil
 }
 
 func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMSketch, error) {
