@@ -154,7 +154,7 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
-var tableReaderDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("TableReaderDistSQLTracker")
+var tableReaderDistSQLTrackerLabel = stringutil.StringerStr("TableReaderDistSQLTracker")
 
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.

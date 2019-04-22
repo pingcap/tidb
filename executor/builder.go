@@ -16,7 +16,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -669,8 +668,8 @@ func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 }
 
 var (
-	grantStmtLabel  fmt.Stringer = stringutil.StringerStr("GrantStmt")
-	revokeStmtLabel fmt.Stringer = stringutil.StringerStr("RevokeStmt")
+	grantStmtLabel  = stringutil.StringerStr("GrantStmt")
+	revokeStmtLabel = stringutil.StringerStr("RevokeStmt")
 )
 
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {

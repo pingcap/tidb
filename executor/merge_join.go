@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -208,7 +207,7 @@ func (e *MergeJoinExec) Close() error {
 	return e.baseExecutor.Close()
 }
 
-var innerTableLabel fmt.Stringer = stringutil.StringerStr("innerTable")
+var innerTableLabel = stringutil.StringerStr("innerTable")
 
 // Open implements the Executor Open interface.
 func (e *MergeJoinExec) Open(ctx context.Context) error {

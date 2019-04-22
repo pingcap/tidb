@@ -16,7 +16,6 @@ package executor
 import (
 	"container/heap"
 	"context"
-	"fmt"
 	"sort"
 	"time"
 
@@ -29,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
+var rowChunksLabel = stringutil.StringerStr("rowChunks")
 
 // SortExec represents sorting executor.
 type SortExec struct {

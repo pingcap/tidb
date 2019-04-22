@@ -38,7 +38,7 @@ type LoadDataExec struct {
 	loadDataInfo *LoadDataInfo
 }
 
-var insertValuesLabel fmt.Stringer = stringutil.StringerStr("InsertValues")
+var insertValuesLabel =stringutil.StringerStr("InsertValues")
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {

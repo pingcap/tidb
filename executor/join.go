@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -263,7 +262,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 	return false, nil
 }
 
-var innerResultLabel fmt.Stringer = stringutil.StringerStr("innerResult")
+var innerResultLabel = stringutil.StringerStr("innerResult")
 
 // fetchInnerRows fetches all rows from inner executor, and append them to
 // e.innerResult.
@@ -615,7 +614,7 @@ func (e *NestedLoopApplyExec) Close() error {
 	return e.outerExec.Close()
 }
 
-var innerListLabel fmt.Stringer = stringutil.StringerStr("innerList")
+var innerListLabel = stringutil.StringerStr("innerList")
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {

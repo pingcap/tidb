@@ -301,7 +301,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	return e.open(ctx, kvRanges)
 }
 
-var indexReaderDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("IndexReaderDistSQLTracker")
+var indexReaderDistSQLTrackerLabel = stringutil.StringerStr("IndexReaderDistSQLTracker")
 
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
@@ -446,7 +446,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
-var indexLookupDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("IndexLookupDistSQLTracker")
+var indexLookupDistSQLTrackerLabel = stringutil.StringerStr("IndexLookupDistSQLTracker")
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
@@ -511,7 +511,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	return nil
 }
 
-var tableWorkerLabel fmt.Stringer = stringutil.StringerStr("tableWorker")
+var tableWorkerLabel = stringutil.StringerStr("tableWorker")
 
 // startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
