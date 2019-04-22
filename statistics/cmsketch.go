@@ -138,12 +138,10 @@ func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
 		c.defaultValue = 1
 	} else if estimateNDV <= uint64(numTop) {
 		c.defaultValue = 1
+	} else if estimateNDV+onlyOnceItems <= uint64(sampleNDV) {
+		c.defaultValue = 1
 	} else {
-		if estimateNDV+onlyOnceItems <= uint64(sampleNDV) {
-			c.defaultValue = 1
-		} else {
-			c.defaultValue = estimateRemainingCount / (estimateNDV - uint64(sampleNDV) + onlyOnceItems)
-		}
+		c.defaultValue = estimateRemainingCount / (estimateNDV - uint64(sampleNDV) + onlyOnceItems)
 	}
 }
 
