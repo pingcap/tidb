@@ -14,6 +14,8 @@
 package chunk
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
@@ -40,13 +42,15 @@ type RowPtr struct {
 	RowIdx uint32
 }
 
+var chunkListLabel fmt.Stringer = stringutil.StringerStr("chunk.List")
+
 // NewList creates a new List with field types, init chunk size and max chunk size.
 func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
 	l := &List{
 		fieldTypes:    fieldTypes,
 		initChunkSize: initChunkSize,
 		maxChunkSize:  maxChunkSize,
-		memTracker:    memory.NewTracker(stringutil.StringerStr("chunk.List"), -1),
+		memTracker:    memory.NewTracker(chunkListLabel, -1),
 		consumedIdx:   -1,
 	}
 	return l

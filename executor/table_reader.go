@@ -154,6 +154,8 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
+var tableReaderDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("TableReaderDistSQLTracker")
+
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
@@ -164,7 +166,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, stringutil.StringerStr("TableReaderDistSQLTracker")).
+		SetMemTracker(e.ctx, tableReaderDistSQLTrackerLabel).
 		Build()
 	if err != nil {
 		return nil, err

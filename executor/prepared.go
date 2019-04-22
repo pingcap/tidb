@@ -86,9 +86,11 @@ type PrepareExec struct {
 	Fields     []*ast.ResultField
 }
 
+var prepareStmtLabel = stringutil.StringerStr("PrepareStmt")
+
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
-	base := newBaseExecutor(ctx, nil, stringutil.StringerStr("PrepareStmt"))
+	base := newBaseExecutor(ctx, nil, prepareStmtLabel)
 	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
 		baseExecutor: base,
