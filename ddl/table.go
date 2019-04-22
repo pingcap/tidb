@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -450,16 +449,13 @@ func (w *worker) onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	// No need to check `newBase` again, because `RebaseAutoID` will do this check.
+	tblInfo.AutoIncID = newBase
 	tbl, err := getTable(store, schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	newBase, err = getNextAutoID(w.sessPool, tbl, newBase)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	tblInfo.AutoIncID = newBase
 	// The operation of the minus 1 to make sure that the current value doesn't be used,
 	// the next Alloc operation will get this value.
 	// Its behavior is consistent with MySQL.
@@ -510,21 +506,6 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
-}
-
-func getNextAutoID(s *sessionPool, tbl table.Table, newBase int64) (int64, error) {
-	ctx, err := s.get()
-	if err != nil {
-		return newBase, errors.Trace(err)
-	}
-	defer s.put(ctx)
-
-	// Check next global max auto ID first.
-	autoIncID, err := tbl.Allocator(ctx).NextGlobalAutoID(tbl.Meta().ID)
-	if err != nil {
-		return newBase, errors.Trace(err)
-	}
-	return mathutil.MaxInt64(newBase, autoIncID), nil
 }
 
 func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits uint64) error {
