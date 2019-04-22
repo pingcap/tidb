@@ -18,6 +18,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -67,24 +68,38 @@ func NewCMSketchWithTopN(d, w int32, data [][]byte, numTop uint32, total uint64)
 	return c
 }
 
-func groupElements(data [][]byte) map[hack.MutableString]uint64 {
-	counter := make(map[hack.MutableString]uint64)
-
-	for k := range data {
-		counter[hack.String(data[k])]++
+// finalBuild builds top n and cmsketch
+func (c *CMSketch) finalBuild(sampleSize uint64, counter map[hack.MutableString]uint64, numTop uint32, nthValue, ratio, sumTopN uint64) (retNumTop uint32, retSumTopN uint64) {
+	enableTopN := sampleSize/uint64(topNThreshold) <= sumTopN
+	topN := make([]dataCount, 0, numTop)
+	retSumTopN = 0
+	for counterKey, cnt := range counter {
+		if enableTopN && cnt >= nthValue {
+			topN = append(topN, dataCount{data: hack.Slice(string(counterKey)), count: cnt * ratio})
+			retSumTopN += cnt * ratio
+		} else {
+			c.insertBytesN(hack.Slice(string(counterKey)), cnt*ratio)
+		}
 	}
-
-	return counter
+	if enableTopN {
+		retNumTop = uint32(len(topN))
+		c.buildTopNMap(topN)
+	}
+	return
 }
 
 // BuildTopN builds table of top N elements.
-// elements in data should not be modified after this call.
-// If the original data is not skew enough, then we won;t build map for top n elements.
+// elements in `data` should not be modified after this call.
+// If the original `data` is not skew enough, then we won't build map for top n elements.
 func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
-	counter := groupElements(data)
+	// Group and count data first
+	counter := make(map[hack.MutableString]uint64)
+	for k := range data {
+		counter[hack.String(data[k])]++
+	}
+	sampleSize := uint64(len(data))
 	sorted := make([]uint64, 0, len(counter))
 	onlyOnceItems := uint64(0)
-
 	for _, cnt := range counter {
 		sorted = append(sorted, cnt)
 		if cnt == 1 {
@@ -96,9 +111,8 @@ func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
 	})
 
 	sampleNDV := uint32(len(sorted))
-	if numTop > sampleNDV {
-		numTop = sampleNDV
-	}
+	numTop = mathutil.MinUint32(sampleNDV, numTop)
+	estimateNDV, ratio := calculateEstimateNDV(onlyOnceItems, sampleSize, uint64(len(sorted)), total)
 
 	NthValue := sorted[numTop-1]
 	newNthValue := sorted[numTop-1]
@@ -116,26 +130,7 @@ func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
 		sumTopN += sorted[i]
 	}
 
-	sampleSize := uint64(len(data))
-	estimateNDV, ratio := calculateEstimateNDV(onlyOnceItems, sampleSize, uint64(len(sorted)), total)
-	enableTopN := sampleSize/uint64(topNThreshold) <= sumTopN
-	topN := make([]dataCount, 0, numTop)
-	sumTopN = 0
-
-	for counterKey, cnt := range counter {
-		if enableTopN && cnt >= newNthValue {
-			topN = append(topN, dataCount{data: hack.Slice(string(counterKey)), count: cnt * ratio})
-			sumTopN += cnt * ratio
-		} else {
-			c.insertBytesN(hack.Slice(string(counterKey)), cnt*ratio)
-		}
-	}
-	numTop = uint32(len(topN))
-	if enableTopN {
-		c.buildTopNMap(topN)
-	}
-
-	estimateRemainingCount := total - (sampleSize-uint64(onlyOnceItems))*ratio
+	numTop, sumTopN = c.finalBuild(sampleSize, counter, numTop, NthValue, ratio, sumTopN)
 
 	if total <= sumTopN {
 		c.defaultValue = 1
@@ -144,6 +139,7 @@ func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
 	} else if estimateNDV+onlyOnceItems <= uint64(sampleNDV) {
 		c.defaultValue = 1
 	} else {
+		estimateRemainingCount := total - (sampleSize-uint64(onlyOnceItems))*ratio
 		c.defaultValue = estimateRemainingCount / (estimateNDV - uint64(sampleNDV) + onlyOnceItems)
 	}
 }
