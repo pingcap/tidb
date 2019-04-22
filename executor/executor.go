@@ -1333,8 +1333,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
+		// For insert statement (not for update statement), disabling the StrictSQLMode
+		// should make TruncateAsWarning and DividedByZeroAsWarning,
+		// but should not make DupKeyAsWarning or BadNullAsWarning,
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.BadNullAsWarning = stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
