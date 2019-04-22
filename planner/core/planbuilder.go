@@ -20,6 +20,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -268,10 +269,14 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
-		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt:
+		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
+	case *ast.CreateBindingStmt:
+		return b.buildCreateBindPlan(x)
+	case *ast.DropBindingStmt:
+		return b.buildDropBindPlan(x)
 	case *ast.ChangeStmt:
 		return b.buildChange(x)
 	}
@@ -358,6 +363,31 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSQLBindDrop,
+		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
+		IsGlobal:     v.GlobalScope,
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	return p, nil
+}
+
+func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
+	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSQLBindCreate,
+		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
+		BindSQL:      v.HintedSel.Text(),
+		IsGlobal:     v.GlobalScope,
+		BindStmt:     v.HintedSel,
+		Charset:      charSet,
+		Collation:    collation,
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }
 
@@ -1008,6 +1038,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		Flag:        show.Flag,
 		Full:        show.Full,
 		User:        show.User,
+		Roles:       show.Roles,
 		IfNotExists: show.IfNotExists,
 		GlobalScope: show.GlobalScope,
 	}.Init(b.ctx)
@@ -1095,7 +1126,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 		}
-	case *ast.AlterUserStmt:
+	case *ast.AlterUserStmt, *ast.SetDefaultRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
@@ -1886,6 +1917,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowDatabases:
 		names = []string{"Database"}
+	case ast.ShowOpenTables:
+		names = []string{"Database", "Table", "In_use", "Name_locked"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeLong}
 	case ast.ShowTables:
 		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
 		if s.Full {
@@ -1981,6 +2015,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 	case ast.ShowPrivileges:
 		names = []string{"Privilege", "Context", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowBindings:
+		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

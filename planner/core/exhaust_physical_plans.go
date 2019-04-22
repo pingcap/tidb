@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -516,7 +517,10 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 	ts.SetSchema(ds.schema)
 
 	ts.stats = property.NewSimpleStats(1)
-	ts.stats.UsePseudoStats = ds.statisticTable.Pseudo
+	ts.stats.StatsVersion = ds.statisticTable.Version
+	if ds.statisticTable.Pseudo {
+		ts.stats.StatsVersion = statistics.PseudoVersion
+	}
 
 	copTask := &copTask{
 		tablePlan:         ts,
@@ -563,7 +567,10 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}
 	is.stats = property.NewSimpleStats(rowCount)
-	is.stats.UsePseudoStats = ds.statisticTable.Pseudo
+	is.stats.StatsVersion = ds.statisticTable.Version
+	if ds.statisticTable.Pseudo {
+		is.stats.StatsVersion = statistics.PseudoVersion
+	}
 
 	cop := &copTask{
 		indexPlan: is,

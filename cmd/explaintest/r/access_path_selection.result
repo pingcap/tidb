@@ -55,7 +55,7 @@ ANALYZE TABLE unknown_correlation;
 EXPLAIN SELECT * FROM unknown_correlation WHERE a = 2 ORDER BY id limit 1;
 id	count	task	operator info
 Limit_11	1.00	root	offset:0, count:1
-└─TableReader_22	1.00	root	data:Limit_21
-  └─Limit_21	1.00	cop	offset:0, count:1
-    └─Selection_20	1.00	cop	eq(test.unknown_correlation.a, 2)
-      └─TableScan_19	4.17	cop	table:unknown_correlation, range:[-inf,+inf], keep order:true
+└─TableReader_24	1.00	root	data:Limit_23
+  └─Limit_23	1.00	cop	offset:0, count:1
+    └─Selection_21	1.00	cop	eq(test.unknown_correlation.a, 2)
+      └─TableScan_20	4.17	cop	table:unknown_correlation, range:[-inf,+inf], keep order:true

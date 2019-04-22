@@ -177,6 +177,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
+	case *plannercore.SQLBindPlan:
+		return b.buildSQLBindExec(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -519,6 +521,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		Table:        v.Table,
 		Column:       v.Column,
 		User:         v.User,
+		Roles:        v.Roles,
 		IfNotExists:  v.IfNotExists,
 		Flag:         v.Flag,
 		Full:         v.Full,
@@ -1250,7 +1253,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 
 // cols2Handle represents an mapper from column index to handle index.
 type cols2Handle struct {
-	// start/end represent the ordinal range [start, end) of the consecutive columns.
+	// start and end represent the ordinal range [start, end) of the consecutive columns.
 	start, end int32
 	// handleOrdinal represents the ordinal of the handle column.
 	handleOrdinal int32
@@ -2028,6 +2031,23 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		processor:    processor,
 		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
 	}
+}
+
+func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = chunk.ZeroCapacity
+
+	e := &SQLBindExec{
+		baseExecutor: base,
+		sqlBindOp:    v.SQLBindOp,
+		normdOrigSQL: v.NormdOrigSQL,
+		bindSQL:      v.BindSQL,
+		charset:      v.Charset,
+		collation:    v.Collation,
+		isGlobal:     v.IsGlobal,
+		bindAst:      v.BindStmt,
+	}
+	return e
 }
 
 func getPhysicalTableID(t table.Table) int64 {

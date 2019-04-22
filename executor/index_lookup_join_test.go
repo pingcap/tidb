@@ -71,7 +71,7 @@ func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
 		"  └─IndexLookUp_11 0.00 root ",
 		"    ├─Selection_10 0.00 cop not(isnull(test.t2.a))",
 		"    │ └─IndexScan_8 10.00 cop table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-		"    └─TableScan_9 0.00 cop table:t2, keep order:false",
+		"    └─TableScan_9 0.00 cop table:t2, keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
 		"2 2 2 2 2",
