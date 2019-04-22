@@ -15,6 +15,7 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -74,7 +75,7 @@ type selectResult struct {
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
-	copPlanIDs []string
+	copPlanIDs []fmt.Stringer
 
 	memTracker *memory.Tracker
 }
@@ -207,7 +208,7 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID, callee, detail)
+				RecordOneCopTask(planID.String(), callee, detail)
 		}
 	}
 }
