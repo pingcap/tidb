@@ -67,7 +67,7 @@ var _ = Suite(&testDBSuite6{})
 var _ = Suite(&testDBSuite7{})
 var _ = Suite(&testDBSuite8{})
 
-const defaultBatchSize = 2048
+const defaultBatchSize = 1024
 
 type testDBSuite struct {
 	cluster    *mocktikv.Cluster
