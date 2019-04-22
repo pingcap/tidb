@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	typ "github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -322,7 +322,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, typ.InstantStr("IndexReaderDistSQLTracker")).
+		SetMemTracker(e.ctx, stringutil.StringerStr("IndexReaderDistSQLTracker")).
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -458,7 +458,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.indexStreaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, typ.InstantStr("IndexLookupDistSQLTracker")).
+		SetMemTracker(e.ctx, stringutil.StringerStr("IndexLookupDistSQLTracker")).
 		Build()
 	if err != nil {
 		return err
@@ -519,7 +519,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:      e.keepOrder,
 			handleIdx:      e.handleIdx,
 			isCheckOp:      e.isCheckOp,
-			memTracker:     memory.NewTracker(typ.InstantStr("tableWorker"), -1),
+			memTracker:     memory.NewTracker(stringutil.StringerStr("tableWorker"), -1),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
@@ -533,7 +533,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, typ.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		streaming:      e.tableStreaming,

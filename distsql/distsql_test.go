@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
-	typ "github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -68,7 +68,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 		var planIDFuncs []fmt.Stringer
 		for i := range planIDs {
 			idx := i
-			planIDFuncs = append(planIDFuncs, typ.InstantStr(planIDs[idx]))
+			planIDFuncs = append(planIDFuncs, stringutil.StringerStr(planIDs[idx]))
 		}
 		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs)
 	}

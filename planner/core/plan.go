@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
-	typ "github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -261,7 +261,7 @@ func (p *basePlan) statsInfo() *property.StatsInfo {
 }
 
 func (p *basePlan) ExplainID() fmt.Stringer {
-	return typ.MemoizeStr(func() string {
+	return stringutil.MemoizeStr(func() string {
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
 }

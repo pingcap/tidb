@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/types"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -222,7 +222,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
 	}
 
-	e.innerTable.memTracker = memory.NewTracker(types.InstantStr("innerTable"), -1)
+	e.innerTable.memTracker = memory.NewTracker(stringutil.StringerStr("innerTable"), -1)
 	e.innerTable.memTracker.AttachTo(e.memTracker)
 
 	return nil

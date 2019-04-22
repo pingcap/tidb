@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	typ "github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -1292,7 +1292,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
 		TimeZone:   vars.Location(),
-		MemTracker: memory.NewTracker(typ.MemoizeStr(s.Text), vars.MemQuotaQuery),
+		MemTracker: memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:

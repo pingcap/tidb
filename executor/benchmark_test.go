@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	typ "github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var (
@@ -128,7 +128,7 @@ func (mds *mockDataSource) Next(ctx context.Context, req *chunk.RecordBatch) err
 }
 
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
-	baseExec := newBaseExecutor(opt.ctx, opt.schema, typ.InstantStr(""))
+	baseExec := newBaseExecutor(opt.ctx, opt.schema, stringutil.StringerStr(""))
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
 	types := m.retTypes()
 	colData := make([][]interface{}, len(types))

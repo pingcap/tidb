@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
-	typ "github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type requiredRowsDataSource struct {
@@ -63,7 +63,7 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(ctx, schema, typ.InstantStr(""))
+	baseExec := newBaseExecutor(ctx, schema, stringutil.StringerStr(""))
 	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0, defaultGenerator}
 }
 
@@ -191,7 +191,7 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 
 func buildLimitExec(ctx sessionctx.Context, src Executor, offset, count int) Executor {
 	n := mathutil.Min(count, ctx.GetSessionVars().MaxChunkSize)
-	base := newBaseExecutor(ctx, src.Schema(), typ.InstantStr(""), src)
+	base := newBaseExecutor(ctx, src.Schema(), stringutil.StringerStr(""), src)
 	base.initCap = n
 	limitExec := &LimitExec{
 		baseExecutor: base,
@@ -206,7 +206,7 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MemQuotaSort = variable.DefTiDBMemQuotaSort
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(typ.InstantStr(""), ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr(""), ctx.GetSessionVars().MemQuotaQuery)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
 	return ctx
 }
@@ -274,7 +274,7 @@ func (s *testExecSuite) TestSortRequiredRows(c *C) {
 
 func buildSortExec(sctx sessionctx.Context, byItems []*plannercore.ByItems, src Executor) Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(sctx, src.Schema(), typ.InstantStr(""), src),
+		baseExecutor: newBaseExecutor(sctx, src.Schema(), stringutil.StringerStr(""), src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -381,7 +381,7 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 
 func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*plannercore.ByItems, src Executor) Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), typ.InstantStr(""), src),
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), stringutil.StringerStr(""), src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -474,7 +474,7 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 
 func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src Executor) Executor {
 	return &SelectionExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), typ.InstantStr(""), src),
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), stringutil.StringerStr(""), src),
 		filters:      filters,
 	}
 }
@@ -592,7 +592,7 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor, numWorkers int) Executor {
 	return &ProjectionExec{
-		baseExecutor:  newBaseExecutor(ctx, src.Schema(), typ.InstantStr(""), src),
+		baseExecutor:  newBaseExecutor(ctx, src.Schema(), stringutil.StringerStr(""), src),
 		numWorkers:    int64(numWorkers),
 		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 	}

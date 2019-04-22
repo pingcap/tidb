@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
-	typ "github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // SortExec represents sorting executor.
@@ -105,7 +105,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	fields := e.retTypes()
 	e.rowChunks = chunk.NewList(fields, e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(typ.InstantStr("rowChunks"))
+	e.rowChunks.GetMemTracker().SetLabel(stringutil.StringerStr("rowChunks"))
 	for {
 		chk := e.children[0].newFirstChunk()
 		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
@@ -274,7 +274,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
 	e.rowChunks = chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(typ.InstantStr("rowChunks"))
+	e.rowChunks.GetMemTracker().SetLabel(stringutil.StringerStr("rowChunks"))
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
 		srcChk := e.children[0].newFirstChunk()
 		// adjust required rows by total limit
@@ -352,7 +352,7 @@ func (e *TopNExec) doCompaction() error {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
-	newRowChunks.GetMemTracker().SetLabel(typ.InstantStr("rowChunks"))
+	newRowChunks.GetMemTracker().SetLabel(stringutil.StringerStr("rowChunks"))
 	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
 

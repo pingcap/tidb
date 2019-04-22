@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
-	typ "github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var (
@@ -267,7 +267,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context) error {
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
-	e.innerResult.GetMemTracker().SetLabel(typ.InstantStr("innerResult"))
+	e.innerResult.GetMemTracker().SetLabel(stringutil.StringerStr("innerResult"))
 	var err error
 	for {
 		if e.finished.Load().(bool) {
@@ -627,7 +627,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.innerList.GetMemTracker().SetLabel(typ.InstantStr("innerList"))
+	e.innerList.GetMemTracker().SetLabel(stringutil.StringerStr("innerList"))
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
 	return nil
