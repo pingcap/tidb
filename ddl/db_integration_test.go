@@ -273,10 +273,6 @@ type testIntegrationSuite11 struct {
 	testIntegrationSuite
 }
 
-func (s *testIntegrationSuite11) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
-}
-
 func (s *testIntegrationSuite11) SetUpSuite(c *C) {
 	setupIntegrationSuite(&s.testIntegrationSuite, c)
 }
