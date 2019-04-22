@@ -15,12 +15,12 @@ package domain
 
 import (
 	"container/heap"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 )
 
