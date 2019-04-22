@@ -273,6 +273,10 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewDatum(st.isInternal))
 	record = append(record, types.NewStringDatum(st.digest))
 	record = append(record, types.NewStringDatum(st.statsInfo))
+	record = append(record, types.NewIntDatum(st.numCopTasks))
+	record = append(record, types.NewStringDatum(st.copProcess))
+	record = append(record, types.NewStringDatum(st.copWait))
+	record = append(record, types.NewIntDatum(st.memMax))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
 }
