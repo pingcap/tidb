@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -220,11 +221,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
-	// gofail: var mockCommitError bool
-	// if mockCommitError && kv.IsMockCommitErrorEnable() {
-	//  kv.MockCommitErrorDisable()
-	//	return errors.New("mock commit error")
-	// }
+	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+		if val.(bool) && kv.IsMockCommitErrorEnable() {
+			kv.MockCommitErrorDisable()
+			failpoint.Return(errors.New("mock commit error"))
+		}
+	})
 
 	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
