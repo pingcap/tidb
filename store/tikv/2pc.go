@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -734,10 +735,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// gofail: var tmpMaxTxnTime uint64
-	// if tmpMaxTxnTime > 0 {
-	//  c.maxTxnTimeUse = tmpMaxTxnTime
-	// }
+	failpoint.Inject("tmpMaxTxnTime", func(val failpoint.Value) {
+		if tmpMaxTxnTime := uint64(val.(int)); tmpMaxTxnTime > 0 {
+			c.maxTxnTimeUse = tmpMaxTxnTime
+		}
+	})
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
 		err = errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",
