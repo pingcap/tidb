@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -221,10 +222,11 @@ const (
       	bind_sql text NOT NULL ,
       	default_db text  NOT NULL,
 		status text NOT NULL,
-		create_time timestamp NOT NULL,
-		update_time timestamp NOT NULL,
+		create_time timestamp(3) NOT NULL,
+		update_time timestamp(3) NOT NULL,
 		charset text NOT NULL,
 		collation text NOT NULL,
+		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -250,17 +252,27 @@ const (
 
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
-	b, err := checkBootstrapped(s)
-	if err != nil {
-		logutil.Logger(context.Background()).Fatal("check bootstrap error",
-			zap.Error(err))
+	dom := domain.GetDomain(s)
+	for {
+		b, err := checkBootstrapped(s)
+		if err != nil {
+			logutil.Logger(context.Background()).Fatal("check bootstrap error",
+				zap.Error(err))
+		}
+		// For rolling upgrade, we can't do upgrade only in the owner.
+		if b {
+			upgrade(s)
+			return
+		}
+		// To reduce conflict when multiple TiDB-server start at the same time.
+		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
+		if dom.DDL().OwnerManager().IsOwner() {
+			doDDLWorks(s)
+			doDMLWorks(s)
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
-	if b {
-		upgrade(s)
-		return
-	}
-	doDDLWorks(s)
-	doDMLWorks(s)
 }
 
 const (
@@ -304,6 +316,7 @@ const (
 	version26 = 26
 	version27 = 27
 	version28 = 28
+	version29 = 29
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -473,6 +486,10 @@ func upgrade(s Session) {
 
 	if ver < version28 {
 		upgradeToVer28(s)
+	}
+
+	if ver == version28 {
+		upgradeToVer29(s)
 	}
 
 	updateBootstrapVer(s)
@@ -755,6 +772,12 @@ func upgradeToVer27(s Session) {
 
 func upgradeToVer28(s Session) {
 	doReentrantDDL(s, CreateBindInfoTable)
+}
+
+func upgradeToVer29(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change create_time create_time timestamp(3)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change update_time update_time timestamp(3)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info add index sql_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

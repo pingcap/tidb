@@ -31,7 +31,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -43,7 +43,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -136,8 +136,10 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	}
 
 	// Goroutine should not leak when error happen.
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError"), IsNil)
+	}()
 	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
 	c.Assert(err, IsNil)
 	rs := rss[0]
@@ -599,17 +601,17 @@ func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (1), (2)")
 	do, _ := session.GetDomain(s.store)
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
+	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
+	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
 	do.StatsHandle().Update(do.InfoSchema())
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
+	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
 	do.StatsHandle().Update(do.InfoSchema())
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }
@@ -661,8 +663,10 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	//     └─TableScan_10     | 3.00  | cop  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
-	gofail.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/executor/parallelHashAggError")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/parallelHashAggError"), IsNil)
+	}()
 	ctx := context.Background()
 	rss, err := tk.Se.Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)
@@ -680,8 +684,10 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 
 	// Goroutine should not leak when error happen.
-	gofail.Enable("github.com/pingcap/tidb/executor/unparallelHashAggError", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/unparallelHashAggError", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError"), IsNil)
+	}()
 	ctx := context.Background()
 	rss, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)

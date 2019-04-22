@@ -26,6 +26,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -228,6 +229,8 @@ var (
 	ErrAlterOperationNotSupported = terror.ClassDDL.New(codeNotSupportedAlterOperation, mysql.MySQLErrName[mysql.ErrAlterOperationNotSupportedReason])
 	// ErrWrongObject returns for wrong object.
 	ErrWrongObject = terror.ClassDDL.New(codeErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
+	// ErrTableCantHandleFt returns FULLTEXT keys are not supported by table type
+	ErrTableCantHandleFt = terror.ClassDDL.New(codeErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
 	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
 	ErrFieldNotFoundPart = terror.ClassDDL.New(codeFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
 	// ErrPartitionColumnList returns "Inconsistency in usage of column lists for partitioning".
@@ -502,10 +505,11 @@ func (d *ddl) genGlobalID() (int64, error) {
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
 
-		// gofail: var mockGenGlobalIDFail bool
-		// if mockGenGlobalIDFail {
-		//	 return errors.New("gofail genGlobalID error")
-		// }
+		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.New("gofail genGlobalID error"))
+			}
+		})
 
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
@@ -564,7 +568,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(job.Type)
-	logutil.Logger(ddlLogCtx).Info("[ddl] start to do DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
+	logutil.Logger(ddlLogCtx).Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
 	jobID := job.ID
@@ -716,6 +720,7 @@ const (
 	codePrimaryCantHaveNull                    = terror.ErrCode(mysql.ErrPrimaryCantHaveNull)
 	codeWrongExprInPartitionFunc               = terror.ErrCode(mysql.ErrWrongExprInPartitionFunc)
 	codeWarnDataTruncated                      = terror.ErrCode(mysql.WarnDataTruncated)
+	codeErrTableCantHandleFt                   = terror.ErrCode(mysql.ErrTableCantHandleFt)
 	codeCoalesceOnlyOnHashPartition            = terror.ErrCode(mysql.ErrCoalesceOnlyOnHashPartition)
 	codeUnknownPartition                       = terror.ErrCode(mysql.ErrUnknownPartition)
 	codeErrGeneratedColumnFunctionIsNotAllowed = terror.ErrCode(mysql.ErrGeneratedColumnFunctionIsNotAllowed)
@@ -776,6 +781,7 @@ func init() {
 		codePrimaryCantHaveNull:                    mysql.ErrPrimaryCantHaveNull,
 		codeWrongExprInPartitionFunc:               mysql.ErrWrongExprInPartitionFunc,
 		codeWarnDataTruncated:                      mysql.WarnDataTruncated,
+		codeErrTableCantHandleFt:                   mysql.ErrTableCantHandleFt,
 		codeCoalesceOnlyOnHashPartition:            mysql.ErrCoalesceOnlyOnHashPartition,
 		codeUnknownPartition:                       mysql.ErrUnknownPartition,
 		codeNotSupportedAlterOperation:             mysql.ErrAlterOperationNotSupportedReason,

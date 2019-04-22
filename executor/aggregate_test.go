@@ -702,3 +702,11 @@ func (s *testSuite1) TestIssue10099(c *C) {
 	tk.MustExec("insert into t values('1', '222'), ('12', '22')")
 	tk.MustQuery("select count(distinct a, b) from t").Check(testkit.Rows("2"))
 }
+
+func (s *testSuite1) TestIssue10098(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(a char(10), b char(10))")
+	tk.MustExec("insert into t values('1', '222'), ('12', '22')")
+	tk.MustQuery("select group_concat(distinct a, b) from t").Check(testkit.Rows("1222,1222"))
+}

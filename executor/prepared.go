@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -85,9 +86,11 @@ type PrepareExec struct {
 	Fields     []*ast.ResultField
 }
 
+var prepareStmtLabel = stringutil.StringerStr("PrepareStmt")
+
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
-	base := newBaseExecutor(ctx, nil, "PrepareStmt")
+	base := newBaseExecutor(ctx, nil, prepareStmtLabel)
 	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
 		baseExecutor: base,

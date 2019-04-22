@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -178,6 +180,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
+	case *plannercore.SQLBindPlan:
+		return b.buildSQLBindExec(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -520,6 +524,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		Table:        v.Table,
 		Column:       v.Column,
 		User:         v.User,
+		Roles:        v.Roles,
 		IfNotExists:  v.IfNotExists,
 		Flag:         v.Flag,
 		Full:         v.Full,
@@ -663,9 +668,14 @@ func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 	return replaceExec
 }
 
+var (
+	grantStmtLabel  fmt.Stringer = stringutil.StringerStr("GrantStmt")
+	revokeStmtLabel fmt.Stringer = stringutil.StringerStr("RevokeStmt")
+)
+
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 	e := &GrantExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, "GrantStmt"),
+		baseExecutor: newBaseExecutor(b.ctx, nil, grantStmtLabel),
 		Privs:        grant.Privs,
 		ObjectType:   grant.ObjectType,
 		Level:        grant.Level,
@@ -678,7 +688,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 
 func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 	e := &RevokeExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, "RevokeStmt"),
+		baseExecutor: newBaseExecutor(b.ctx, nil, revokeStmtLabel),
 		ctx:          b.ctx,
 		Privs:        revoke.Privs,
 		ObjectType:   revoke.ObjectType,
@@ -1251,7 +1261,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 
 // cols2Handle represents an mapper from column index to handle index.
 type cols2Handle struct {
-	// start/end represent the ordinal range [start, end) of the consecutive columns.
+	// start and end represent the ordinal range [start, end) of the consecutive columns.
 	start, end int32
 	// handleOrdinal represents the ordinal of the handle column.
 	handleOrdinal int32
@@ -1390,25 +1400,93 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	return e
 }
 
+func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) {
+	findTask := false
+	for _, eTask := range e.tasks {
+		if eTask.fastExec.PhysicalTableID == task.PhysicalTableID {
+			eTask.fastExec.colsInfo = append(eTask.fastExec.colsInfo, task.ColsInfo...)
+			findTask = true
+			break
+		}
+	}
+	if !findTask {
+		var concurrency int
+		concurrency, b.err = getBuildStatsConcurrency(e.ctx)
+		if b.err != nil {
+			return
+		}
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType: fastTask,
+			fastExec: &AnalyzeFastExec{
+				ctx:             b.ctx,
+				PhysicalTableID: task.PhysicalTableID,
+				colsInfo:        task.ColsInfo,
+				pkInfo:          task.PKInfo,
+				maxNumBuckets:   maxNumBuckets,
+				table:           task.Table,
+				concurrency:     concurrency,
+			},
+		})
+	}
+}
+
+func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, maxNumBuckets uint64) {
+	findTask := false
+	for _, eTask := range e.tasks {
+		if eTask.fastExec.PhysicalTableID == task.PhysicalTableID {
+			eTask.fastExec.idxsInfo = append(eTask.fastExec.idxsInfo, task.IndexInfo)
+			findTask = true
+			break
+		}
+	}
+	if !findTask {
+		var concurrency int
+		concurrency, b.err = getBuildStatsConcurrency(e.ctx)
+		if b.err != nil {
+			return
+		}
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType: fastTask,
+			fastExec: &AnalyzeFastExec{
+				ctx:             b.ctx,
+				PhysicalTableID: task.PhysicalTableID,
+				idxsInfo:        []*model.IndexInfo{task.IndexInfo},
+				maxNumBuckets:   maxNumBuckets,
+				table:           task.Table,
+				concurrency:     concurrency,
+			},
+		})
+	}
+}
+
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	e := &AnalyzeExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
+	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	for _, task := range v.ColTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType: colTask,
-			colExec:  b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets),
-		})
+		if enableFastAnalyze {
+			b.buildAnalyzeFastColumn(e, task, v.MaxNumBuckets)
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: colTask,
+				colExec:  b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets),
+			})
+		}
 		if b.err != nil {
 			return nil
 		}
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType: idxTask,
-			idxExec:  b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets),
-		})
+		if enableFastAnalyze {
+			b.buildAnalyzeFastIndex(e, task, v.MaxNumBuckets)
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: idxTask,
+				idxExec:  b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets),
+			})
+		}
 		if b.err != nil {
 			return nil
 		}
@@ -1937,6 +2015,23 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		processor:    processor,
 		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
 	}
+}
+
+func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = chunk.ZeroCapacity
+
+	e := &SQLBindExec{
+		baseExecutor: base,
+		sqlBindOp:    v.SQLBindOp,
+		normdOrigSQL: v.NormdOrigSQL,
+		bindSQL:      v.BindSQL,
+		charset:      v.Charset,
+		collation:    v.Collation,
+		isGlobal:     v.IsGlobal,
+		bindAst:      v.BindStmt,
+	}
+	return e
 }
 
 func getPhysicalTableID(t table.Table) int64 {

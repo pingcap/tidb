@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -440,8 +441,12 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				col.GeneratedStored = v.Stored
 				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
+			case ast.ColumnOptionCollate:
+				if field_types.HasCharset(colDef.Tp) {
+					col.FieldType.Collate = v.StrValue
+				}
 			case ast.ColumnOptionFulltext:
-				// TODO: Support this type.
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			}
 		}
 	}
@@ -967,6 +972,11 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 					continue
 				}
 			}
+		}
+		if constr.Tp == ast.ConstraintFulltext {
+			sc := ctx.GetSessionVars().StmtCtx
+			sc.AppendWarning(ErrTableCantHandleFt)
+			continue
 		}
 		// build index info.
 		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
@@ -1710,6 +1720,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
 				err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("add")
+			case ast.ConstraintFulltext:
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			default:
 				// Nothing to do now.
 			}
