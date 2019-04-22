@@ -1199,7 +1199,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err == nil {
 		// do pre-split and scatter.
 		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-			go preSplitTableRegion(d.store, tbInfo)
+			preSplitTableRegion(d.store, tbInfo)
 		}
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
