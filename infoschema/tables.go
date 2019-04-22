@@ -568,7 +568,7 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"PARTITION_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"JOB_INFO", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ROW_COUNT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{"PROCESSED_ROWS", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{"START_TIME", mysql.TypeDatetime, 0, 0, nil, nil},
 	{"STATE", mysql.TypeVarchar, 64, 0, nil, nil},
 }

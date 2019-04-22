@@ -370,7 +370,7 @@ func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[0][3], Equals, "analyze columns")
 	c.Assert(result.Rows()[0][4], Equals, "2")
 	c.Assert(result.Rows()[0][5], NotNil)
-	c.Assert(result.Rows()[0][6], Equals, "succeed")
+	c.Assert(result.Rows()[0][6], Equals, "finished")
 
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[1][0], Equals, "test")
@@ -379,5 +379,5 @@ func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][3], Equals, "analyze index idx")
 	c.Assert(result.Rows()[1][4], Equals, "2")
 	c.Assert(result.Rows()[1][5], NotNil)
-	c.Assert(result.Rows()[1][6], Equals, "succeed")
+	c.Assert(result.Rows()[1][6], Equals, "finished")
 }

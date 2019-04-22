@@ -41,7 +41,7 @@ type AnalyzeJob struct {
 const (
 	pending = "pending"
 	running = "running"
-	succeed = "succeed"
+	succeed = "finished"
 	failed  = "failed"
 )
 
