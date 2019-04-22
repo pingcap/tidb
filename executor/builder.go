@@ -1457,6 +1457,10 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
+	autoAnalyze := ""
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		autoAnalyze = "auto "
+	}
 	for _, task := range v.ColTasks {
 		if enableFastAnalyze {
 			b.buildAnalyzeFastColumn(e, task, v.MaxNumBuckets)
@@ -1464,7 +1468,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			e.tasks = append(e.tasks, &analyzeTask{
 				taskType: colTask,
 				colExec:  b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets),
-				job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze columns"},
+				job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"},
 			})
 		}
 		if b.err != nil {
@@ -1478,7 +1482,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			e.tasks = append(e.tasks, &analyzeTask{
 				taskType: idxTask,
 				idxExec:  b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets),
-				job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze index " + task.IndexInfo.Name.O},
+				job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O},
 			})
 		}
 		if b.err != nil {

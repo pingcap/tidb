@@ -812,24 +812,20 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 		}
 		for _, idx := range idxInfo {
 			for i, id := range physicalIDs {
-				info := AnalyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i]}
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Table: table}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
-					PhysicalTableID: id,
-					IndexInfo:       idx,
-					Table:           table,
-					AnalyzeInfo:     info,
+					IndexInfo:   idx,
+					analyzeInfo: info,
 				})
 			}
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
 			for i, id := range physicalIDs {
-				info := AnalyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i]}
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Table: table}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
-					PhysicalTableID: id,
-					PKInfo:          pkInfo,
-					ColsInfo:        colInfo,
-					Table:           table,
-					AnalyzeInfo:     info,
+					PKInfo:      pkInfo,
+					ColsInfo:    colInfo,
+					analyzeInfo: info,
 				})
 			}
 		}
@@ -850,8 +846,8 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
 		for i, id := range physicalIDs {
-			info := AnalyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i]}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx, AnalyzeInfo: info})
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id}
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info})
 		}
 	}
 	return p, nil
@@ -867,8 +863,8 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, erro
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			for i, id := range physicalIDs {
-				info := AnalyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i]}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx, AnalyzeInfo: info})
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id}
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info})
 			}
 		}
 	}
