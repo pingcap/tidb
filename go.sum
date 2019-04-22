@@ -96,8 +96,8 @@ github.com/pingcap/kvproto v0.0.0-20190226063853-f6c0b7ffff11 h1:iGNfAHgK0VHJobW
 github.com/pingcap/kvproto v0.0.0-20190226063853-f6c0b7ffff11/go.mod h1:0gwbe1F2iBIjuQ9AH0DbQhL+Dpr5GofU8fgYyXk+ykk=
 github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596 h1:t2OQTpPJnrPDGlvA+3FwJptMTt6MEPdzK1Wt99oaefQ=
 github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596/go.mod h1:WpHUKhNZ18v116SvGrmjkA9CBhYmuUTKL+p8JC9ANEw=
-github.com/pingcap/parser v0.0.0-20190410113155-72aa33252485 h1:tmK/bExJ3Mcnh3Lo07naQZjd7ADX9eo6kjM02z5h6OM=
-github.com/pingcap/parser v0.0.0-20190410113155-72aa33252485/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20190421035202-497ae72425c5 h1:csU8uAxq5yIK6SMRtuYkiazo7cFP9iio9vSK1uh23nU=
+github.com/pingcap/parser v0.0.0-20190421035202-497ae72425c5/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible h1:e9Gi/LP9181HT3gBfSOeSBA+5JfemuE4aEAhqNgoE4k=
