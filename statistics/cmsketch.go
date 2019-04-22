@@ -14,7 +14,6 @@
 package statistics
 
 import (
-	"bytes"
 	"math"
 	"sort"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
 )
@@ -38,12 +38,11 @@ type CMSketch struct {
 	count        uint64 // TopN is not counted in count
 	defaultValue uint64 // In sampled data, if cmsketch returns a small value (less than avg value / 2), then this will returned.
 	table        [][]uint32
-	topNIndex    map[uint64][]cmsCount
+	topNIndex    map[hack.MutableString]uint64
 }
 
-type cmsCount struct {
-	h1    uint64
-	h2    uint64
+// dataCount is a simple counter used by BuildTopN
+type dataCount struct {
 	data  []byte
 	count uint64
 }
@@ -58,38 +57,18 @@ func NewCMSketch(d, w int32) *CMSketch {
 }
 
 // NewCMSketchWithTopN returns a new CM sketch with TopN elements.
-// Total is the size of the whole dataset
-// Only when the number of topn elements exceeded len(data) / topnThreshold will store topn elements
-func NewCMSketchWithTopN(d, w int32, data [][]byte, n uint32, total uint64) *CMSketch {
-	tbl := make([][]uint32, d)
-	for i := range tbl {
-		tbl[i] = make([]uint32, w)
-	}
-	c := &CMSketch{depth: d, width: w, table: tbl}
-	c.BuildTopN(data, n, topNThreshold, total)
+// total is the size of the whole dataset
+func NewCMSketchWithTopN(d, w int32, data [][]byte, numTop uint32, total uint64) *CMSketch {
+	c := NewCMSketch(d, w)
+	c.BuildTopN(data, numTop, total)
 	return c
 }
 
-func groupElements(data [][]byte) map[uint64][]cmsCount {
-	counter := make(map[uint64][]cmsCount)
+func groupElements(data [][]byte) map[hack.MutableString]uint64 {
+	counter := make(map[hack.MutableString]uint64)
 
 	for k := range data {
-		h1, h2 := murmur3.Sum128(data[k])
-		vals, ok := counter[h1]
-		if !ok {
-			vals = make([]cmsCount, 0)
-		}
-		exists := false
-		for i := range vals {
-			if vals[i].h2 == h2 && bytes.Equal(vals[i].data, data[k]) {
-				exists = true
-				vals[i].count++
-			}
-		}
-		if !exists {
-			vals = append(vals, cmsCount{h1, h2, data[k], 1})
-		}
-		counter[h1] = vals
+		counter[hack.String(data[k])]++
 	}
 
 	return counter
@@ -97,13 +76,16 @@ func groupElements(data [][]byte) map[uint64][]cmsCount {
 
 // BuildTopN builds table of top N elements.
 // elements in data should not be modified after this call.
-func (c *CMSketch) BuildTopN(data [][]byte, numTop, topNThreshold uint32, total uint64) {
+// If the original data is not skew enough, then we won;t build map for top n elements.
+func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
 	counter := groupElements(data)
-	sorted := make([]uint64, 0)
+	sorted := make([]uint64, 0, len(counter))
+	onlyOnceItems := uint64(0)
 
-	for _, vals := range counter {
-		for i := range vals {
-			sorted = append(sorted, vals[i].count)
+	for _, cnt := range counter {
+		sorted = append(sorted, cnt)
+		if cnt == 1 {
+			onlyOnceItems++
 		}
 	}
 	sort.Slice(sorted, func(i, j int) bool {
@@ -131,21 +113,18 @@ func (c *CMSketch) BuildTopN(data [][]byte, numTop, topNThreshold uint32, total 
 		sumTopN += sorted[i]
 	}
 
-	estimateNDV, ratio, onlyOnceItems := calculateEstimateNDV(sorted, total)
-
 	sampleSize := uint64(len(data))
+	estimateNDV, ratio := calculateEstimateNDV(onlyOnceItems, sampleSize, uint64(len(sorted)), total)
 	enableTopN := sampleSize/uint64(topNThreshold) <= sumTopN
-	topN := make([]cmsCount, 0)
+	topN := make([]dataCount, 0, numTop)
 	sumTopN = 0
 
-	for _, vals := range counter {
-		for i := range vals {
-			if enableTopN && vals[i].count >= newNthValue {
-				topN = append(topN, cmsCount{data: vals[i].data, count: vals[i].count * ratio})
-				sumTopN += vals[i].count * ratio
-			} else {
-				c.insertBytesN(vals[i].data, vals[i].count*ratio)
-			}
+	for counterKey, cnt := range counter {
+		if enableTopN && cnt >= newNthValue {
+			topN = append(topN, dataCount{data: hack.Slice(string(counterKey)), count: cnt * ratio})
+			sumTopN += cnt * ratio
+		} else {
+			c.insertBytesN(hack.Slice(string(counterKey)), cnt*ratio)
 		}
 	}
 	numTop = uint32(len(topN))
@@ -168,46 +147,32 @@ func (c *CMSketch) BuildTopN(data [][]byte, numTop, topNThreshold uint32, total 
 	}
 }
 
-func (c *CMSketch) buildTopNMap(topn []cmsCount) {
-	c.topNIndex = make(map[uint64][]cmsCount)
+func (c *CMSketch) buildTopNMap(topn []dataCount) {
+	c.topNIndex = make(map[hack.MutableString]uint64)
 	for i := range topn {
 		if topn[i].data == nil {
 			continue
 		}
-		h1, h2 := murmur3.Sum128(topn[i].data)
-		vals, ok := c.topNIndex[h1]
-		if !ok {
-			vals = make([]cmsCount, 0)
-		}
-		vals = append(vals, cmsCount{h1, h2, topn[i].data, topn[i].count})
-		c.topNIndex[h1] = vals
+		c.topNIndex[hack.String(topn[i].data)] = topn[i].count
 	}
 }
 
 // queryAddTopN TopN adds count to CMSketch.topNIndex if exists, and returns the count of such elements after insert
 // if such elements does not in topn elements, nothing will happen and false will be returned.
-func (c *CMSketch) queryAddTopN(h1, h2, count uint64, d []byte) (uint64, bool) {
+func (c *CMSketch) queryAddTopN(d []byte, count uint64) (uint64, bool) {
 	if c.topNIndex == nil {
 		return 0, false
 	}
-	cnt, ok := c.topNIndex[h1]
-	if !ok {
-		return 0, false
+	cnt, ok := c.topNIndex[hack.String(d)]
+	if count == 0 {
+		return cnt, ok
 	}
-	for k := range cnt {
-		if cnt[k].h2 == h2 && bytes.Equal(d, cnt[k].data) {
-			if count != 0 {
-				// Avoid potential data race
-				cnt[k].count += count
-			}
-			return cnt[k].count, true
-		}
-	}
+	c.topNIndex[hack.String(d)] = cnt + count
 	return 0, false
 }
 
-func (c *CMSketch) queryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
-	return c.queryAddTopN(h1, h2, 0, d)
+func (c *CMSketch) queryTopN(d []byte) (uint64, bool) {
+	return c.queryAddTopN(d, 0)
 }
 
 // InsertBytes inserts the bytes value into the CM Sketch.
@@ -218,7 +183,7 @@ func (c *CMSketch) InsertBytes(bytes []byte) {
 // insertBytesN adds the bytes value into the CM Sketch by n.
 func (c *CMSketch) insertBytesN(bytes []byte, n uint64) {
 	h1, h2 := murmur3.Sum128(bytes)
-	if _, ok := c.queryAddTopN(h1, h2, n, bytes); ok {
+	if _, ok := c.queryAddTopN(bytes, n); ok {
 		return
 	}
 	c.count += n
@@ -255,9 +220,9 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 // setValue sets the count for value that hashed into (h1, h2).
 func (c *CMSketch) setValueBytes(d []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := c.queryTopN(h1, h2, d); ok {
+	if oriCount, ok := c.queryTopN(d); ok {
 		deltaCount := count - oriCount
-		c.queryAddTopN(h1, h2, deltaCount, d)
+		c.queryAddTopN(d, deltaCount)
 	} else {
 		c.setValue(h1, h2, uint32(count))
 	}
@@ -274,7 +239,7 @@ func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (ui
 // QueryBytes is used to query the count of specified bytes.
 func (c *CMSketch) QueryBytes(d []byte) uint64 {
 	h1, h2 := murmur3.Sum128(d)
-	if count, ok := c.queryTopN(h1, h2, d); ok {
+	if count, ok := c.queryTopN(d); ok {
 		return count
 	}
 	return c.queryHashValue(h1, h2)

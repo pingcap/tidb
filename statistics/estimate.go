@@ -18,22 +18,14 @@ import "math"
 // calculateEstimateNDV calculates the estimate ndv of a sampled data from a multisize with size total.
 // count[i] stores the count of the i-th element.
 // onlyOnceItems is the number of elements that occurred only once.
-func calculateEstimateNDV(count []uint64, total uint64) (ndv uint64, ratio uint64, onlyOnceItems uint64) {
-	sampleSize := uint64(0)
-	sampleNDV := uint64(len(count))
-	for _, v := range count {
-		if v == 1 {
-			onlyOnceItems++
-		}
-		sampleSize += v
-	}
-
+func calculateEstimateNDV(onlyOnceItems, sampleSize, sampleNDV, total uint64) (ndv uint64, ratio uint64) {
 	ratio = total / sampleSize
 	if total < sampleSize {
 		ratio = 1
+		ndv = sampleNDV
 	}
 
-	if onlyOnceItems == uint64(len(count)) {
+	if onlyOnceItems == sampleSize {
 		// Assume this is a unique column
 		ratio = 1
 		ndv = total
@@ -62,5 +54,5 @@ func calculateEstimateNDV(count []uint64, total uint64) (ndv uint64, ratio uint6
 			ndv = total
 		}
 	}
-	return ndv, ratio, onlyOnceItems
+	return ndv, ratio
 }
