@@ -69,6 +69,33 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	statementPerTransactionInternalOK    = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "ok")
+	statementPerTransactionInternalError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "error")
+	statementPerTransactionGeneralOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "ok")
+	statementPerTransactionGeneralError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "error")
+	transactionDurationInternalOK        = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "ok")
+	transactionDurationInternalError     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "error")
+	transactionDurationGeneralOK         = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "ok")
+	transactionDurationGeneralError      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "error")
+
+	transactionCounterInternalOK  = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
+	transactionCounterInternalErr = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
+	transactionCounterGeneralOK   = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
+	transactionCounterGeneralErr  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
+
+	transactionRollbackCounterInternal = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
+	transactionRollbackCounterGeneral  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
+
+	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
+	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
+
+	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
+	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
+	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
+	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
+)
+
 // Session context
 type Session interface {
 	sessionctx.Context
@@ -396,11 +423,9 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			err = s.retry(ctx, uint(maxRetryCount))
 		}
 	}
-	label := s.getSQLLabel()
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
-	metrics.StatementPerTransaction.WithLabelValues(label, metrics.RetLabel(err)).Observe(float64(counter))
-	metrics.TransactionDuration.WithLabelValues(label, metrics.RetLabel(err)).Observe(float64(duration))
+	s.recordOnTransactionExecution(err, counter, duration)
 	s.cleanRetryInfo()
 
 	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
@@ -446,12 +471,8 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 	stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
-	label := metrics.LblOK
-	if err != nil {
-		label = metrics.LblError
-	}
 	s.sessionVars.TxnCtx.Cleanup()
-	metrics.TransactionCounter.WithLabelValues(s.getSQLLabel(), label).Inc()
+	s.recordTransactionCounter(err)
 	return err
 }
 
@@ -463,7 +484,11 @@ func (s *session) RollbackTxn(ctx context.Context) {
 
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
-		metrics.TransactionCounter.WithLabelValues(s.getSQLLabel(), metrics.LblRollback).Inc()
+		if s.isInternal() {
+			transactionRollbackCounterInternal.Inc()
+		} else {
+			transactionRollbackCounterGeneral.Inc()
+		}
 	}
 	s.cleanRetryInfo()
 	s.txn.changeToInvalid()
@@ -513,6 +538,10 @@ func (s *session) getSQLLabel() string {
 		return metrics.LblInternal
 	}
 	return metrics.LblGeneral
+}
+
+func (s *session) isInternal() bool {
+	return s.sessionVars.InRestrictedSQL
 }
 
 func (s *session) isRetryableError(err error) bool {
@@ -917,7 +946,11 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, err
 	}
-	metrics.SessionExecuteRunDuration.WithLabelValues(s.getSQLLabel()).Observe(time.Since(startTime).Seconds())
+	if s.isInternal() {
+		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
+	} else {
+		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
+	}
 
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
@@ -956,8 +989,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("sql", sql))
 		return nil, util.SyntaxError(err)
 	}
-	label := s.getSQLLabel()
-	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
+	isInternal := s.isInternal()
+	if isInternal {
+		sessionExecuteParseDurationInternal.Observe(time.Since(startTS).Seconds())
+	} else {
+		sessionExecuteParseDurationGeneral.Observe(time.Since(startTS).Seconds())
+	}
 
 	compiler := executor.Compiler{Ctx: s}
 	for _, stmtNode := range stmtNodes {
@@ -977,7 +1014,11 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				zap.String("sql", sql))
 			return nil, err
 		}
-		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
+		if isInternal {
+			sessionExecuteCompileDurationInternal.Observe(time.Since(startTS).Seconds())
+		} else {
+			sessionExecuteCompileDurationGeneral.Observe(time.Since(startTS).Seconds())
+		}
 		s.currentPlan = stmt.Plan
 
 		// Step3: Execute the physical plan.
@@ -1708,5 +1749,41 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
 			zap.String("sql", query+vars.GetExecuteArgumentsInfo()))
+	}
+}
+
+func (s *session) recordOnTransactionExecution(err error, counter int, duration float64) {
+	if s.isInternal() {
+		if err != nil {
+			statementPerTransactionInternalError.Observe(float64(counter))
+			transactionDurationInternalError.Observe(duration)
+		} else {
+			statementPerTransactionInternalOK.Observe(float64(counter))
+			transactionDurationInternalOK.Observe(duration)
+		}
+	} else {
+		if err != nil {
+			statementPerTransactionGeneralError.Observe(float64(counter))
+			transactionDurationGeneralError.Observe(duration)
+		} else {
+			statementPerTransactionGeneralOK.Observe(float64(counter))
+			transactionDurationGeneralOK.Observe(duration)
+		}
+	}
+}
+
+func (s *session) recordTransactionCounter(err error) {
+	if s.isInternal() {
+		if err != nil {
+			transactionCounterInternalErr.Inc()
+		} else {
+			transactionCounterInternalOK.Inc()
+		}
+	} else {
+		if err != nil {
+			transactionCounterGeneralErr.Inc()
+		} else {
+			transactionCounterGeneralOK.Inc()
+		}
 	}
 }
