@@ -318,13 +318,13 @@ type Show struct {
 	Column      *ast.ColumnName // Used for `desc table column`.
 	Flag        int             // Some flag parsed from sql, such as FULL.
 	Full        bool
-	User        *auth.UserIdentity // Used for show grants.
-	IfNotExists bool               // Used for `show create database if not exists`
+	User        *auth.UserIdentity   // Used for show grants.
+	Roles       []*auth.RoleIdentity // Used for show grants.
+	IfNotExists bool                 // Used for `show create database if not exists`
 
 	Conditions []expression.Expression
 
-	// Used by show variables
-	GlobalScope bool
+	GlobalScope bool // Used by show variables
 }
 
 // Set represents a plan for set stmt.
