@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 	"golang.org/x/net/context"
 )
 
@@ -209,6 +210,8 @@ type Request struct {
 	// Streaming indicates using streaming API for this request, result in that one Next()
 	// call would not corresponds to a whole region result.
 	Streaming bool
+	// MemTracker is used to trace and control memory usage in co-processor layer.
+	MemTracker *memory.Tracker
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -220,6 +223,8 @@ type ResultSubset interface {
 	GetStartKey() Key
 	// GetExecDetails gets the detail information.
 	GetExecDetails() *execdetails.ExecDetails
+	// MemSize returns how many bytes of memory this result use for tracing memory usage.
+	MemSize() int64
 }
 
 // Response represents the response returned from KV layer.

@@ -381,6 +381,7 @@ func NewSessionVars() *SessionVars {
 		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
 		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
 		MemQuotaNestedLoopApply:   DefTiDBMemQuotaNestedLoopApply,
+		MemQuotaDistSQL:           DefTiDBMemQuotaDistSQL,
 	}
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: DefIndexJoinBatchSize,
@@ -732,6 +733,8 @@ type MemQuota struct {
 	MemQuotaIndexLookupJoin int64
 	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
 	MemQuotaNestedLoopApply int64
+	// MemQuotaDistSQL defines the memory quota for all operators in DistSQL layer like co-processor and selectResult.
+	MemQuotaDistSQL int64
 }
 
 // BatchSize defines batch size values.
