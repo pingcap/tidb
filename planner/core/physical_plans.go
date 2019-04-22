@@ -397,4 +397,3 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 
 	return statsInfos
 }
-

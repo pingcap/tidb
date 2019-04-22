@@ -15,12 +15,12 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/statistics"
 	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
