@@ -899,10 +899,22 @@ const (
 	SlowLogStatsInfoStr = "Stats"
 	// SlowLogNumCopTasksStr is the number of cop-tasks.
 	SlowLogNumCopTasksStr = "Num_cop_tasks"
-	// SlowLogCopProcessStr includes some useful information about cop-tasks' process time.
-	SlowLogCopProcessStr = "Cop_process"
-	// SlowLogCopWaitStr includes some useful information about cop-tasks' wait time.
-	SlowLogCopWaitStr = "Cop_wait"
+	// SlowLogCopProcAvg is the average process time of all cop-tasks.
+	SlowLogCopProcAvg = "Cop_proc_avg"
+	// SlowLogCopProcP90 is the p90 process time of all cop-tasks.
+	SlowLogCopProcP90 = "Cop_proc_p90"
+	// SlowLogCopProcMax is the max process time of all cop-tasks.
+	SlowLogCopProcMax = "Cop_proc_max"
+	// SlowLogCopProcAddr is the address of TiKV where the cop-task which cost max process time run.
+	SlowLogCopProcAddr = "Cop_proc_addr"
+	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
+	SlowLogCopWaitAvg = "Cop_wait_avg"
+	// SlowLogCopWaitP90 is the p90 wait time of all cop-tasks.
+	SlowLogCopWaitP90 = "Cop_wait_p90"
+	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
+	SlowLogCopWaitMax = "Cop_wait_max"
+	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
+	SlowLogCopWaitAddr = "Cop_wait_addr"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
 )
@@ -972,12 +984,16 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 	}
 	if copTasks != nil {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopProcessStr + SlowLogSpaceMarkStr +
-			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_addr: %v", copTasks.AvgProcessTime,
-				copTasks.P90ProcessTime, copTasks.MaxProcessTime, copTasks.MaxProcessAddress) + "\n")
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopWaitStr + SlowLogSpaceMarkStr +
-			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_Addr: %v", copTasks.AvgWaitTime,
-				copTasks.P90WaitTime, copTasks.MaxWaitTime, copTasks.MaxWaitAddress) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
+			SlowLogCopProcAvg, SlowLogSpaceMarkStr, copTasks.AvgProcessTime.Seconds(),
+			SlowLogCopProcP90, SlowLogSpaceMarkStr, copTasks.P90ProcessTime.Seconds(),
+			SlowLogCopProcMax, SlowLogSpaceMarkStr, copTasks.MaxProcessTime.Seconds(),
+			SlowLogCopProcAddr, SlowLogSpaceMarkStr, copTasks.MaxProcessAddress) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
+			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, copTasks.AvgWaitTime.Seconds(),
+			SlowLogCopWaitP90, SlowLogSpaceMarkStr, copTasks.P90WaitTime.Seconds(),
+			SlowLogCopWaitMax, SlowLogSpaceMarkStr, copTasks.MaxWaitTime.Seconds(),
+			SlowLogCopWaitAddr, SlowLogSpaceMarkStr, copTasks.MaxWaitAddress) + "\n")
 	}
 	if memMax > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
