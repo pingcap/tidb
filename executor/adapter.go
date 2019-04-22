@@ -443,6 +443,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			TableIDs: tableIDs,
 			IndexIDs: indexIDs,
 			Internal: sessVars.InRestrictedSQL,
+			CopTask:  copTaskInfo,
+			MemMax:   memMax,
 		})
 	}
 }

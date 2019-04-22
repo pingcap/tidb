@@ -15,6 +15,7 @@ package domain
 
 import (
 	"container/heap"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"sort"
 	"sync"
 	"time"
@@ -226,4 +227,6 @@ type SlowQueryInfo struct {
 	IndexIDs string
 	Internal bool
 	Digest   string
+	MemMax   int64
+	CopTask  *stmtctx.CopTasksDetails
 }

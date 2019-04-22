@@ -619,6 +619,14 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 			req.AppendInt64(11, 1)
 		}
 		req.AppendString(12, slow.Digest)
+		req.AppendInt64(13, int64(slow.CopTask.NumCopTasks))
+		req.AppendString(14, fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_addr: %v",
+			slow.CopTask.AvgProcessTime.Seconds(), slow.CopTask.P90ProcessTime.Seconds(),
+			slow.CopTask.MaxProcessTime.Seconds(), slow.CopTask.MaxProcessAddress))
+		req.AppendString(15, fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_Addr: %v",
+			slow.CopTask.AvgWaitTime.Seconds(), slow.CopTask.P90WaitTime.Seconds(),
+			slow.CopTask.MaxWaitTime.Seconds(), slow.CopTask.MaxWaitAddress))
+		req.AppendInt64(16, slow.MemMax)
 		e.cursor++
 	}
 	return nil

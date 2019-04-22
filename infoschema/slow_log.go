@@ -49,6 +49,10 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogStatsInfoStr, mysql.TypeVarchar, 512, 0, nil, nil},
+	{variable.SlowLogNumCopTasksStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{variable.SlowLogCopProcessStr, mysql.TypeVarchar, 512, 0, nil, nil},
+	{variable.SlowLogCopWaitStr, mysql.TypeVarchar, 512, 0, nil, nil},
+	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeVarchar, 4096, 0, nil, nil},
 }
 
