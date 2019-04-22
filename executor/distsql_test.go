@@ -209,7 +209,7 @@ func (s *testSuite) TestUniqueKeyNullValueSelect(c *C) {
 }
 
 // TestIssue10178 contains tests for https://github.com/pingcap/tidb/issues/10178 .
-func (s *testSuite3) TestIssue10178(c *C) {
+func (s *testSuite) TestIssue10178(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
