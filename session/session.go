@@ -32,6 +32,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -326,11 +327,12 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
-	// gofail: var mockCommitError bool
-	// if mockCommitError && mockCommitErrorOnce {
-	//	mockCommitErrorOnce = false
-	//	return kv.ErrRetryable
-	// }
+	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+		if val.(bool) && mockCommitErrorOnce {
+			mockCommitErrorOnce = false
+			failpoint.Return(kv.ErrRetryable)
+		}
+	})
 
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)

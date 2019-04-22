@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"runtime"
 	"sort"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -258,7 +260,7 @@ func (e *IndexReaderExecutor) Close() error {
 	err := e.result.Close()
 	e.result = nil
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)
@@ -299,6 +301,8 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	return e.open(ctx, kvRanges)
 }
 
+var indexReaderDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("IndexReaderDistSQLTracker")
+
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
@@ -320,7 +324,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, "IndexReaderDistSQLTracker").
+		SetMemTracker(e.ctx, indexReaderDistSQLTrackerLabel).
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -442,6 +446,8 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
+var indexLookupDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("IndexLookupDistSQLTracker")
+
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
 	if e.runtimeStats != nil {
@@ -456,7 +462,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.indexStreaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, "IndexLookupDistSQLTracker").
+		SetMemTracker(e.ctx, indexLookupDistSQLTrackerLabel).
 		Build()
 	if err != nil {
 		return err
@@ -492,9 +498,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 			logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
 		}
 		if e.runtimeStats != nil {
-			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[len(e.idxPlans)-1].ExplainID())
+			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[len(e.idxPlans)-1].ExplainID().String())
 			copStats.SetRowNum(count)
-			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ExplainID())
+			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ExplainID().String())
 			copStats.SetRowNum(count)
 		}
 		e.ctx.StoreQueryFeedback(e.feedback)
@@ -504,6 +510,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}()
 	return nil
 }
+
+var tableWorkerLabel fmt.Stringer = stringutil.StringerStr("tableWorker")
 
 // startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
@@ -517,7 +525,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:      e.keepOrder,
 			handleIdx:      e.handleIdx,
 			isCheckOp:      e.isCheckOp,
-			memTracker:     memory.NewTracker("tableWorker", -1),
+			memTracker:     memory.NewTracker(tableWorkerLabel, -1),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
@@ -531,7 +539,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		streaming:      e.tableStreaming,
@@ -565,7 +573,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[0].ExplainID())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[0].ExplainID().String())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	return nil
@@ -852,8 +860,8 @@ func GetLackHandles(expectedHandles []int64, obtainedHandlesMap map[int64]struct
 	return diffHandles
 }
 
-func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []string {
-	planIDs := make([]string, 0, len(plans))
+func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []fmt.Stringer {
+	planIDs := make([]fmt.Stringer, 0, len(plans))
 	for _, p := range plans {
 		planIDs = append(planIDs, p.ExplainID())
 	}

@@ -22,10 +22,10 @@ import (
 	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -300,10 +300,11 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
-	// gofail: var ErrorMockReloadFailed bool
-	// if ErrorMockReloadFailed {
-	// 		return errors.New("mock reload failed")
-	// }
+	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock reload failed"))
+		}
+	})
 
 	// Lock here for only once at the same time.
 	do.m.Lock()
@@ -590,8 +591,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 				AutoSyncInterval: 30 * time.Second,
 				DialTimeout:      5 * time.Second,
 				DialOptions: []grpc.DialOption{
-					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
 					grpc.WithBackoffMaxDelay(time.Second * 3),
 					grpc.WithKeepaliveParams(keepalive.ClientParameters{
 						Time:                time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
