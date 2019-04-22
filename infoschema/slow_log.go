@@ -145,6 +145,10 @@ type slowQueryTuple struct {
 	isInternal   bool
 	digest       string
 	statsInfo    string
+	numCopTasks  int64
+	copProcess   string
+	copWait      string
+	memMax       int64
 	sql          string
 }
 
@@ -225,6 +229,22 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.digest = value
 	case variable.SlowLogStatsInfoStr:
 		st.statsInfo = value
+	case variable.SlowLogNumCopTasksStr:
+		num, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.numCopTasks = num
+	case variable.SlowLogCopProcessStr:
+		st.copProcess = value
+	case variable.SlowLogCopWaitStr:
+		st.copWait = value
+	case variable.SlowLogMemMax:
+		num, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.memMax = num
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
 	}
