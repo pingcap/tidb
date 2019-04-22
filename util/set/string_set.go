@@ -31,12 +31,3 @@ func (s StringSet) Exist(val string) bool {
 func (s StringSet) Insert(val string) {
 	s[val] = struct{}{}
 }
-
-// InsertIfNotExist inserts `val` into `s` if it not exists in `s`.
-func (s StringSet) InsertIfNotExist(val string) bool {
-	_, ok := s[val]
-	if !ok {
-		s[val] = struct{}{}
-	}
-	return ok
-}

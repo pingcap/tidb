@@ -185,9 +185,11 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if isNull {
 			continue
 		}
-		if p.valSet.InsertIfNotExist(string(p.encodeBytesBuffer)) {
+		joinedVal := string(p.encodeBytesBuffer)
+		if p.valSet.Exist(joinedVal) {
 			continue
 		}
+		p.valSet.Insert(joinedVal)
 		// write separator
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
