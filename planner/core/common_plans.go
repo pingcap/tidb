@@ -35,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
+var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
+
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
 	baseSchemaProducer
@@ -200,7 +202,11 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
-			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			if metrics.ResettablePlanCacheCounterFortTest {
+				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			} else {
+				planCacheCounter.Inc()
+			}
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
