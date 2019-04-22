@@ -10,6 +10,3 @@ jobs:
       - run:
           name: "Build & Test"
           command: make dev
-      - run:
-          name: "Check go mod replace is removed"
-          command: ./tools/check/check_parser_replace.sh

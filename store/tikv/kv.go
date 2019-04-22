@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
@@ -36,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 )
 
 type storeCache struct {
@@ -55,11 +53,7 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
-		DialOptions: []grpc.DialOption{
-			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
-		},
-		TLS: tlsConfig,
+		TLS:              tlsConfig,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
