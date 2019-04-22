@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -582,7 +583,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	if keyErr := commitResp.GetError(); keyErr != nil {
 		c.mu.RLock()
 		defer c.mu.RUnlock()
-		err = errors.Errorf("conn%d 2PC commit failed: %v", c.connID, keyErr.String())
+		err = extractKeyErr(keyErr)
 		if c.mu.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
@@ -695,42 +696,26 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}()
 
 	binlogChan := c.prewriteBinlog()
-	prewriteBo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
-	err := c.prewriteKeys(prewriteBo, c.keys)
+	err := c.doActionWithRetry(ctx, c.prewrite)
 	c.detail.PrewriteTime = time.Since(start)
-	c.detail.TotalBackoffTime += time.Duration(prewriteBo.totalSleep) * time.Millisecond
+	if err != nil {
+		return err
+	}
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
 			return errors.Trace(binlogErr)
 		}
 	}
-	if err != nil {
-		logutil.Logger(ctx).Debug("2PC failed on prewrite",
-			zap.Error(err),
-			zap.Uint64("txnStartTS", c.startTS))
-		return errors.Trace(err)
-	}
 
 	start = time.Now()
-	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
-	if err != nil {
-		logutil.Logger(ctx).Warn("2PC get commitTS failed",
-			zap.Error(err),
-			zap.Uint64("txnStartTS", c.startTS))
-		return errors.Trace(err)
-	}
+	err = c.doActionWithRetry(ctx, c.getCommitTS)
 	c.detail.GetCommitTsTime = time.Since(start)
-
-	// check commitTS
-	if commitTS <= c.startTS {
-		err = errors.Errorf("conn%d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
-			c.connID, c.startTS, commitTS)
-		logutil.Logger(context.Background()).Error("invalid transaction", zap.Error(err))
-		return errors.Trace(err)
+	if err != nil {
+		return err
 	}
-	c.commitTS = commitTS
+
 	if err = c.checkSchemaValid(); err != nil {
 		return errors.Trace(err)
 	}
@@ -742,15 +727,69 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	})
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
-		err = errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",
+		return errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
-		return errors.Annotate(err, txnRetryableMark)
 	}
 
 	start = time.Now()
+	err = c.doActionWithRetry(ctx, c.commit)
+	c.detail.CommitTime = time.Since(start)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *twoPhaseCommitter) prewrite(ctx context.Context) error {
+	prewriteBo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars)
+	err := c.prewriteKeys(prewriteBo, c.keys)
+	c.detail.TotalBackoffTime += time.Duration(prewriteBo.totalSleep) * time.Millisecond
+	if err != nil {
+		logutil.Logger(ctx).Debug("2PC failed on prewrite",
+			zap.Error(err),
+			zap.Uint64("txnStartTS", c.startTS))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// mockGetTSErrorInRetryOnce use to make sure gofail mockGetTSErrorInRetry only mock get TS error once.
+var mockGetTSErrorInRetryOnce = true
+
+func (c *twoPhaseCommitter) getCommitTS(ctx context.Context) error {
+
+	// mockGetTSErrorInRetry should wait MockCommitErrorOnce first, then will run into retry() logic.
+	// Then mockGetTSErrorInRetry will return retryable error when first retry.
+	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
+	// This may cause duplicate data to be written.
+	failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
+		if val.(bool) && !kv.IsMockCommitErrorEnable() && mockGetTSErrorInRetryOnce {
+			mockGetTSErrorInRetryOnce = false
+			failpoint.Return(errors.Errorf("PD server timeout[try again later]"))
+		}
+	})
+
+	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
+	if err != nil {
+		logutil.Logger(ctx).Warn("2PC get commitTS failed",
+			zap.Error(err),
+			zap.Uint64("txnStartTS", c.startTS))
+		return errors.Trace(err)
+	}
+	// check commitTS
+	if commitTS <= c.startTS {
+		err = errors.Errorf("conn%d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
+			c.connID, c.startTS, commitTS)
+		logutil.Logger(context.Background()).Error("invalid transaction", zap.Error(err))
+		return errors.Trace(err)
+	}
+	c.commitTS = commitTS
+	return nil
+}
+
+func (c *twoPhaseCommitter) commit(ctx context.Context) (err error) {
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
 	err = c.commitKeys(commitBo, c.keys)
-	c.detail.CommitTime = time.Since(start)
 	c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
@@ -771,6 +810,20 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			zap.Uint64("txnStartTS", c.startTS))
 	}
 	return nil
+}
+
+func (c *twoPhaseCommitter) doActionWithRetry(ctx context.Context, f func(ctx context.Context) error) (err error) {
+	var retryCnt uint64
+	for {
+		err = f(ctx)
+		if retryCnt < atomic.LoadUint64(&config.GetGlobalConfig().Max2PCRetry) &&
+			err != nil &&
+			strings.Contains(err.Error(), txnRetryableMark) {
+			retryCnt++
+			continue
+		}
+		return
+	}
 }
 
 type schemaLeaseChecker interface {

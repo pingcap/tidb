@@ -14,8 +14,6 @@
 package kv
 
 import (
-	"strings"
-
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 )
@@ -69,13 +67,16 @@ var (
 	ErrKeyExists = terror.ClassKV.New(codeKeyExists, "key already exist")
 	// ErrNotImplemented returns when a function is not implemented yet.
 	ErrNotImplemented = terror.ClassKV.New(codeNotImplemented, "not implemented")
+	// ErrWriteConflict returns when the commit meets an write conflict error.
+	ErrWriteConflict = terror.ClassTiKV.New(mysql.ErrWriteConflict, mysql.MySQLErrName[mysql.ErrWriteConflict])
 )
 
 func init() {
 	kvMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeKeyExists:     mysql.ErrDupEntry,
-		codeEntryTooLarge: mysql.ErrTooBigRowsize,
-		codeTxnTooLarge:   mysql.ErrTxnTooLarge,
+		codeKeyExists:          mysql.ErrDupEntry,
+		codeEntryTooLarge:      mysql.ErrTooBigRowsize,
+		codeTxnTooLarge:        mysql.ErrTxnTooLarge,
+		mysql.ErrWriteConflict: mysql.ErrWriteConflict,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassKV] = kvMySQLErrCodes
 }
@@ -89,11 +90,9 @@ func IsRetryableError(err error) bool {
 	if ErrRetryable.Equal(err) ||
 		ErrLockConflict.Equal(err) ||
 		ErrConditionNotMatch.Equal(err) ||
-		// TiKV exception message will tell you if you should retry or not
-		strings.Contains(err.Error(), "try again later") {
+		ErrWriteConflict.Equal(err) {
 		return true
 	}
-
 	return false
 }
 

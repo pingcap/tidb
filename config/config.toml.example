@@ -44,6 +44,11 @@ enable-streaming = false
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
+# Maximum retry times for 2pc which are used to avoid the network lagging, set to 0 to disable the retry.
+# This config only control the retry times of the `COMMIT` of the transaction, which is different from the transaction
+# executing retry variables (`tidb_retry_limit` and `tidb_disable_txn_auto_retry`).
+max-2pc-retry = 10
+
 # Make "kill query" behavior compatible with MySQL. It's not recommend to
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -302,30 +301,29 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return NewLock(locked), nil
 	}
+	return nil, extractKeyErr(keyErr)
+}
+
+func extractKeyErr(keyErr *pb.KeyError) error {
 	if keyErr.Conflict != nil {
-		err := errors.New(conflictToString(keyErr.Conflict))
-		return nil, errors.Annotate(err, txnRetryableMark)
+		return kv.ErrWriteConflict.GenWithStackByArgs(keyErr.Conflict.StartTs, keyErr.Conflict.ConflictTs,
+			conflictToString(keyErr.Conflict))
 	}
 	if keyErr.Retryable != "" {
 		err := errors.Errorf("tikv restarts txn: %s", keyErr.GetRetryable())
 		logutil.Logger(context.Background()).Debug("error", zap.Error(err))
-		return nil, errors.Annotate(err, txnRetryableMark)
+		return errors.Annotate(err, txnRetryableMark)
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
 		logutil.Logger(context.Background()).Warn("error", zap.Error(err))
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return nil, errors.Errorf("unexpected KeyError: %s", keyErr.String())
+	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
 
 func conflictToString(conflict *pb.WriteConflict) string {
 	var buf bytes.Buffer
-	_, err := fmt.Fprintf(&buf, "%s txnStartTS=%d, conflictTS=%d, key=",
-		util.WriteConflictMarker, conflict.StartTs, conflict.ConflictTs)
-	if err != nil {
-		logutil.Logger(context.Background()).Error("error", zap.Error(err))
-	}
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)

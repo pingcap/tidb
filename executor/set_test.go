@@ -339,6 +339,17 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
 	_, err = tk.Exec("set global read_only = abc")
 	c.Assert(err, NotNil)
+
+	tk.MustExec("set session tidb_max_2pc_retry = 0")
+	tk.MustQuery("select @@session.tidb_max_2pc_retry;").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_max_2pc_retry = 20")
+	tk.MustQuery("select @@session.tidb_max_2pc_retry;").Check(testkit.Rows("20"))
+	tk.MustExec("set session tidb_max_2pc_retry = -1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect tidb_max_2pc_retry value: '-1'"))
+	tk.MustQuery("select @@session.tidb_max_2pc_retry;").Check(testkit.Rows("0"))
+	_, err = tk.Exec("set global tidb_max_2pc_retry = 0")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {

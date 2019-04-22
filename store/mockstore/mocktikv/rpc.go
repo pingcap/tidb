@@ -68,6 +68,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if retryable, ok := errors.Cause(err).(ErrRetryable); ok {
 		return &kvrpcpb.KeyError{
 			Retryable: retryable.Error(),
+			Conflict:  &kvrpcpb.WriteConflict{},
 		}
 	}
 	return &kvrpcpb.KeyError{

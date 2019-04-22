@@ -80,6 +80,9 @@ type Config struct {
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	// Max2PCRetry is the maximum retry times for 2pc which are used to avoid the network lagging,
+	// set to 0 to disable the retry.
+	Max2PCRetry uint64 `toml:"max-2pc-retry" json:"max-2pc-retry"`
 }
 
 // Log is the log section of config.
@@ -306,6 +309,7 @@ var defaultConf = Config{
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
+	Max2PCRetry:         2,
 	Log: Log{
 		Level:              "info",
 		Format:             "text",

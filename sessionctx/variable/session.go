@@ -723,6 +723,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
 	case TiDBDisableTxnAutoRetry:
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
+	case TiDBMax2PCRetry:
+		atomic.StoreUint64(&config.GetGlobalConfig().Max2PCRetry, uint64(tidbOptInt64(val, DefTiDBMax2PCRetry)))
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:

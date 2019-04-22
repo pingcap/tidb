@@ -27,7 +27,7 @@ var (
 // mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
 const mismatchClusterID = "mismatch cluster id"
 
-// TiDB decides whether to retry transaction by checking if error message contains
+// TiDB decides whether to retry commit by checking if error message contains
 // string "try again later" literally.
 // In TiClient we use `errors.Annotate(err, txnRetryableMark)` to direct TiDB to
 // restart a transaction.
