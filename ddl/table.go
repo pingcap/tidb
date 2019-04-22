@@ -344,9 +344,33 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
 		return
 	}
 	regionIDs := make([]uint64, 0, 1<<(tblInfo.PreSplitRegions-1)+len(tblInfo.Indices))
+
+	// Suppose:
+	// ShardRowIDBits = 5
+	// PreSplitRegions = 3
+	//
+	// then will pre-split 2^(3-1) = 4 regions.
+	//
+	// in this code:
+	// max   = 1 << (tblInfo.ShardRowIDBits - 1) = 1 << (5-1) = 16
+	// step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions)) = 1 << (5-3) = 4;
+	//
+	// then split regionID is below:
+	// 4  << 59 = 2305843009213693952
+	// 8  << 59 = 4611686018427387904
+	// 12 << 59 = 6917529027641081856
+	//
+	// The 4 pre-split regions range is below:
+	// 0                   ~ 2305843009213693952
+	// 2305843009213693952 ~ 4611686018427387904
+	// 4611686018427387904 ~ 6917529027641081856
+	// 6917529027641081856 ~ 9223372036854775807 ( (1 << 63) - 1 )
+	//
+	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
+
 	// Split table region.
 	step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions))
-	// The highest bit is the symbol bit， and alloc _tidb_rowid will always be positive number.
+	// The highest bit is the symbol bit,and alloc _tidb_rowid will always be positive number.
 	// So we only need to split the region for the positive number.
 	max := int64(1 << (tblInfo.ShardRowIDBits - 1))
 	for p := int64(step); p < max; p += step {
