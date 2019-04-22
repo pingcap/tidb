@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
@@ -36,10 +37,11 @@ import (
 )
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	// gofail: var mockExceedErrorLimit bool
-	// if mockExceedErrorLimit {
-	//    return ver, errors.New("mock do job error")
-	// }
+	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock do job error"))
+		}
+	})
 
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
@@ -269,11 +271,12 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		// gofail: var mockRecoverTableCommitErr bool
-		// if mockRecoverTableCommitErr && mockRecoverTableCommitErrOnce {
-		//	 mockRecoverTableCommitErrOnce = false
-		//	 kv.MockCommitErrorEnable()
-		// }
+		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
+			if val.(bool) && mockRecoverTableCommitErrOnce {
+				mockRecoverTableCommitErrOnce = false
+				kv.MockCommitErrorEnable()
+			}
+		})
 
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
@@ -414,11 +417,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// gofail: var truncateTableErr bool
-	// if truncateTableErr {
-	//  job.State = model.JobStateCancelled
-	//  return ver, errors.New("occur an error after dropping table.")
-	// }
+	failpoint.Inject("truncateTableErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("occur an error after dropping table"))
+		}
+	})
 
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
@@ -578,11 +582,14 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// gofail: var renameTableErr bool
-	// if renameTableErr {
-	//	job.State = model.JobStateCancelled
-	//	return ver, errors.New("occur an error after renaming table.")
-	// }
+
+	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("occur an error after renaming table"))
+		}
+	})
+
 	tblInfo.Name = tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {

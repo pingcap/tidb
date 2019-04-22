@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -718,6 +718,11 @@ commit;`
 	tk.MustExec(`INSERT IGNORE t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
 	tk.CheckLastMessage("")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'f2' cannot be null"))
+	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
+
+	tk.MustExec(`SET sql_mode='';`)
+	_, err = tk.Exec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
+	c.Assert(err, NotNil)
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 }
 
@@ -2467,9 +2472,9 @@ func (s *testSuite2) TestAutoIDInRetry(c *C) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	gofail.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	gofail.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))

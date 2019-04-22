@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package helper
+package helper_test
 
 import (
 	"crypto/tls"
@@ -24,9 +24,11 @@ import (
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
 )
 
@@ -65,17 +67,17 @@ func (s *HelperTestSuite) SetUpSuite(c *C) {
 	mockTikvStore, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	s.store = &mockStore{
 		mockTikvStore.(tikv.Storage),
-		[]string{"127.0.0.1:10090/"},
+		[]string{"127.0.0.1:10100/"},
 	}
 	c.Assert(err, IsNil)
 }
 
 func (s *HelperTestSuite) TestHotRegion(c *C) {
-	helper := Helper{
+	helper := helper.Helper{
 		Store:       s.store,
 		RegionCache: s.store.GetRegionCache(),
 	}
-	regionMetric, err := helper.FetchHotRegion("/pd/api/v1/hotspot/regions/read")
+	regionMetric, err := helper.FetchHotRegion(pdapi.HotRead)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
 	c.Assert(fmt.Sprintf("%v", regionMetric), Equals, "map[1:{100 1 0}]")
 }
@@ -85,7 +87,7 @@ func (s *HelperTestSuite) mockPDHTTPServer(c *C) {
 	router.HandleFunc("/pd/api/v1/hotspot/regions/read", s.mockHotRegionResponse)
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
-	server := &http.Server{Addr: "127.0.0.1:10090", Handler: serverMux}
+	server := &http.Server{Addr: "127.0.0.1:10100", Handler: serverMux}
 	err := server.ListenAndServe()
 	c.Assert(err, IsNil)
 }
@@ -93,8 +95,8 @@ func (s *HelperTestSuite) mockPDHTTPServer(c *C) {
 func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	regionsStat := hotRegionsStat{
-		[]regionStat{
+	regionsStat := helper.HotRegionsStat{
+		RegionsStat: []helper.RegionStat{
 			{
 				FlowBytes: 100,
 				RegionID:  1,
@@ -102,8 +104,8 @@ func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http
 			},
 		},
 	}
-	resp := StoreHotRegionInfos{
-		AsLeader: make(map[uint64]*hotRegionsStat),
+	resp := helper.StoreHotRegionInfos{
+		AsLeader: make(map[uint64]*helper.HotRegionsStat),
 	}
 	resp.AsLeader[0] = &regionsStat
 	data, err := json.MarshalIndent(resp, "", "	")
