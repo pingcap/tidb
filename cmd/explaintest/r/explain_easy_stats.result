@@ -50,7 +50,7 @@ Projection_6	2481.25	root	test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c1, test.t
   ├─IndexLookUp_17	1998.00	root	
   │ ├─Selection_16	1998.00	cop	gt(test.t1.c1, 1)
   │ │ └─IndexScan_14	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:true
-  │ └─TableScan_15	1998.00	cop	table:t1, keep order:false
+  │ └─TableScan_15	1998.00	cop	table:t1, keep order:false, stats:pseudo
   └─IndexLookUp_21	1985.00	root	
     ├─IndexScan_19	1985.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true
     └─TableScan_20	1985.00	cop	table:t2, keep order:false
@@ -84,7 +84,7 @@ IndexLookUp_12	0.00	root
 ├─Selection_10	0.00	cop	gt(test.t1.c1, 1)
 │ └─IndexScan_8	0.00	cop	table:t1, index:c2, range:[1,1], keep order:false
 └─Selection_11	0.00	cop	lt(test.t1.c3, 1)
-  └─TableScan_9	0.00	cop	table:t1, keep order:false
+  └─TableScan_9	0.00	cop	table:t1, keep order:false, stats:pseudo
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	count	task	operator info
 TableReader_7	0.50	root	data:Selection_6
@@ -106,7 +106,7 @@ Projection_12	1999.00	root	eq(test.t1.c2, test.t2.c2)
     └─IndexLookUp_43	1.00	root	
       ├─Limit_42	1.00	cop	offset:0, count:1
       │ └─IndexScan_40	1.25	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
-      └─TableScan_41	1.00	cop	table:t2, keep order:false
+      └─TableScan_41	1.00	cop	table:t2, keep order:false, stats:pseudo
 explain select * from t1 order by c1 desc limit 1;
 id	count	task	operator info
 Limit_10	1.00	root	offset:0, count:1
@@ -163,14 +163,14 @@ Limit_9	1.00	root	offset:1, count:1
 └─IndexLookUp_15	1.00	root	
   ├─Limit_14	1.00	cop	offset:0, count:2
   │ └─IndexScan_12	1.00	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
-  └─TableScan_13	1.00	cop	table:index_prune, keep order:false
+  └─TableScan_13	1.00	cop	table:index_prune, keep order:false, stats:pseudo
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
 id	count	task	operator info
 Limit_9	0.00	root	offset:1, count:0
 └─IndexLookUp_15	0.00	root	
   ├─Limit_14	0.00	cop	offset:0, count:1
   │ └─IndexScan_12	1.00	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
-  └─TableScan_13	0.00	cop	table:index_prune, keep order:false
+  └─TableScan_13	0.00	cop	table:index_prune, keep order:false, stats:pseudo
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;
 id	count	task	operator info
 Point_Get_1	1.00	root	table:index_prune, index:a b
