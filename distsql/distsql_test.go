@@ -308,6 +308,9 @@ func (r *mockResultSubset) GetExecDetails() *execdetails.ExecDetails {
 	return &execdetails.ExecDetails{}
 }
 
+// MemSize implements kv.ResultSubset interface.
+func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
+
 func populateBuffer() []byte {
 	numCols := 4
 	numRows := 1024
