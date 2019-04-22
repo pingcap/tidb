@@ -133,6 +133,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 			}
 			logutil.Logger(context.Background()).Error("batchRecvLoop error when receive", zap.Error(err))
 
+			now := time.Now()
 			for { // try to re-create the streaming in the loop.
 				// Hold the lock to forbid batchSendLoop using the old client.
 				c.clientLock.Lock()
@@ -152,6 +153,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				// TODO: Use a more smart backoff strategy.
 				time.Sleep(time.Second)
 			}
+			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
 			continue
 		}
 
