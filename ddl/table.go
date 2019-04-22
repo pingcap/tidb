@@ -72,7 +72,15 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			// TODO: Add restrictions to this operation.
-			go splitTableRegion(d.store, tbInfo.ID)
+			pi := tbInfo.GetPartitionInfo()
+			if pi != nil {
+				// Max partition count is 4096, should we sample and just choose some of the partition to split?
+				for _, def := range pi.Definitions {
+					go splitTableRegion(d.store, def.ID)
+				}
+			} else {
+				go splitTableRegion(d.store, tbInfo.ID)
+			}
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
