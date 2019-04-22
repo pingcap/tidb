@@ -39,10 +39,10 @@ type AnalyzeJob struct {
 }
 
 const (
-	pending = "pending"
-	running = "running"
-	succeed = "finished"
-	failed  = "failed"
+	pending  = "pending"
+	running  = "running"
+	finished = "finished"
+	failed   = "failed"
 )
 
 // AddNewAnalyzeJob adds new analyze job.
@@ -61,14 +61,14 @@ func MoveToHistory(job *AnalyzeJob) {
 	analyzeStatus.Unlock()
 }
 
-// ClearHistoryJobs clears all history analyzeStatus.
+// ClearHistoryJobs clears all history jobs.
 func ClearHistoryJobs() {
 	analyzeStatus.Lock()
 	analyzeStatus.history = make(map[*AnalyzeJob]struct{})
 	analyzeStatus.Unlock()
 }
 
-// GetAllAnalyzeJobs gets all analyze analyzeStatus.
+// GetAllAnalyzeJobs gets all analyze jobs.
 func GetAllAnalyzeJobs() []*AnalyzeJob {
 	analyzeStatus.Lock()
 	jobs := make([]*AnalyzeJob, 0, len(analyzeStatus.jobs)+len(analyzeStatus.history))
@@ -97,13 +97,13 @@ func (job *AnalyzeJob) Update(rowCount int64) {
 	job.Mutex.Unlock()
 }
 
-// Finish update the status of analyze job to succeed or failed according to `meetError`.
+// Finish update the status of analyze job to finished or failed according to `meetError`.
 func (job *AnalyzeJob) Finish(meetError bool) {
 	job.Mutex.Lock()
 	if meetError {
 		job.State = failed
 	} else {
-		job.State = succeed
+		job.State = finished
 	}
 	job.Mutex.Unlock()
 }
