@@ -1393,7 +1393,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) {
 	findTask := false
 	for _, eTask := range e.tasks {
-		if eTask.fastExec.PhysicalTableID == task.PhysicalTableID {
+		if eTask.fastExec.physicalTableID == task.PhysicalTableID {
 			eTask.fastExec.colsInfo = append(eTask.fastExec.colsInfo, task.ColsInfo...)
 			findTask = true
 			break
@@ -1409,7 +1409,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 			taskType: fastTask,
 			fastExec: &AnalyzeFastExec{
 				ctx:             b.ctx,
-				PhysicalTableID: task.PhysicalTableID,
+				physicalTableID: task.PhysicalTableID,
 				colsInfo:        task.ColsInfo,
 				pkInfo:          task.PKInfo,
 				maxNumBuckets:   maxNumBuckets,
@@ -1423,7 +1423,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, maxNumBuckets uint64) {
 	findTask := false
 	for _, eTask := range e.tasks {
-		if eTask.fastExec.PhysicalTableID == task.PhysicalTableID {
+		if eTask.fastExec.physicalTableID == task.PhysicalTableID {
 			eTask.fastExec.idxsInfo = append(eTask.fastExec.idxsInfo, task.IndexInfo)
 			findTask = true
 			break
@@ -1439,7 +1439,7 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 			taskType: fastTask,
 			fastExec: &AnalyzeFastExec{
 				ctx:             b.ctx,
-				PhysicalTableID: task.PhysicalTableID,
+				physicalTableID: task.PhysicalTableID,
 				idxsInfo:        []*model.IndexInfo{task.IndexInfo},
 				maxNumBuckets:   maxNumBuckets,
 				concurrency:     concurrency,

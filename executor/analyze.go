@@ -490,7 +490,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []statistics.AnalyzeResult {
 	if len(exec.idxsInfo) > 0 {
 		for i := hasPKInfo + len(exec.colsInfo); i < len(hists); i++ {
 			idxResult := statistics.AnalyzeResult{
-				PhysicalTableID: exec.PhysicalTableID,
+				PhysicalTableID: exec.physicalTableID,
 				Hist:            []*statistics.Histogram{hists[i]},
 				Cms:             []*statistics.CMSketch{cms[i]},
 				IsIndex:         1,
@@ -504,7 +504,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []statistics.AnalyzeResult {
 	}
 	hist := hists[0]
 	colResult := statistics.AnalyzeResult{
-		PhysicalTableID: exec.PhysicalTableID,
+		PhysicalTableID: exec.physicalTableID,
 		Hist:            hists[:hasPKInfo+len(exec.colsInfo)],
 		Cms:             cms[:hasPKInfo+len(exec.colsInfo)],
 		Count:           hist.NullCount,
@@ -527,7 +527,7 @@ type AnalyzeFastTask struct {
 // AnalyzeFastExec represents Fast Analyze executor.
 type AnalyzeFastExec struct {
 	ctx             sessionctx.Context
-	PhysicalTableID int64
+	physicalTableID int64
 	pkInfo          *model.ColumnInfo
 	colsInfo        []*model.ColumnInfo
 	idxsInfo        []*model.IndexInfo
@@ -540,6 +540,7 @@ type AnalyzeFastExec struct {
 	sampCursor      int32
 	sampTasks       []*AnalyzeFastTask
 	scanTasks       []*tikv.KeyLocation
+	collectors      []*statistics.SampleCollector
 }
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
@@ -615,7 +616,7 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
-	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.PhysicalTableID)
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.physicalTableID)
 	var loc *tikv.KeyLocation
 	var err error
 	// extract all regions contain the table
@@ -678,7 +679,7 @@ func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[i
 	return val, nil
 }
 
-func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.SampleCollector, sValue []byte, sKey kv.Key, samplePos int32, hasPKInfo int) (err error) {
+func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, samplePos int32, hasPKInfo int) (err error) {
 	// Decode the cols value in order.
 	var values map[int64]types.Datum
 	values, err = e.decodeValues(sValue)
@@ -696,11 +697,11 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 			}
 			v = types.NewIntDatum(key)
 		}
-		if collectors[0].Samples[samplePos] == nil {
-			collectors[0].Samples[samplePos] = &statistics.SampleItem{}
+		if e.collectors[0].Samples[samplePos] == nil {
+			e.collectors[0].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		collectors[0].Samples[samplePos].Ordinal = int(samplePos)
-		collectors[0].Samples[samplePos].Value = v
+		e.collectors[0].Samples[samplePos].Ordinal = int(samplePos)
+		e.collectors[0].Samples[samplePos].Value = v
 	}
 	// Update the columns' collectors.
 	for j, colInfo := range e.colsInfo {
@@ -708,11 +709,11 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 		if err != nil {
 			return err
 		}
-		if collectors[hasPKInfo+j].Samples[samplePos] == nil {
-			collectors[hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
+		if e.collectors[hasPKInfo+j].Samples[samplePos] == nil {
+			e.collectors[hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		collectors[hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
-		collectors[hasPKInfo+j].Samples[samplePos].Value = v
+		e.collectors[hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
+		e.collectors[hasPKInfo+j].Samples[samplePos].Value = v
 	}
 	// Update the indexes' collectors.
 	for j, idxInfo := range e.idxsInfo {
@@ -734,16 +735,16 @@ func (e *AnalyzeFastExec) updateCollectorSamples(collectors []*statistics.Sample
 		if err != nil {
 			return err
 		}
-		if collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] == nil {
-			collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
+		if e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] == nil {
+			e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
-		collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
+		e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
+		e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
 	}
 	return nil
 }
 
-func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collectors []*statistics.SampleCollector) (err error) {
+func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte) (err error) {
 	length := int32(len(kvMap))
 	newCursor := atomic.AddInt32(&e.sampCursor, length)
 	hasPKInfo := 0
@@ -752,7 +753,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 	}
 	samplePos := newCursor - length
 	for sKey, sValue := range kvMap {
-		err = e.updateCollectorSamples(collectors, sValue, kv.Key(sKey), samplePos, hasPKInfo)
+		err = e.updateCollectorSamples(sValue, kv.Key(sKey), samplePos, hasPKInfo)
 		if err != nil {
 			return err
 		}
@@ -761,7 +762,7 @@ func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte, collec
 	return nil
 }
 
-func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statistics.SampleCollector) (err error) {
+func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (err error) {
 	hasPKInfo := 0
 	if e.pkInfo != nil {
 		hasPKInfo = 1
@@ -781,7 +782,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 			e.sampCursor++
 		}
 
-		err = e.updateCollectorSamples(collectors, iter.Value(), iter.Key(), p, hasPKInfo)
+		err = e.updateCollectorSamples(iter.Value(), iter.Key(), p, hasPKInfo)
 		if err != nil {
 			return err
 		}
@@ -789,7 +790,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator, collectors []*statist
 	return err
 }
 
-func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*statistics.SampleCollector) error {
+func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) error {
 	snapshot, err := e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
 	if err != nil {
 		return err
@@ -799,7 +800,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 		if err != nil {
 			return err
 		}
-		err = e.handleScanIter(iter, collectors)
+		err = e.handleScanIter(iter)
 		if err != nil {
 			return err
 		}
@@ -807,7 +808,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer, collectors []*stat
 	return nil
 }
 
-func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *error, collectors []*statistics.SampleCollector) {
+func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *error) {
 	defer func() {
 		e.wg.Done()
 	}()
@@ -849,7 +850,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 			return
 		}
 
-		*err = e.handleBatchGetResponse(kvMap, collectors)
+		*err = e.handleBatchGetResponse(kvMap)
 		if *err != nil {
 			return
 		}
@@ -869,9 +870,9 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 	// collect column samples and primary key samples and index samples.
 	length := len(e.colsInfo) + hasPKInfo + len(e.idxsInfo)
-	collectors := make([]*statistics.SampleCollector, length)
-	for i := range collectors {
-		collectors[i] = &statistics.SampleCollector{
+	e.collectors = make([]*statistics.SampleCollector, length)
+	for i := range e.collectors {
+		e.collectors[i] = &statistics.SampleCollector{
 			FMSketch:      statistics.NewFMSketch(maxSketchSize),
 			MaxSampleSize: int64(MaxSampleSize),
 			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
@@ -882,7 +883,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	e.wg.Add(e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		bo := tikv.NewBackoffer(context.Background(), 500)
-		go e.handleSampTasks(bo, i, &errs[i], collectors)
+		go e.handleSampTasks(bo, i, &errs[i])
 	}
 	e.wg.Wait()
 	for _, err := range errs {
@@ -892,7 +893,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	bo := tikv.NewBackoffer(context.Background(), 500)
-	err := e.handleScanTasks(bo, collectors)
+	err := e.handleScanTasks(bo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -900,16 +901,16 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	hists, cms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length)
 	for i := 0; i < length; i++ {
 		if i < hasPKInfo {
-			hists[i], err = e.buildHist(e.pkInfo.ID, collectors[i], &e.pkInfo.FieldType)
+			hists[i], err = e.buildHist(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType)
 		} else if i < hasPKInfo+len(e.colsInfo) {
-			hists[i], err = e.buildHist(e.colsInfo[i-hasPKInfo].ID, collectors[i], &e.colsInfo[i-hasPKInfo].FieldType)
+			hists[i], err = e.buildHist(e.colsInfo[i-hasPKInfo].ID, e.collectors[i], &e.colsInfo[i-hasPKInfo].FieldType)
 		} else {
-			hists[i], err = e.buildHist(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)].ID, collectors[i], types.NewFieldType(mysql.TypeBlob))
+			hists[i], err = e.buildHist(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)].ID, e.collectors[i], types.NewFieldType(mysql.TypeBlob))
 		}
 		if err != nil {
 			return nil, nil, err
 		}
-		cms[i] = collectors[i].CMSketch
+		cms[i] = e.collectors[i].CMSketch
 	}
 	return hists, cms, nil
 }
@@ -954,4 +955,30 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		return hists, cms, err
 	}
 	return nil, nil, errors.Errorf("Too many rebuilds for getting sample tasks.")
+}
+
+// AnalyzeTestFastExec is for fast sample in unit test.
+type AnalyzeTestFastExec struct {
+	AnalyzeFastExec
+	Ctx             sessionctx.Context
+	PhysicalTableID int64
+	PKInfo          *model.ColumnInfo
+	ColsInfo        []*model.ColumnInfo
+	IdxsInfo        []*model.IndexInfo
+	Concurrency     int
+	Collectors      []*statistics.SampleCollector
+}
+
+// TestFastSample only test the fast sample in unit test.
+func (e *AnalyzeTestFastExec) TestFastSample() error {
+	e.ctx = e.Ctx
+	e.pkInfo = e.PKInfo
+	e.colsInfo = e.ColsInfo
+	e.idxsInfo = e.IdxsInfo
+	e.concurrency = e.Concurrency
+	e.physicalTableID = e.PhysicalTableID
+	e.wg = &sync.WaitGroup{}
+	_, _, err := e.buildStats()
+	e.Collectors = e.collectors
+	return err
 }
