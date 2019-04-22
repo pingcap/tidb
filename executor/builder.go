@@ -52,6 +52,18 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+var (
+	executorCounterMergeJoinExec       = metrics.ExecutorCounter.WithLabelValues("MergeJoinExec")
+	executorCountHashJoinExec          = metrics.ExecutorCounter.WithLabelValues("HashJoinExec")
+	executorCounterHashAggExec         = metrics.ExecutorCounter.WithLabelValues("HashAggExec")
+	executorStreamAggExec              = metrics.ExecutorCounter.WithLabelValues("StreamAggExec")
+	executorCounterSortExec            = metrics.ExecutorCounter.WithLabelValues("SortExec")
+	executorCounterTopNExec            = metrics.ExecutorCounter.WithLabelValues("TopNExec")
+	executorCounterNestedLoopApplyExec = metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec")
+	executorCounterIndexLookUpJoin     = metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin")
+	executorCounterIndexLookUpExecutor = metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor")
+)
+
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
@@ -882,7 +894,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 		return nil
 	}
 
-	metrics.ExecutorCounter.WithLabelValues("MergeJoinExec").Inc()
+	executorCounterMergeJoinExec.Inc()
 	return e
 }
 
@@ -948,7 +960,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
-	metrics.ExecutorCounter.WithLabelValues("HashJoinExec").Inc()
+	executorCountHashJoinExec.Inc()
 	if e.ctx.GetSessionVars().EnableRadixJoin {
 		return &RadixHashJoinExec{HashJoinExec: e}
 	}
@@ -1031,7 +1043,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 		}
 	}
 
-	metrics.ExecutorCounter.WithLabelValues("HashAggExec").Inc()
+	executorCounterHashAggExec.Inc()
 	return e
 }
 
@@ -1059,7 +1071,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 		}
 	}
 
-	metrics.ExecutorCounter.WithLabelValues("StreamAggExec").Inc()
+	executorStreamAggExec.Inc()
 	return e
 }
 
@@ -1153,7 +1165,7 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	metrics.ExecutorCounter.WithLabelValues("SortExec").Inc()
+	executorCounterSortExec.Inc()
 	return &sortExec
 }
 
@@ -1167,7 +1179,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	metrics.ExecutorCounter.WithLabelValues("TopNExec").Inc()
+	executorCounterTopNExec.Inc()
 	return &TopNExec{
 		SortExec: sortExec,
 		limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
@@ -1207,7 +1219,7 @@ func (b *executorBuilder) buildApply(apply *plannercore.PhysicalApply) *NestedLo
 		joiner:       tupleJoiner,
 		outerSchema:  apply.OuterSchema,
 	}
-	metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec").Inc()
+	executorCounterNestedLoopApplyExec.Inc()
 	return e
 }
 
@@ -1618,7 +1630,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = e.newFirstChunk()
-	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
+	executorCounterIndexLookUpJoin.Inc()
 	return e
 }
 
@@ -1825,7 +1837,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 
 	ret.ranges = is.Ranges
-	metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor").Inc()
+	executorCounterIndexLookUpExecutor.Inc()
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
