@@ -183,33 +183,6 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	return false
 }
 
-// FindAllRole is used to find all roles grant to this user.
-func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
-	queue, head := make([]*auth.RoleIdentity, 0, len(activeRoles)), 0
-	for _, r := range activeRoles {
-		queue = append(queue, r)
-	}
-	// Using breadth first search to find all roles grant to this user.
-	visited, ret := make(map[string]bool), make([]*auth.RoleIdentity, 0)
-	for head < len(queue) {
-		role := queue[head]
-		if _, ok := visited[role.String()]; !ok {
-			visited[role.String()] = true
-			ret = append(ret, role)
-			key := role.Username + "@" + role.Hostname
-			if edgeTable, ok := p.RoleGraph[key]; ok {
-				for _, v := range edgeTable.roleList {
-					if _, ok := visited[v.String()]; !ok {
-						queue = append(queue, v)
-					}
-				}
-			}
-		}
-		head += 1
-	}
-	return ret
-}
-
 // LoadAll loads the tables from database to memory.
 func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err := p.LoadUserTable(ctx)
