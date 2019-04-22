@@ -92,6 +92,27 @@ func isLogicOrFunction(e Expression) bool {
 	return false
 }
 
+func (s *testUtilSuite) TestDisableParseJSONFlag4Expr(c *check.C) {
+	var expr Expression
+	expr = &Column{RetType: newIntFieldType()}
+	ft := expr.GetType()
+	ft.Flag |= mysql.ParseToJSONFlag
+	DisableParseJSONFlag4Expr(expr)
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsTrue)
+
+	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
+	ft = expr.GetType()
+	ft.Flag |= mysql.ParseToJSONFlag
+	DisableParseJSONFlag4Expr(expr)
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsTrue)
+
+	expr = &ScalarFunction{RetType: newIntFieldType()}
+	ft = expr.GetType()
+	ft.Flag |= mysql.ParseToJSONFlag
+	DisableParseJSONFlag4Expr(expr)
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsFalse)
+}
+
 func BenchmarkExtractColumns(b *testing.B) {
 	conditions := []Expression{
 		newFunction(ast.EQ, newColumn(0), newColumn(1)),
