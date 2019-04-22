@@ -27,6 +27,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -132,13 +133,16 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 			}
 			logutil.Logger(context.Background()).Error("batchRecvLoop error when receive", zap.Error(err))
 
-			// Hold the lock to forbid batchSendLoop using the old client.
-			c.clientLock.Lock()
-			c.failPendingRequests(err) // fail all pending requests.
-			for {                      // try to re-create the streaming in the loop.
+			for { // try to re-create the streaming in the loop.
+				// Hold the lock to forbid batchSendLoop using the old client.
+				c.clientLock.Lock()
+				c.failPendingRequests(err) // fail all pending requests.
+
 				// Re-establish a application layer stream. TCP layer is handled by gRPC.
 				tikvClient := tikvpb.NewTikvClient(c.conn)
 				streamClient, err := tikvClient.BatchCommands(context.TODO())
+				c.clientLock.Unlock()
+
 				if err == nil {
 					logutil.Logger(context.Background()).Info("batchRecvLoop re-create streaming success")
 					c.client = streamClient
@@ -148,7 +152,6 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				// TODO: Use a more smart backoff strategy.
 				time.Sleep(time.Second)
 			}
-			c.clientLock.Unlock()
 			continue
 		}
 
@@ -577,6 +580,13 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			return sendBatchRequest(ctx, addr, connArray, batchReq, timeout)
 		}
+	}
+
+	if req.IsDebugReq() {
+		client := debugpb.NewDebugClient(connArray.Get())
+		ctx1, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return tikvrpc.CallDebugRPC(ctx1, client, req)
 	}
 
 	client := tikvpb.NewTikvClient(connArray.Get())

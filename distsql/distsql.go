@@ -43,9 +43,13 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
 	if resp == nil {
 		err := errors.New("client returns nil response")
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
+	// kvReq.MemTracker is used to trace and control memory usage in DistSQL layer;
+	// for streamResult, since it is a pipeline which has no buffer, it's not necessary to trace it;
+	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
+	// instead of creating a new one for simplification.
 	if kvReq.Streaming {
 		return &streamResult{
 			resp:       resp,
@@ -70,6 +74,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		ctx:        sctx,
 		feedback:   fb,
 		sqlType:    label,
+		memTracker: kvReq.MemTracker,
 	}, nil
 }
 

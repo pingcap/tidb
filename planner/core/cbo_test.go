@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -47,7 +48,7 @@ func (s *testAnalyzeSuite) loadTableStats(fileName string, dom *domain.Domain) e
 	if err != nil {
 		return err
 	}
-	statsTbl := &statistics.JSONTable{}
+	statsTbl := &handle.JSONTable{}
 	err = json.Unmarshal(bytes, statsTbl)
 	if err != nil {
 		return err
@@ -105,7 +106,7 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"HashLeftJoin_8 7.49 root inner join, inner:TableReader_15, equal:[eq(test.t1.a, test.t2.a)]",
@@ -195,7 +196,7 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 
 	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
@@ -225,12 +226,12 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
 		"HashAgg_9 2.00 root group by:col_1, funcs:count(col_0)",
@@ -567,12 +568,12 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	}
 	h := dom.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	statistics.RatioOfPseudoEstimate = 10.0
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
@@ -923,4 +924,66 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 		"    └─Selection_14 9990.00 cop not(isnull(t1.b))",
 		"      └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
+}
+
+func (s *testAnalyzeSuite) TestIssue9805(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`
+		create table t1 (
+			id bigint primary key,
+			a bigint not null,
+			b varchar(100) not null,
+			c varchar(10) not null,
+			d bigint as (a % 30) not null,
+			key (d, b, c)
+		)
+	`)
+	tk.MustExec(`
+		create table t2 (
+			id varchar(50) primary key,
+			a varchar(100) unique,
+			b datetime,
+			c varchar(45),
+			d int not null unique auto_increment
+		)
+	`)
+	rs := tk.MustQuery("explain analyze select t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
+
+	// Expected output is like:
+	//
+	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
+	// | id                             | count    | task | operator info                                                                    | execution info                   |
+	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
+	// | Projection_9                   | 10.00    | root | test.t1.id, test.t2.a                                                            | time:203.355µs, loops:1, rows:0  |
+	// | └─IndexJoin_13                 | 10.00    | root | inner join, inner:IndexLookUp_12, outer key:test.t1.a, inner key:test.t2.d       | time:199.633µs, loops:1, rows:0  |
+	// |   ├─Projection_16              | 8.00     | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                       | time:164.587µs, loops:1, rows:0  |
+	// |   │ └─Selection_17             | 8.00     | root | eq(cast(mod(test.t1.a, 30)), 4)                                                  | time:157.768µs, loops:1, rows:0  |
+	// |   │   └─TableReader_20         | 10.00    | root | data:Selection_19                                                                | time:154.61µs, loops:1, rows:0   |
+	// |   │     └─Selection_19         | 10.00    | cop  | eq(test.t1.b, "t2")                                                              | time:28.824µs, loops:1, rows:0   |
+	// |   │       └─TableScan_18       | 10000.00 | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                      | time:27.654µs, loops:1, rows:0   |
+	// |   └─IndexLookUp_12             | 10.00    | root |                                                                                  | time:0ns, loops:0, rows:0        |
+	// |     ├─IndexScan_10             | 10.00    | cop  | table:t2, index:d, range: decided by [test.t1.a], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        |
+	// |     └─TableScan_11             | 10.00    | cop  | table:t2, keep order:false, stats:pseudo                                         | time:0ns, loops:0, rows:0        |
+	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
+	// 10 rows in set (0.00 sec)
+	//
+	c.Assert(rs.Rows(), HasLen, 10)
+	hasIndexLookUp12 := false
+	for _, row := range rs.Rows() {
+		c.Assert(row, HasLen, 5)
+		if strings.HasSuffix(row[0].(string), "IndexLookUp_12") {
+			hasIndexLookUp12 = true
+			c.Assert(row[4], Equals, "time:0ns, loops:0, rows:0")
+		}
+	}
+	c.Assert(hasIndexLookUp12, IsTrue)
 }

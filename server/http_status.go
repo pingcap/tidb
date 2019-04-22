@@ -16,6 +16,7 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -34,14 +35,15 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
-	log "github.com/sirupsen/logrus"
 	"github.com/tiancaiamao/appdash/traceapp"
+	"go.uber.org/zap"
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
 
-const defaultStatusAddr = ":10080"
+const defaultStatusPort = 10080
 
 func (s *Server) startStatusHTTP() {
 	go s.startHTTPServer()
@@ -66,7 +68,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
 	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", valueHandler{})
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool}).Name("DDL_History")
-	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.store.(kv.Storage)}).Name("DDL_Owner_Resign")
+	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.Store.(kv.Storage)}).Name("DDL_Owner_Resign")
 
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")
@@ -88,9 +90,9 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	}
-	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
+	addr := fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
-		addr = defaultStatusAddr
+		addr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
 	}
 
 	// HTTP path for web UI.
@@ -105,7 +107,7 @@ func (s *Server) startHTTPServer() {
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
 		sr := router.PathPrefix("/web/trace/").Subrouter()
 		if _, err := traceapp.New(traceapp.NewRouter(sr), baseURL); err != nil {
-			log.Error(err)
+			logutil.Logger(context.Background()).Error("new failed", zap.Error(err))
 		}
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
@@ -226,7 +228,7 @@ func (s *Server) startHTTPServer() {
 	err = router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		pathTemplate, err = route.GetPathTemplate()
 		if err != nil {
-			log.Error("Get http router path error ", err)
+			logutil.Logger(context.Background()).Error("get HTTP router path failed", zap.Error(err))
 		}
 		name := route.GetName()
 		// If the name attribute is not set, GetName returns "".
@@ -237,18 +239,18 @@ func (s *Server) startHTTPServer() {
 		return nil
 	})
 	if err != nil {
-		log.Error("Generate root error ", err)
+		logutil.Logger(context.Background()).Error("generate root failed", zap.Error(err))
 	}
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
 	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
 		_, err = responseWriter.Write([]byte(httpRouterPage.String()))
 		if err != nil {
-			log.Error("Http index page error ", err)
+			logutil.Logger(context.Background()).Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
 
-	log.Infof("Listening on %v for status and metrics report.", addr)
+	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", addr))
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
@@ -258,7 +260,7 @@ func (s *Server) startHTTPServer() {
 	}
 
 	if err != nil {
-		log.Info(err)
+		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
 	}
 }
 
@@ -280,7 +282,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	js, err := json.Marshal(st)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		log.Error("Encode json error", err)
+		logutil.Logger(context.Background()).Error("encode json failed", zap.Error(err))
 	} else {
 		_, err = w.Write(js)
 		terror.Log(errors.Trace(err))

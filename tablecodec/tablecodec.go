@@ -372,25 +372,23 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 		cnt int
 		b   []byte
 		err error
+		cid int64
 	)
 	row := make([][]byte, len(colIDs))
 	for len(data) > 0 && cnt < len(colIDs) {
 		// Get col id.
-		b, data, err = codec.CutOne(data)
+		data, cid, err = codec.CutColumnID(data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		_, cid, err := codec.DecodeOne(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+
 		// Get col value.
 		b, data, err = codec.CutOne(data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		id := cid.GetInt64()
-		offset, ok := colIDs[id]
+
+		offset, ok := colIDs[cid]
 		if ok {
 			row[offset] = b
 			cnt++

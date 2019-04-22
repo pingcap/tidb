@@ -14,10 +14,12 @@
 package memory
 
 import (
+	"math/rand"
 	"os"
 	"sync"
 	"testing"
 
+	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
@@ -42,16 +44,16 @@ func (s *testSuite) TearDownTest(c *C)  { testleak.AfterTest(c)() }
 func (s *testSuite) TestSetLabel(c *C) {
 	tracker := NewTracker("old label", -1)
 	c.Assert(tracker.label, Equals, "old label")
-	c.Assert(tracker.bytesConsumed, Equals, int64(0))
+	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
 	c.Assert(tracker.parent, IsNil)
-	c.Assert(len(tracker.children), Equals, 0)
+	c.Assert(len(tracker.mu.children), Equals, 0)
 	tracker.SetLabel("new label")
 	c.Assert(tracker.label, Equals, "new label")
-	c.Assert(tracker.bytesConsumed, Equals, int64(0))
+	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
 	c.Assert(tracker.parent, IsNil)
-	c.Assert(len(tracker.children), Equals, 0)
+	c.Assert(len(tracker.mu.children), Equals, 0)
 }
 
 func (s *testSuite) TestConsume(c *C) {
@@ -108,17 +110,17 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(100))
 	c.Assert(child.parent, DeepEquals, oldParent)
-	c.Assert(len(oldParent.children), Equals, 1)
-	c.Assert(oldParent.children[0], DeepEquals, child)
+	c.Assert(len(oldParent.mu.children), Equals, 1)
+	c.Assert(oldParent.mu.children[0], DeepEquals, child)
 
 	child.AttachTo(newParent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(0))
 	c.Assert(newParent.BytesConsumed(), Equals, int64(100))
 	c.Assert(child.parent, DeepEquals, newParent)
-	c.Assert(len(newParent.children), Equals, 1)
-	c.Assert(newParent.children[0], DeepEquals, child)
-	c.Assert(len(oldParent.children), Equals, 0)
+	c.Assert(len(newParent.mu.children), Equals, 1)
+	c.Assert(newParent.mu.children[0], DeepEquals, child)
+	c.Assert(len(oldParent.mu.children), Equals, 0)
 }
 
 func (s *testSuite) TestReplaceChild(c *C) {
@@ -133,21 +135,21 @@ func (s *testSuite) TestReplaceChild(c *C) {
 
 	parent.ReplaceChild(oldChild, newChild)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
-	c.Assert(len(parent.children), Equals, 1)
-	c.Assert(parent.children[0], DeepEquals, newChild)
+	c.Assert(len(parent.mu.children), Equals, 1)
+	c.Assert(parent.mu.children[0], DeepEquals, newChild)
 	c.Assert(newChild.parent, DeepEquals, parent)
 	c.Assert(oldChild.parent, IsNil)
 
 	parent.ReplaceChild(oldChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
-	c.Assert(len(parent.children), Equals, 1)
-	c.Assert(parent.children[0], DeepEquals, newChild)
+	c.Assert(len(parent.mu.children), Equals, 1)
+	c.Assert(parent.mu.children[0], DeepEquals, newChild)
 	c.Assert(newChild.parent, DeepEquals, parent)
 	c.Assert(oldChild.parent, IsNil)
 
 	parent.ReplaceChild(newChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(0))
-	c.Assert(len(parent.children), Equals, 0)
+	c.Assert(len(parent.mu.children), Equals, 0)
 	c.Assert(newChild.parent, IsNil)
 	c.Assert(oldChild.parent, IsNil)
 }
@@ -188,6 +190,33 @@ func (s *testSuite) TestToString(c *C) {
   }
 }
 `)
+}
+
+func (s *testSuite) TestMaxConsumed(c *C) {
+	r := NewTracker("root", -1)
+	c1 := NewTracker("child 1", -1)
+	c2 := NewTracker("child 2", -1)
+	cc1 := NewTracker("child of child 1", -1)
+
+	c1.AttachTo(r)
+	c2.AttachTo(r)
+	cc1.AttachTo(c1)
+
+	ts := []*Tracker{r, c1, c2, cc1}
+	var consumed, maxConsumed int64
+	for i := 0; i < 10; i++ {
+		t := ts[rand.Intn(len(ts))]
+		b := rand.Int63n(1000) - 500
+		if consumed+b < 0 {
+			b = -consumed
+		}
+		consumed += b
+		t.Consume(b)
+		maxConsumed = mathutil.MaxInt64(maxConsumed, consumed)
+
+		c.Assert(r.BytesConsumed(), Equals, consumed)
+		c.Assert(r.MaxConsumed(), Equals, maxConsumed)
+	}
 }
 
 func BenchmarkConsume(b *testing.B) {

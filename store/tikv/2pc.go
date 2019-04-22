@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -128,7 +127,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		keys = append(keys, k)
 		entrySize := len(k) + len(v)
 		if entrySize > kv.TxnEntrySizeLimit {
-			return kv.ErrEntryTooLarge
+			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
 		}
 		size += entrySize
 		return nil
@@ -457,7 +456,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				key := alreadyExist.GetKey()
 				conditionPair := c.txn.us.LookupConditionPair(key)
 				if conditionPair == nil {
-					panic(fmt.Sprintf("conn%d, conditionPair for key:%s should not be nil", c.connID, key))
+					return errors.Errorf("conn%d, conditionPair for key:%s should not be nil", c.connID, key)
 				}
 				logutil.Logger(context.Background()).Debug("key already exists",
 					zap.Uint64("conn", c.connID),
