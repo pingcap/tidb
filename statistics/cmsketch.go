@@ -97,7 +97,6 @@ func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
 	for k := range data {
 		counter[hack.String(data[k])]++
 	}
-	sampleSize := uint64(len(data))
 	sorted := make([]uint64, 0, len(counter))
 	onlyOnceItems := uint64(0)
 	for _, cnt := range counter {
@@ -110,10 +109,11 @@ func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
 		return sorted[i] > sorted[j]
 	})
 
+	sampleSize := uint64(len(data))
 	sampleNDV := uint32(len(sorted))
-	numTop = mathutil.MinUint32(sampleNDV, numTop)
-	estimateNDV, ratio := calculateEstimateNDV(onlyOnceItems, sampleSize, uint64(len(sorted)), total)
+	estimateNDV, ratio := calculateEstimateNDV(onlyOnceItems, sampleSize, uint64(sampleNDV), total)
 
+	numTop = mathutil.MinUint32(sampleNDV, numTop)
 	NthValue := sorted[numTop-1]
 	newNthValue := sorted[numTop-1]
 	sumTopN := uint64(0)
