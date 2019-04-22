@@ -15,7 +15,6 @@ package domain
 
 import (
 	"context"
-	"crypto/tls"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -23,10 +22,11 @@ import (
 	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -43,7 +43,8 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -58,7 +59,7 @@ type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
-	bindHandle      *bindinfo.Handle
+	bindHandle      *bindinfo.BindHandle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
 	statsUpdating   sync2.AtomicInt32
@@ -300,10 +301,11 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
-	// gofail: var ErrorMockReloadFailed bool
-	// if ErrorMockReloadFailed {
-	// 		return errors.New("mock reload failed")
-	// }
+	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock reload failed"))
+		}
+	})
 
 	// Lock here for only once at the same time.
 	do.m.Lock()
@@ -563,13 +565,6 @@ func (c *ddlCallback) OnChanged(err error) error {
 	return nil
 }
 
-// EtcdBackend is used for judging a storage is a real TiKV.
-type EtcdBackend interface {
-	EtcdAddrs() []string
-	TLSConfig() *tls.Config
-	StartGCWorker() error
-}
-
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
@@ -589,7 +584,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
-	if ebd, ok := do.store.(EtcdBackend); ok {
+	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
@@ -785,7 +780,7 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 }
 
 // BindHandle returns domain's bindHandle.
-func (do *Domain) BindHandle() *bindinfo.Handle {
+func (do *Domain) BindHandle() *bindinfo.BindHandle {
 	return do.bindHandle
 }
 
@@ -793,10 +788,8 @@ func (do *Domain) BindHandle() *bindinfo.Handle {
 // be called only once in BootstrapSession.
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewHandle()
-
-	bindCacheUpdater := bindinfo.NewBindCacheUpdater(ctx, do.BindHandle(), parser)
-	err := bindCacheUpdater.Update(true)
+	do.bindHandle = bindinfo.NewBindHandle(ctx, parser)
+	err := do.bindHandle.Update(true)
 	if err != nil {
 		return err
 	}
@@ -812,7 +805,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 				return
 			case <-time.After(duration):
 			}
-			err = bindCacheUpdater.Update(false)
+			err = do.bindHandle.Update(false)
 			if err != nil {
 				logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
 			}
@@ -822,13 +815,13 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 }
 
 // StatsHandle returns the statistic handle.
-func (do *Domain) StatsHandle() *statistics.Handle {
-	return (*statistics.Handle)(atomic.LoadPointer(&do.statsHandle))
+func (do *Domain) StatsHandle() *handle.Handle {
+	return (*handle.Handle)(atomic.LoadPointer(&do.statsHandle))
 }
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
+	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(handle.NewHandle(ctx, do.statsLease)))
 }
 
 // StatsUpdating checks if the stats worker is updating.
@@ -853,7 +846,7 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle := statistics.NewHandle(ctx, do.statsLease)
+	statsHandle := handle.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
 	if do.statsLease <= 0 {
@@ -877,7 +870,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	if do.etcdClient == nil {
 		statsOwner = owner.NewMockManager(id, cancelFunc)
 	} else {
-		statsOwner = owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
+		statsOwner = owner.NewOwnerManager(do.etcdClient, handle.StatsPrompt, id, handle.StatsOwnerKey, cancelFunc)
 	}
 	// TODO: Need to do something when err is not nil.
 	err := statsOwner.CampaignOwner(cancelCtx)
@@ -932,7 +925,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				logutil.Logger(context.Background()).Debug("handle ddl event failed", zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
-			err = statsHandle.DumpStatsDeltaToKV(statistics.DumpDelta)
+			err = statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("dump stats delta failed", zap.Error(err))
 			}

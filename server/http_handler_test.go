@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -91,15 +92,14 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	r, err := NewRegionFrameRange(region)
+	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(r.first.IndexID, Equals, sIndex)
-	c.Assert(r.first.IsRecord, IsFalse)
-	c.Assert(r.first.RecordID, Equals, int64(0))
-	c.Assert(r.first.IndexValues, DeepEquals, expectIndexValues)
-	c.Assert(r.last.IsRecord, IsTrue)
-	c.Assert(r.last.RecordID, Equals, recordID)
-	c.Assert(r.last.IndexValues, IsNil)
+	c.Assert(r.First.IndexID, Equals, sIndex)
+	c.Assert(r.First.IsRecord, IsFalse)
+	c.Assert(r.First.RecordID, Equals, int64(0))
+	c.Assert(r.First.IndexValues, DeepEquals, expectIndexValues)
+	c.Assert(r.Last.RecordID, Equals, recordID)
+	c.Assert(r.Last.IndexValues, IsNil)
 
 	testCases := []struct {
 		tableID int64
@@ -118,11 +118,11 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 		{10, 1, false},
 	}
 	for _, t := range testCases {
-		var f *FrameItem
+		var f *helper.FrameItem
 		if t.indexID == 0 {
-			f = r.getRecordFrame(t.tableID, "", "")
+			f = r.GetRecordFrame(t.tableID, "", "")
 		} else {
-			f = r.getIndexFrame(t.tableID, t.indexID, "", "", "")
+			f = r.GetIndexFrame(t.tableID, t.indexID, "", "", "")
 		}
 		if t.isCover {
 			c.Assert(f, NotNil)
@@ -141,12 +141,12 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	r, err := NewRegionFrameRange(region)
+	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(r.first.IsRecord, IsTrue)
-	c.Assert(r.last.IsRecord, IsTrue)
-	c.Assert(r.getRecordFrame(300, "", ""), NotNil)
-	c.Assert(r.getIndexFrame(200, 100, "", "", ""), NotNil)
+	c.Assert(r.First.IsRecord, IsTrue)
+	c.Assert(r.Last.IsRecord, IsTrue)
+	c.Assert(r.GetRecordFrame(300, "", ""), NotNil)
+	c.Assert(r.GetIndexFrame(200, 100, "", "", ""), NotNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
@@ -158,12 +158,12 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	r, err := NewRegionFrameRange(region)
+	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(r.first.IsRecord, IsFalse)
-	c.Assert(r.last.IsRecord, IsTrue)
-	c.Assert(r.getRecordFrame(3, "", ""), NotNil)
-	c.Assert(r.getIndexFrame(8, 1, "", "", ""), NotNil)
+	c.Assert(r.First.IsRecord, IsFalse)
+	c.Assert(r.Last.IsRecord, IsTrue)
+	c.Assert(r.GetRecordFrame(3, "", ""), NotNil)
+	c.Assert(r.GetIndexFrame(8, 1, "", "", ""), NotNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
@@ -584,6 +584,36 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	se, err := session.CreateSession(ts.store.(kv.Storage))
 	c.Assert(err, IsNil)
 	c.Assert(dbtbl.SchemaVersion, Equals, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion())
+
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	dbt.mustExec("create database if not exists test;")
+	dbt.mustExec("use test;")
+	dbt.mustExec(` create table t1 (id int KEY)
+		partition by range (id) (
+		PARTITION p0 VALUES LESS THAN (3),
+		PARTITION p1 VALUES LESS THAN (5),
+		PARTITION p2 VALUES LESS THAN (7),
+		PARTITION p3 VALUES LESS THAN (9))`)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/test/t1"))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&t)
+	c.Assert(err, IsNil)
+	c.Assert(t.Name.L, Equals, "t1")
+
+	resp, err = http.Get(fmt.Sprintf(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID)))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&dbtbl)
+	c.Assert(err, IsNil)
+	c.Assert(dbtbl.TableInfo.Name.L, Equals, "t1")
+	c.Assert(dbtbl.DBInfo.Name.L, Equals, "test")
+	c.Assert(dbtbl.TableInfo, DeepEquals, t)
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {

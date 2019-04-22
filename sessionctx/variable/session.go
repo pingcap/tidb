@@ -410,6 +410,7 @@ func NewSessionVars() *SessionVars {
 		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
 		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
 		MemQuotaNestedLoopApply:   DefTiDBMemQuotaNestedLoopApply,
+		MemQuotaDistSQL:           DefTiDBMemQuotaDistSQL,
 	}
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: DefIndexJoinBatchSize,
@@ -603,7 +604,21 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TxnIsolationOneShot:
 		switch val {
 		case "SERIALIZABLE", "READ-UNCOMMITTED":
-			return ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
+			skipIsolationLevelCheck, err := GetSessionSystemVar(s, TiDBSkipIsolationLevelCheck)
+			returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(val)
+			if err != nil {
+				returnErr = err
+			}
+			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
+				return returnErr
+			}
+			//SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
+			// 1. tx_isolation
+			// 2. transaction_isolation
+			// The following if condition is used to deduplicate two same warnings.
+			if name == "transaction_isolation" {
+				s.StmtCtx.AppendWarning(returnErr)
+			}
 		}
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val
@@ -759,6 +774,12 @@ const (
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
 )
 
+// these variables are useless for TiDB, but still need to validate their values for some compatible issues.
+// TODO: some more variables need to be added here.
+const (
+	serverReadOnly = "read_only"
+)
+
 var (
 	// TxIsolationNames are the valid values of the variable "tx_isolation" or "transaction_isolation".
 	TxIsolationNames = map[string]struct{}{
@@ -822,6 +843,8 @@ type MemQuota struct {
 	MemQuotaIndexLookupJoin int64
 	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
 	MemQuotaNestedLoopApply int64
+	// MemQuotaDistSQL defines the memory quota for all operators in DistSQL layer like co-processor and selectResult.
+	MemQuotaDistSQL int64
 }
 
 // BatchSize defines batch size values.
@@ -872,6 +895,16 @@ const (
 	SlowLogDigestStr = "Digest"
 	// SlowLogQuerySQLStr is slow log field name.
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
+	// SlowLogStatsInfoStr is plan stats info.
+	SlowLogStatsInfoStr = "Stats"
+	// SlowLogNumCopTasksStr is the number of cop-tasks.
+	SlowLogNumCopTasksStr = "Num_cop_tasks"
+	// SlowLogCopProcessStr includes some useful information about cop-tasks' process time.
+	SlowLogCopProcessStr = "Cop_process"
+	// SlowLogCopWaitStr includes some useful information about cop-tasks' wait time.
+	SlowLogCopWaitStr = "Cop_wait"
+	// SlowLogMemMax is the max number bytes of memory used in this statement.
+	SlowLogMemMax = "Mem_max"
 )
 
 // SlowLogFormat uses for formatting slow log.
@@ -885,8 +918,15 @@ const (
 // # DB: test
 // # Index_ids: [1,2]
 // # Is_internal: false
+// # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+// # Stats: t1:1,t2:2
+// # Num_cop_tasks: 10
+// # Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s Max_addr: 10.6.131.78
+// # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
+// # Memory_max: 4096
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest, sql string) string {
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
+	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
 	buf.WriteString(SlowLogRowPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
@@ -909,6 +949,38 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 	buf.WriteString(SlowLogRowPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
 	if len(digest) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+	}
+	if len(statsInfos) > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
+		firstComma := false
+		vStr := ""
+		for k, v := range statsInfos {
+			if v == 0 {
+				vStr = "pseudo"
+			} else {
+				vStr = strconv.FormatUint(v, 10)
+
+			}
+			if firstComma {
+				buf.WriteString("," + k + ":" + vStr)
+			} else {
+				buf.WriteString(k + ":" + vStr)
+				firstComma = true
+			}
+		}
+		buf.WriteString("\n")
+	}
+	if copTasks != nil {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopProcessStr + SlowLogSpaceMarkStr +
+			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_addr: %v", copTasks.AvgProcessTime,
+				copTasks.P90ProcessTime, copTasks.MaxProcessTime, copTasks.MaxProcessAddress) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopWaitStr + SlowLogSpaceMarkStr +
+			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_Addr: %v", copTasks.AvgWaitTime,
+				copTasks.P90WaitTime, copTasks.MaxWaitTime, copTasks.MaxWaitAddress) + "\n")
+	}
+	if memMax > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"

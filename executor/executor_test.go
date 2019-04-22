@@ -30,6 +30,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -64,7 +65,9 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestT(t *testing.T) {
@@ -84,6 +87,7 @@ var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
+var _ = Suite(&testOOMSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -1763,8 +1767,15 @@ func (s *testSuite) TestSQLMode(c *C) {
 
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	_, err = tk.Exec("insert t values (null)")
+	c.Check(err, NotNil)
+	tk.MustExec("insert ignore t values (null)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
+	tk.MustExec("insert t select null")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert t values (1000)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("0", "127"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0", "0", "0", "127"))
 
 	tk.MustExec("insert tdouble values (10.23)")
 	tk.MustQuery("select * from tdouble").Check(testkit.Rows("9.99"))
@@ -3642,4 +3653,92 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select b from pt where b = 3").Check(testkit.Rows("3"))
 	// Index lookup
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
+}
+
+type testOOMSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+	oom   *oomCapturer
+}
+
+func (s *testOOMSuite) SetUpSuite(c *C) {
+	c.Skip("log.ReplaceGlobals(lg, r) in registerHook() may result in data race")
+	testleak.BeforeTest()
+	s.registerHook()
+	var err error
+	s.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	session.SetSchemaLease(0)
+	domain.RunAutoAnalyze = false
+	s.do, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testOOMSuite) registerHook() {
+	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	_, r, _ := log.InitLogger(conf)
+	s.oom = &oomCapturer{r.Core, ""}
+	lg := zap.New(s.oom)
+	log.ReplaceGlobals(lg, r)
+}
+
+func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+
+	s.oom.tracker = ""
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "TableReaderDistSQLTracker")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+
+	s.oom.tracker = ""
+	tk.MustQuery("select a from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select a from t use index(idx_a)")
+	c.Assert(s.oom.tracker, Equals, "IndexReaderDistSQLTracker")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+
+	s.oom.tracker = ""
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select * from t use index(idx_a)")
+	c.Assert(s.oom.tracker, Equals, "IndexLookupDistSQLTracker")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+}
+
+type oomCapturer struct {
+	zapcore.Core
+	tracker string
+}
+
+func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	if strings.Contains(entry.Message, "memory exceeds quota") {
+		err, _ := fields[0].Interface.(error)
+		str := err.Error()
+		begin := strings.Index(str, "8001]")
+		if begin == -1 {
+			panic("begin not found")
+		}
+		end := strings.Index(str, " holds")
+		if end == -1 {
+			panic("end not found")
+		}
+		h.tracker = str[begin+len("8001]") : end]
+	}
+	return nil
+}
+
+func (h *oomCapturer) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if h.Enabled(e.Level) {
+		return ce.AddCore(e, h)
+	}
+	return ce
 }
