@@ -113,10 +113,6 @@ type testIntegrationSuite1 struct {
 	testIntegrationSuite
 }
 
-func (s *testIntegrationSuite1) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
-}
-
 func (s *testIntegrationSuite1) SetUpSuite(c *C) {
 	setupIntegrationSuite(&s.testIntegrationSuite, c)
 }
@@ -145,10 +141,6 @@ type testIntegrationSuite3 struct {
 	testIntegrationSuite
 }
 
-func (s *testIntegrationSuite3) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
-}
-
 func (s *testIntegrationSuite3) SetUpSuite(c *C) {
 	setupIntegrationSuite(&s.testIntegrationSuite, c)
 }
@@ -159,10 +151,6 @@ func (s *testIntegrationSuite3) TearDownSuite(c *C) {
 
 type testIntegrationSuite4 struct {
 	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite4) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
 }
 
 func (s *testIntegrationSuite4) SetUpSuite(c *C) {
@@ -177,10 +165,6 @@ type testIntegrationSuite5 struct {
 	testIntegrationSuite
 }
 
-func (s *testIntegrationSuite5) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
-}
-
 func (s *testIntegrationSuite5) SetUpSuite(c *C) {
 	setupIntegrationSuite(&s.testIntegrationSuite, c)
 }
@@ -191,10 +175,6 @@ func (s *testIntegrationSuite5) TearDownSuite(c *C) {
 
 type testIntegrationSuite6 struct {
 	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite6) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
 }
 
 func (s *testIntegrationSuite6) SetUpSuite(c *C) {
@@ -209,10 +189,6 @@ type testIntegrationSuite7 struct {
 	testIntegrationSuite
 }
 
-func (s *testIntegrationSuite7) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
-}
-
 func (s *testIntegrationSuite7) SetUpSuite(c *C) {
 	setupIntegrationSuite(&s.testIntegrationSuite, c)
 }
@@ -223,10 +199,6 @@ func (s *testIntegrationSuite7) TearDownSuite(c *C) {
 
 type testIntegrationSuite8 struct {
 	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite8) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
 }
 
 func (s *testIntegrationSuite8) SetUpSuite(c *C) {
@@ -241,10 +213,6 @@ type testIntegrationSuite9 struct {
 	testIntegrationSuite
 }
 
-func (s *testIntegrationSuite9) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
-}
-
 func (s *testIntegrationSuite9) SetUpSuite(c *C) {
 	setupIntegrationSuite(&s.testIntegrationSuite, c)
 }
@@ -255,10 +223,6 @@ func (s *testIntegrationSuite9) TearDownSuite(c *C) {
 
 type testIntegrationSuite10 struct {
 	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite10) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
 }
 
 func (s *testIntegrationSuite10) SetUpSuite(c *C) {
