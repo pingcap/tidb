@@ -47,7 +47,7 @@ require (
 	github.com/philhofer/fwd v1.0.0 // indirect
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.1
-	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
+	github.com/pingcap/failpoint v0.0.0-20190418063555-9c3d850fd17c
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20190215154024-7f2fc73ef562
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
