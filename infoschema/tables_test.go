@@ -302,6 +302,8 @@ func (s *testSuite) TestSlowQuery(c *C) {
 # Conn_ID: 6
 # Query_time: 4.895492
 # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Process_keys: 100000
+# Wait_time: 0.101
+# Backoff_time: 0.092
 # DB: test
 # Is_internal: false
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
