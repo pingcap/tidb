@@ -1493,7 +1493,8 @@ func dataForHotRegionByMetrics(metrics map[helper.TblIndex]helper.RegionMetric, 
 	return rows
 }
 
-func dataForAnalyzeStatus() (rows [][]types.Datum) {
+// DataForAnalyzeStatus gets all the analyze jobs.
+func DataForAnalyzeStatus() (rows [][]types.Datum) {
 	for _, job := range statistics.GetAllAnalyzeJobs() {
 		job.Lock()
 		var startTime interface{}
@@ -1648,7 +1649,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableTiDBHotRegions:
 		fullRows, err = dataForTiDBHotRegions(ctx)
 	case tableAnalyzeStatus:
-		fullRows = dataForAnalyzeStatus()
+		fullRows = DataForAnalyzeStatus()
 	}
 	if err != nil {
 		return nil, err

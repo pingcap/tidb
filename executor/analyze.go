@@ -306,7 +306,6 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		if l := nullHist.Len(); l > 0 {
 			hist.NullCount = nullHist.Buckets[l-1].Count
 		}
-		e.job.Update(hist.NullCount)
 	}
 	hist.ID = e.idxInfo.ID
 	return hist, cms, nil
