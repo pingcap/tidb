@@ -202,9 +202,13 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	s.ctx.Store = s.store
 
 	for i := 0; i < 10; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i))
 		c.Assert(tk.QueryToErr("select * from t where a>=0"), IsNil)
+	}
 
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("update t set a=%d where a=%d", i, i+10))
+		c.Assert(tk.QueryToErr("select * from t where a>=0"), IsNil)
 	}
 
 	for i := 0; i < 10; i++ {
