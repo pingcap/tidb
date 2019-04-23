@@ -14,7 +14,6 @@
 package stmtctx
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -25,9 +24,8 @@ func TestCopTasksDetails(t *testing.T) {
 	ctx := new(StatementContext)
 	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
-			CalleeAddress: fmt.Sprintf("%v", i+1),
-			ProcessTime:   time.Second * time.Duration(i+1),
-			WaitTime:      time.Millisecond * time.Duration(i+1),
+			ProcessTime: time.Second * time.Duration(i+1),
+			WaitTime:    time.Millisecond * time.Duration(i+1),
 		}
 		ctx.MergeExecDetails(d, nil)
 	}
@@ -36,11 +34,9 @@ func TestCopTasksDetails(t *testing.T) {
 		c.AvgProcessTime != time.Second*101/2 ||
 		c.P90ProcessTime != time.Second*91 ||
 		c.MaxProcessTime != time.Second*100 ||
-		c.MaxProcessAddress != "100" ||
 		c.AvgWaitTime != time.Millisecond*101/2 ||
 		c.P90WaitTime != time.Millisecond*91 ||
-		c.MaxWaitTime != time.Millisecond*100 ||
-		c.MaxWaitAddress != "100" {
+		c.MaxWaitTime != time.Millisecond*100 {
 		t.Fatal(c)
 	}
 }
