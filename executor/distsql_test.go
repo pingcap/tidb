@@ -216,6 +216,6 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 		c.Assert(err, IsNil)
 
 		err = tk.QueryToErr("select * from t where a>=0")
-		c.Assert(err.Error(), Equals, fmt.Sprintf("[kv:2]inconsistent extra index idx_a, %d handles got 10 rows", i+11))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[kv:2]handle count %d isn't equal to value count 10", i+11))
 	}
 }

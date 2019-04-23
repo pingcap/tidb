@@ -812,11 +812,6 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 	}
 
-	if len(task.rows) != len(task.handles) {
-		return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, %d handles got %d rows",
-			w.idxLookup.index.Name.O, len(task.handles), len(task.rows))
-	}
-
 	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
@@ -832,13 +827,18 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	if w.isCheckOp && handleCnt != len(task.rows) {
+	if handleCnt != len(task.rows) {
+		if !w.isCheckOp {
+			return kv.ErrNotExist.GenWithStack("handle count %d isn't equal to value count %d",
+				handleCnt, len(task.rows))
+		}
+
 		obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
 		for _, row := range task.rows {
 			handle := row.GetInt64(w.handleIdx)
 			obtainedHandlesMap[handle] = struct{}{}
 		}
-		return errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
+		return kv.ErrNotExist.GenWithStack("handle count %d isn't equal to value count %d, missing handles %v in a batch",
 			handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
 	}
 
