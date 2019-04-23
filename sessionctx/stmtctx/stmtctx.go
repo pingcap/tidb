@@ -343,14 +343,12 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	})
 	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].ProcessTime
 	d.MaxProcessTime = sc.mu.allExecDetails[n-1].ProcessTime
-	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
 	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
 		return sc.mu.allExecDetails[i].WaitTime < sc.mu.allExecDetails[j].WaitTime
 	})
 	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].WaitTime
 	d.MaxWaitTime = sc.mu.allExecDetails[n-1].WaitTime
-	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 	return d
 }
 
@@ -360,11 +358,9 @@ type CopTasksDetails struct {
 
 	AvgProcessTime    time.Duration
 	P90ProcessTime    time.Duration
-	MaxProcessAddress string
 	MaxProcessTime    time.Duration
 
 	AvgWaitTime    time.Duration
 	P90WaitTime    time.Duration
-	MaxWaitAddress string
 	MaxWaitTime    time.Duration
 }

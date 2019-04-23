@@ -853,13 +853,13 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 		buf.WriteString("\n")
 	}
 	if copTasks != nil {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopProcessStr + SlowLogSpaceMarkStr +
-			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_addr: %v", copTasks.AvgProcessTime,
-				copTasks.P90ProcessTime, copTasks.MaxProcessTime, copTasks.MaxProcessAddress) + "\n")
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopWaitStr + SlowLogSpaceMarkStr +
-			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_Addr: %v", copTasks.AvgWaitTime,
-				copTasks.P90WaitTime, copTasks.MaxWaitTime, copTasks.MaxWaitAddress) + "\n")
+		buf.WriteString(SlowLogPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
+		buf.WriteString(SlowLogPrefixStr + SlowLogCopProcessStr + SlowLogSpaceMarkStr +
+			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v", copTasks.AvgProcessTime,
+				copTasks.P90ProcessTime, copTasks.MaxProcessTime) + "\n")
+		buf.WriteString(SlowLogPrefixStr + SlowLogCopWaitStr + SlowLogSpaceMarkStr +
+			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v", copTasks.AvgWaitTime,
+				copTasks.P90WaitTime, copTasks.MaxWaitTime) + "\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"
