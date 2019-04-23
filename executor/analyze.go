@@ -547,7 +547,6 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 	defer func() {
 		e.wg.Done()
 		if *needRebuild == true {
-			close(e.sampLocs)
 			for ok := true; ok; _, ok = <-e.sampLocs {
 				// Do nothing, just clear the channel.
 			}
