@@ -834,7 +834,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				handle := row.GetInt64(w.handleIdx)
 				obtainedHandlesMap[handle] = struct{}{}
 			}
-			return kv.ErrNotExist.GenWithStack("inconsistent index %s handle count %d isn't equal to value count %d, missing handles %v in a batch",
+			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d, missing handles %v in a batch",
 				w.idxLookup.index.Name.O, handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
 		}
 
@@ -842,7 +842,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
 			tblScan, ok := w.idxLookup.tblPlans[0].(*plannercore.PhysicalTableScan)
 			if ok && tblScan.NoCondition() {
-				return kv.ErrNotExist.GenWithStack("inconsistent index %s handle count %d isn't equal to value count %d",
+				return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
 					w.idxLookup.index.Name.O, handleCnt, len(task.rows))
 			}
 		}
