@@ -34,7 +34,7 @@ func (c *CMSketch) insert(val *types.Datum) error {
 	return nil
 }
 
-func insertTopN(d, w int32, val []*types.Datum, n uint32, total uint64) (*CMSketch, error) {
+func prepareCMSWithTopN(d, w int32, val []*types.Datum, n uint32, total uint64) (*CMSketch, error) {
 	data := make([][]byte, len(val), len(val))
 	for i, v := range val {
 		bytes, err := codec.EncodeValue(nil, nil, *v)
@@ -72,7 +72,7 @@ func buildCMSketchTopNAndMap(d, w, n, sample int32, seed int64, total, imax uint
 			vals = append(vals, &val)
 		}
 	}
-	cms, err := insertTopN(d, w, vals, uint32(n), total)
+	cms, err := prepareCMSWithTopN(d, w, vals, uint32(n), total)
 	return cms, mp, err
 }
 
@@ -204,7 +204,7 @@ func (s *testStatisticsSuite) TestCMSketchTopNUniqueData(c *C) {
 			vals = append(vals, &val)
 		}
 	}
-	cms, err := insertTopN(d, w, vals, uint32(20), total)
+	cms, err := prepareCMSWithTopN(d, w, vals, uint32(20), total)
 	c.Assert(err, IsNil)
 	avg, err := averageAbsoluteError(cms, mp)
 	c.Assert(err, IsNil)

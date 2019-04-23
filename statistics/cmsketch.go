@@ -89,14 +89,14 @@ func newTopNHelper(data [][]byte, numTop uint32) *topNHelper {
 
 	var (
 		// last is the last element in top N index should occurres atleast `last` times.
-		last    uint64
-		sumTopN uint64
-		ndv     = uint32(len(sorted))
+		last      uint64
+		sumTopN   uint64
+		sampleNDV = uint32(len(sorted))
 	)
-	numTop = mathutil.MinUint32(ndv, numTop) // In case numTop is bigger than sample NUV.
+	numTop = mathutil.MinUint32(sampleNDV, numTop) // In case numTop is bigger than sample NUV.
 	// The following loop builds find how many elements be added to the top N index.
 	// The final Top-N index may have at most 2*numTop elements for some less skewed data.
-	for i := uint32(0); i < ndv && i < numTop*2; i++ {
+	for i := uint32(0); i < sampleNDV && i < numTop*2; i++ {
 		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2.
 		// If the frequency of i-th elements is close to n-th element, it is added to the top N index too.
 		if i >= numTop && sorted[i]*3 < sorted[numTop-1]*2 && last != sorted[i] {
@@ -115,34 +115,34 @@ func newTopNHelper(data [][]byte, numTop uint32) *topNHelper {
 // total is the size of the whole dataset
 func NewCMSketchWithTopN(d, w int32, data [][]byte, numTop uint32, total uint64) *CMSketch {
 	helper := newTopNHelper(data, numTop)
-	c := NewCMSketch(d, w)
 	estimateNDV, ratio := calculateEstimateNDV(helper, total)
-	c.buildCMSWithTopN(helper, ratio)
-	c.setDefaultVal(helper, estimateNDV, ratio, total)
+	c := helper.buildCMSWithTopN(d, w, ratio)
+	c.calculateDefaultVal(helper, estimateNDV, ratio, total)
 	return c
 }
 
 // finalBuild builds Top-N and cmsketch
-func (c *CMSketch) buildCMSWithTopN(helper *topNHelper, ratio uint64) (retNumTop uint32, retSumTopN uint64) {
+func (helper *topNHelper) buildCMSWithTopN(d, w int32, ratio uint64) (c *CMSketch) {
+	c = NewCMSketch(d, w)
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	topN := make([]dataCount, 0, helper.numTop)
-	retSumTopN = 0
+	helper.sumTopN = 0
 	for counterKey, cnt := range helper.counter {
 		if enableTopN && cnt >= helper.lastVal {
 			topN = append(topN, dataCount{data: hack.Slice(string(counterKey)), count: cnt * ratio})
-			retSumTopN += cnt * ratio
+			helper.sumTopN += cnt * ratio
 		} else {
 			c.insertBytesN(hack.Slice(string(counterKey)), cnt*ratio)
 		}
 	}
 	if enableTopN {
-		retNumTop = uint32(len(topN))
+		helper.numTop = uint32(len(topN))
 		c.buildTopNMap(topN)
 	}
 	return
 }
 
-func (c *CMSketch) setDefaultVal(helper *topNHelper, estimateNDV, ratio, total uint64) {
+func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, ratio, total uint64) {
 	sampleNDV := uint64(len(helper.sorted))
 	if total <= helper.sumTopN {
 		c.defaultValue = 1
