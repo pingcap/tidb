@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -171,6 +172,7 @@ func (s *testSuite1) TestShowPartitionStats(c *C) {
 
 func (s *testSuite1) TestShowAnalyzeStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
@@ -195,8 +197,4 @@ func (s *testSuite1) TestShowAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][4], Equals, "2")
 	c.Assert(result.Rows()[1][5], NotNil)
 	c.Assert(result.Rows()[1][6], Equals, "finished")
-
-	tk.MustExec("analyze table t")
-	result = tk.MustQuery("show analyze status")
-	c.Assert(len(result.Rows()), Equals, 2)
 }

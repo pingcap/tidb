@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
@@ -355,6 +356,7 @@ select * from t_slim;`))
 
 func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx(a))")

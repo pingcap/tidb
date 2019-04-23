@@ -65,7 +65,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	for i := 0; i < concurrency; i++ {
 		go e.analyzeWorker(taskCh, resultCh)
 	}
-	statistics.ClearHistoryJobs()
 	for _, task := range e.tasks {
 		statistics.AddNewAnalyzeJob(task.job)
 	}
