@@ -55,23 +55,23 @@ import (
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store           kv.Storage
-	infoHandle      *infoschema.Handle
-	privHandle      *privileges.Handle
-	bindHandle      *bindinfo.BindHandle
-	statsHandle     unsafe.Pointer
-	statsLease      time.Duration
-	statsUpdating   sync2.AtomicInt32
-	ddl             ddl.DDL
-	info            *InfoSyncer
-	m               sync.Mutex
-	SchemaValidator SchemaValidator
-	sysSessionPool  *sessionPool
-	exit            chan struct{}
-	etcdClient      *clientv3.Client
-	wg              sync.WaitGroup
-	gvc             GlobalVariableCache
-	slowQuery       *topNSlowQueries
+	store            kv.Storage
+	infoHandle       *infoschema.Handle
+	privHandle       *privileges.Handle
+	globalBindHandle *bindinfo.GlobalBindHandle
+	statsHandle      unsafe.Pointer
+	statsLease       time.Duration
+	statsUpdating    sync2.AtomicInt32
+	ddl              ddl.DDL
+	info             *InfoSyncer
+	m                sync.Mutex
+	SchemaValidator  SchemaValidator
+	sysSessionPool   *sessionPool
+	exit             chan struct{}
+	etcdClient       *clientv3.Client
+	wg               sync.WaitGroup
+	gvc              GlobalVariableCache
+	slowQuery        *topNSlowQueries
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -776,17 +776,17 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
-// BindHandle returns domain's bindHandle.
-func (do *Domain) BindHandle() *bindinfo.BindHandle {
-	return do.bindHandle
+// GlobalBindHandle returns domain's globalBindHandle.
+func (do *Domain) GlobalBindHandle() *bindinfo.GlobalBindHandle {
+	return do.globalBindHandle
 }
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewBindHandle(ctx, parser)
-	err := do.bindHandle.Update(true)
+	do.globalBindHandle = bindinfo.NewGlobalBindHandle(ctx, parser)
+	err := do.globalBindHandle.Update(true)
 	if err != nil {
 		return err
 	}
@@ -802,7 +802,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 				return
 			case <-time.After(duration):
 			}
-			err = do.bindHandle.Update(false)
+			err = do.globalBindHandle.Update(false)
 			if err != nil {
 				logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
 			}

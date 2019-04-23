@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	// using is the bind info's in use status.
-	using = "using"
-	// deleted is the bind info's deleted status.
-	deleted = "deleted"
+	// Using is the bind info's in use status.
+	Using = "using"
+	// Deleted is the bind info's Deleted status.
+	Deleted = "deleted"
 )
 
 // bindMeta stores the basic bind info and bindSql astNode.

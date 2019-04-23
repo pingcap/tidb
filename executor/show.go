@@ -182,7 +182,7 @@ func (e *ShowExec) fetchShowBind() error {
 	if !e.GlobalScope {
 		return errors.New("show non-global bind sql is not supported")
 	}
-	bindRecords := domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
+	bindRecords := domain.GetDomain(e.ctx).GlobalBindHandle().GetAllBindRecord()
 	for _, bindData := range bindRecords {
 		e.appendRow([]interface{}{
 			bindData.OriginalSQL,

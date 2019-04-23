@@ -31,14 +31,20 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// BindHandle is used to handle all the sql bind operations.
-type BindHandle struct {
+// GlobalBindHandle is used to handle all the sql bind operations.
+type GlobalBindHandle struct {
 	sctx struct {
 		sync.Mutex
 		sessionctx.Context
 	}
 
-	// bindInfo caches the sql bind info from storage.
+	BindHandle
+	lastUpdateTime types.Time
+}
+
+// BindHandle is used to handle memory bind operations.
+type BindHandle struct {
+	// bindInfo caches the sql bind info.
 	//
 	// The Mutex protects that there is only one goroutine changes the content
 	// of atmoic.Value.
@@ -60,20 +66,28 @@ type BindHandle struct {
 		atomic.Value
 	}
 
-	parser         *parser.Parser
-	lastUpdateTime types.Time
+	Parser *parser.Parser
 }
 
-// NewBindHandle creates a new BindHandle.
-func NewBindHandle(ctx sessionctx.Context, parser *parser.Parser) *BindHandle {
-	handle := &BindHandle{parser: parser}
-	handle.sctx.Context = ctx
+// NewBindHandle creates a new GlobalBindHandle.
+func NewBindHandle(parser *parser.Parser) *BindHandle {
+	handle := &BindHandle{}
+	handle.Parser = parser
 	handle.bindInfo.Value.Store(make(cache, 32))
 	return handle
 }
 
+// NewGlobalBindHandle creates a new GlobalBindHandle.
+func NewGlobalBindHandle(ctx sessionctx.Context, parser *parser.Parser) *GlobalBindHandle {
+	handle := &GlobalBindHandle{}
+	handle.sctx.Context = ctx
+	handle.bindInfo.Value.Store(make(cache, 32))
+	handle.Parser = parser
+	return handle
+}
+
 // Update updates the global sql bind cache.
-func (h *BindHandle) Update(fullLoad bool) (err error) {
+func (h *GlobalBindHandle) Update(fullLoad bool) (err error) {
 	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
 	if !fullLoad {
 		sql += " where update_time >= \"" + h.lastUpdateTime.String() + "\""
@@ -106,15 +120,25 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		}
 
 		newCache.removeStaleBindMetas(hash, meta)
-		if meta.Status == using {
+		if meta.Status == Using {
 			newCache[hash] = append(newCache[hash], meta)
 		}
 	}
 	return nil
 }
 
+// AddBindRecord new a BindRecord with bindMeta, add it to the cache.
+func (h *BindHandle) AddBindRecord(record *BindRecord) error {
+	// update the bindMeta to the cache.
+	hash, meta, err := h.newBindMeta(record)
+	if err == nil {
+		h.appendBindMeta(hash, meta)
+	}
+	return err
+}
+
 // AddBindRecord adds a BindRecord to the storage and bindMeta to the cache.
-func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
+func (h *GlobalBindHandle) AddBindRecord(record *BindRecord) (err error) {
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	h.sctx.Lock()
 	_, err = exec.Execute(context.TODO(), "BEGIN")
@@ -163,7 +187,7 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 		Fsp:  3,
 	}
 	record.UpdateTime = record.CreateTime
-	record.Status = using
+	record.Status = Using
 	record.BindSQL = h.getEscapeCharacter(record.BindSQL)
 
 	// insert the BindRecord to the storage.
@@ -172,7 +196,7 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 }
 
 // DropBindRecord drops a BindRecord to the storage and bindMeta int the cache.
-func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
+func (h *GlobalBindHandle) DropBindRecord(record *BindRecord) (err error) {
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	h.sctx.Lock()
 
@@ -210,7 +234,7 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 		Type: mysql.TypeDatetime,
 		Fsp:  3,
 	}
-	record.Status = deleted
+	record.Status = Deleted
 	record.UpdateTime = updateTs
 
 	_, err = exec.Execute(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, updateTs))
@@ -241,7 +265,7 @@ func (h *BindHandle) GetBindRecord(normdOrigSQL, db string) *bindMeta {
 }
 
 // GetAllBindRecord return all bind record in cache.
-func (h *BindHandle) GetAllBindRecord() (bindRecords []*bindMeta) {
+func (h *GlobalBindHandle) GetAllBindRecord() (bindRecords []*bindMeta) {
 	bindRecordMap := h.bindInfo.Load().(cache)
 	for _, bindRecord := range bindRecordMap {
 		bindRecords = append(bindRecords, bindRecord...)
@@ -251,7 +275,7 @@ func (h *BindHandle) GetAllBindRecord() (bindRecords []*bindMeta) {
 
 func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *bindMeta, err error) {
 	hash = parser.DigestHash(record.OriginalSQL)
-	stmtNodes, _, err := h.parser.Parse(record.BindSQL, record.Charset, record.Collation)
+	stmtNodes, _, err := h.Parser.Parse(record.BindSQL, record.Charset, record.Collation)
 	if err != nil {
 		return "", nil, err
 	}
@@ -347,7 +371,7 @@ func (m *bindMeta) isSame(other *bindMeta) bool {
 	return m.OriginalSQL == other.OriginalSQL && m.Db == other.Db
 }
 
-func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db string) string {
+func (h *GlobalBindHandle) deleteBindInfoSQL(normdOrigSQL, db string) string {
 	return fmt.Sprintf(
 		"DELETE FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
 		normdOrigSQL,
@@ -355,7 +379,7 @@ func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db string) string {
 	)
 }
 
-func (h *BindHandle) insertBindInfoSQL(record *BindRecord) string {
+func (h *GlobalBindHandle) insertBindInfoSQL(record *BindRecord) string {
 	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES ('%s', '%s', '%s', '%s', '%s', '%s','%s', '%s')`,
 		record.OriginalSQL,
 		record.BindSQL,
@@ -368,15 +392,15 @@ func (h *BindHandle) insertBindInfoSQL(record *BindRecord) string {
 	)
 }
 
-func (h *BindHandle) logicalDeleteBindInfoSQL(normdOrigSQL, db string, updateTs types.Time) string {
+func (h *GlobalBindHandle) logicalDeleteBindInfoSQL(normdOrigSQL, db string, updateTs types.Time) string {
 	return fmt.Sprintf(`UPDATE mysql.bind_info SET status='%s',update_time='%s' WHERE original_sql='%s' and default_db='%s'`,
-		deleted,
+		Deleted,
 		updateTs,
 		normdOrigSQL,
 		db)
 }
 
-func (h *BindHandle) getEscapeCharacter(str string) string {
+func (h *GlobalBindHandle) getEscapeCharacter(str string) string {
 	var buffer bytes.Buffer
 	for _, v := range str {
 		if v == '\'' || v == '"' || v == '\\' {
@@ -386,3 +410,14 @@ func (h *BindHandle) getEscapeCharacter(str string) string {
 	}
 	return buffer.String()
 }
+
+// sessionBindInfoKeyType is a dummy type to avoid naming collision in context.
+type sessionBindInfoKeyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k sessionBindInfoKeyType) String() string {
+	return "session_bindinfo"
+}
+
+// SessionBindInfoKeyType is a variable key for store session bind info.
+const SessionBindInfoKeyType sessionBindInfoKeyType = 0
