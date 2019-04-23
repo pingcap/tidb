@@ -852,9 +852,13 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *erro
 		}
 
 		var kvMap map[string][]byte
-		kvMap, *err = snapshot.BatchGet(keys)
-		if *err != nil {
-			return
+		for _, key := range keys {
+			var iter kv.Iterator
+			iter, *err = snapshot.Iter(key, endKey)
+			if *err != nil {
+				return
+			}
+			kvMap[string(iter.Key())] = iter.Value()
 		}
 
 		*err = e.handleBatchGetResponse(kvMap)
