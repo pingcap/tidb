@@ -116,7 +116,7 @@ func NewCMSketchWithTopN(d, w int32, sample [][]byte, numTop uint32, rowCount ui
 	helper := newTopNHelper(sample, numTop)
 	// rowCount is not a accurate value when fast analyzing
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
-	rowCount := mathutil.MaxUint64(rowCount, uint64(len(sample)))
+	rowCount = mathutil.MaxUint64(rowCount, uint64(len(sample)))
 	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
 	c := buildCMSWithTopN(helper, d, w, scaleRatio)
 	c.calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
