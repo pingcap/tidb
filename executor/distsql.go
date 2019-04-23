@@ -839,7 +839,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 
 		if len(w.idxLookup.tblPlans) == 1 {
-			// if this table scan has no condition, the number or rows it returns must equal to the length of handles.
+			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
 			tblScan, ok := w.idxLookup.tblPlans[0].(*plannercore.PhysicalTableScan)
 			if ok && tblScan.NoCondition() {
 				return kv.ErrNotExist.GenWithStack("inconsistent index %s handle count %d isn't equal to value count %d",
