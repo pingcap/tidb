@@ -117,53 +117,22 @@ func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	tearDownIntegrationSuite(s, c)
 }
 
-type testIntegrationSuite1 struct {
-	*testIntegrationSuite
-}
-
-type testIntegrationSuite2 struct {
-	*testIntegrationSuite
-}
+type testIntegrationSuite1 struct{ *testIntegrationSuite }
+type testIntegrationSuite2 struct{ *testIntegrationSuite }
 
 func (s *testIntegrationSuite2) TearDownTest(c *C) {
 	tearDownIntegrationSuiteTest(s.testIntegrationSuite, c)
 }
 
-type testIntegrationSuite3 struct {
-	*testIntegrationSuite
-}
-
-type testIntegrationSuite4 struct {
-	*testIntegrationSuite
-}
-
-type testIntegrationSuite5 struct {
-	*testIntegrationSuite
-}
-
-type testIntegrationSuite6 struct {
-	*testIntegrationSuite
-}
-
-type testIntegrationSuite7 struct {
-	*testIntegrationSuite
-}
-
-type testIntegrationSuite8 struct {
-	*testIntegrationSuite
-}
-
-type testIntegrationSuite9 struct {
-	*testIntegrationSuite
-}
-
-type testIntegrationSuite10 struct {
-	*testIntegrationSuite
-}
-
-type testIntegrationSuite11 struct {
-	*testIntegrationSuite
-}
+type testIntegrationSuite3 struct{ *testIntegrationSuite }
+type testIntegrationSuite4 struct{ *testIntegrationSuite }
+type testIntegrationSuite5 struct{ *testIntegrationSuite }
+type testIntegrationSuite6 struct{ *testIntegrationSuite }
+type testIntegrationSuite7 struct{ *testIntegrationSuite }
+type testIntegrationSuite8 struct{ *testIntegrationSuite }
+type testIntegrationSuite9 struct{ *testIntegrationSuite }
+type testIntegrationSuite10 struct{ *testIntegrationSuite }
+type testIntegrationSuite11 struct{ *testIntegrationSuite }
 
 func (s *testIntegrationSuite6) TestNoZeroDateMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

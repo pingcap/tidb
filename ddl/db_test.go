@@ -126,37 +126,14 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	tearDownSuite(s, c)
 }
 
-type testDBSuite1 struct {
-	*testDBSuite
-}
-
-type testDBSuite2 struct {
-	*testDBSuite
-}
-
-type testDBSuite3 struct {
-	*testDBSuite
-}
-
-type testDBSuite4 struct {
-	*testDBSuite
-}
-
-type testDBSuite5 struct {
-	*testDBSuite
-}
-
-type testDBSuite6 struct {
-	*testDBSuite
-}
-
-type testDBSuite7 struct {
-	*testDBSuite
-}
-
-type testDBSuite8 struct {
-	*testDBSuite
-}
+type testDBSuite1 struct{ *testDBSuite }
+type testDBSuite2 struct{ *testDBSuite }
+type testDBSuite3 struct{ *testDBSuite }
+type testDBSuite4 struct{ *testDBSuite }
+type testDBSuite5 struct{ *testDBSuite }
+type testDBSuite6 struct{ *testDBSuite }
+type testDBSuite7 struct{ *testDBSuite }
+type testDBSuite8 struct{ *testDBSuite }
 
 func assertErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
 	_, err := tk.Exec(sql)
@@ -787,13 +764,7 @@ func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
 }
 
 func (s *testDBSuite1) TestAddIndex1(c *C) {
-	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
-			      partition by range (c1) (
-			      partition p0 values less than (3440),
-			      partition p1 values less than (61440),
-			      partition p2 values less than (122880),
-			      partition p3 values less than (204800),
-			      partition p4 values less than maxvalue)`)
+	s.testAddIndex(c, false, "create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 }
 
 func (s *testDBSuite2) TestAddIndex2(c *C) {
