@@ -114,34 +114,36 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 // NewCMSketchWithTopN returns a new CM sketch with TopN elements.
 func NewCMSketchWithTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) *CMSketch {
 	helper := newTopNHelper(sample, numTop)
-	estimateNDV, ratio := calculateEstimateNDV(helper, rowCount)
-	c := buildCMSWithTopN(helper, d, w, ratio)
-	c.calculateDefaultVal(helper, estimateNDV, ratio, rowCount)
+	// rowCount is not a accurate value when fast analyzing
+	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
+	rowCount := mathutil.MaxUint64(rowCount, uint64(len(sample)))
+	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
+	c := buildCMSWithTopN(helper, d, w, scaleRatio)
+	c.calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
 	return c
 }
 
-func buildCMSWithTopN(helper *topNHelper, d, w int32, ratio uint64) (c *CMSketch) {
+func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64) (c *CMSketch) {
 	c, helper.sumTopN, helper.numTop = NewCMSketch(d, w), 0, 0
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
 		c.topN = make(map[uint64][]topNMeta)
 	}
 	for counterKey, cnt := range helper.counter {
-		scaledCount := cnt * ratio
+		data, scaledCount := hack.Slice(string(counterKey)), cnt*scaleRatio
 		if enableTopN && cnt >= helper.lastVal {
-			data := hack.Slice(string(counterKey))
 			h1, h2 := murmur3.Sum128(data)
 			c.topN[h1] = append(c.topN[h1], topNMeta{h1, h2, data, scaledCount})
 			helper.sumTopN += scaledCount
 			helper.numTop++
 		} else {
-			c.updateBytesWithDelta(hack.Slice(string(counterKey)), scaledCount)
+			c.updateBytesWithDelta(data, scaledCount)
 		}
 	}
 	return
 }
 
-func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, ratio, rowCount uint64) {
+func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount uint64) {
 	sampleNDV := uint64(len(helper.sorted))
 	if rowCount <= helper.sumTopN {
 		c.defaultValue = 1
@@ -150,7 +152,7 @@ func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, ratio, r
 	} else if estimateNDV+helper.onlyOnceItems <= uint64(sampleNDV) {
 		c.defaultValue = 1
 	} else {
-		estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*ratio
+		estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio
 		c.defaultValue = estimateRemainingCount / (estimateNDV - uint64(sampleNDV) + helper.onlyOnceItems)
 	}
 }

@@ -15,24 +15,22 @@ package statistics
 
 import (
 	"math"
-
-	"github.com/cznic/mathutil"
 )
 
 // calculateEstimateNDV calculates the estimate ndv of a sampled data from a multisize with size total.
 // count[i] stores the count of the i-th element.
 // onlyOnceItems is the number of elements that occurred only once.
-func calculateEstimateNDV(h *topNHelper, rowCount uint64) (ndv uint64, ratio uint64) {
+func calculateEstimateNDV(h *topNHelper, rowCount uint64) (ndv uint64, scaleRatio uint64) {
 	sampleSize, sampleNDV, onlyOnceItems := h.sampleSize, uint64(len(h.sorted)), h.onlyOnceItems
-	ratio = mathutil.MaxUint64(1, rowCount/sampleSize)
+	scaleRatio = rowCount / sampleSize
 
 	if onlyOnceItems == sampleSize {
-		// Assume this is a unique column
+		// Assume this is a unique column, so do not scale up the count of elements
 		return rowCount, 1
 	} else if onlyOnceItems == 0 {
 		// Assume data only consists of sampled data
-		// Nothing to do, no change with ratio
-		return sampleNDV, ratio
+		// Nothing to do, no change with scale ratio
+		return sampleNDV, scaleRatio
 	}
 	// Charikar, Moses, et al. "Towards estimation error guarantees for distinct values."
 	// Proceedings of the nineteenth ACM SIGMOD-SIGACT-SIGART symposium on Principles of database systems. ACM, 2000.
@@ -53,5 +51,5 @@ func calculateEstimateNDV(h *topNHelper, rowCount uint64) (ndv uint64, ratio uin
 	if ndv > rowCount {
 		ndv = rowCount
 	}
-	return ndv, ratio
+	return ndv, scaleRatio
 }
