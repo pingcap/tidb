@@ -82,9 +82,20 @@ func (s *HelperTestSuite) TestHotRegion(c *C) {
 	c.Assert(fmt.Sprintf("%v", regionMetric), Equals, "map[1:{100 1 0}]")
 }
 
+func (s *HelperTestSuite) TestTiKVStoresStat(c *C) {
+	h := helper.Helper{
+		Store:       s.store,
+		RegionCache: s.store.GetRegionCache(),
+	}
+	stat, err := h.GetStoresStat()
+	c.Assert(err, IsNil, Commentf("err: %+v", err))
+	c.Assert(fmt.Sprintf("%v", stat), Equals, "&{1 [{{1 127.0.0.1:20160 0 Up 3.0.0-beta [{test test}]} {60 GiB 100 GiB 10 1 1000 1000 200 1 1000 1000 2019-04-23 19:30:30 +0800 CST 2019-04-23 19:31:30 +0800 CST 1h30m}}]}")
+}
+
 func (s *HelperTestSuite) mockPDHTTPServer(c *C) {
 	router := mux.NewRouter()
-	router.HandleFunc("/pd/api/v1/hotspot/regions/read", s.mockHotRegionResponse)
+	router.HandleFunc(pdapi.HotRead, s.mockHotRegionResponse)
+	router.HandleFunc(pdapi.Stores, s.mockStoreStatResponse)
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
 	server := &http.Server{Addr: "127.0.0.1:10100", Handler: serverMux}
@@ -117,4 +128,60 @@ func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http
 		log.Panic("write http response failed", zap.Error(err))
 	}
 
+}
+
+func (s *HelperTestSuite) mockStoreStatResponse(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	startTs, err := time.Parse(time.RFC3339, "2019-04-23T19:30:30+08:00")
+	if err != nil {
+		log.Panic("mock tikv store api response failed", zap.Error(err))
+	}
+	lastHeartbeatTs, err := time.Parse(time.RFC3339, "2019-04-23T19:31:30+08:00")
+	if err != nil {
+		log.Panic("mock tikv store api response failed", zap.Error(err))
+	}
+	storesStat := helper.StoresStat{
+		Count: 1,
+		Stores: []helper.StoreStat{
+			{
+				Store: helper.StoreBaseStat{
+					ID:        1,
+					Address:   "127.0.0.1:20160",
+					State:     0,
+					StateName: "Up",
+					Version:   "3.0.0-beta",
+					Labels: []helper.StoreLabel{
+						{
+							Key:   "test",
+							Value: "test",
+						},
+					},
+				},
+				Status: helper.StoreDetailStat{
+					Capacity:        "60 GiB",
+					Available:       "100 GiB",
+					LeaderCount:     10,
+					LeaderWeight:    1,
+					LeaderScore:     1000,
+					LeaderSize:      1000,
+					RegionCount:     200,
+					RegionWeight:    1,
+					RegionScore:     1000,
+					RegionSize:      1000,
+					StartTs:         startTs,
+					LastHeartbeatTs: lastHeartbeatTs,
+					Uptime:          "1h30m",
+				},
+			},
+		},
+	}
+	data, err := json.MarshalIndent(storesStat, "", "	")
+	if err != nil {
+		log.Panic("json marshal failed", zap.Error(err))
+	}
+	_, err = w.Write(data)
+	if err != nil {
+		log.Panic("write http response failed", zap.Error(err))
+	}
 }

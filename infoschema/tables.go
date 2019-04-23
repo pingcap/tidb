@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -72,6 +74,7 @@ const (
 	tableTiDBIndexes                        = "TIDB_INDEXES"
 	tableSlowLog                            = "SLOW_QUERY"
 	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
+	tableTiKVStoreStatus                    = "TIKV_STORE_STATUS"
 )
 
 type columnInfo struct {
@@ -559,6 +562,85 @@ var tableTiDBHotRegionsCols = []columnInfo{
 	{"MAX_HOT_DEGREE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"FLOW_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var tableTiKVStoreStatusCols = []columnInfo{
+	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"STORE_STATE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"STORE_STATE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABEL", mysql.TypeJSON, 51, 0, nil, nil},
+	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CAPACITY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"AVAILABLE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LEADER_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_WEIGHT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_SCORE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_WEIGHT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_SCORE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"START_TS", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"LAST_HEARTBEAT_TS", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"UPTIME", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	storesStat, err := tikvHelper.GetStoresStat()
+	if err != nil {
+		return nil, err
+	}
+	for _, storeStat := range storesStat.Stores {
+		row := make([]types.Datum, len(tableTiKVStoreStatusCols))
+		row[0].SetInt64(storeStat.Store.ID)
+		row[1].SetString(storeStat.Store.Address)
+		row[2].SetInt64(storeStat.Store.State)
+		row[3].SetString(storeStat.Store.StateName)
+		data, err := json.Marshal(storeStat.Store.Labels)
+		if err != nil {
+			return nil, err
+		}
+		bj := binaryJson.BinaryJSON{}
+		if err = bj.UnmarshalJSON(data); err != nil {
+			return nil, err
+		}
+		row[4].SetMysqlJSON(bj)
+		row[5].SetString(storeStat.Store.Version)
+		row[6].SetString(storeStat.Status.Capacity)
+		row[7].SetString(storeStat.Status.Available)
+		row[8].SetInt64(storeStat.Status.LeaderCount)
+		row[9].SetInt64(storeStat.Status.LeaderWeight)
+		row[10].SetInt64(storeStat.Status.LeaderScore)
+		row[11].SetInt64(storeStat.Status.LeaderSize)
+		row[12].SetInt64(storeStat.Status.RegionCount)
+		row[13].SetInt64(storeStat.Status.RegionWeight)
+		row[14].SetInt64(storeStat.Status.RegionScore)
+		row[15].SetInt64(storeStat.Status.RegionSize)
+		startTs := types.Time{
+			Time: types.FromGoTime(storeStat.Status.StartTs),
+			Type: mysql.TypeDatetime,
+			Fsp:  types.DefaultFsp,
+		}
+		row[16].SetMysqlTime(startTs)
+		lastHeartbeatTs := types.Time{
+			Time: types.FromGoTime(storeStat.Status.LastHeartbeatTs),
+			Type: mysql.TypeDatetime,
+			Fsp:  types.DefaultFsp,
+		}
+		row[17].SetMysqlTime(lastHeartbeatTs)
+		row[18].SetString(storeStat.Status.Uptime)
+		records = append(records, row)
+	}
+	return records, nil
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -1516,6 +1598,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
 	tableSlowLog:                            slowQueryCols,
 	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
+	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1611,6 +1694,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForSlowLog(ctx)
 	case tableTiDBHotRegions:
 		fullRows, err = dataForTiDBHotRegions(ctx)
+	case tableTiKVStoreStatus:
+		fullRows, err = dataForTiKVStoreStatus(ctx)
 	}
 	if err != nil {
 		return nil, err
