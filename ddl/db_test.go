@@ -1810,7 +1810,6 @@ func (s *testDBSuite6) TestCreateTableWithLike2(c *C) {
 		c.Assert(err, IsNil)
 		s.tk.MustExec("alter table t2 add column e int")
 		t2Info := testGetTableByName(c, s.s, "test_db", "t2")
-		c.Assert(len(t2Info.Meta().Columns), Equals, 4)
 		c.Assert(len(t2Info.Meta().Columns), Equals, len(t2Info.Cols()))
 	}
 	checkTbl2()
@@ -1828,10 +1827,11 @@ func (s *testDBSuite6) TestCreateTableWithLike2(c *C) {
 		c.Assert(err, IsNil)
 		s.tk.MustExec("alter table t2 add column e int")
 		tbl2 := testGetTableByName(c, s.s, "test_db", "t2")
-		c.Assert(len(tbl2.Meta().Columns), Equals, 4)
 		c.Assert(len(tbl2.Meta().Columns), Equals, len(tbl2.Cols()))
-		c.Assert(len(tbl2.Meta().Indices), Equals, 1)
-		c.Assert(tbl2.Meta().Indices[0].Name.L, Equals, "idx1")
+
+		for i := 0; i < len(tbl2.Meta().Indices); i++ {
+			c.Assert(tbl2.Meta().Indices[i].State, Equals, model.StatePublic)
+		}
 	}
 	checkTbl2()
 
