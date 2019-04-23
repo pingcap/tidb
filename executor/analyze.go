@@ -617,30 +617,38 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.physicalTableID)
-	var loc *tikv.KeyLocation
-	var err error
 	// extract all regions contain the table
 	e.scanTasks = e.scanTasks[:0]
 	e.sampTasks = e.sampTasks[:0]
-	// If length of KeyLocation.StartKey is 0, then the start key is infinitesimal.
-	// If length of KeyLocation.EndKey is 0, then the end kety is infinity.
-	for loc, err = e.cache.LocateKey(bo, startKey); bytes.Compare(loc.StartKey, endKey) <= 0 && err == nil; loc, err = e.cache.LocateKey(bo, loc.EndKey) {
-		if bytes.Compare(endKey, loc.EndKey) < 0 || bytes.Compare(loc.StartKey, startKey) < 0 || len(loc.StartKey) == 0 || len(loc.EndKey) == 0 {
-			e.scanTasks = append(e.scanTasks, loc)
-			if len(loc.StartKey) == 0 || bytes.Compare(loc.StartKey, startKey) < 0 {
-				loc.StartKey = startKey
-			}
-			if len(loc.EndKey) == 0 || bytes.Compare(endKey, loc.EndKey) < 0 {
-				loc.EndKey = endKey
-				break
-			}
-		} else {
+	targetKey := startKey
+	for {
+		// Search for the region which contains the targetKey.
+		loc, err := e.cache.LocateKey(bo, targetKey)
+		if err != nil {
+			return false, err
+		}
+		if bytes.Compare(endKey, loc.StartKey) < 0 {
+			break
+		}
+		// Set the next search key.
+		targetKey = loc.EndKey
+
+		// If the KV pairs in the region all belonging to the table, add it to the sample task.
+		if bytes.Compare(startKey, loc.StartKey) <= 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
 			e.sampLocs <- loc
+			continue
+		}
+
+		e.scanTasks = append(e.scanTasks, loc)
+		if bytes.Compare(loc.StartKey, startKey) < 0 {
+			loc.StartKey = startKey
+		}
+		if bytes.Compare(endKey, loc.EndKey) < 0 || len(loc.EndKey) == 0 {
+			loc.EndKey = endKey
+			break
 		}
 	}
-	if err != nil {
-		return false, err
-	}
+
 	close(e.sampLocs)
 	e.wg.Wait()
 	for i := 0; i < e.concurrency; i++ {
