@@ -163,6 +163,11 @@ type PhysicalTableScan struct {
 	rangeDecidedBy []*expression.Column
 }
 
+// NoCondition returns if this table scan has any condition or filter
+func (ts *PhysicalTableScan) NoCondition() bool {
+	return len(ts.AccessCondition) == 0 && len(ts.filterCondition) == 0
+}
+
 // IsPartition returns true and partition ID if it's actually a partition.
 func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
