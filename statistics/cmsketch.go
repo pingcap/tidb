@@ -71,10 +71,10 @@ type topNHelper struct {
 	lastVal       uint64
 }
 
-func newTopNHelper(data [][]byte, numTop uint32) *topNHelper {
+func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	counter := make(map[hack.MutableString]uint64)
-	for k := range data {
-		counter[hack.String(data[k])]++
+	for i := range sample {
+		counter[hack.String(sample[i])]++
 	}
 	sorted, onlyOnceItems := make([]uint64, 0, len(counter)), uint64(0)
 	for _, cnt := range counter {
@@ -95,26 +95,25 @@ func newTopNHelper(data [][]byte, numTop uint32) *topNHelper {
 	)
 	numTop = mathutil.MinUint32(sampleNDV, numTop) // In case numTop is bigger than sample NUV.
 	// The following loop builds find how many elements be added to the top N index.
-	// The final Top-N index may have at most 2*numTop elements for some less skewed data.
+	// The final Top-N index may have at most 2*numTop elements for some less skewed sample.
 	for i := uint32(0); i < sampleNDV && i < numTop*2; i++ {
 		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2.
 		// If the frequency of i-th elements is close to n-th element, it is added to the top N index too.
 		if i >= numTop && sorted[i]*3 < sorted[numTop-1]*2 && last != sorted[i] {
 			break
 		}
-		// These two values are only used for build topNIndex, and they are not used in counting defaultValue.
+		// These two values are only used for build topN, and they are not used in counting defaultValue.
 		last = sorted[i]
 		// We use sumTopN to estimate the total count of top N elements to determine weather to build the top N index.
 		sumTopN += sorted[i]
 	}
 
-	return &topNHelper{uint64(len(data)), numTop, counter, sorted, onlyOnceItems, sumTopN, last}
+	return &topNHelper{uint64(len(sample)), numTop, counter, sorted, onlyOnceItems, sumTopN, last}
 }
 
 // NewCMSketchWithTopN returns a new CM sketch with TopN elements.
-// total is the size of the whole dataset
-func NewCMSketchWithTopN(d, w int32, data [][]byte, numTop uint32, rowCount uint64) *CMSketch {
-	helper := newTopNHelper(data, numTop)
+func NewCMSketchWithTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) *CMSketch {
+	helper := newTopNHelper(sample, numTop)
 	estimateNDV, ratio := calculateEstimateNDV(helper, rowCount)
 	c := helper.buildCMSWithTopN(d, w, ratio)
 	c.calculateDefaultVal(helper, estimateNDV, ratio, rowCount)
@@ -169,7 +168,7 @@ func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, ratio, r
 	}
 }
 
-// queryAddTopN TopN adds count to CMSketch.topNIndex if exists, and returns the count of such elements after insert
+// queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert
 // if such elements does not in topn elements, nothing will happen and false will be returned.
 func (c *CMSketch) updateTopNWithDelta(h1, h2, delta uint64, d []byte) bool {
 	if c.topN == nil {
