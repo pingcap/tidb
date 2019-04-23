@@ -519,6 +519,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		worker := &tableWorker{
+			idxLookup:      e,
 			workCh:         workCh,
 			finished:       e.finished,
 			buildTblReader: e.buildTableReader,
@@ -732,6 +733,7 @@ func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {
 
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableWorker struct {
+	idxLookup      *IndexLookUpExecutor
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
 	buildTblReader func(ctx context.Context, handles []int64) (Executor, error)
@@ -809,6 +811,12 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			task.rows = append(task.rows, row)
 		}
 	}
+
+	if len(task.rows) != len(task.handles) {
+		return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, %d handles got %d rows",
+			w.idxLookup.index.Name.O, len(task.handles), len(task.rows))
+	}
+
 	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
