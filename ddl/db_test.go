@@ -58,14 +58,14 @@ const (
 	waitForCleanDataInterval = time.Millisecond * 100
 )
 
-var _ = Suite(&testDBSuite1{})
-var _ = Suite(&testDBSuite2{})
-var _ = Suite(&testDBSuite3{})
-var _ = Suite(&testDBSuite4{})
-var _ = Suite(&testDBSuite5{})
-var _ = Suite(&testDBSuite6{})
-var _ = Suite(&testDBSuite7{})
-var _ = Suite(&testDBSuite8{})
+var _ = Suite(&testDBSuite1{&testDBSuite{}})
+var _ = Suite(&testDBSuite2{&testDBSuite{}})
+var _ = Suite(&testDBSuite3{&testDBSuite{}})
+var _ = Suite(&testDBSuite4{&testDBSuite{}})
+var _ = Suite(&testDBSuite5{&testDBSuite{}})
+var _ = Suite(&testDBSuite6{&testDBSuite{}})
+var _ = Suite(&testDBSuite7{&testDBSuite{}})
+var _ = Suite(&testDBSuite8{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 
@@ -118,100 +118,44 @@ func tearDownSuite(s *testDBSuite, c *C) {
 	s.store.Close()
 }
 
+func (s *testDBSuite) SetUpSuite(c *C) {
+	setUpSuite(s, c)
+}
+
+func (s *testDBSuite) TearDownSuite(c *C) {
+	tearDownSuite(s, c)
+}
+
 type testDBSuite1 struct {
-	testDBSuite
-}
-
-func (s *testDBSuite1) SetUpSuite(c *C) {
-	setUpSuite(&s.testDBSuite, c)
-}
-
-func (s *testDBSuite1) TearDownSuite(c *C) {
-	tearDownSuite(&s.testDBSuite, c)
+	*testDBSuite
 }
 
 type testDBSuite2 struct {
-	testDBSuite
-}
-
-func (s *testDBSuite2) SetUpSuite(c *C) {
-	setUpSuite(&s.testDBSuite, c)
-}
-
-func (s *testDBSuite2) TearDownSuite(c *C) {
-	tearDownSuite(&s.testDBSuite, c)
+	*testDBSuite
 }
 
 type testDBSuite3 struct {
-	testDBSuite
-}
-
-func (s *testDBSuite3) SetUpSuite(c *C) {
-	setUpSuite(&s.testDBSuite, c)
-}
-
-func (s *testDBSuite3) TearDownSuite(c *C) {
-	tearDownSuite(&s.testDBSuite, c)
+	*testDBSuite
 }
 
 type testDBSuite4 struct {
-	testDBSuite
-}
-
-func (s *testDBSuite4) SetUpSuite(c *C) {
-	setUpSuite(&s.testDBSuite, c)
-}
-
-func (s *testDBSuite4) TearDownSuite(c *C) {
-	tearDownSuite(&s.testDBSuite, c)
+	*testDBSuite
 }
 
 type testDBSuite5 struct {
-	testDBSuite
-}
-
-func (s *testDBSuite5) SetUpSuite(c *C) {
-	setUpSuite(&s.testDBSuite, c)
-}
-
-func (s *testDBSuite5) TearDownSuite(c *C) {
-	tearDownSuite(&s.testDBSuite, c)
+	*testDBSuite
 }
 
 type testDBSuite6 struct {
-	testDBSuite
-}
-
-func (s *testDBSuite6) SetUpSuite(c *C) {
-	setUpSuite(&s.testDBSuite, c)
-}
-
-func (s *testDBSuite6) TearDownSuite(c *C) {
-	tearDownSuite(&s.testDBSuite, c)
+	*testDBSuite
 }
 
 type testDBSuite7 struct {
-	testDBSuite
-}
-
-func (s *testDBSuite7) SetUpSuite(c *C) {
-	setUpSuite(&s.testDBSuite, c)
-}
-
-func (s *testDBSuite7) TearDownSuite(c *C) {
-	tearDownSuite(&s.testDBSuite, c)
+	*testDBSuite
 }
 
 type testDBSuite8 struct {
-	testDBSuite
-}
-
-func (s *testDBSuite8) SetUpSuite(c *C) {
-	setUpSuite(&s.testDBSuite, c)
-}
-
-func (s *testDBSuite8) TearDownSuite(c *C) {
-	tearDownSuite(&s.testDBSuite, c)
+	*testDBSuite
 }
 
 func assertErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {

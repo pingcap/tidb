@@ -46,17 +46,17 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = Suite(&testIntegrationSuite1{})
-var _ = Suite(&testIntegrationSuite2{})
-var _ = Suite(&testIntegrationSuite3{})
-var _ = Suite(&testIntegrationSuite4{})
-var _ = Suite(&testIntegrationSuite5{})
-var _ = Suite(&testIntegrationSuite6{})
-var _ = Suite(&testIntegrationSuite7{})
-var _ = Suite(&testIntegrationSuite8{})
-var _ = Suite(&testIntegrationSuite9{})
-var _ = Suite(&testIntegrationSuite10{})
-var _ = Suite(&testIntegrationSuite11{})
+var _ = Suite(&testIntegrationSuite1{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite2{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite3{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite7{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite8{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite9{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite10{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite11{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	lease     time.Duration
@@ -109,140 +109,60 @@ func tearDownIntegrationSuite(s *testIntegrationSuite, c *C) {
 	s.store.Close()
 }
 
+func (s *testIntegrationSuite) SetUpSuite(c *C) {
+	setupIntegrationSuite(s, c)
+}
+
+func (s *testIntegrationSuite) TearDownSuite(c *C) {
+	tearDownIntegrationSuite(s, c)
+}
+
 type testIntegrationSuite1 struct {
-	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite1) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite1) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	*testIntegrationSuite
 }
 
 type testIntegrationSuite2 struct {
-	testIntegrationSuite
+	*testIntegrationSuite
 }
 
 func (s *testIntegrationSuite2) TearDownTest(c *C) {
-	tearDownIntegrationSuiteTest(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite2) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite2) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	tearDownIntegrationSuiteTest(s.testIntegrationSuite, c)
 }
 
 type testIntegrationSuite3 struct {
-	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite3) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite3) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	*testIntegrationSuite
 }
 
 type testIntegrationSuite4 struct {
-	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite4) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite4) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	*testIntegrationSuite
 }
 
 type testIntegrationSuite5 struct {
-	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite5) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite5) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	*testIntegrationSuite
 }
 
 type testIntegrationSuite6 struct {
-	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite6) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite6) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	*testIntegrationSuite
 }
 
 type testIntegrationSuite7 struct {
-	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite7) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite7) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	*testIntegrationSuite
 }
 
 type testIntegrationSuite8 struct {
-	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite8) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite8) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	*testIntegrationSuite
 }
 
 type testIntegrationSuite9 struct {
-	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite9) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite9) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	*testIntegrationSuite
 }
 
 type testIntegrationSuite10 struct {
-	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite10) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite10) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	*testIntegrationSuite
 }
 
 type testIntegrationSuite11 struct {
-	testIntegrationSuite
-}
-
-func (s *testIntegrationSuite11) SetUpSuite(c *C) {
-	setupIntegrationSuite(&s.testIntegrationSuite, c)
-}
-
-func (s *testIntegrationSuite11) TearDownSuite(c *C) {
-	tearDownIntegrationSuite(&s.testIntegrationSuite, c)
+	*testIntegrationSuite
 }
 
 func (s *testIntegrationSuite6) TestNoZeroDateMode(c *C) {

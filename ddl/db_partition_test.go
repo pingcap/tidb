@@ -736,7 +736,7 @@ func (s *testIntegrationSuite6) TestTruncatePartitionAndDropTable(c *C) {
 	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
 	tk.MustExec("truncate table t3;")
 	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
-	hasOldPartitionData := checkPartitionDelRangeDone(c, &s.testIntegrationSuite, partitionPrefix)
+	hasOldPartitionData := checkPartitionDelRangeDone(c, s.testIntegrationSuite, partitionPrefix)
 	c.Assert(hasOldPartitionData, IsFalse)
 
 	// Test drop table partition.
@@ -773,7 +773,7 @@ func (s *testIntegrationSuite6) TestTruncatePartitionAndDropTable(c *C) {
 	oldPID = oldTblInfo.Meta().Partition.Definitions[1].ID
 	tk.MustExec("drop table t4;")
 	partitionPrefix = tablecodec.EncodeTablePrefix(oldPID)
-	hasOldPartitionData = checkPartitionDelRangeDone(c, &s.testIntegrationSuite, partitionPrefix)
+	hasOldPartitionData = checkPartitionDelRangeDone(c, s.testIntegrationSuite, partitionPrefix)
 	c.Assert(hasOldPartitionData, IsFalse)
 	assertErrorCode(c, tk, "select * from t4;", tmysql.ErrNoSuchTable)
 
