@@ -129,7 +129,9 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, ratio uint64) (c *CMSketch
 	for counterKey, cnt := range helper.counter {
 		scaledCount := cnt * ratio
 		if enableTopN && cnt >= helper.lastVal {
-			c.insertToTopN(hack.Slice(string(counterKey)), scaledCount)
+			data := hack.Slice(string(counterKey))
+			h1, h2 := murmur3.Sum128(data)
+			c.topN[h1] = append(c.topN[h1], topNMeta{h1, h2, data, scaledCount})
 			helper.sumTopN += scaledCount
 			helper.numTop++
 		} else {
@@ -137,15 +139,6 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, ratio uint64) (c *CMSketch
 		}
 	}
 	return
-}
-
-// insertToTopN assumes that data never occurred in c.topN before.
-// Should only be used when building top-n index.
-func (c *CMSketch) insertToTopN(data []byte, count uint64) {
-	h1, h2 := murmur3.Sum128(data)
-	vals := c.topN[h1]
-	vals = append(vals, topNMeta{h1, h2, data, count})
-	c.topN[h1] = vals
 }
 
 func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, ratio, rowCount uint64) {
