@@ -45,6 +45,11 @@ const (
 	actionCleanup  twoPhaseCommitAction = 3
 )
 
+var (
+	tikvSecondaryLockCleanupFailureCounterCommit   = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
+	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
+)
+
 func (ca twoPhaseCommitAction) String() string {
 	switch ca {
 	case actionPrewrite:
@@ -303,7 +308,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 					zap.Uint64("conn", c.connID),
 					zap.Stringer("action type", action),
 					zap.Error(e))
-				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
+				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
 			}
 		}()
 	} else {
@@ -681,7 +686,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
 				err := c.cleanupKeys(NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
 				if err != nil {
-					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
+					tikvSecondaryLockCleanupFailureCounterRollback.Inc()
 					logutil.Logger(ctx).Info("2PC cleanup failed",
 						zap.Error(err),
 						zap.Uint64("txnStartTS", c.startTS))
