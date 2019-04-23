@@ -206,4 +206,14 @@ var (
 			Buckets: prometheus.ExponentialBuckets(1, 2, 30),
 			Help:    "batch wait duration",
 		})
+
+	TiKVBatchClientUnavailable = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_client_unavailable_seconds",
+			// 1ms ~ 1000s
+			Buckets: prometheus.ExponentialBuckets(0.001, 2, 20),
+			Help:    "batch client unavailable",
+		})
 )
