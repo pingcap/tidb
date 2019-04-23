@@ -20,6 +20,7 @@ import (
 	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
@@ -129,6 +130,13 @@ func (h *GlobalBindHandle) Update(fullLoad bool) (err error) {
 
 // AddBindRecord new a BindRecord with bindMeta, add it to the cache.
 func (h *BindHandle) AddBindRecord(record *BindRecord) error {
+	record.CreateTime = types.Time{
+		Time: types.FromGoTime(time.Now()),
+		Type: mysql.TypeDatetime,
+		Fsp:  3,
+	}
+	record.UpdateTime = record.CreateTime
+
 	// update the bindMeta to the cache.
 	hash, meta, err := h.newBindMeta(record)
 	if err == nil {
