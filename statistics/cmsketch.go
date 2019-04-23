@@ -30,7 +30,7 @@ import (
 )
 
 // topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.
-const topNThreshold = 10
+const topNThreshold = uint64(10)
 
 // CMSketch is used to estimate point queries.
 // Refer: https://en.wikipedia.org/wiki/Count-min_sketch
@@ -60,21 +60,75 @@ func NewCMSketch(d, w int32) *CMSketch {
 	return &CMSketch{depth: d, width: w, table: tbl}
 }
 
+// topNHelper wraps some variables used when building cmsketch with top n.
+type topNHelper struct {
+	sampleSize    uint64
+	numTop        uint32
+	counter       map[hack.MutableString]uint64
+	sorted        []uint64
+	onlyOnceItems uint64
+	sumTopN       uint64
+	lastVal       uint64
+}
+
+func newTopNHelper(data [][]byte, numTop uint32) *topNHelper {
+	counter := make(map[hack.MutableString]uint64)
+	for k := range data {
+		counter[hack.String(data[k])]++
+	}
+	sorted, onlyOnceItems := make([]uint64, 0, len(counter)), uint64(0)
+	for _, cnt := range counter {
+		sorted = append(sorted, cnt)
+		if cnt == 1 {
+			onlyOnceItems++
+		}
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] > sorted[j]
+	})
+
+	var (
+		// last is the last element in top N index should occurres atleast `last` times.
+		last    uint64
+		sumTopN uint64
+		ndv     = uint32(len(sorted))
+	)
+	numTop = mathutil.MinUint32(ndv, numTop) // In case numTop is bigger than sample NUV.
+	// The following loop builds find how many elements be added to the top N index.
+	// The final Top-N index may have at most 2*numTop elements for some less skewed data.
+	for i := uint32(0); i < ndv && i < numTop*2; i++ {
+		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2.
+		// If the frequency of i-th elements is close to n-th element, it is added to the top N index too.
+		if i >= numTop && sorted[i]*3 < sorted[numTop-1]*2 && last != sorted[i] {
+			break
+		}
+		// These two values are only used for build topNIndex, and they are not used in counting defaultValue.
+		last = sorted[i]
+		// We use sumTopN to estimate the total count of top N elements to determine weather to build the top N index.
+		sumTopN += sorted[i]
+	}
+
+	return &topNHelper{uint64(len(data)), numTop, counter, sorted, onlyOnceItems, sumTopN, last}
+}
+
 // NewCMSketchWithTopN returns a new CM sketch with TopN elements.
 // total is the size of the whole dataset
 func NewCMSketchWithTopN(d, w int32, data [][]byte, numTop uint32, total uint64) *CMSketch {
+	helper := newTopNHelper(data, numTop)
 	c := NewCMSketch(d, w)
-	c.BuildTopN(data, numTop, total)
+	estimateNDV, ratio := calculateEstimateNDV(helper, total)
+	c.buildCMSWithTopN(helper, ratio)
+	c.setDefaultVal(helper, estimateNDV, ratio, total)
 	return c
 }
 
 // finalBuild builds Top-N and cmsketch
-func (c *CMSketch) finalBuild(sampleSize uint64, counter map[hack.MutableString]uint64, numTop uint32, nthValue, ratio, sumTopN uint64) (retNumTop uint32, retSumTopN uint64) {
-	enableTopN := sampleSize/uint64(topNThreshold) <= sumTopN
-	topN := make([]dataCount, 0, numTop)
+func (c *CMSketch) buildCMSWithTopN(helper *topNHelper, ratio uint64) (retNumTop uint32, retSumTopN uint64) {
+	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
+	topN := make([]dataCount, 0, helper.numTop)
 	retSumTopN = 0
-	for counterKey, cnt := range counter {
-		if enableTopN && cnt >= nthValue {
+	for counterKey, cnt := range helper.counter {
+		if enableTopN && cnt >= helper.lastVal {
 			topN = append(topN, dataCount{data: hack.Slice(string(counterKey)), count: cnt * ratio})
 			retSumTopN += cnt * ratio
 		} else {
@@ -88,61 +142,17 @@ func (c *CMSketch) finalBuild(sampleSize uint64, counter map[hack.MutableString]
 	return
 }
 
-// BuildTopN builds table of top N elements.
-// elements in `data` should not be modified after this call.
-// If the original `data` is not skew enough, then we won't build map for top N elements.
-func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
-	// Group and count data first
-	counter := make(map[hack.MutableString]uint64)
-	for k := range data {
-		counter[hack.String(data[k])]++
-	}
-	sorted := make([]uint64, 0, len(counter))
-	onlyOnceItems := uint64(0)
-	for _, cnt := range counter {
-		sorted = append(sorted, cnt)
-		if cnt == 1 {
-			onlyOnceItems++
-		}
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i] > sorted[j]
-	})
-
-	sampleSize := uint64(len(data))
-	sampleNDV := uint32(len(sorted))
-	estimateNDV, ratio := calculateEstimateNDV(onlyOnceItems, sampleSize, uint64(sampleNDV), total)
-
-	numTop = mathutil.MinUint32(sampleNDV, numTop) // In case numTop is bigger than sample NUV.
-	nthValue := sorted[numTop-1]
-	last := uint64(0) // The last element in top N index should occurres atleast `last` times.
-	sumTopN := uint64(0)
-
-	// The following loop builds find how many elements be added to the top N index.
-	// The final Top-N index may have at most 2*numTop elements for some less skewed data.
-	for i := uint32(0); i < sampleNDV && i < numTop*2; i++ {
-		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2.
-		// If the frequency of i-th elements is close to n-th element, it is added to the top N index too.
-		if i >= numTop && sorted[i]*3 < nthValue*2 && last != sorted[i] {
-			break
-		}
-		// These two values are only used for build topNIndex, and they are not used in counting defaultValue.
-		last = sorted[i]
-		// We use sumTopN to estimate the total count of top N elements to determine weather to build the top N index.
-		sumTopN += sorted[i]
-	}
-
-	numTop, sumTopN = c.finalBuild(sampleSize, counter, numTop, last, ratio, sumTopN)
-
-	if total <= sumTopN {
+func (c *CMSketch) setDefaultVal(helper *topNHelper, estimateNDV, ratio, total uint64) {
+	sampleNDV := uint64(len(helper.sorted))
+	if total <= helper.sumTopN {
 		c.defaultValue = 1
-	} else if estimateNDV <= uint64(numTop) {
+	} else if estimateNDV <= uint64(helper.numTop) {
 		c.defaultValue = 1
-	} else if estimateNDV+onlyOnceItems <= uint64(sampleNDV) {
+	} else if estimateNDV+helper.onlyOnceItems <= uint64(sampleNDV) {
 		c.defaultValue = 1
 	} else {
-		estimateRemainingCount := total - (sampleSize-uint64(onlyOnceItems))*ratio
-		c.defaultValue = estimateRemainingCount / (estimateNDV - uint64(sampleNDV) + onlyOnceItems)
+		estimateRemainingCount := total - (helper.sampleSize-uint64(helper.onlyOnceItems))*ratio
+		c.defaultValue = estimateRemainingCount / (estimateNDV - uint64(sampleNDV) + helper.onlyOnceItems)
 	}
 }
 
