@@ -17,6 +17,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"runtime/pprof"
 	"strings"
 
@@ -183,4 +186,36 @@ func (s *testSuite3) TestIssue10178(c *C) {
 	tk.MustQuery("select max(a) from t").Check(testkit.Rows("18446744073709551615"))
 	tk.MustQuery("select * from t where a > 9223372036854775807").Check(testkit.Rows("18446744073709551615"))
 	tk.MustQuery("select * from t where a < 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+}
+
+func (s *testSuite3) TestInconsistentIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a))")
+	is := s.domain.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	idx := tbl.Meta().FindIndexByName("idx_a")
+	idxOp := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+		c.Assert(tk.QueryToErr("select * from t where a>=0"), IsNil)
+
+	}
+
+	for i := 0; i < 10; i++ {
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = idxOp.Create(s.ctx, txn, types.MakeDatums(i+10), int64(100+i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+
+		err = tk.QueryToErr("select * from t where a>=0")
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[kv:2]inconsistent extra index idx_a, %d handles got 10 rows", i+11))
+	}
 }
