@@ -247,10 +247,10 @@ func (e *ShowExec) fetchShowProcessList() error {
 		return nil
 	}
 
-	loginUser := e.ctx.GetSessionVars().User
+	loginUser, activeRoles := e.ctx.GetSessionVars().User, e.ctx.GetSessionVars().ActiveRoles
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
-		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+		if pm.RequestVerification(activeRoles, "", "", "", mysql.ProcessPriv) {
 			hasProcessPriv = true
 		}
 	}
@@ -284,11 +284,12 @@ func (e *ShowExec) fetchShowTables() error {
 	}
 	// sort for tables
 	tableNames := make([]string, 0, len(e.is.SchemaTables(e.DBName)))
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	var tableTypes = make(map[string]string)
 	for _, v := range e.is.SchemaTables(e.DBName) {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
-		if checker != nil && !checker.RequestVerification(e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
@@ -332,8 +333,9 @@ func (e *ShowExec) fetchShowTableStatus() error {
 		return errors.Trace(err)
 	}
 
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	for _, row := range rows {
-		if checker != nil && !checker.RequestVerification(e.DBName.O, row.GetString(0), "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, row.GetString(0), "", mysql.AllPrivMask) {
 			continue
 		}
 		e.result.AppendRow(row)
@@ -356,7 +358,8 @@ func (e *ShowExec) fetchShowColumns() error {
 		return errors.Trace(err)
 	}
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -438,7 +441,8 @@ func (e *ShowExec) fetchShowIndex() error {
 	}
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
