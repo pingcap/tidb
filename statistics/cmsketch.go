@@ -222,7 +222,7 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	oriCount := c.queryHashValue(h1, h2)
 
-	if c.considerDefVal(oriCount) && c.defaultValue > 0 {
+	if c.considerDefVal(oriCount) {
 		// This case, we should also update c.defaultValue
 		// Set default value directly will result in more error, instead, update it by 5%.
 		// This should make estimate better, if defaultValue becomes 0 frequently, commit this line.
