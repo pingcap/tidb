@@ -600,7 +600,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 
 // buildSampTask return tow variable, the first bool is whether the task meeting region error
 // and need to rebuild.
-func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
+func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
 	bo := tikv.NewBackoffer(context.Background(), 500)
 	atomic.StoreUint64(&e.rowCount, 0)
@@ -612,6 +612,21 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 	for i := 0; i < e.concurrency; i++ {
 		go e.getSampRegionsRowCount(bo, &needRebuildForRoutine[i], &errs[i], &sampTasksForRoutine[i])
 	}
+
+	defer func() {
+		close(e.sampLocs)
+		e.wg.Wait()
+		if err != nil {
+			return
+		}
+		for i := 0; i < e.concurrency; i++ {
+			if errs[i] != nil {
+				err = errs[i]
+			}
+			needRebuild = needRebuild || needRebuildForRoutine[i]
+			e.sampTasks = append(e.sampTasks, sampTasksForRoutine[i]...)
+		}
+	}()
 
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
@@ -646,22 +661,6 @@ func (e *AnalyzeFastExec) buildSampTask() (bool, error) {
 			loc.EndKey = endKey
 			break
 		}
-	}
-
-	close(e.sampLocs)
-	e.wg.Wait()
-	for i := 0; i < e.concurrency; i++ {
-		if errs[i] != nil {
-			return false, errs[i]
-		}
-	}
-	for i := 0; i < e.concurrency; i++ {
-		if needRebuildForRoutine[i] == true {
-			return true, nil
-		}
-	}
-	for i := 0; i < e.concurrency; i++ {
-		e.sampTasks = append(e.sampTasks, sampTasksForRoutine[i]...)
 	}
 
 	return false, nil
