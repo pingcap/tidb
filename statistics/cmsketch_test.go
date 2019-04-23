@@ -210,5 +210,5 @@ func (s *testStatisticsSuite) TestCMSketchTopNUniqueData(c *C) {
 	c.Assert(err, IsNil)
 	c.Check(cms.defaultValue, Equals, uint64(1))
 	c.Check(avg, Equals, uint64(0))
-	c.Check(len(cms.topNIndex), Equals, 0)
+	c.Check(len(cms.topN), Equals, 0)
 }

@@ -40,7 +40,7 @@ type CMSketch struct {
 	count        uint64 // TopN is not counted in count
 	defaultValue uint64 // In sampled data, if cmsketch returns a small value (less than avg value / 2), then this will returned.
 	table        [][]uint32
-	topNIndex    map[uint64][]dataCount
+	topN         map[uint64][]dataCount
 }
 
 // dataCount is a simple counter used by BuildTopN
@@ -113,11 +113,11 @@ func newTopNHelper(data [][]byte, numTop uint32) *topNHelper {
 
 // NewCMSketchWithTopN returns a new CM sketch with TopN elements.
 // total is the size of the whole dataset
-func NewCMSketchWithTopN(d, w int32, data [][]byte, numTop uint32, total uint64) *CMSketch {
+func NewCMSketchWithTopN(d, w int32, data [][]byte, numTop uint32, rowCount uint64) *CMSketch {
 	helper := newTopNHelper(data, numTop)
-	estimateNDV, ratio := calculateEstimateNDV(helper, total)
+	estimateNDV, ratio := calculateEstimateNDV(helper, rowCount)
 	c := helper.buildCMSWithTopN(d, w, ratio)
-	c.calculateDefaultVal(helper, estimateNDV, ratio, total)
+	c.calculateDefaultVal(helper, estimateNDV, ratio, rowCount)
 	return c
 }
 
@@ -132,81 +132,79 @@ func (helper *topNHelper) buildCMSWithTopN(d, w int32, ratio uint64) (c *CMSketc
 			topN = append(topN, dataCount{data: hack.Slice(string(counterKey)), count: cnt * ratio})
 			helper.sumTopN += cnt * ratio
 		} else {
-			c.insertBytesN(hack.Slice(string(counterKey)), cnt*ratio)
+			c.updateBytesWithDelta(hack.Slice(string(counterKey)), cnt*ratio)
 		}
 	}
-	if enableTopN {
-		helper.numTop = uint32(len(topN))
-		c.buildTopNMap(topN)
+	if !enableTopN {
+		return
+	}
+	helper.numTop = uint32(len(topN))
+	c.topN = make(map[uint64][]dataCount)
+	for i := range topN {
+		if topN[i].data == nil {
+			continue
+		}
+		h1, h2 := murmur3.Sum128(topN[i].data)
+		vals, ok := c.topN[h1]
+		if !ok {
+			vals = make([]dataCount, 0)
+		}
+		vals = append(vals, dataCount{h1, h2, topN[i].data, topN[i].count})
+		c.topN[h1] = vals
 	}
 	return
 }
 
-func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, ratio, total uint64) {
+func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, ratio, rowCount uint64) {
 	sampleNDV := uint64(len(helper.sorted))
-	if total <= helper.sumTopN {
+	if rowCount <= helper.sumTopN {
 		c.defaultValue = 1
 	} else if estimateNDV <= uint64(helper.numTop) {
 		c.defaultValue = 1
 	} else if estimateNDV+helper.onlyOnceItems <= uint64(sampleNDV) {
 		c.defaultValue = 1
 	} else {
-		estimateRemainingCount := total - (helper.sampleSize-uint64(helper.onlyOnceItems))*ratio
+		estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*ratio
 		c.defaultValue = estimateRemainingCount / (estimateNDV - uint64(sampleNDV) + helper.onlyOnceItems)
-	}
-}
-
-func (c *CMSketch) buildTopNMap(topn []dataCount) {
-	c.topNIndex = make(map[uint64][]dataCount)
-	for i := range topn {
-		if topn[i].data == nil {
-			continue
-		}
-		h1, h2 := murmur3.Sum128(topn[i].data)
-		vals, ok := c.topNIndex[h1]
-		if !ok {
-			vals = make([]dataCount, 0)
-		}
-		vals = append(vals, dataCount{h1, h2, topn[i].data, topn[i].count})
-		c.topNIndex[h1] = vals
 	}
 }
 
 // queryAddTopN TopN adds count to CMSketch.topNIndex if exists, and returns the count of such elements after insert
 // if such elements does not in topn elements, nothing will happen and false will be returned.
-func (c *CMSketch) queryAddTopN(h1, h2, count uint64, d []byte) (uint64, bool) {
-	if c.topNIndex == nil {
+func (c *CMSketch) updateTopNWithDelta(h1, h2, delta uint64, d []byte) bool {
+	if c.topN == nil {
+		return false
+	}
+	for _, cnt := range c.topN[h1] {
+		if cnt.h2 == h2 && bytes.Equal(d, cnt.data) {
+			cnt.count += delta
+			return true
+		}
+	}
+	return false
+}
+
+func (c *CMSketch) queryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
+	if c.topN == nil {
 		return 0, false
 	}
-	cnt, ok := c.topNIndex[h1]
-	if !ok {
-		return 0, false
-	}
-	for k := range cnt {
-		if cnt[k].h2 == h2 && bytes.Equal(d, cnt[k].data) {
-			if count != 0 {
-				// Avoid potential data race
-				cnt[k].count += count
-			}
-			return cnt[k].count, true
+	for _, cnt := range c.topN[h1] {
+		if cnt.h2 == h2 && bytes.Equal(d, cnt.data) {
+			return cnt.count, true
 		}
 	}
 	return 0, false
 }
 
-func (c *CMSketch) queryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
-	return c.queryAddTopN(h1, h2, 0, d)
-}
-
 // InsertBytes inserts the bytes value into the CM Sketch.
 func (c *CMSketch) InsertBytes(bytes []byte) {
-	c.insertBytesN(bytes, 1)
+	c.updateBytesWithDelta(bytes, 1)
 }
 
 // insertBytesN adds the bytes value into the CM Sketch by n.
-func (c *CMSketch) insertBytesN(bytes []byte, n uint64) {
+func (c *CMSketch) updateBytesWithDelta(bytes []byte, n uint64) {
 	h1, h2 := murmur3.Sum128(bytes)
-	if _, ok := c.queryAddTopN(h1, h2, n, bytes); ok {
+	if c.updateTopNWithDelta(h1, h2, n, bytes) {
 		return
 	}
 	c.count += n
@@ -216,11 +214,15 @@ func (c *CMSketch) insertBytesN(bytes []byte, n uint64) {
 	}
 }
 
+func (c *CMSketch) considerDefVal(cnt uint64) bool {
+	return cnt < 2*(c.count/uint64(c.width)) && c.defaultValue > 0
+}
+
 // setValue sets the count for value that hashed into (h1, h2).
 func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	oriCount := c.queryHashValue(h1, h2)
 
-	if oriCount < 2*(c.count/uint64(c.width)) && c.defaultValue > 0 {
+	if c.considerDefVal(oriCount) && c.defaultValue > 0 {
 		// This case, we should also update c.defaultValue
 		// Set default value directly will result in more error, instead, update it by 5%.
 		// This should make estimate better, if defaultValue becomes 0 frequently, commit this line.
@@ -237,17 +239,6 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		c.table[i][j] = c.table[i][j] + deltaCount
-	}
-}
-
-// setValue sets the count for value that hashed into (h1, h2).
-func (c *CMSketch) setValueBytes(d []byte, count uint64) {
-	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := c.queryTopN(h1, h2, d); ok {
-		deltaCount := count - oriCount
-		c.queryAddTopN(h1, h2, deltaCount, d)
-	} else {
-		c.setValue(h1, h2, uint32(count))
 	}
 }
 
@@ -289,7 +280,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 		res = min
 	}
 	// If res is small than some value, we think it is sampled occasionally
-	if res < 2*uint32((c.count/uint64(c.width))) && c.defaultValue > 0 {
+	if c.considerDefVal(uint64(res)) {
 		// Assume items not in CMSketch is a average value
 		return c.defaultValue
 	}
@@ -302,7 +293,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
-	if c.topNIndex != nil || rc.topNIndex != nil {
+	if c.topN != nil || rc.topN != nil {
 		return errors.New("CMSketch with Top-N does not supports merge")
 	}
 	c.count += rc.count

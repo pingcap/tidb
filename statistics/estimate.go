@@ -18,10 +18,10 @@ import "math"
 // calculateEstimateNDV calculates the estimate ndv of a sampled data from a multisize with size total.
 // count[i] stores the count of the i-th element.
 // onlyOnceItems is the number of elements that occurred only once.
-func calculateEstimateNDV(h *topNHelper, total uint64) (ndv uint64, ratio uint64) {
+func calculateEstimateNDV(h *topNHelper, rowCount uint64) (ndv uint64, ratio uint64) {
 	sampleSize, sampleNDV, onlyOnceItems := h.sampleSize, uint64(len(h.sorted)), h.onlyOnceItems
-	ratio = total / sampleSize
-	if total < sampleSize {
+	ratio = rowCount / sampleSize
+	if rowCount < sampleSize {
 		ratio = 1
 		ndv = sampleNDV
 	}
@@ -29,7 +29,7 @@ func calculateEstimateNDV(h *topNHelper, total uint64) (ndv uint64, ratio uint64
 	if onlyOnceItems == sampleSize {
 		// Assume this is a unique column
 		ratio = 1
-		ndv = total
+		ndv = rowCount
 	} else if onlyOnceItems == 0 {
 		// Assume data only consists of sampled data
 		// Nothing to do, no change with ratio
@@ -43,7 +43,7 @@ func calculateEstimateNDV(h *topNHelper, total uint64) (ndv uint64, ratio uint64
 
 		f1 := float64(onlyOnceItems)
 		n := float64(sampleSize)
-		N := float64(total)
+		N := float64(rowCount)
 		d := float64(sampleNDV)
 
 		ndv = uint64(math.Sqrt(N/n)*f1 + d - f1 + 0.5)
@@ -51,8 +51,8 @@ func calculateEstimateNDV(h *topNHelper, total uint64) (ndv uint64, ratio uint64
 		if ndv < sampleNDV {
 			ndv = sampleNDV
 		}
-		if ndv > total {
-			ndv = total
+		if ndv > rowCount {
+			ndv = rowCount
 		}
 	}
 	return ndv, ratio
