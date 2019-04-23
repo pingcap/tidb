@@ -74,7 +74,7 @@ type BindHandle struct {
 func NewBindHandle(parser *parser.Parser) *BindHandle {
 	handle := &BindHandle{}
 	handle.Parser = parser
-	handle.bindInfo.Value.Store(make(cache, 32))
+	handle.bindInfo.Value.Store(make(cache))
 	return handle
 }
 
