@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/debugpb"
@@ -518,10 +519,10 @@ func analyzeFastExec(exec *AnalyzeFastExec) []statistics.AnalyzeResult {
 
 // AnalyzeFastTask is the task for build stats.
 type AnalyzeFastTask struct {
-	Location  *tikv.KeyLocation
-	SampSize  uint64
-	LRowCount uint64
-	RRowCount uint64
+	Location    *tikv.KeyLocation
+	SampSize    uint64
+	BeginOffset uint64
+	EndOffset   uint64
 }
 
 // AnalyzeFastExec represents Fast Analyze executor.
@@ -588,9 +589,9 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 				}
 				newCount := atomic.AddUint64(&e.rowCount, cnt)
 				task := &AnalyzeFastTask{
-					Location:  loc,
-					LRowCount: newCount - cnt,
-					RRowCount: newCount,
+					Location:    loc,
+					BeginOffset: newCount - cnt,
+					EndOffset:   newCount,
 				}
 				*sampTasks = append(*sampTasks, task)
 				break
@@ -815,17 +816,17 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) error {
 	return nil
 }
 
-func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, rid int, err *error) {
+func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *error) {
 	defer func() {
 		e.wg.Done()
 	}()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
-	rander := rand.New(rand.NewSource(RandSeed + int64(rid)))
+	rander := rand.New(rand.NewSource(RandSeed + int64(workID)))
 	if *err != nil {
 		return
 	}
-	for i := rid; i < len(e.sampTasks); i += e.concurrency {
+	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
 		if task.SampSize == 0 {
 			continue
@@ -884,16 +885,14 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	e.collectors = make([]*statistics.SampleCollector, length)
 	for i := range e.collectors {
 		e.collectors[i] = &statistics.SampleCollector{
-			FMSketch:      statistics.NewFMSketch(maxSketchSize),
 			MaxSampleSize: int64(MaxSampleSize),
-			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
 			Samples:       make([]*statistics.SampleItem, MaxSampleSize),
 		}
 	}
 
 	e.wg.Add(e.concurrency)
+	bo := tikv.NewBackoffer(context.Background(), 500)
 	for i := 0; i < e.concurrency; i++ {
-		bo := tikv.NewBackoffer(context.Background(), 500)
 		go e.handleSampTasks(bo, i, &errs[i])
 	}
 	e.wg.Wait()
@@ -903,7 +902,6 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		}
 	}
 
-	bo := tikv.NewBackoffer(context.Background(), 500)
 	err := e.handleScanTasks(bo)
 	if err != nil {
 		return nil, nil, err
@@ -928,44 +926,48 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
 	// To set rand seed, it's for unit test.
+	// To ensure that random sequences are different in non-test environments, RandSeed must be set time.Now().
+	if RandSeed == 1 {
+		RandSeed = time.Now().UnixNano()
+	}
 	rander := rand.New(rand.NewSource(RandSeed))
 
 	// Only four rebuilds for sample task are allowed.
-	for buildCnt := 0; buildCnt < 5; buildCnt++ {
-		needRebuild, err := e.buildSampTask()
+	needRebuild, maxBuildTimes := true, 5
+	for counter := maxBuildTimes; needRebuild && counter > 0; counter-- {
+		needRebuild, err = e.buildSampTask()
 		if err != nil {
 			return nil, nil, err
 		}
-		if needRebuild {
-			continue
-		}
-
-		// If sample region size is smaller than MaxSampleSize * 2,
-		// then we trans the sample tasks to scan tasks.
-		if e.rowCount < uint64(MaxSampleSize)*2 {
-			for _, task := range e.sampTasks {
-				e.scanTasks = append(e.scanTasks, task.Location)
-			}
-			e.sampTasks = e.sampTasks[:0]
-			e.rowCount = 0
-		} else {
-			randPos := make([]uint64, 0, MaxSampleSize+1)
-			for i := 0; i < MaxSampleSize; i++ {
-				randPos = append(randPos, uint64(rander.Int63n(int64(e.rowCount))))
-			}
-			sort.Slice(randPos, func(i, j int) bool {
-				return randPos[i] < randPos[j]
-			})
-
-			for _, task := range e.sampTasks {
-				task.SampSize = uint64(sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.RRowCount }) - sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.LRowCount }))
-			}
-		}
-
-		hists, cms, err = e.runTasks()
-		return hists, cms, err
 	}
-	return nil, nil, errors.Errorf("Too many rebuilds for getting sample tasks.")
+	if needRebuild {
+		errMsg := "build fast analyze task failed, exceed maxBuildTimes: %v"
+		return nil, nil, errors.Errorf(errMsg, maxBuildTimes)
+	}
+
+	// If total row count of the table is smaller than 2*MaxSampleSize, we
+	// translate all the sample tasks to scan tasks.
+	if e.rowCount < uint64(MaxSampleSize)*2 {
+		for _, task := range e.sampTasks {
+			e.scanTasks = append(e.scanTasks, task.Location)
+		}
+		e.sampTasks = e.sampTasks[:0]
+		e.rowCount = 0
+		return e.runTasks()
+	}
+
+	randPos := make([]uint64, 0, MaxSampleSize+1)
+	for i := 0; i < MaxSampleSize; i++ {
+		randPos = append(randPos, uint64(rander.Int63n(int64(e.rowCount))))
+	}
+	sort.Slice(randPos, func(i, j int) bool { return randPos[i] < randPos[j] })
+
+	for _, task := range e.sampTasks {
+		begin := sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.BeginOffset })
+		end := sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.EndOffset })
+		task.SampSize = uint64(end - begin)
+	}
+	return e.runTasks()
 }
 
 // AnalyzeTestFastExec is for fast sample in unit test.
