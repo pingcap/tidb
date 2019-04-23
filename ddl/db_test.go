@@ -1788,6 +1788,7 @@ func (s *testDBSuite6) TestCreateTableWithLike2(c *C) {
 	tbl1 := testGetTableByName(c, s.s, "test_db", "t1")
 	doneCh := make(chan error, 2)
 	hook := &ddl.TestDDLCallback{}
+	var onceChecker sync.Map
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn && job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
 			return
@@ -1795,7 +1796,13 @@ func (s *testDBSuite6) TestCreateTableWithLike2(c *C) {
 		if job.TableID != tbl1.Meta().ID {
 			return
 		}
+
 		if job.SchemaState == model.StateDeleteOnly {
+			if _, ok := onceChecker.Load(job.ID); ok {
+				return
+			}
+
+			onceChecker.Store(job.ID, true)
 			go backgroundExec(s.store, "create table t2 like t1", doneCh)
 		}
 	}
