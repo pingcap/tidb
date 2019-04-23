@@ -826,7 +826,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		scanResp := handler.handleKvScan(&kvrpcpb.ScanRequest{StartKey: region.StartKey, EndKey: region.EndKey})
 		resp.DebugGetRegionProperties = &debugpb.GetRegionPropertiesResponse{
 			Props: []*debugpb.Property{{
-				Name:  "num_rows",
+				Name:  "mvcc.num_rows",
 				Value: strconv.Itoa(len(scanResp.Pairs)),
 			}}}
 	default:

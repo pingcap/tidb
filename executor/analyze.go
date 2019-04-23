@@ -580,7 +580,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 			return
 		}
 		for _, prop := range resp.DebugGetRegionProperties.Props {
-			if prop.Name == "mvcc.num_rows" || prop.Name == "num_rows" {
+			if prop.Name == "mvcc.num_rows" {
 				var cnt uint64
 				cnt, *err = strconv.ParseUint(prop.Value, 10, 64)
 				if *err != nil {
@@ -593,6 +593,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 					RRowCount: newCount,
 				}
 				*sampTasks = append(*sampTasks, task)
+				break
 			}
 		}
 	}
