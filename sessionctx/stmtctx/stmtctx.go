@@ -15,6 +15,7 @@ package stmtctx
 
 import (
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -74,6 +75,7 @@ type StatementContext struct {
 		warnings          []SQLWarn
 		histogramsNotLoad bool
 		execDetails       execdetails.ExecDetails
+		allExecDetails    []*execdetails.ExecDetails
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -273,6 +275,8 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.affectedRows = 0
 	sc.mu.foundRows = 0
 	sc.mu.warnings = nil
+	sc.mu.execDetails = execdetails.ExecDetails{}
+	sc.mu.allExecDetails = make([]*execdetails.ExecDetails, 0, 4)
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexIDs = sc.IndexIDs[:0]
@@ -289,6 +293,7 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.RequestCount++
 		sc.mu.execDetails.TotalKeys += details.TotalKeys
 		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
 	sc.mu.execDetails.CommitDetail = commitDetails
 	sc.mu.Unlock()
@@ -319,4 +324,43 @@ func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
 		return true
 	}
 	return false
+}
+
+// CopTasksDetails returns some useful information of cop-tasks during execution.
+func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	n := len(sc.mu.allExecDetails)
+	d := &CopTasksDetails{NumCopTasks: n}
+	if n == 0 {
+		return d
+	}
+	d.AvgProcessTime = sc.mu.execDetails.ProcessTime / time.Duration(n)
+	d.AvgWaitTime = sc.mu.execDetails.WaitTime / time.Duration(n)
+
+	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
+		return sc.mu.allExecDetails[i].ProcessTime < sc.mu.allExecDetails[j].ProcessTime
+	})
+	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].ProcessTime
+	d.MaxProcessTime = sc.mu.allExecDetails[n-1].ProcessTime
+
+	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
+		return sc.mu.allExecDetails[i].WaitTime < sc.mu.allExecDetails[j].WaitTime
+	})
+	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].WaitTime
+	d.MaxWaitTime = sc.mu.allExecDetails[n-1].WaitTime
+	return d
+}
+
+//CopTasksDetails collects some useful information of cop-tasks during execution.
+type CopTasksDetails struct {
+	NumCopTasks int
+
+	AvgProcessTime time.Duration
+	P90ProcessTime time.Duration
+	MaxProcessTime time.Duration
+
+	AvgWaitTime time.Duration
+	P90WaitTime time.Duration
+	MaxWaitTime time.Duration
 }
