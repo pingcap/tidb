@@ -75,9 +75,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 			pi := tbInfo.GetPartitionInfo()
 			if pi != nil {
 				// Max partition count is 4096, should we sample and just choose some of the partition to split?
-				for _, def := range pi.Definitions {
-					go splitTableRegion(d.store, def.ID)
-				}
+				go func(pi *model.PartitionInfo) {
+					for _, def := range pi.Definitions {
+						splitTableRegion(d.store, def.ID)
+					}
+				}(pi)
 			} else {
 				go splitTableRegion(d.store, tbInfo.ID)
 			}
