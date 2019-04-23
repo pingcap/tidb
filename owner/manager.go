@@ -28,6 +28,7 @@ import (
 	"github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
@@ -142,15 +143,22 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 			return etcdSession, errors.Trace(err)
 		}
 
-		// gofail: var closeClient bool
-		//	if closeClient {
-		//		etcdCli.Close()
-		//	}
+		failpoint.Inject("closeClient", func(val failpoint.Value) {
+			if val.(bool) {
+				if err := etcdCli.Close(); err != nil {
+					failpoint.Return(etcdSession, errors.Trace(err))
+				}
+			}
+		})
 
-		// gofail: var closeGrpc bool
-		//	if closeGrpc {
-		//		etcdCli.ActiveConnection().Close()
-		//	}
+		failpoint.Inject("closeGrpc", func(val failpoint.Value) {
+			if val.(bool) {
+				if err := etcdCli.ActiveConnection().Close(); err != nil {
+					failpoint.Return(etcdSession, errors.Trace(err))
+				}
+			}
+		})
+
 		startTime := time.Now()
 		etcdSession, err = concurrency.NewSession(etcdCli,
 			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))

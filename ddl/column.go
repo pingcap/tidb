@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -163,10 +164,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, nil
 	}
 
-	// gofail: var errorBeforeDecodeArgs bool
-	// if errorBeforeDecodeArgs {
-	// 	return ver, errors.New("occur an error before decode args")
-	// }
+	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("occur an error before decode args"))
+		}
+	})
 
 	tblInfo, columnInfo, col, pos, offset, err := checkAddColumn(t, job)
 	if err != nil {
@@ -374,12 +376,13 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		}
 	}
 
-	// gofail: var uninitializedOffsetAndState bool
-	// if uninitializedOffsetAndState {
-	// if newCol.State != model.StatePublic {
-	//      return ver, errors.New("the column state is wrong")
-	// }
-	// }
+	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
+		if val.(bool) {
+			if newCol.State != model.StatePublic {
+				failpoint.Return(ver, errors.New("the column state is wrong"))
+			}
+		}
+	})
 
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) && !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
 		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.

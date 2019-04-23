@@ -67,7 +67,7 @@ func (s *HelperTestSuite) SetUpSuite(c *C) {
 	mockTikvStore, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	s.store = &mockStore{
 		mockTikvStore.(tikv.Storage),
-		[]string{"127.0.0.1:10090/"},
+		[]string{"127.0.0.1:10100/"},
 	}
 	c.Assert(err, IsNil)
 }
@@ -87,7 +87,7 @@ func (s *HelperTestSuite) mockPDHTTPServer(c *C) {
 	router.HandleFunc("/pd/api/v1/hotspot/regions/read", s.mockHotRegionResponse)
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
-	server := &http.Server{Addr: "127.0.0.1:10090", Handler: serverMux}
+	server := &http.Server{Addr: "127.0.0.1:10100", Handler: serverMux}
 	err := server.ListenAndServe()
 	c.Assert(err, IsNil)
 }
