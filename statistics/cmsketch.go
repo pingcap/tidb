@@ -68,7 +68,7 @@ func NewCMSketchWithTopN(d, w int32, data [][]byte, numTop uint32, total uint64)
 	return c
 }
 
-// finalBuild builds top n and cmsketch
+// finalBuild builds Top-N and cmsketch
 func (c *CMSketch) finalBuild(sampleSize uint64, counter map[hack.MutableString]uint64, numTop uint32, nthValue, ratio, sumTopN uint64) (retNumTop uint32, retSumTopN uint64) {
 	enableTopN := sampleSize/uint64(topNThreshold) <= sumTopN
 	topN := make([]dataCount, 0, numTop)
@@ -90,7 +90,7 @@ func (c *CMSketch) finalBuild(sampleSize uint64, counter map[hack.MutableString]
 
 // BuildTopN builds table of top N elements.
 // elements in `data` should not be modified after this call.
-// If the original `data` is not skew enough, then we won't build map for top n elements.
+// If the original `data` is not skew enough, then we won't build map for top N elements.
 func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
 	// Group and count data first
 	counter := make(map[hack.MutableString]uint64)
@@ -113,24 +113,26 @@ func (c *CMSketch) BuildTopN(data [][]byte, numTop uint32, total uint64) {
 	sampleNDV := uint32(len(sorted))
 	estimateNDV, ratio := calculateEstimateNDV(onlyOnceItems, sampleSize, uint64(sampleNDV), total)
 
-	numTop = mathutil.MinUint32(sampleNDV, numTop)
-	NthValue := sorted[numTop-1]
-	newNthValue := sorted[numTop-1]
+	numTop = mathutil.MinUint32(sampleNDV, numTop) // In case numTop is bigger than sample NUV.
+	nthValue := sorted[numTop-1]
+	last := uint64(0) // The last element in top N index should occurres atleast `last` times.
 	sumTopN := uint64(0)
 
-	// Add a few elements, the number of which is close to the n-th most element.
+	// The following loop builds find how many elements be added to the top N index.
+	// The final Top-N index may have at most 2*numTop elements for some less skewed data.
 	for i := uint32(0); i < sampleNDV && i < numTop*2; i++ {
-		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2
-		if i >= numTop && sorted[i]*3 < NthValue*2 && newNthValue != sorted[i] {
+		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2.
+		// If the frequency of i-th elements is close to n-th element, it is added to the top N index too.
+		if i >= numTop && sorted[i]*3 < nthValue*2 && last != sorted[i] {
 			break
 		}
-		// sumTopN might be smaller than sum of final sum of elements in topNIndex.
 		// These two values are only used for build topNIndex, and they are not used in counting defaultValue.
-		newNthValue = sorted[i]
+		last = sorted[i]
+		// We use sumTopN to estimate the total count of top N elements to determine weather to build the top N index.
 		sumTopN += sorted[i]
 	}
 
-	numTop, sumTopN = c.finalBuild(sampleSize, counter, numTop, NthValue, ratio, sumTopN)
+	numTop, sumTopN = c.finalBuild(sampleSize, counter, numTop, last, ratio, sumTopN)
 
 	if total <= sumTopN {
 		c.defaultValue = 1
@@ -285,13 +287,13 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 }
 
 // MergeCMSketch merges two CM Sketch.
-// Call with CMSketch with top N initialized may downgrade the result
+// Call with CMSketch with Top-N initialized may downgrade the result
 func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
 	if c.topNIndex != nil || rc.topNIndex != nil {
-		return errors.New("CMSketch with top n does not supports merge")
+		return errors.New("CMSketch with Top-N does not supports merge")
 	}
 	c.count += rc.count
 	for i := range c.table {
@@ -303,7 +305,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 }
 
 // CMSketchToProto converts CMSketch to its protobuf representation.
-// TODO: Encode/Decode cmsketch with top n
+// TODO: Encode/Decode cmsketch with Top-N
 func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 	protoSketch := &tipb.CMSketch{Rows: make([]*tipb.CMSketchRow, c.depth)}
 	for i := range c.table {
@@ -316,7 +318,7 @@ func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 }
 
 // CMSketchFromProto converts CMSketch from its protobuf representation.
-// TODO: Encode/Decode cmsketch with top n
+// TODO: Encode/Decode cmsketch with Top-N
 func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 	if protoSketch == nil {
 		return nil
