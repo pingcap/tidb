@@ -80,13 +80,13 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	statsInfos := make(map[string]uint64)
 	statsInfos["t1"] = 0
 	copTasks := &stmtctx.CopTasksDetails{
-		NumCopTasks:       10,
-		AvgProcessTime:    time.Second,
-		P90ProcessTime:    time.Second * 2,
-		MaxProcessTime:    time.Second * 3,
-		AvgWaitTime:       time.Millisecond * 10,
-		P90WaitTime:       time.Millisecond * 20,
-		MaxWaitTime:       time.Millisecond * 30,
+		NumCopTasks:    10,
+		AvgProcessTime: time.Second,
+		P90ProcessTime: time.Second * 2,
+		MaxProcessTime: time.Second * 3,
+		AvgWaitTime:    time.Millisecond * 10,
+		P90WaitTime:    time.Millisecond * 20,
+		MaxWaitTime:    time.Millisecond * 30,
 	}
 	resultString := `# Txn_start_ts: 406649736972468225
 # User: root@192.168.0.1

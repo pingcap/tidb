@@ -356,11 +356,11 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 type CopTasksDetails struct {
 	NumCopTasks int
 
-	AvgProcessTime    time.Duration
-	P90ProcessTime    time.Duration
-	MaxProcessTime    time.Duration
+	AvgProcessTime time.Duration
+	P90ProcessTime time.Duration
+	MaxProcessTime time.Duration
 
-	AvgWaitTime    time.Duration
-	P90WaitTime    time.Duration
-	MaxWaitTime    time.Duration
+	AvgWaitTime time.Duration
+	P90WaitTime time.Duration
+	MaxWaitTime time.Duration
 }
