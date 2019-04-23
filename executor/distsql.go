@@ -829,8 +829,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 
 	if handleCnt != len(task.rows) {
 		if !w.isCheckOp {
-			return kv.ErrNotExist.GenWithStack("handle count %d isn't equal to value count %d",
-				handleCnt, len(task.rows))
+			return kv.ErrNotExist.GenWithStack("index %s handle count %d isn't equal to value count %d",
+				w.idxLookup.index.Name.O, handleCnt, len(task.rows))
 		}
 
 		obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
@@ -838,8 +838,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			handle := row.GetInt64(w.handleIdx)
 			obtainedHandlesMap[handle] = struct{}{}
 		}
-		return kv.ErrNotExist.GenWithStack("handle count %d isn't equal to value count %d, missing handles %v in a batch",
-			handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
+		return kv.ErrNotExist.GenWithStack("index %s handle count %d isn't equal to value count %d, missing handles %v in a batch",
+			w.idxLookup.index.Name.O, handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
 	}
 
 	return nil
