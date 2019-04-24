@@ -159,8 +159,9 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 	// We should remove all accessConds, so that they will not be added to filter conditions.
 	newConditions = removeAccessConditions(newConditions, accessConds)
 	eqOrInCount := len(accessConds)
+	res.EqCondCount = eqCount
+	res.EqOrInCount = eqOrInCount
 	if eqOrInCount == len(cols) {
-		// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
 		filterConds = append(filterConds, newConditions...)
 		ranges, err = buildCNFIndexRange(sctx.GetSessionVars().StmtCtx, cols, tpSlice, lengths, eqOrInCount, accessConds)
 		if err != nil {
@@ -169,7 +170,6 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		res.Ranges = ranges
 		res.AccessConds = accessConds
 		res.RemainedConds = filterConds
-		res.EqCondCount = eqCount
 		return res, nil
 	}
 	checker := &conditionChecker{
@@ -194,7 +194,6 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 	res.Ranges = ranges
 	res.AccessConds = accessConds
 	res.RemainedConds = filterConds
-	res.EqCondCount = eqCount
 	return res, err
 }
 
@@ -319,6 +318,8 @@ type DetachRangeResult struct {
 	RemainedConds []expression.Expression
 	// EqCondCount is the number of equal conditions extracted.
 	EqCondCount int
+	// EqOrInCount is the number of equal/in conditions extracted.
+	EqOrInCount int
 	// IsDNFCond indicates if the top layer of conditions are in DNF.
 	IsDNFCond bool
 }
