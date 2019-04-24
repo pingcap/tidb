@@ -280,9 +280,8 @@ type DDL interface {
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m          sync.RWMutex
-	infoHandle *infoschema.Handle
-	quitCh     chan struct{}
+	m      sync.RWMutex
+	quitCh chan struct{}
 
 	*ddlCtx
 	workers     map[workerType]*worker
@@ -300,6 +299,7 @@ type ddlCtx struct {
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoHandle   *infoschema.Handle
 
 	// hook may be modified.
 	mu struct {
@@ -380,12 +380,12 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
+		infoHandle:   infoHandle,
 	}
 	ddlCtx.mu.hook = hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		infoHandle: infoHandle,
-		ddlCtx:     ddlCtx,
+		ddlCtx: ddlCtx,
 	}
 
 	d.start(ctx, ctxPool)

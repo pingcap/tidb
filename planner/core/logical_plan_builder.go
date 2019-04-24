@@ -2265,7 +2265,6 @@ func (b *PlanBuilder) BuildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 	if err != nil {
 		return nil, err
 	}
-
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
 	selectLogicalPlan, err := b.Build(selectNode)
