@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var (
@@ -261,12 +263,14 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 	return false, nil
 }
 
+var innerResultLabel fmt.Stringer = stringutil.StringerStr("innerResult")
+
 // fetchInnerRows fetches all rows from inner executor, and append them to
 // e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context) error {
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
-	e.innerResult.GetMemTracker().SetLabel("innerResult")
+	e.innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	var err error
 	for {
 		if e.finished.Load().(bool) {
@@ -611,6 +615,8 @@ func (e *NestedLoopApplyExec) Close() error {
 	return e.outerExec.Close()
 }
 
+var innerListLabel fmt.Stringer = stringutil.StringerStr("innerList")
+
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	err := e.outerExec.Open(ctx)
@@ -626,7 +632,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.innerList.GetMemTracker().SetLabel("innerList")
+	e.innerList.GetMemTracker().SetLabel(innerListLabel)
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
 	return nil
