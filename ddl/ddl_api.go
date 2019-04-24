@@ -1199,10 +1199,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err == nil {
 		// do pre-split and scatter.
 		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-			if tbInfo.WaitSplitFinish {
-				preSplitTableRegion(d.store, tbInfo)
+			if ctx.GetSessionVars().WaitTableSplitFinish {
+				preSplitTableRegion(d.store, tbInfo, true)
 			} else {
-				go preSplitTableRegion(d.store, tbInfo)
+				go preSplitTableRegion(d.store, tbInfo, false)
 			}
 		}
 		if tbInfo.AutoIncID > 1 {
@@ -1579,8 +1579,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			tbInfo.PreSplitRegions = op.UintValue
-		case ast.TableOptionWaitSplitFinish:
-			tbInfo.WaitSplitFinish = op.UintValue == 1
 		}
 	}
 	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {

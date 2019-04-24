@@ -338,14 +338,14 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	}
 }
 
-func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
+func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSplitFinish bool) {
 	s, ok := store.(splitableStore)
 	if !ok {
 		return
 	}
 	regionIDs := make([]uint64, 0, 1<<(tblInfo.PreSplitRegions-1)+len(tblInfo.Indices))
 
-	// Suppose:
+	// Example:
 	// ShardRowIDBits = 5
 	// PreSplitRegions = 3
 	//
@@ -395,7 +395,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo) {
 			regionIDs = append(regionIDs, regionID)
 		}
 	}
-	if !tblInfo.WaitSplitFinish {
+	if !waitTableSplitFinish {
 		return
 	}
 	for _, regionID := range regionIDs {
