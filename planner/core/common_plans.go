@@ -420,22 +420,28 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 }
 
-// AnalyzeColumnsTask is used for analyze columns.
-type AnalyzeColumnsTask struct {
+// analyzeInfo is used to store the database name, table name and partition name of analyze task.
+type analyzeInfo struct {
+	DBName        string
+	TableName     string
+	PartitionName string
+	// PhysicalTableID is the id for a partition or a table.
 	PhysicalTableID int64
-	PKInfo          *model.ColumnInfo
-	ColsInfo        []*model.ColumnInfo
 	Table           table.Table
 	Incremental     bool
 }
 
+// AnalyzeColumnsTask is used for analyze columns.
+type AnalyzeColumnsTask struct {
+	PKInfo   *model.ColumnInfo
+	ColsInfo []*model.ColumnInfo
+	analyzeInfo
+}
+
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
-	// PhysicalTableID is the id for a partition or a table.
-	PhysicalTableID int64
-	IndexInfo       *model.IndexInfo
-	Table           table.Table
-	Incremental     bool
+	IndexInfo *model.IndexInfo
+	analyzeInfo
 }
 
 // Analyze represents an analyze plan

@@ -1449,7 +1449,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 	}
 	exec := analyzeTask.colExec
 	analyzeTask.taskType = pkIncrementalTask
-	analyzeTask.colIncrementalEXec = &analyzePKIncrementalExec{AnalyzeColumnsExec: *exec, pkStats: col}
+	analyzeTask.colIncrementalExec = &analyzePKIncrementalExec{AnalyzeColumnsExec: *exec, pkStats: col}
 	return analyzeTask
 }
 
@@ -1518,32 +1518,50 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
+	autoAnalyze := ""
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		autoAnalyze = "auto "
+	}
 	for _, task := range v.ColTasks {
+		job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName}
 		if task.Incremental {
-			e.tasks = append(e.tasks, b.buildAnalyzePKIncremental(task, v.MaxNumBuckets))
+			job.JobInfo = "analyze incremental columns"
+			colJob := b.buildAnalyzePKIncremental(task, v.MaxNumBuckets)
+			colJob.job = job
+			e.tasks = append(e.tasks, colJob)
 		} else {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastColumn(e, task, v.MaxNumBuckets)
 			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets))
+				colJob := b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets)
+				job.JobInfo = autoAnalyze + "analyze columns"
+				colJob.job = job
+				e.tasks = append(e.tasks, colJob)
 			}
-			if b.err != nil {
-				return nil
-			}
+		}
+		if b.err != nil {
+			return nil
 		}
 	}
 	for _, task := range v.IdxTasks {
+		job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName}
 		if task.Incremental {
-			e.tasks = append(e.tasks, b.buildAnalyzeIndexIncremental(task, v.MaxNumBuckets))
+			job.JobInfo = "analyze incremental index " + task.IndexInfo.Name.O
+			idxJob := b.buildAnalyzeIndexIncremental(task, v.MaxNumBuckets)
+			idxJob.job = job
+			e.tasks = append(e.tasks, idxJob)
 		} else {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastIndex(e, task, v.MaxNumBuckets)
 			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets))
+				job.JobInfo = autoAnalyze + "analyze index " + task.IndexInfo.Name.O
+				idxJob := b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets)
+				idxJob.job = job
+				e.tasks = append(e.tasks, idxJob)
 			}
-			if b.err != nil {
-				return nil
-			}
+		}
+		if b.err != nil {
+			return nil
 		}
 	}
 	return e
