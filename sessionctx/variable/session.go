@@ -867,7 +867,7 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 				copTasks.P90WaitTime, copTasks.MaxWaitTime) + "\n")
 	}
 	if memMax > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
+		buf.WriteString(SlowLogPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"
