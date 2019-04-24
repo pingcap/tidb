@@ -16,6 +16,7 @@ package stmtctx
 import (
 	"math"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -94,6 +95,7 @@ type StatementContext struct {
 
 		message           string
 		warnings          []SQLWarn
+		errorCount        uint16
 		histogramsNotLoad bool
 		execDetails       execdetails.ExecDetails
 		allExecDetails    []*execdetails.ExecDetails
@@ -267,31 +269,42 @@ func (sc *StatementContext) WarningCount() uint16 {
 	return wc
 }
 
-// NumWarnings gets warning count. It's different from `WarningCount` in that
-// `WarningCount` return the warning count of the last executed command, so if
-// the last command is a SHOW statement, `WarningCount` return 0. On the other
-// hand, `NumWarnings` always return number of warnings(or errors if `errOnly`
-// is set).
-func (sc *StatementContext) NumWarnings(errOnly bool) uint16 {
-	var wc uint16
+const zero = "0"
+
+// NumErrorWarnings gets warning and error count.
+func (sc *StatementContext) NumErrorWarnings() (ec, wc string) {
+	var (
+		ecNum uint16
+		wcNum int
+	)
 	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if errOnly {
-		for _, warn := range sc.mu.warnings {
-			if warn.Level == WarnLevelError {
-				wc++
-			}
-		}
+	ecNum = sc.mu.errorCount
+	wcNum = len(sc.mu.warnings)
+	sc.mu.Unlock()
+
+	if ecNum == 0 {
+		ec = zero
 	} else {
-		wc = uint16(len(sc.mu.warnings))
+		ec = strconv.Itoa(int(ecNum))
 	}
-	return wc
+
+	if wcNum == 0 {
+		wc = zero
+	} else {
+		wc = strconv.Itoa(wcNum)
+	}
+	return
 }
 
 // SetWarnings sets warnings.
 func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
 	sc.mu.warnings = warns
+	for _, w := range warns {
+		if w.Level == WarnLevelError {
+			sc.mu.errorCount++
+		}
+	}
 	sc.mu.Unlock()
 }
 
@@ -318,6 +331,7 @@ func (sc *StatementContext) AppendError(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
+		sc.mu.errorCount++
 	}
 	sc.mu.Unlock()
 }
@@ -377,6 +391,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.copied = 0
 	sc.mu.touched = 0
 	sc.mu.message = ""
+	sc.mu.errorCount = 0
 	sc.mu.warnings = nil
 	sc.mu.execDetails = execdetails.ExecDetails{}
 	sc.mu.allExecDetails = make([]*execdetails.ExecDetails, 0, 4)

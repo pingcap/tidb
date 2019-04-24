@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -37,11 +39,11 @@ var _ Executor = &TableReaderExecutor{}
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
 	selectResultFunc func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
+		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer) (distsql.SelectResult, error)
 }
 
 func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer) (distsql.SelectResult, error) {
 	if sr.selectResultFunc == nil {
 		return distsql.SelectWithRuntimeStats(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs)
 	}
@@ -145,12 +147,14 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 func (e *TableReaderExecutor) Close() error {
 	err := e.resultHandler.Close()
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
+
+var tableReaderDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("TableReaderDistSQLTracker")
 
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
@@ -162,7 +166,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetMemTracker(e.ctx, "TableReaderDistSQLTracker").
+		SetMemTracker(e.ctx, tableReaderDistSQLTrackerLabel).
 		Build()
 	if err != nil {
 		return nil, err
