@@ -63,7 +63,6 @@ func NewCMSketch(d, w int32) *CMSketch {
 // topNHelper wraps some variables used when building cmsketch with top n.
 type topNHelper struct {
 	sampleSize    uint64
-	numTop        uint32
 	counter       map[hack.MutableString]uint64
 	sorted        []uint64
 	onlyOnceItems uint64
@@ -106,7 +105,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		sumTopN += sorted[i]
 	}
 
-	return &topNHelper{uint64(len(sample)), numTop, counter, sorted, onlyOnceItems, sumTopN, last}
+	return &topNHelper{uint64(len(sample)), counter, sorted, onlyOnceItems, sumTopN, last}
 }
 
 // NewCMSketchWithTopN returns a new CM sketch with TopN elements.
@@ -127,14 +126,11 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64) (c *CMS
 	if enableTopN {
 		c.topN = make(map[uint64][]topNMeta)
 	}
-	helper.sumTopN, helper.numTop = 0, 0
 	for counterKey, cnt := range helper.counter {
 		data, scaledCount := hack.Slice(string(counterKey)), cnt*scaleRatio
 		if enableTopN && cnt >= helper.lastVal {
 			h1, h2 := murmur3.Sum128(data)
 			c.topN[h1] = append(c.topN[h1], topNMeta{h1, h2, data, scaledCount})
-			helper.sumTopN += scaledCount
-			helper.numTop++
 		} else {
 			c.updateBytesWithDelta(data, scaledCount)
 		}
@@ -144,7 +140,7 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64) (c *CMS
 
 func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount uint64) {
 	sampleNDV := uint64(len(helper.sorted))
-	if rowCount <= helper.sumTopN || rowCount <= (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio {
+	if rowCount <= (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio {
 		c.defaultValue = 1
 	} else {
 		estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio
