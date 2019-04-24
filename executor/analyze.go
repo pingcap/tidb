@@ -542,6 +542,7 @@ type AnalyzeFastExec struct {
 	sampTasks       []*AnalyzeFastTask
 	scanTasks       []*tikv.KeyLocation
 	collectors      []*statistics.SampleCollector
+	randSeed        int64
 }
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
@@ -752,7 +753,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	return nil
 }
 
-func (e *AnalyzeFastExec) handleBatchGetResponse(kvMap map[string][]byte) (err error) {
+func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err error) {
 	length := int32(len(kvMap))
 	newCursor := atomic.AddInt32(&e.sampCursor, length)
 	hasPKInfo := 0
@@ -775,7 +776,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (err error) {
 	if e.pkInfo != nil {
 		hasPKInfo = 1
 	}
-	rander := rand.New(rand.NewSource(RandSeed + int64(e.rowCount)))
+	rander := rand.New(rand.NewSource(e.randSeed + int64(e.rowCount)))
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
 		e.rowCount++
@@ -822,7 +823,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 	}()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
-	rander := rand.New(rand.NewSource(RandSeed + int64(workID)))
+	rander := rand.New(rand.NewSource(e.randSeed + int64(workID)))
 	if *err != nil {
 		return
 	}
@@ -862,7 +863,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			kvMap[string(iter.Key())] = iter.Value()
 		}
 
-		*err = e.handleBatchGetResponse(kvMap)
+		*err = e.handleBatchSeekResponse(kvMap)
 		if *err != nil {
 			return
 		}
@@ -928,9 +929,11 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 	// To set rand seed, it's for unit test.
 	// To ensure that random sequences are different in non-test environments, RandSeed must be set time.Now().
 	if RandSeed == 1 {
-		RandSeed = time.Now().UnixNano()
+		e.randSeed = time.Now().UnixNano()
+	} else {
+		e.randSeed = RandSeed
 	}
-	rander := rand.New(rand.NewSource(RandSeed))
+	rander := rand.New(rand.NewSource(e.randSeed))
 
 	// Only four rebuilds for sample task are allowed.
 	needRebuild, maxBuildTimes := true, 5
