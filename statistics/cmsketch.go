@@ -308,6 +308,7 @@ func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 			protoSketch.TopN = append(protoSketch.TopN, &tipb.CMSketchTopN{Data: dataMeta.data, Count: dataMeta.count})
 		}
 	}
+	protoSketch.DefaultValue = c.defaultValue
 	return protoSketch
 }
 
@@ -327,6 +328,7 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 	if len(protoSketch.TopN) == 0 {
 		return c
 	}
+	c.defaultValue = protoSketch.DefaultValue
 	c.topN = make(map[uint64][]topNMeta)
 	for _, e := range protoSketch.TopN {
 		h1, h2 := murmur3.Sum128(e.Data)
@@ -386,7 +388,7 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 	if c == nil || rc == nil {
 		return c == nil && rc == nil
 	}
-	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count {
+	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count || c.defaultValue != rc.defaultValue {
 		return false
 	}
 	for i := range c.table {
@@ -442,5 +444,5 @@ func (c *CMSketch) Copy() *CMSketch {
 			topN[k] = newVals
 		}
 	}
-	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, topN: topN}
+	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, defaultValue: c.defaultValue, topN: topN}
 }

@@ -91,4 +91,4 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/tipb => github.com/erjiaqing/tipb v0.0.0-20190412084800-66fe8d63f8c7
+replace github.com/pingcap/tipb => github.com/erjiaqing/tipb v0.0.0-20190424101756-ee69026891aa
