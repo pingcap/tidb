@@ -234,7 +234,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	}{
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.c_str",
-			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}(cast(t1.a),cast(t2.c_str))->Projection",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t))}(cast(t1.a),t2.c_str)->Projection",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.a",

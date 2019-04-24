@@ -830,7 +830,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "show columns from t where `Key` = 'pri' like 't*'",
-			plan: "Show([eq(cast(key), 0)])",
+			plan: "Show([eq(key, 0)])",
 		},
 		{
 			sql:  "do sleep(5)",
