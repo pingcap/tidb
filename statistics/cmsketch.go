@@ -93,18 +93,16 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		sumTopN   uint64
 		sampleNDV = uint32(len(sorted))
 	)
-	numTop = mathutil.MinUint32(sampleNDV, numTop) // In case numTop is bigger than sample NUV.
-	// The following loop builds find how many elements be added to the top N index.
-	// The final Top-N index may have at most 2*numTop elements for some less skewed sample.
+	numTop = mathutil.MinUint32(sampleNDV, numTop) // Ensure numTop no larger than sampNDV.
+	// Only element whose frequency is not smaller than 2/3 multiples the
+	// frequency of the n-th element are added to the TopN statistics. We chose
+	// 2/3 as an empirical value because the average cardinality estimation
+	// error is relatively small compared with 1/2.
 	for i := uint32(0); i < sampleNDV && i < numTop*2; i++ {
-		// Here, 2/3 is get by running tests, tested 1, 1/2, 2/3, and 2/3 is relative better than 1 and 1/2.
-		// If the frequency of i-th elements is close to n-th element, it is added to the top N index too.
 		if i >= numTop && sorted[i]*3 < sorted[numTop-1]*2 && last != sorted[i] {
 			break
 		}
-		// These two values are only used for build topN, and they are not used in counting defaultValue.
 		last = sorted[i]
-		// We use sumTopN to estimate the total count of top N elements to determine weather to build the top N index.
 		sumTopN += sorted[i]
 	}
 
@@ -210,12 +208,12 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	oriCount := c.queryHashValue(h1, h2)
 	if c.considerDefVal(oriCount) {
-		// This case, we should also update c.defaultValue
-		// Set default value directly will result in more error, instead, update it by 5%.
-		// This should make estimate better, if defaultValue becomes 0 frequently, commit this line.
+		// When getting estimate count of <h1, h2>, we used c.defaultValue
+		// Thus when updating value of <h1, h2> we should alse update c.defaultValue, but not much for a large number, 5% is enough.
+		// This should make estimate better, remove this line if it does not work as expected.
 		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05)
 		if c.defaultValue == 0 {
-			// c.defaultValue never guess 0 since we are using a sampled data, instead, return a small number, like 1.
+			// c.defaultValue never guess 0 since we are using a sampled data.
 			c.defaultValue = 1
 		}
 	}

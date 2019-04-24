@@ -34,14 +34,14 @@ func (c *CMSketch) insert(val *types.Datum) error {
 	return nil
 }
 
-func prepareCMSWithTopN(d, w int32, val []*types.Datum, n uint32, total uint64) (*CMSketch, error) {
-	data := make([][]byte, len(val), len(val))
-	for i, v := range val {
+func prepareCMSWithTopN(d, w int32, vals []*types.Datum, n uint32, total uint64) (*CMSketch, error) {
+	data := make([][]byte, 0, len(vals))
+	for i, v := range vals {
 		bytes, err := codec.EncodeValue(nil, nil, *v)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		data[i] = bytes
+		data = append(data, bytes)
 	}
 	return NewCMSketchWithTopN(d, w, data, n, total), nil
 }
