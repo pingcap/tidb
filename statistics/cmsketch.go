@@ -122,11 +122,12 @@ func NewCMSketchWithTopN(d, w int32, sample [][]byte, numTop uint32, rowCount ui
 }
 
 func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64) (c *CMSketch) {
-	c, helper.sumTopN, helper.numTop = NewCMSketch(d, w), 0, 0
+	c = NewCMSketch(d, w)
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
 		c.topN = make(map[uint64][]topNMeta)
 	}
+	helper.sumTopN, helper.numTop = 0, 0
 	for counterKey, cnt := range helper.counter {
 		data, scaledCount := hack.Slice(string(counterKey)), cnt*scaleRatio
 		if enableTopN && cnt >= helper.lastVal {
@@ -143,11 +144,7 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64) (c *CMS
 
 func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount uint64) {
 	sampleNDV := uint64(len(helper.sorted))
-	if rowCount <= helper.sumTopN {
-		c.defaultValue = 1
-	} else if estimateNDV <= uint64(helper.numTop) {
-		c.defaultValue = 1
-	} else if estimateNDV+helper.onlyOnceItems <= uint64(sampleNDV) {
+	if rowCount <= helper.sumTopN || rowCount <= (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio {
 		c.defaultValue = 1
 	} else {
 		estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio
@@ -201,7 +198,7 @@ func (c *CMSketch) updateBytesWithDelta(bytes []byte, delta uint64) {
 }
 
 func (c *CMSketch) considerDefVal(cnt uint64) bool {
-	return cnt < 2*(c.count/uint64(c.width)) && c.defaultValue > 0
+	return cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)) && c.defaultValue > 0
 }
 
 // SetValueBytes sets value of d to count.
