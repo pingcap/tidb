@@ -295,6 +295,11 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 }
 
 func (ts *TidbTestSuite) TestTLS(c *C) {
+	preEnv := os.Getenv("GODEBUG")
+	os.Setenv("GODEBUG", "tls13=0")
+	defer func() {
+		os.Setenv("GODEBUG", preEnv)
+	}()
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
