@@ -337,7 +337,7 @@ func (s *testEvaluatorSuite) TestGetAccurateCmpType(c *C) {
 	stringCol := &Column{RetType: types.NewFieldType(mysql.TypeVarString)}
 	intCon := &Constant{RetType: types.NewFieldType(mysql.TypeInt24)}
 	floatCon := &Constant{RetType: types.NewFieldType(mysql.TypeFloat)}
-	//cmpType := GetAccurateCmpType(stringCol,intCon)
+
 	c.Assert(GetAccurateCmpType(stringCol, intCon), Equals, types.ETString)
 	c.Assert(GetAccurateCmpType(stringCol, floatCon), Equals, types.ETString)
 	c.Assert(GetAccurateCmpType(intCon, stringCol), Equals, types.ETString)
