@@ -392,7 +392,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	if len(ds.pushedDownConds) == 0 {
 		return false, nil
 	}
-	path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
+	path.accessConds, path.tableFilters = ranger.DetachCondsForColumn(ds.ctx, ds.pushedDownConds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
 	// can be used to access data.
 	corColInAccessConds := false

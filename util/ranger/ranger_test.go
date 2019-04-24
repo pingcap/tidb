@@ -311,7 +311,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
 		c.Assert(col, NotNil)
 		var filter []expression.Expression
-		conds, filter = ranger.DetachCondsForTableRange(ctx, conds, col)
+		conds, filter = ranger.DetachCondsForColumn(ctx, conds, col)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildTableRange(conds, new(stmtctx.StatementContext), col.RetType)

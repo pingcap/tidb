@@ -375,7 +375,8 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 	return filterConds
 }
 
-// ExtractAccessConditionsForColumn detaches the access conditions used for range calculation.
+// ExtractAccessConditionsForColumn extracts the access conditions used for range calculation. Since
+// we don't need to return the remained filter conditions, it is much simpler than DetachCondsForColumn.
 func ExtractAccessConditionsForColumn(conds []expression.Expression, uniqueID int64) []expression.Expression {
 	checker := conditionChecker{
 		colUniqueID: uniqueID,
@@ -385,9 +386,8 @@ func ExtractAccessConditionsForColumn(conds []expression.Expression, uniqueID in
 	return expression.Filter(accessConds, conds, checker.check)
 }
 
-// DetachCondsForTableRange detaches the conditions used for range calculation from other useless conditions for
-// calculating the table range.
-func DetachCondsForTableRange(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
+// DetachCondsForColumn detaches access conditions for specified column from other filter conditions.
+func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessConditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
 		colUniqueID: col.UniqueID,
 		length:      types.UnspecifiedLength,
