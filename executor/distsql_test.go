@@ -192,7 +192,6 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	defer tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	is := s.domain.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -225,6 +224,16 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 
 		// if has other conditions, the inconsistent index check doesn't work.
 		err = tk.QueryToErr("select * from t where a>=0 and b<10")
+		c.Assert(err, IsNil)
+	}
+
+	// fix inconsistent problem to pass CI
+	for i := 0; i < 10; i++ {
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(i+10), int64(100+i), nil)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
 	}
 }
