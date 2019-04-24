@@ -370,7 +370,7 @@ func DecodeCMSketch(data []byte, topNData [][]byte) (*CMSketch, error) {
 	}
 	// Sometimes, topNData mightcontains older top n elements when count of new top n is less than old top n.
 	if len(topNData) < len(p.TopN) {
-		return nil, errors.New("length of topNData and p.TopN mismatch")
+		return nil, errors.Trace(errors.New("length of topNData and p.TopN mismatch"))
 	}
 	for i, v := range p.TopN {
 		v.Data = topNData[i]

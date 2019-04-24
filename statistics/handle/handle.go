@@ -338,8 +338,7 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*stati
 		}
 		topn[p] = topnrows[i].GetBytes(1)
 	}
-	cms, err := statistics.DecodeCMSketch(rows[0].GetBytes(0), topn)
-	return cms, errors.Trace(err)
+	return statistics.DecodeCMSketch(rows[0].GetBytes(0), topn)
 }
 
 func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
@@ -544,8 +543,8 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	for i, v := range topNData {
 		insertSQL := fmt.Sprintf("replace into mysql.stats_topnstore (table_id, is_index, hist_id, value_id, content) values (%d, %d, %d, %d, X'%X')", tableID, isIndex, hg.ID, i, v)
-		_, err1 := exec.Execute(ctx, insertSQL)
-		if err1 != nil {
+		_, err = exec.Execute(ctx, insertSQL)
+		if err != nil {
 			return
 		}
 	}
