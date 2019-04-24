@@ -346,7 +346,6 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_wait_table_split_finish = 0")
 	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("0"))
-
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {
