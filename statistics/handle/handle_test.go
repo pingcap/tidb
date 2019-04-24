@@ -551,6 +551,7 @@ func (s *testStatsSuite) TestCMSketchTopNStore(c *C) {
 	cmsBackup := cms.Copy()
 
 	h.SaveStatsToStorage(stat.PhysicalID, 0, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, 0)
+	stat = h.GetTableStats(tableInfo)
 	cms2 := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
 	c.Check(cmsBackup.Equal(cms2), IsTrue)
 }

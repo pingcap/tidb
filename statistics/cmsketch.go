@@ -324,6 +324,9 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 			c.count = c.count + uint64(counter)
 		}
 	}
+	if len(protoSketch.TopN) == 0 {
+		return c
+	}
 	c.topN = make(map[uint64][]topNMeta)
 	for _, e := range protoSketch.TopN {
 		h1, h2 := murmur3.Sum128(e.Data)
@@ -426,5 +429,18 @@ func (c *CMSketch) Copy() *CMSketch {
 		tbl[i] = make([]uint32, c.width)
 		copy(tbl[i], c.table[i])
 	}
-	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl}
+	var topN map[uint64][]topNMeta
+	if c.topN != nil {
+		topN = make(map[uint64][]topNMeta)
+		for k, vals := range c.topN {
+			newVals := make([]topNMeta, 0, len(vals))
+			for _, val := range vals {
+				newVal := topNMeta{h1: val.h1, h2: val.h2, count: val.count, data: make([]byte, len(val.data))}
+				copy(newVal.data, val.data)
+				newVals = append(newVals, val)
+			}
+			topN[k] = newVals
+		}
+	}
+	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, topN: topN}
 }
