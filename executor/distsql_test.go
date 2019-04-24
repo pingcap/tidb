@@ -192,6 +192,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	is := s.domain.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

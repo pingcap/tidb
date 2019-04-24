@@ -834,8 +834,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				handle := row.GetInt64(w.handleIdx)
 				obtainedHandlesMap[handle] = struct{}{}
 			}
-			return errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
-				handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
+			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d, missing handles %v in a batch",
+				w.idxLookup.index.Name.O, handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
 		}
 
 		if len(w.idxLookup.tblPlans) == 1 {
