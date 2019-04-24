@@ -302,6 +302,10 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
+	if !sessVars.StrictSQLMode {
+		// If StrictSQLMode is disabled and it is a insert-select statement, it also handle BadNullAsWarning.
+		sessVars.StmtCtx.BadNullAsWarning = true
+	}
 	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 
 	for {
