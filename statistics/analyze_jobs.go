@@ -86,7 +86,7 @@ func GetAllAnalyzeJobs() []*AnalyzeJob {
 	}
 	jobs = append(jobs, analyzeStatus.history...)
 	analyzeStatus.Unlock()
-	sort.Slice(jobs, func(i int, j int) bool { return jobs[i].updateTime.After(jobs[j].updateTime) })
+	sort.Slice(jobs, func(i int, j int) bool { return jobs[i].updateTime.Before(jobs[j].updateTime) })
 	return jobs
 }
 
