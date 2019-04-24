@@ -720,8 +720,8 @@ func ColumnToProto(c *ColumnInfo) *tipb.ColumnInfo {
 // TODO: update it when more collate is supported.
 func collationToProto(c string) int32 {
 	v := mysql.CollationNames[c]
-	if v == mysql.BinaryCollationID {
-		return int32(mysql.BinaryCollationID)
+	if v == mysql.BinaryDefaultCollationID {
+		return int32(mysql.BinaryDefaultCollationID)
 	}
 	// We only support binary and utf8_bin collation.
 	// Setting other collations to utf8_bin for old data compatibility.

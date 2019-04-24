@@ -20,15 +20,15 @@ func CharsetNameToID(charset string) uint8 {
 	// Use quick path for TiDB to avoid access CharsetIDs map
 	// "SHOW CHARACTER SET;" to see all the supported character sets.
 	if charset == "utf8mb4" {
-		return UTF8MB4CollationID
+		return UTF8MB4DefaultCollationID
 	} else if charset == "binary" {
-		return BinaryCollationID
+		return BinaryDefaultCollationID
 	} else if charset == "utf8" {
-		return UTF8CollationID
+		return UTF8DefaultCollationID
 	} else if charset == "ascii" {
-		return ASCIICollationID
+		return ASCIIDefaultCollationID
 	} else if charset == "latin1" {
-		return Latin1CollationID
+		return Latin1DefaultCollationID
 	} else {
 		return CharsetIDs[charset]
 	}
@@ -41,10 +41,10 @@ var CharsetIDs = map[string]uint8{
 	"cp850":    4,
 	"hp8":      6,
 	"koi8r":    7,
-	"latin1":   Latin1CollationID,
+	"latin1":   Latin1DefaultCollationID,
 	"latin2":   9,
 	"swe7":     10,
-	"ascii":    ASCIICollationID,
+	"ascii":    ASCIIDefaultCollationID,
 	"ujis":     12,
 	"sjis":     13,
 	"hebrew":   16,
@@ -57,7 +57,7 @@ var CharsetIDs = map[string]uint8{
 	"gbk":      28,
 	"latin5":   30,
 	"armscii8": 32,
-	"utf8":     UTF8CollationID,
+	"utf8":     UTF8DefaultCollationID,
 	"ucs2":     35,
 	"cp866":    36,
 	"keybcs2":  37,
@@ -65,14 +65,14 @@ var CharsetIDs = map[string]uint8{
 	"macroman": 39,
 	"cp852":    40,
 	"latin7":   41,
-	"utf8mb4":  UTF8MB4CollationID,
+	"utf8mb4":  UTF8MB4DefaultCollationID,
 	"cp1251":   51,
 	"utf16":    54,
 	"utf16le":  56,
 	"cp1256":   57,
 	"cp1257":   59,
 	"utf32":    60,
-	"binary":   BinaryCollationID,
+	"binary":   BinaryDefaultCollationID,
 	"geostd8":  92,
 	"cp932":    95,
 	"eucjpms":  97,
@@ -85,10 +85,10 @@ var Charsets = map[string]string{
 	"cp850":    "cp850_general_ci",
 	"hp8":      "hp8_english_ci",
 	"koi8r":    "koi8r_general_ci",
-	"latin1":   "latin1_swedish_ci",
+	"latin1":   "latin1_bin",
 	"latin2":   "latin2_general_ci",
 	"swe7":     "swe7_swedish_ci",
-	"ascii":    "ascii_general_ci",
+	"ascii":    "ascii_bin",
 	"ujis":     "ujis_japanese_ci",
 	"sjis":     "sjis_japanese_ci",
 	"hebrew":   "hebrew_general_ci",
@@ -101,7 +101,7 @@ var Charsets = map[string]string{
 	"gbk":      "gbk_chinese_ci",
 	"latin5":   "latin5_turkish_ci",
 	"armscii8": "armscii8_general_ci",
-	"utf8":     "utf8_general_ci",
+	"utf8":     "utf8_bin",
 	"ucs2":     "ucs2_general_ci",
 	"cp866":    "cp866_general_ci",
 	"keybcs2":  "keybcs2_general_ci",
@@ -109,7 +109,7 @@ var Charsets = map[string]string{
 	"macroman": "macroman_general_ci",
 	"cp852":    "cp852_general_ci",
 	"latin7":   "latin7_general_ci",
-	"utf8mb4":  "utf8mb4_general_ci",
+	"utf8mb4":  "utf8mb4_bin",
 	"cp1251":   "cp1251_general_ci",
 	"utf16":    "utf16_general_ci",
 	"utf16le":  "utf16le_general_ci",
@@ -122,7 +122,7 @@ var Charsets = map[string]string{
 	"eucjpms":  "eucjpms_japanese_ci",
 }
 
-// Collations maps MySQL default collation ID to its name.
+// Collations maps MySQL collation ID to its name.
 var Collations = map[uint8]string{
 	1:   "big5_chinese_ci",
 	2:   "latin2_czech_cs",
@@ -345,7 +345,7 @@ var Collations = map[uint8]string{
 	247: "utf8mb4_vietnamese_ci",
 }
 
-// CollationNames maps MySQL default collation name to its ID
+// CollationNames maps MySQL collation name to its ID
 var CollationNames = map[string]uint8{
 	"big5_chinese_ci":          1,
 	"latin2_czech_cs":          2,
@@ -574,15 +574,15 @@ const (
 	UTF8MB4Charset = "utf8mb4"
 	DefaultCharset = UTF8MB4Charset
 	// DefaultCollationID is utf8mb4_bin(46)
-	DefaultCollationID      = 46
-	Latin1CollationID       = 8
-	ASCIICollationID        = 11
-	UTF8CollationID         = 33
-	UTF8MB4CollationID      = 45
-	BinaryCollationID       = 63
-	UTF8DefaultCollation    = "utf8_bin"
-	UTF8MB4DefaultCollation = "utf8mb4_bin"
-	DefaultCollationName    = UTF8MB4DefaultCollation
+	DefaultCollationID        = 46
+	Latin1DefaultCollationID  = 47
+	ASCIIDefaultCollationID   = 65
+	UTF8DefaultCollationID    = 83
+	UTF8MB4DefaultCollationID = 46
+	BinaryDefaultCollationID  = 63
+	UTF8DefaultCollation      = "utf8_bin"
+	UTF8MB4DefaultCollation   = "utf8mb4_bin"
+	DefaultCollationName      = UTF8MB4DefaultCollation
 
 	// MaxBytesOfCharacter, is the max bytes length of a character,
 	// refer to RFC3629, in UTF-8, characters from the U+0000..U+10FFFF range
