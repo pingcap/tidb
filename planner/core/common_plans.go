@@ -35,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
+var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
+
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
 	baseSchemaProducer
@@ -200,7 +202,11 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
-			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			if metrics.ResettablePlanCacheCounterFortTest {
+				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			} else {
+				planCacheCounter.Inc()
+			}
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
@@ -414,20 +420,27 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 }
 
+// analyzeInfo is used to store the database name, table name and partition name of analyze task.
+type analyzeInfo struct {
+	DBName        string
+	TableName     string
+	PartitionName string
+	// PhysicalTableID is the id for a partition or a table.
+	PhysicalTableID int64
+	Table           table.Table
+}
+
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	PhysicalTableID int64
-	PKInfo          *model.ColumnInfo
-	ColsInfo        []*model.ColumnInfo
-	Table           table.Table
+	PKInfo   *model.ColumnInfo
+	ColsInfo []*model.ColumnInfo
+	analyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
-	// PhysicalTableID is the id for a partition or a table.
-	PhysicalTableID int64
-	IndexInfo       *model.IndexInfo
-	Table           table.Table
+	IndexInfo *model.IndexInfo
+	analyzeInfo
 }
 
 // Analyze represents an analyze plan
