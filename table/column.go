@@ -426,12 +426,17 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	if col.IsGenerated() {
 		return types.Datum{}, nil
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	vars := ctx.GetSessionVars()
+	sc := vars.StmtCtx
 	if sc.BadNullAsWarning {
 		sc.AppendWarning(ErrColumnCantNull.GenWithStackByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-	return types.Datum{}, ErrNoDefaultValue.GenWithStack("Field '%s' doesn't have a default value", col.Name)
+	if !vars.StrictSQLMode {
+		sc.AppendWarning(ErrNoDefaultValue.GenWithStackByArgs(col.Name))
+		return GetZeroValue(col), nil
+	}
+	return types.Datum{}, ErrNoDefaultValue.GenWithStackByArgs(col.Name)
 }
 
 // GetZeroValue gets zero value for given column type.
