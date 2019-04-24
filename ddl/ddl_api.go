@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -338,6 +337,9 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
+	if err := colDef.ResolveCharsetCollation(); err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, tblCharset, dbCharset); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -498,12 +500,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				col.GeneratedStored = v.Stored
 				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
-			case ast.ColumnOptionCollate:
-				if field_types.HasCharset(colDef.Tp) {
-					col.FieldType.Collate = v.StrValue
-				}
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
+			case ast.ColumnOptionCollate:
+				// Do nothing
 			}
 		}
 	}
