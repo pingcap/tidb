@@ -427,7 +427,8 @@ type analyzeInfo struct {
 	PartitionName string
 	// PhysicalTableID is the id for a partition or a table.
 	PhysicalTableID int64
-	Table           table.Table
+	PKInfo          *model.ColumnInfo
+	ColsInfo        []*model.ColumnInfo
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
