@@ -208,9 +208,8 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	oriCount := c.queryHashValue(h1, h2)
 	if c.considerDefVal(oriCount) {
-		// When getting estimate count of <h1, h2>, we used c.defaultValue
-		// Thus when updating value of <h1, h2> we should alse update c.defaultValue, but not much for a large number, 5% is enough.
-		// This should make estimate better, remove this line if it does not work as expected.
+		// We should alse update c.defaultValue since we used c.defaultValue when getting the estimate count.
+		// This should make estimation better, remove this line if it does not work as expected.
 		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05)
 		if c.defaultValue == 0 {
 			// c.defaultValue never guess 0 since we are using a sampled data.
@@ -264,9 +263,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	if res > min {
 		res = min
 	}
-	// If res is small than some value, we think it is sampled occasionally
 	if c.considerDefVal(uint64(res)) {
-		// Assume items not in CMSketch is a average value
 		return c.defaultValue
 	}
 	return uint64(res)
