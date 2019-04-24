@@ -508,6 +508,10 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
+		// If the converted outerValue overflows, we don't need to lookup it.
+		if terror.ErrorEqual(err, types.ErrOverflow) {
+			return nil, nil
+		}
 		if err != nil {
 			return nil, err
 		}
