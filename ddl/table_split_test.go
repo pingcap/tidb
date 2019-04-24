@@ -72,9 +72,10 @@ type kvStore interface {
 func checkRegionStartWithTableID(c *C, id int64, store kvStore) {
 	regionStartKey := tablecodec.EncodeTablePrefix(id)
 	var loc *tikv.KeyLocation
+	var err error
 	for i := 0; i < 10; i++ {
 		cache := store.GetRegionCache()
-		loc, err := cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
+		loc, err = cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
 		c.Assert(err, IsNil)
 
 		// Region cache may be out of date, so we need to drop this expired region and load it again.
