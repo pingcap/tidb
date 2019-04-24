@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
@@ -72,6 +73,7 @@ const (
 	tableTiDBIndexes                        = "TIDB_INDEXES"
 	tableSlowLog                            = "SLOW_QUERY"
 	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
+	tableAnalyzeStatus                      = "ANALYZE_STATUS"
 )
 
 type columnInfo struct {
@@ -561,9 +563,19 @@ var tableTiDBHotRegionsCols = []columnInfo{
 	{"FLOW_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
+var tableAnalyzeStatusCols = []columnInfo{
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PARTITION_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"JOB_INFO", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PROCESSED_ROWS", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{"START_TIME", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"STATE", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
 func dataForCharacterSets() (records [][]types.Datum) {
 
-	charsets := charset.GetAllCharsets()
+	charsets := charset.GetSupportedCharsets()
 
 	for _, charset := range charsets {
 
@@ -579,7 +591,7 @@ func dataForCharacterSets() (records [][]types.Datum) {
 
 func dataForCollations() (records [][]types.Datum) {
 
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 
 	for _, collation := range collations {
 
@@ -600,7 +612,7 @@ func dataForCollations() (records [][]types.Datum) {
 
 func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
 
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 
 	for _, collation := range collations {
 
@@ -642,7 +654,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	loginUser := ctx.GetSessionVars().User
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
 			hasProcessPriv = true
 		}
 	}
@@ -895,7 +907,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 			if charset == "" {
 				charset = mysql.DefaultCharset
 			}
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			record := types.MakeDatums(
@@ -939,7 +951,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 
 			createOptions := ""
 
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -1030,7 +1042,7 @@ func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, tb := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -1092,7 +1104,7 @@ func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.D
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -1482,6 +1494,30 @@ func dataForHotRegionByMetrics(metrics map[helper.TblIndex]helper.RegionMetric, 
 	return rows
 }
 
+// DataForAnalyzeStatus gets all the analyze jobs.
+func DataForAnalyzeStatus() (rows [][]types.Datum) {
+	for _, job := range statistics.GetAllAnalyzeJobs() {
+		job.Lock()
+		var startTime interface{}
+		if job.StartTime.IsZero() {
+			startTime = nil
+		} else {
+			startTime = types.Time{Time: types.FromGoTime(job.StartTime), Type: mysql.TypeDatetime}
+		}
+		rows = append(rows, types.MakeDatums(
+			job.DBName,        // TABLE_SCHEMA
+			job.TableName,     // TABLE_NAME
+			job.PartitionName, // PARTITION_NAME
+			job.JobInfo,       // JOB_INFO
+			job.RowCount,      // ROW_COUNT
+			startTime,         // START_TIME
+			job.State,         // STATE
+		))
+		job.Unlock()
+	}
+	return
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -1517,6 +1553,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
 	tableSlowLog:                            slowQueryCols,
 	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
+	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1612,6 +1649,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForSlowLog(ctx)
 	case tableTiDBHotRegions:
 		fullRows, err = dataForTiDBHotRegions(ctx)
+	case tableAnalyzeStatus:
+		fullRows = DataForAnalyzeStatus()
 	}
 	if err != nil {
 		return nil, err

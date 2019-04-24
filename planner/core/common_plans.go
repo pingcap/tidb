@@ -35,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
+var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
+
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
 	baseSchemaProducer
@@ -200,7 +202,11 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
-			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			if metrics.ResettablePlanCacheCounterFortTest {
+				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			} else {
+				planCacheCounter.Inc()
+			}
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
@@ -414,20 +420,28 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 }
 
-// AnalyzeColumnsTask is used for analyze columns.
-type AnalyzeColumnsTask struct {
+// analyzeInfo is used to store the database name, table name and partition name of analyze task.
+type analyzeInfo struct {
+	DBName        string
+	TableName     string
+	PartitionName string
+	// PhysicalTableID is the id for a partition or a table.
 	PhysicalTableID int64
 	PKInfo          *model.ColumnInfo
 	ColsInfo        []*model.ColumnInfo
-	Table           table.Table
+}
+
+// AnalyzeColumnsTask is used for analyze columns.
+type AnalyzeColumnsTask struct {
+	PKInfo   *model.ColumnInfo
+	ColsInfo []*model.ColumnInfo
+	analyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
-	// PhysicalTableID is the id for a partition or a table.
-	PhysicalTableID int64
-	IndexInfo       *model.IndexInfo
-	Table           table.Table
+	IndexInfo *model.IndexInfo
+	analyzeInfo
 }
 
 // Analyze represents an analyze plan
@@ -554,15 +568,16 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
-	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
+	explainID := p.ExplainID().String()
+	row := []string{e.prettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
-		if runtimeStatsColl.ExistsCopStats(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.GetCopStats(p.ExplainID()).String())
-		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
+		if runtimeStatsColl.ExistsCopStats(explainID) {
+			row = append(row, runtimeStatsColl.GetCopStats(explainID).String())
+		} else if runtimeStatsColl.ExistsRootStats(explainID) {
+			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
 		} else {
 			row = append(row, "time:0ns, loops:0, rows:0")
 		}
