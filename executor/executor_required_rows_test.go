@@ -62,12 +62,16 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(ctx, schema, "")
+	baseExec := newBaseExecutor(ctx, schema, nil)
 	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0, defaultGenerator}
 }
 
 func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	defer func() {
+		if r.expectedRowsRet == nil {
+			r.numNextCalled++
+			return
+		}
 		rowsRet := req.NumRows()
 		expected := r.expectedRowsRet[r.numNextCalled]
 		if rowsRet != expected {
@@ -186,7 +190,7 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 
 func buildLimitExec(ctx sessionctx.Context, src Executor, offset, count int) Executor {
 	n := mathutil.Min(count, ctx.GetSessionVars().MaxChunkSize)
-	base := newBaseExecutor(ctx, src.Schema(), "", src)
+	base := newBaseExecutor(ctx, src.Schema(), nil, src)
 	base.initCap = n
 	limitExec := &LimitExec{
 		baseExecutor: base,
@@ -201,7 +205,8 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MemQuotaSort = variable.DefTiDBMemQuotaSort
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker("", ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().SnapshotTS = uint64(1)
 	return ctx
 }
 
@@ -268,7 +273,7 @@ func (s *testExecSuite) TestSortRequiredRows(c *C) {
 
 func buildSortExec(sctx sessionctx.Context, byItems []*plannercore.ByItems, src Executor) Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(sctx, src.Schema(), "", src),
+		baseExecutor: newBaseExecutor(sctx, src.Schema(), nil, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -375,7 +380,7 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 
 func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*plannercore.ByItems, src Executor) Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), "", src),
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), nil, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -468,7 +473,7 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 
 func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src Executor) Executor {
 	return &SelectionExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), "", src),
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), nil, src),
 		filters:      filters,
 	}
 }
@@ -525,6 +530,7 @@ func (s *testExecSuite) TestProjectionUnparallelRequiredRows(c *C) {
 }
 
 func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
+	c.Skip("not stable because of goroutine schedule")
 	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
 	testCases := []struct {
 		totalRows      int
@@ -585,7 +591,7 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor, numWorkers int) Executor {
 	return &ProjectionExec{
-		baseExecutor:  newBaseExecutor(ctx, src.Schema(), "", src),
+		baseExecutor:  newBaseExecutor(ctx, src.Schema(), nil, src),
 		numWorkers:    int64(numWorkers),
 		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 	}
@@ -726,4 +732,77 @@ func (s *testExecSuite) TestHashAggParallelRequiredRows(c *C) {
 			c.Assert(ds.checkNumNextCalled(), IsNil)
 		}
 	}
+}
+
+func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
+	justReturn1 := func(valType *types.FieldType) interface{} {
+		switch valType.Tp {
+		case mysql.TypeLong, mysql.TypeLonglong:
+			return int64(1)
+		case mysql.TypeDouble:
+			return float64(1)
+		default:
+			panic("not support")
+		}
+	}
+	joinTypes := []plannercore.JoinType{plannercore.RightOuterJoin, plannercore.LeftOuterJoin,
+		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin}
+	for _, joinType := range joinTypes {
+		ctx := defaultCtx()
+		required := make([]int, 100)
+		for i := range required {
+			required[i] = rand.Int()%ctx.GetSessionVars().MaxChunkSize + 1
+		}
+		innerSrc := newRequiredRowsDataSourceWithGenerator(ctx, 1, nil, justReturn1)             // just return one row: (1, 1)
+		outerSrc := newRequiredRowsDataSourceWithGenerator(ctx, 10000000, required, justReturn1) // always return (1, 1)
+		exec := buildMergeJoinExec(ctx, joinType, innerSrc, outerSrc)
+		c.Assert(exec.Open(context.Background()), IsNil)
+
+		chk := exec.newFirstChunk()
+		for i := range required {
+			chk.SetRequiredRows(required[i], ctx.GetSessionVars().MaxChunkSize)
+			c.Assert(exec.Next(context.Background(), chunk.NewRecordBatch(chk)), IsNil)
+		}
+		c.Assert(exec.Close(), IsNil)
+		c.Assert(outerSrc.checkNumNextCalled(), IsNil)
+	}
+}
+
+func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc Executor) Executor {
+	if joinType == plannercore.RightOuterJoin {
+		innerSrc, outerSrc = outerSrc, innerSrc
+	}
+
+	innerCols := innerSrc.Schema().Columns
+	outerCols := outerSrc.Schema().Columns
+	j := plannercore.PhysicalMergeJoin{
+		JoinType:        joinType,
+		LeftConditions:  nil,
+		RightConditions: nil,
+		DefaultValues:   []types.Datum{types.NewDatum(1), types.NewDatum(1)},
+		LeftKeys:        outerCols,
+		RightKeys:       innerCols,
+	}.Init(ctx, nil)
+
+	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
+	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
+	schema := expression.NewSchema(cols...)
+	j.SetSchema(schema)
+
+	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftKeys))
+	for i := range j.LeftKeys {
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(j.LeftKeys[i], j.RightKeys[i]))
+	}
+
+	b := newExecutorBuilder(ctx, nil)
+	return b.build(j)
+}
+
+type mockPlan struct {
+	MockPhysicalPlan
+	exec Executor
+}
+
+func (mp *mockPlan) GetExecutor() Executor {
+	return mp.exec
 }

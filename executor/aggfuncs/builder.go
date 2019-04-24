@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -73,6 +72,8 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 		return buildCumeDist(ordinal, orderByCols)
 	case ast.WindowFuncNthValue:
 		return buildNthValue(windowFuncDesc, ordinal)
+	case ast.WindowFuncNtile:
+		return buildNtile(windowFuncDesc, ordinal)
 	case ast.WindowFuncPercentRank:
 		return buildPercenRank(ordinal, orderByCols)
 	case ast.WindowFuncLead:
@@ -295,7 +296,7 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 		sep, _, err := c.EvalString(nil, chunk.Row{})
 		// This err should never happen.
 		if err != nil {
-			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
+			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
 		}
 		var s string
 		s, err = variable.GetSessionSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
@@ -305,7 +306,7 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 		maxLen, err := strconv.ParseUint(s, 10, 64)
 		// Should never happen
 		if err != nil {
-			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
+			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
 		}
 		var truncated int32
 		if aggFuncDesc.HasDistinct {
@@ -391,6 +392,15 @@ func buildNthValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// Already checked when building the function description.
 	nth, _, _ := expression.GetUint64FromConstant(aggFuncDesc.Args[1])
 	return &nthValue{baseAggFunc: base, tp: aggFuncDesc.RetTp, nth: nth}
+}
+
+func buildNtile(aggFuncDes *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDes.Args,
+		ordinal: ordinal,
+	}
+	n, _, _ := expression.GetUint64FromConstant(aggFuncDes.Args[0])
+	return &ntile{baseAggFunc: base, n: n}
 }
 
 func buildPercenRank(ordinal int, orderByCols []*expression.Column) AggFunc {

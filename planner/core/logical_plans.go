@@ -17,7 +17,6 @@ import (
 	"context"
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -67,6 +66,12 @@ const (
 	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
 	AntiLeftOuterSemiJoin
 )
+
+// IsOuterJoin returns if this joiner is a outer joiner
+func (tp JoinType) IsOuterJoin() bool {
+	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
 
 func (tp JoinType) String() string {
 	switch tp {
@@ -425,7 +430,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	}
 	path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
@@ -441,7 +446,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 			break
 		}
 	}
-	return noIntervalRange, errors.Trace(err)
+	return noIntervalRange, err
 }
 
 // deriveIndexPathStats will fulfill the information that the accessPath need.
@@ -468,24 +473,26 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	} else {
 		path.tableFilters = ds.pushedDownConds
 	}
-	corColInAccessConds := false
 	if path.eqCondCount == len(path.accessConds) {
-		access, remained := path.splitCorColAccessCondFromFilters()
-		path.accessConds = append(path.accessConds, access...)
+		accesses, remained := path.splitCorColAccessCondFromFilters()
+		path.accessConds = append(path.accessConds, accesses...)
 		path.tableFilters = remained
-		if len(access) > 0 {
-			corColInAccessConds = true
+		if len(accesses) > 0 && ds.statisticTable.Pseudo {
+			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+		} else {
+			selectivity := path.countAfterAccess / float64(ds.statisticTable.Count)
+			for i := range accesses {
+				col := path.idxCols[path.eqCondCount+i]
+				ndv := ds.getColumnNDV(col.ID)
+				ndv *= selectivity
+				if ndv < 1 {
+					ndv = 1.0
+				}
+				path.countAfterAccess = path.countAfterAccess / ndv
+			}
 		}
 	}
 	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
-	if corColInAccessConds {
-		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
-		if ok && !ds.stats.HistColl.Pseudo {
-			path.countAfterAccess = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
-		} else {
-			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
-		}
-	}
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.countAfterAccess < ds.stats.RowCount {

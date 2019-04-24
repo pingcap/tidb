@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,16 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package schemautil
+package pdapi
 
-import "github.com/pingcap/parser/model"
-
-// FindIndexByName finds index by name.
-func FindIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
-	for _, idx := range indices {
-		if idx.Name.L == idxName {
-			return idx
-		}
-	}
-	return nil
-}
+// HotRead / HotWrite is the pd apis to get the corresponding hot region information.
+const (
+	HotRead  = "/pd/api/v1/hotspot/regions/read"
+	HotWrite = "/pd/api/v1/hotspot/regions/read"
+)

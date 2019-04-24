@@ -1269,6 +1269,8 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		{"15-01-2001 1:59:58.", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 000000000, time.Local)},
 		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
 		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%S.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
+		{"2003-01-02 10:11:12 PM", "%Y-%m-%d %H:%i:%S %p", false, time.Time{}},
+		{"10:20:10AM", "%H:%i:%S%p", false, time.Time{}},
 	}
 
 	fc := funcs[ast.StrToDate]
@@ -1937,6 +1939,23 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		}
 	}
 
+	// MAKETIME(CAST(-1 AS UNSIGNED),0,0);
+	tp1 := &types.FieldType{
+		Tp:      mysql.TypeLonglong,
+		Flag:    mysql.UnsignedFlag,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+		Flen:    mysql.MaxIntWidth,
+	}
+	f := BuildCastFunction(s.ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err := f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	f1, err := maketime.getFunction(s.ctx, s.datumsToConstants([]types.Datum{res, makeDatums(0)[0], makeDatums(0)[0]}))
+	c.Assert(err, IsNil)
+	got, err := evalBuiltinFunc(f1, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(got.GetMysqlDuration().String(), Equals, "838:59:59")
+
 	tbl = []struct {
 		Args []interface{}
 		Want interface{}
@@ -2428,6 +2447,8 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 		"0000-00-00",
 		"1992-13-00",
 		"2007-10-07 23:59:61",
+		"2005-00-00",
+		"2005-00-01",
 		123456789}
 
 	for _, i := range testsNull {

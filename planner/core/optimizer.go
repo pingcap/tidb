@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
@@ -77,15 +78,15 @@ func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoS
 	}
 	p, err := builder.Build(node)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return p, nil
 }
 
 // CheckPrivilege checks the privilege for a user.
-func CheckPrivilege(pm privilege.Manager, vs []visitInfo) error {
+func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
 	for _, v := range vs {
-		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
+		if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
 				return ErrPrivilegeCheckFail
 			}
@@ -99,14 +100,14 @@ func CheckPrivilege(pm privilege.Manager, vs []visitInfo) error {
 func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	logic, err := logicalOptimize(flag, logic)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	physical, err := physicalOptimize(logic)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	finalPlan := postOptimize(physical)
 	return finalPlan, nil
@@ -129,15 +130,15 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 		}
 		logic, err = rule.optimize(logic)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
-	return logic, errors.Trace(err)
+	return logic, err
 }
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	if _, err := logic.recursiveDeriveStats(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	logic.preparePossibleProperties()
@@ -149,7 +150,7 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 
 	t, err := logic.findBestTask(prop)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if t.invalid() {
 		return nil, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")

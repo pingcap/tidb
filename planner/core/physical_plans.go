@@ -386,3 +386,26 @@ type PhysicalWindow struct {
 	OrderBy        []property.Item
 	Frame          *WindowFrame
 }
+
+// CollectPlanStatsVersion uses to collect the statistics version of the plan.
+func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
+	for _, child := range plan.Children() {
+		statsInfos = CollectPlanStatsVersion(child, statsInfos)
+	}
+	switch copPlan := plan.(type) {
+	case *PhysicalTableReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.tablePlan, statsInfos)
+	case *PhysicalIndexReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
+	case *PhysicalIndexLookUpReader:
+		// For index loop up, only the indexPlan is necessary,
+		// because they use the same stats and we do not set the stats info for tablePlan.
+		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
+	case *PhysicalIndexScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
+	case *PhysicalTableScan:
+		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
+	}
+
+	return statsInfos
+}

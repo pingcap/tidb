@@ -68,6 +68,7 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustQuery("explain delete from t where a = 1").Check(testkit.Rows(
 		"Point_Get_1 1.00 root table:t, handle:1",
 	))
+	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}

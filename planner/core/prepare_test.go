@@ -144,8 +144,6 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 
-	defer testleak.AfterTest(c)()
-
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (id int PRIMARY KEY, c1 TIMESTAMP(3) NOT NULL DEFAULT '2019-01-14 10:43:20', KEY idx1 (c1))")
@@ -156,6 +154,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 
 	var cnt [2]float64
 	var planStr [2]string
+	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	for i := 0; i < 2; i++ {
@@ -317,4 +316,30 @@ func readGaugeInt(g prometheus.Gauge) int {
 	mm := &dto.Metric{}
 	m.Write(mm)
 	return int(mm.GetGauge().GetValue())
+}
+
+// unit test for issue https://github.com/pingcap/tidb/issues/9478
+func (s *testPrepareSuite) TestPrepareWithWindowFunction(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_window_function = 0")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table window_prepare(a int, b double)")
+	tk.MustExec("insert into window_prepare values(1, 1.1), (2, 1.9)")
+	tk.MustExec("prepare stmt1 from 'select row_number() over() from window_prepare';")
+	// Test the unnamed window can be executed successfully.
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1", "2"))
+	// Test the stmt can be prepared successfully.
+	tk.MustExec("prepare stmt2 from 'select count(a) over (order by a rows between ? preceding and ? preceding) from window_prepare'")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt2 using @a, @b").Check(testkit.Rows("0", "0"))
 }

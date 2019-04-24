@@ -191,6 +191,9 @@ type SessionVars struct {
 	// params for prepared statements
 	PreparedParams []types.Datum
 
+	// ActiveRoles stores active roles for current user
+	ActiveRoles []*auth.RoleIdentity
+
 	// retry information
 	RetryInfo *RetryInfo
 	// Should be reset on transaction finished.
@@ -341,6 +344,29 @@ type SessionVars struct {
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
+
+	// EnableFastAnalyze indicates whether to take fast analyze.
+	EnableFastAnalyze bool
+}
+
+// ConnectionInfo present connection used by audit.
+type ConnectionInfo struct {
+	ConnectionID      uint32
+	ConnectionType    string
+	Host              string
+	ClientIP          string
+	ClientPort        string
+	ServerID          int
+	ServerPort        int
+	Duration          float64
+	User              string
+	ServerOSLoginUser string
+	OSVersion         string
+	ClientVersion     string
+	ServerVersion     string
+	SSLVersion        string
+	PID               int
+	DB                string
 }
 
 // NewSessionVars creates a session vars object.
@@ -354,6 +380,7 @@ func NewSessionVars() *SessionVars {
 		TxnCtx:                      &TransactionContext{},
 		KVVars:                      kv.NewVariables(),
 		RetryInfo:                   &RetryInfo{},
+		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:               true,
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
@@ -388,6 +415,7 @@ func NewSessionVars() *SessionVars {
 		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
 		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
 		MemQuotaNestedLoopApply:   DefTiDBMemQuotaNestedLoopApply,
+		MemQuotaDistSQL:           DefTiDBMemQuotaDistSQL,
 	}
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: DefIndexJoinBatchSize,
@@ -581,14 +609,28 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TxnIsolationOneShot:
 		switch val {
 		case "SERIALIZABLE", "READ-UNCOMMITTED":
-			return ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
+			skipIsolationLevelCheck, err := GetSessionSystemVar(s, TiDBSkipIsolationLevelCheck)
+			returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(val)
+			if err != nil {
+				returnErr = err
+			}
+			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
+				return returnErr
+			}
+			//SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
+			// 1. tx_isolation
+			// 2. transaction_isolation
+			// The following if condition is used to deduplicate two same warnings.
+			if name == "transaction_isolation" {
+				s.StmtCtx.AppendWarning(returnErr)
+			}
 		}
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		s.TimeZone = tz
 	case SQLModeVar:
@@ -604,7 +646,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBSnapshot:
 		err := setSnapshotTS(s, val)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case AutocommitVar:
 		isAutocommit := TiDBOptOn(val)
@@ -704,10 +746,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableWindowFunction = TiDBOptOn(val)
 	case TiDBOptJoinReorderThreshold:
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
-	case TiDBCheckMb4ValueInUtf8:
-		config.GetGlobalConfig().CheckMb4ValueInUtf8 = TiDBOptOn(val)
+	case TiDBCheckMb4ValueInUTF8:
+		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
+	case TiDBEnableFastAnalyze:
+		s.EnableFastAnalyze = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -735,6 +779,12 @@ const (
 	TxnIsolation         = "tx_isolation"
 	TransactionIsolation = "transaction_isolation"
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
+)
+
+// these variables are useless for TiDB, but still need to validate their values for some compatible issues.
+// TODO: some more variables need to be added here.
+const (
+	serverReadOnly = "read_only"
 )
 
 var (
@@ -800,6 +850,8 @@ type MemQuota struct {
 	MemQuotaIndexLookupJoin int64
 	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
 	MemQuotaNestedLoopApply int64
+	// MemQuotaDistSQL defines the memory quota for all operators in DistSQL layer like co-processor and selectResult.
+	MemQuotaDistSQL int64
 }
 
 // BatchSize defines batch size values.
@@ -822,8 +874,8 @@ type BatchSize struct {
 }
 
 const (
-	// SlowLogPrefixStr is slow log row prefix.
-	SlowLogPrefixStr = "# "
+	// SlowLogRowPrefixStr is slow log row prefix.
+	SlowLogRowPrefixStr = "# "
 	// SlowLogSpaceMarkStr is slow log space mark.
 	SlowLogSpaceMarkStr = ": "
 	// SlowLogSQLSuffixStr is slow log suffix.
@@ -831,7 +883,7 @@ const (
 	// SlowLogTimeStr is slow log field name.
 	SlowLogTimeStr = "Time"
 	// SlowLogStartPrefixStr is slow log start row prefix.
-	SlowLogStartPrefixStr = SlowLogPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
+	SlowLogStartPrefixStr = SlowLogRowPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
 	// SlowLogUserStr is slow log field name.
@@ -850,6 +902,28 @@ const (
 	SlowLogDigestStr = "Digest"
 	// SlowLogQuerySQLStr is slow log field name.
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
+	// SlowLogStatsInfoStr is plan stats info.
+	SlowLogStatsInfoStr = "Stats"
+	// SlowLogNumCopTasksStr is the number of cop-tasks.
+	SlowLogNumCopTasksStr = "Num_cop_tasks"
+	// SlowLogCopProcAvg is the average process time of all cop-tasks.
+	SlowLogCopProcAvg = "Cop_proc_avg"
+	// SlowLogCopProcP90 is the p90 process time of all cop-tasks.
+	SlowLogCopProcP90 = "Cop_proc_p90"
+	// SlowLogCopProcMax is the max process time of all cop-tasks.
+	SlowLogCopProcMax = "Cop_proc_max"
+	// SlowLogCopProcAddr is the address of TiKV where the cop-task which cost max process time run.
+	SlowLogCopProcAddr = "Cop_proc_addr"
+	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
+	SlowLogCopWaitAvg = "Cop_wait_avg"
+	// SlowLogCopWaitP90 is the p90 wait time of all cop-tasks.
+	SlowLogCopWaitP90 = "Cop_wait_p90"
+	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
+	SlowLogCopWaitMax = "Cop_wait_max"
+	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
+	SlowLogCopWaitAddr = "Cop_wait_addr"
+	// SlowLogMemMax is the max number bytes of memory used in this statement.
+	SlowLogMemMax = "Mem_max"
 )
 
 // SlowLogFormat uses for formatting slow log.
@@ -863,30 +937,73 @@ const (
 // # DB: test
 // # Index_ids: [1,2]
 // # Is_internal: false
+// # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+// # Stats: t1:1,t2:2
+// # Num_cop_tasks: 10
+// # Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s Max_addr: 10.6.131.78
+// # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
+// # Memory_max: 4096
 // select * from t_slim;
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest, sql string) string {
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, digest string,
+	statsInfos map[string]uint64, copTasks *stmtctx.CopTasksDetails, memMax int64, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
-	buf.WriteString(SlowLogPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
+	buf.WriteString(SlowLogRowPrefixStr + SlowLogTxnStartTSStr + SlowLogSpaceMarkStr + strconv.FormatUint(txnTS, 10) + "\n")
 	if s.User != nil {
-		buf.WriteString(SlowLogPrefixStr + SlowLogUserStr + SlowLogSpaceMarkStr + s.User.String() + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogUserStr + SlowLogSpaceMarkStr + s.User.String() + "\n")
 	}
 	if s.ConnectionID != 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogConnIDStr + SlowLogSpaceMarkStr + strconv.FormatUint(s.ConnectionID, 10) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogConnIDStr + SlowLogSpaceMarkStr + strconv.FormatUint(s.ConnectionID, 10) + "\n")
 	}
-	buf.WriteString(SlowLogPrefixStr + SlowLogQueryTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64) + "\n")
+	buf.WriteString(SlowLogRowPrefixStr + SlowLogQueryTimeStr + SlowLogSpaceMarkStr + strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64) + "\n")
 	if len(execDetailStr) > 0 {
-		buf.WriteString(SlowLogPrefixStr + execDetailStr + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
 	}
 	if len(s.CurrentDB) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogDBStr + SlowLogSpaceMarkStr + s.CurrentDB + "\n")
 	}
 	if len(indexIDs) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogIndexIDsStr + SlowLogSpaceMarkStr + indexIDs + "\n")
 	}
-	buf.WriteString(SlowLogPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
+	buf.WriteString(SlowLogRowPrefixStr + SlowLogIsInternalStr + SlowLogSpaceMarkStr + strconv.FormatBool(s.InRestrictedSQL) + "\n")
 	if len(digest) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogDigestStr + SlowLogSpaceMarkStr + digest + "\n")
+	}
+	if len(statsInfos) > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
+		firstComma := false
+		vStr := ""
+		for k, v := range statsInfos {
+			if v == 0 {
+				vStr = "pseudo"
+			} else {
+				vStr = strconv.FormatUint(v, 10)
+
+			}
+			if firstComma {
+				buf.WriteString("," + k + ":" + vStr)
+			} else {
+				buf.WriteString(k + ":" + vStr)
+				firstComma = true
+			}
+		}
+		buf.WriteString("\n")
+	}
+	if copTasks != nil {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
+			SlowLogCopProcAvg, SlowLogSpaceMarkStr, copTasks.AvgProcessTime.Seconds(),
+			SlowLogCopProcP90, SlowLogSpaceMarkStr, copTasks.P90ProcessTime.Seconds(),
+			SlowLogCopProcMax, SlowLogSpaceMarkStr, copTasks.MaxProcessTime.Seconds(),
+			SlowLogCopProcAddr, SlowLogSpaceMarkStr, copTasks.MaxProcessAddress) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
+			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, copTasks.AvgWaitTime.Seconds(),
+			SlowLogCopWaitP90, SlowLogSpaceMarkStr, copTasks.P90WaitTime.Seconds(),
+			SlowLogCopWaitMax, SlowLogSpaceMarkStr, copTasks.MaxWaitTime.Seconds(),
+			SlowLogCopWaitAddr, SlowLogSpaceMarkStr, copTasks.MaxWaitAddress) + "\n")
+	}
+	if memMax > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"

@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -28,6 +27,19 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+)
+
+var (
+	stmtNodeCounterUse      = metrics.StmtNodeCounter.WithLabelValues("Use")
+	stmtNodeCounterShow     = metrics.StmtNodeCounter.WithLabelValues("Show")
+	stmtNodeCounterBegin    = metrics.StmtNodeCounter.WithLabelValues("Begin")
+	stmtNodeCounterCommit   = metrics.StmtNodeCounter.WithLabelValues("Commit")
+	stmtNodeCounterRollback = metrics.StmtNodeCounter.WithLabelValues("Rollback")
+	stmtNodeCounterInsert   = metrics.StmtNodeCounter.WithLabelValues("Insert")
+	stmtNodeCounterReplace  = metrics.StmtNodeCounter.WithLabelValues("Replace")
+	stmtNodeCounterDelete   = metrics.StmtNodeCounter.WithLabelValues("Delete")
+	stmtNodeCounterUpdate   = metrics.StmtNodeCounter.WithLabelValues("Update")
+	stmtNodeCounterSelect   = metrics.StmtNodeCounter.WithLabelValues("Select")
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
@@ -44,12 +56,12 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 
 	infoSchema := GetInfoSchema(c.Ctx)
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
@@ -125,7 +137,30 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	}
 
 	typeLabel := GetStmtLabel(stmtNode)
-	metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
+	switch typeLabel {
+	case "Use":
+		stmtNodeCounterUse.Inc()
+	case "Show":
+		stmtNodeCounterShow.Inc()
+	case "Begin":
+		stmtNodeCounterBegin.Inc()
+	case "Commit":
+		stmtNodeCounterCommit.Inc()
+	case "Rollback":
+		stmtNodeCounterRollback.Inc()
+	case "Insert":
+		stmtNodeCounterInsert.Inc()
+	case "Replace":
+		stmtNodeCounterReplace.Inc()
+	case "Delete":
+		stmtNodeCounterDelete.Inc()
+	case "Update":
+		stmtNodeCounterUpdate.Inc()
+	case "Select":
+		stmtNodeCounterSelect.Inc()
+	default:
+		metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
+	}
 
 	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
 		return
@@ -189,6 +224,22 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
+	case *ast.CreateBindingStmt:
+		if x.OriginSel != nil {
+			originSelect := x.OriginSel.(*ast.SelectStmt)
+			dbLabels := getDbFromResultNode(originSelect.From.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+
+		if len(dbLabelSet) == 0 && x.HintedSel != nil {
+			hintedSelect := x.HintedSel.(*ast.SelectStmt)
+			dbLabels := getDbFromResultNode(hintedSelect.From.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
 	}
 
 	return dbLabelSet
@@ -242,6 +293,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "AnalyzeTable"
 	case *ast.BeginStmt:
 		return "Begin"
+	case *ast.ChangeStmt:
+		return "Change"
 	case *ast.CommitStmt:
 		return "Commit"
 	case *ast.CreateDatabaseStmt:
@@ -295,6 +348,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Prepare"
 	case *ast.UseStmt:
 		return "Use"
+	case *ast.CreateBindingStmt:
+		return "CreateBinding"
 	}
 	return "other"
 }

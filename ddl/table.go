@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -27,16 +29,19 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/gcutil"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	// gofail: var mockExceedErrorLimit bool
-	// if mockExceedErrorLimit {
-	//    return ver, errors.New("mock do job error")
-	// }
+	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock do job error"))
+		}
+	})
 
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
@@ -47,9 +52,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	tbInfo.State = model.StateNone
-	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
+	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
 		return ver, errors.Trace(err)
 	}
 
@@ -91,10 +98,17 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		return ver, errors.Trace(err)
 	}
 	tbInfo.State = model.StateNone
-	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
+	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
 	if err != nil {
-		if infoschema.ErrDatabaseNotExists.Equal(err) || !orReplace {
+		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		} else if infoschema.ErrTableExists.Equal(err) {
+			if !orReplace {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		} else {
 			return ver, errors.Trace(err)
 		}
 	}
@@ -165,17 +179,17 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 const (
-	restoreTableCheckFlagNone int64 = iota
-	restoreTableCheckFlagEnableGC
-	restoreTableCheckFlagDisableGC
+	recoverTableCheckFlagNone int64 = iota
+	recoverTableCheckFlagEnableGC
+	recoverTableCheckFlagDisableGC
 )
 
-func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tblInfo := &model.TableInfo{}
-	var autoID, dropJobID, restoreTableCheckFlag int64
+	var autoID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	if err = job.DecodeArgs(tblInfo, &autoID, &dropJobID, &snapshotTS, &restoreTableCheckFlag); err != nil {
+	if err = job.DecodeArgs(tblInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -188,24 +202,27 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	err = checkTableNotExists(t, job, schemaID, tblInfo.Name.L)
+	err = checkTableNotExists(d, t, schemaID, tblInfo.Name.L)
 	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
 		return ver, errors.Trace(err)
 	}
 
-	// Restore table divide into 2 steps:
-	// 1. Check GC enable status, to decided whether enable GC after restore table.
+	// Recover table divide into 2 steps:
+	// 1. Check GC enable status, to decided whether enable GC after recover table.
 	//     a. Why not disable GC before put the job to DDL job queue?
-	//        Think about concurrency problem. If a restore job-1 is doing and already disabled GC,
-	//        then, another restore table job-2 check GC enable will get disable before into the job queue.
-	//        then, after restore table job-2 finished, the GC will be disabled.
-	//     b. Why split into 2 steps? 1 step also can finish this job: check GC -> disable GC -> restore table -> finish job.
+	//        Think about concurrency problem. If a recover job-1 is doing and already disabled GC,
+	//        then, another recover table job-2 check GC enable will get disable before into the job queue.
+	//        then, after recover table job-2 finished, the GC will be disabled.
+	//     b. Why split into 2 steps? 1 step also can finish this job: check GC -> disable GC -> recover table -> finish job.
 	//        What if the transaction commit failed? then, the job will retry, but the GC already disabled when first running.
 	//        So, after this job retry succeed, the GC will be disabled.
-	// 2. Do restore table job.
+	// 2. Do recover table job.
 	//     a. Check whether GC enabled, if enabled, disable GC first.
-	//     b. Check GC safe point. If drop table time if after safe point time, then can do restore.
-	//        otherwise, can't restore table, because the records of the table may already delete by gc.
+	//     b. Check GC safe point. If drop table time if after safe point time, then can do recover.
+	//        otherwise, can't recover table, because the records of the table may already delete by gc.
 	//     c. Remove GC task of the table from gc_delete_range table.
 	//     d. Create table and rebase table auto ID.
 	//     e. Finish.
@@ -214,9 +231,9 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[len(job.Args)-1] = restoreTableCheckFlagEnableGC
+			job.Args[len(job.Args)-1] = recoverTableCheckFlagEnableGC
 		} else {
-			job.Args[len(job.Args)-1] = restoreTableCheckFlagDisableGC
+			job.Args[len(job.Args)-1] = recoverTableCheckFlagDisableGC
 		}
 
 		job.SchemaState = model.StateWriteOnly
@@ -227,7 +244,7 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 	case model.StateWriteOnly:
 		// write only -> public
-		// do restore table.
+		// do recover table.
 		if gcEnable {
 			err = disableGC(w)
 			if err != nil {
@@ -254,11 +271,12 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		// gofail: var mockRestoreTableCommitErr bool
-		// if mockRestoreTableCommitErr && mockRestoreTableCommitErrOnce {
-		//	 mockRestoreTableCommitErrOnce = false
-		//	 kv.MockCommitErrorEnable()
-		// }
+		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
+			if val.(bool) && mockRecoverTableCommitErrOnce {
+				mockRecoverTableCommitErrOnce = false
+				kv.MockCommitErrorEnable()
+			}
+		})
 
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
@@ -268,13 +286,13 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid restore table state %v", tblInfo.State)
+		return ver, ErrInvalidTableState.GenWithStack("invalid recover table state %v", tblInfo.State)
 	}
 	return ver, nil
 }
 
-// mockRestoreTableCommitErrOnce uses to make sure `mockRestoreTableCommitErr` only mock error once.
-var mockRestoreTableCommitErrOnce = true
+// mockRecoverTableCommitErrOnce uses to make sure `mockRecoverTableCommitErr` only mock error once.
+var mockRecoverTableCommitErrOnce = true
 
 func enableGC(w *worker) error {
 	ctx, err := w.sessPool.get()
@@ -328,7 +346,7 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	if err := s.SplitRegion(tableStartKey); err != nil {
 		// It will be automatically split by TiKV later.
-		log.Warnf("[ddl] splitting table region failed %v", errors.ErrorStack(err))
+		logutil.Logger(ddlLogCtx).Warn("[ddl] split table region failed", zap.Error(err))
 	}
 }
 
@@ -399,11 +417,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// gofail: var truncateTableErr bool
-	// if truncateTableErr {
-	//  job.State = model.JobStateCancelled
-	//  return ver, errors.New("occur an error after dropping table.")
-	// }
+	failpoint.Inject("truncateTableErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("occur an error after dropping table"))
+		}
+	})
 
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
@@ -467,7 +486,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, nil
 }
 
-func onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var shardRowIDBits uint64
 	err := job.DecodeArgs(&shardRowIDBits)
 	if err != nil {
@@ -479,7 +498,22 @@ func onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo.ShardRowIDBits = shardRowIDBits
+	if shardRowIDBits < tblInfo.ShardRowIDBits {
+		tblInfo.ShardRowIDBits = shardRowIDBits
+	} else {
+		tbl, err := getTable(d.store, job.SchemaID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		err = verifyNoOverflowShardBits(w.sessPool, tbl, shardRowIDBits)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		tblInfo.ShardRowIDBits = shardRowIDBits
+		// MaxShardRowIDBits use to check the overflow of auto ID.
+		tblInfo.MaxShardRowIDBits = shardRowIDBits
+	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -489,7 +523,25 @@ func onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits uint64) error {
+	ctx, err := s.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer s.put(ctx)
+
+	// Check next global max auto ID first.
+	autoIncID, err := tbl.Allocator(ctx).NextGlobalAutoID(tbl.Meta().ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tables.OverflowShardBits(autoIncID, shardRowIDBits) {
+		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID overflow", shardRowIDBits)
+	}
+	return nil
+}
+
+func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var oldSchemaID int64
 	var tableName model.CIStr
 	if err := job.DecodeArgs(&oldSchemaID, &tableName); err != nil {
@@ -503,9 +555,11 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 	newSchemaID := job.SchemaID
-	err = checkTableNotExists(t, job, newSchemaID, tableName.L)
+	err = checkTableNotExists(d, t, newSchemaID, tableName.L)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
 		return ver, errors.Trace(err)
 	}
 
@@ -528,11 +582,14 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// gofail: var renameTableErr bool
-	// if renameTableErr {
-	//	job.State = model.JobStateCancelled
-	//	return ver, errors.New("occur an error after renaming table.")
-	// }
+
+	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("occur an error after renaming table"))
+		}
+	})
+
 	tblInfo.Name = tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
@@ -584,13 +641,36 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
+	// double check.
+	_, err = checkAlterTableCharset(tblInfo, dbInfo, toCharset, toCollate)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	tblInfo.Charset = toCharset
 	tblInfo.Collate = toCollate
+	// update column charset.
+	for _, col := range tblInfo.Columns {
+		if typesNeedCharset(col.Tp) {
+			col.Charset = toCharset
+			col.Collate = toCollate
+		} else {
+			col.Charset = charset.CharsetBin
+			col.Collate = charset.CharsetBin
+		}
+	}
+
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -599,7 +679,37 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	return ver, nil
 }
 
-func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName string) error {
+func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
+	// d.infoHandle maybe nil in some test.
+	if d.infoHandle == nil {
+		return checkTableNotExistsFromStore(t, schemaID, tableName)
+	}
+	// Try to use memory schema info to check first.
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return err
+	}
+	is := d.infoHandle.Get()
+	if is.SchemaMetaVersion() == currVer {
+		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
+	}
+
+	return checkTableNotExistsFromStore(t, schemaID, tableName)
+}
+
+func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName string) error {
+	// Check this table's database.
+	schema, ok := is.SchemaByID(schemaID)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+	}
+	if is.TableExists(schema.Name, model.NewCIStr(tableName)) {
+		return infoschema.ErrTableExists.GenWithStackByArgs(tableName)
+	}
+	return nil
+}
+
+func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string) error {
 	// Check this table's database.
 	tables, err := t.ListTables(schemaID)
 	if err != nil {

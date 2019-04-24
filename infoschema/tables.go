@@ -28,8 +28,12 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -68,6 +72,8 @@ const (
 	tableProcesslist                        = "PROCESSLIST"
 	tableTiDBIndexes                        = "TIDB_INDEXES"
 	tableSlowLog                            = "SLOW_QUERY"
+	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
+	tableAnalyzeStatus                      = "ANALYZE_STATUS"
 )
 
 type columnInfo struct {
@@ -530,7 +536,7 @@ var tableProcesslistCols = []columnInfo{
 	{"COMMAND", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
 	{"TIME", mysql.TypeLong, 7, mysql.NotNullFlag, 0, nil},
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
-	{"Info", mysql.TypeString, 512, 0, nil, nil},
+	{"INFO", mysql.TypeString, 512, 0, nil, nil},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -545,9 +551,31 @@ var tableTiDBIndexesCols = []columnInfo{
 	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
+var tableTiDBHotRegionsCols = []columnInfo{
+	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"MAX_HOT_DEGREE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"FLOW_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var tableAnalyzeStatusCols = []columnInfo{
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PARTITION_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"JOB_INFO", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PROCESSED_ROWS", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{"START_TIME", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"STATE", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
 func dataForCharacterSets() (records [][]types.Datum) {
 
-	charsets := charset.GetAllCharsets()
+	charsets := charset.GetSupportedCharsets()
 
 	for _, charset := range charsets {
 
@@ -563,7 +591,7 @@ func dataForCharacterSets() (records [][]types.Datum) {
 
 func dataForCollations() (records [][]types.Datum) {
 
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 
 	for _, collation := range collations {
 
@@ -584,7 +612,7 @@ func dataForCollations() (records [][]types.Datum) {
 
 func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
 
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 
 	for _, collation := range collations {
 
@@ -604,7 +632,7 @@ func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err err
 		var value string
 		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		row := types.MakeDatums(v.Name, value)
 		records = append(records, row)
@@ -626,13 +654,13 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	loginUser := ctx.GetSessionVars().User
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
 			hasProcessPriv = true
 		}
 	}
 
-	var records [][]types.Datum
 	pl := sm.ShowProcessList()
+	records := make([][]types.Datum, 0, len(pl))
 	for _, pi := range pl {
 		// If you have the PROCESS privilege, you can see all threads.
 		// Otherwise, you can see only your own threads.
@@ -640,20 +668,8 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			continue
 		}
 
-		var t uint64
-		if len(pi.Info) != 0 {
-			t = uint64(time.Since(pi.Time) / time.Second)
-		}
-		record := types.MakeDatums(
-			pi.ID,
-			pi.User,
-			pi.Host,
-			pi.DB,
-			pi.Command,
-			t,
-			fmt.Sprintf("%d", pi.State),
-			pi.Info,
-		)
+		rows := pi.ToRow(true)
+		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
 	return records
@@ -716,7 +732,7 @@ var filesCols = []columnInfo{
 
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schema := range schemas {
 
@@ -746,7 +762,7 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, count from mysql.stats_meta")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	rowCountMap := make(map[int64]uint64, len(rows))
 	for _, row := range rows {
@@ -765,7 +781,7 @@ type tableHistID struct {
 func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	colLengthMap := make(map[tableHistID]uint64, len(rows))
 	for _, row := range rows {
@@ -845,12 +861,12 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 	tableRows, err := getRowCountAllTable(ctx)
 	if err != nil {
 		c.setLoading(false)
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	colLength, err := getColLengthAllTables(ctx)
 	if err != nil {
 		c.setLoading(false)
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 
 	c.mu.Lock()
@@ -875,11 +891,11 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 		is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
 		tbl, err := is.TableByName(schema.Name, tblInfo.Name)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		autoIncID, err = tbl.Allocator(ctx).NextGlobalAutoID(tblInfo.ID)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 	}
 	return autoIncID, nil
@@ -901,7 +917,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 			if charset == "" {
 				charset = mysql.DefaultCharset
 			}
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			record := types.MakeDatums(
@@ -925,7 +941,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	checker := privilege.GetPrivilegeManager(ctx)
@@ -945,7 +961,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 
 			createOptions := ""
 
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -955,7 +971,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				}
 				autoIncID, err := getAutoIncrementID(ctx, schema, table)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				rowCount := tableRowsMap[table.ID]
 				dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
@@ -1025,7 +1041,7 @@ func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, tb := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -1087,7 +1103,7 @@ func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.D
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -1099,7 +1115,7 @@ func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.D
 }
 
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	var rows [][]types.Datum
+	rows := make([][]types.Datum, 0, len(tbl.Columns))
 	for i, col := range tbl.Columns {
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
 		colLen, decimal := col.Flen, col.Decimal
@@ -1168,8 +1184,8 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			numericPrecision,                     // NUMERIC_PRECISION
 			numericScale,                         // NUMERIC_SCALE
 			datetimePrecision,                    // DATETIME_PRECISION
-			col.Charset,                          // CHARACTER_SET_NAME
-			col.Collate,                          // COLLATION_NAME
+			columnDesc.Charset,                   // CHARACTER_SET_NAME
+			columnDesc.Collation,                 // COLLATION_NAME
 			columnType,                           // COLUMN_TYPE
 			columnDesc.Key,                       // COLUMN_KEY
 			columnDesc.Extra,                     // EXTRA
@@ -1177,12 +1193,6 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Comment,                   // COLUMN_COMMENT
 			col.GeneratedExprString,              // GENERATION_EXPRESSION
 		)
-		// In mysql, 'character_set_name' and 'collation_name' are setted to null when column type is non-varchar or non-blob in information_schema.
-		if col.Tp != mysql.TypeVarchar && col.Tp != mysql.TypeBlob {
-			record[13].SetNull()
-			record[14].SetNull()
-		}
-
 		rows = append(rows, record)
 	}
 	return rows
@@ -1214,7 +1224,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 					1,             // SEQ_IN_INDEX
 					col.Name.O,    // COLUMN_NAME
 					"A",           // COLLATION
-					0,             // CARDINALITY
+					nil,           // CARDINALITY
 					nil,           // SUB_PART
 					nil,           // PACKED
 					"",            // NULLABLE
@@ -1251,7 +1261,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 				i+1,           // SEQ_IN_INDEX
 				key.Name.O,    // COLUMN_NAME
 				"A",           // COLLATION
-				0,             // CARDINALITY
+				nil,           // CARDINALITY
 				nil,           // SUB_PART
 				nil,           // PACKED
 				nullable,      // NULLABLE
@@ -1437,6 +1447,76 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
+func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
+	}
+	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, dataForHotRegionByMetrics(metrics, "read")...)
+	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, dataForHotRegionByMetrics(metrics, "write")...)
+	return records, nil
+}
+
+func dataForHotRegionByMetrics(metrics map[helper.TblIndex]helper.RegionMetric, tp string) [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(metrics))
+	for tblIndex, regionMetric := range metrics {
+		row := make([]types.Datum, len(tableTiDBHotRegionsCols))
+		if tblIndex.IndexName != "" {
+			row[1].SetInt64(tblIndex.IndexID)
+			row[4].SetString(tblIndex.IndexName)
+		} else {
+			row[1].SetNull()
+			row[4].SetNull()
+		}
+		row[0].SetInt64(tblIndex.TableID)
+		row[2].SetString(tblIndex.DbName)
+		row[3].SetString(tblIndex.TableName)
+		row[5].SetString(tp)
+		row[6].SetInt64(int64(regionMetric.MaxHotDegree))
+		row[7].SetInt64(int64(regionMetric.Count))
+		row[8].SetUint64(regionMetric.FlowBytes)
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// DataForAnalyzeStatus gets all the analyze jobs.
+func DataForAnalyzeStatus() (rows [][]types.Datum) {
+	for _, job := range statistics.GetAllAnalyzeJobs() {
+		job.Lock()
+		var startTime interface{}
+		if job.StartTime.IsZero() {
+			startTime = nil
+		} else {
+			startTime = types.Time{Time: types.FromGoTime(job.StartTime), Type: mysql.TypeDatetime}
+		}
+		rows = append(rows, types.MakeDatums(
+			job.DBName,        // TABLE_SCHEMA
+			job.TableName,     // TABLE_NAME
+			job.PartitionName, // PARTITION_NAME
+			job.JobInfo,       // JOB_INFO
+			job.RowCount,      // ROW_COUNT
+			startTime,         // START_TIME
+			job.State,         // STATE
+		))
+		job.Unlock()
+	}
+	return
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -1471,6 +1551,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableProcesslist:                        tableProcesslistCols,
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
 	tableSlowLog:                            slowQueryCols,
+	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
+	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1564,9 +1646,13 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForProcesslist(ctx)
 	case tableSlowLog:
 		fullRows, err = dataForSlowLog(ctx)
+	case tableTiDBHotRegions:
+		fullRows, err = dataForTiDBHotRegions(ctx)
+	case tableAnalyzeStatus:
+		fullRows = DataForAnalyzeStatus()
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(cols) == len(it.cols) {
 		return
@@ -1589,12 +1675,12 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 	}
 	rows, err := it.getRows(ctx, cols)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for i, row := range rows {
 		more, err := fn(int64(i), row, cols)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !more {
 			break

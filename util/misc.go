@@ -14,13 +14,16 @@
 package util
 
 import (
+	"context"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -30,6 +33,8 @@ const (
 	RetryInterval uint64 = 500
 	// GCTimeFormat is the format that gc_worker used to store times.
 	GCTimeFormat = "20060102-15:04:05 -0700"
+	// WriteConflictMarker is used when transaction writing is conflicted.
+	WriteConflictMarker = "[write conflict]"
 )
 
 // RunWithRetry will run the f with backoff and retry.
@@ -70,8 +75,9 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 			recoverFn(r)
 		}
 		if r != nil {
-			buf := GetStack()
-			log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
+			logutil.Logger(context.Background()).Error("panic in the recoverable goroutine",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
 		}
 	}()
 	exec()
@@ -107,7 +113,16 @@ func SyntaxError(err error) error {
 	if err == nil {
 		return nil
 	}
-	log.Errorf("%+v", err)
+	logutil.Logger(context.Background()).Error("syntax error", zap.Error(err))
+
+	// If the error is already a terror with stack, pass it through.
+	if errors.HasStack(err) {
+		cause := errors.Cause(err)
+		if _, ok := cause.(*terror.Error); ok {
+			return err
+		}
+	}
+
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 
