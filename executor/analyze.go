@@ -560,6 +560,7 @@ type AnalyzeFastExec struct {
 	idxsInfo        []*model.IndexInfo
 	concurrency     int
 	maxNumBuckets   uint64
+	tblInfo         *model.TableInfo
 	cache           *tikv.RegionCache
 	wg              *sync.WaitGroup
 	sampLocs        chan *tikv.KeyLocation
@@ -897,8 +898,33 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 }
 
 func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
-	// TODO: build histogram and cmsketch here for one collector.
-	return nil, nil
+	// build collector properties.
+	collector.UpdateTotalSize()
+	collector.Samples = collector.Samples[:e.sampCursor]
+	collector.Count = int64(e.sampCursor)
+	data := make([][]byte, 0, len(collector.Samples))
+	for _, sample := range collector.Samples {
+		bytes, err := sample.Value.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		data = append(data, []byte(bytes))
+		if sample.Value.IsNull() {
+			collector.NullCount++
+		}
+	}
+	rowCount := domain.GetDomain(e.ctx).StatsHandle().GetTableStats(e.tblInfo).Count
+	if int64(e.rowCount) < rowCount {
+		rowCount = int64(e.rowCount)
+	}
+	// build CMSketch
+	collector.CMSketch = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, uint32(e.sampCursor), uint64(rowCount))
+	// build Histogram
+	hist, err := statistics.BuildColumnWithSamples(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, rowCount)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return hist, nil
 }
 
 func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMSketch, error) {
