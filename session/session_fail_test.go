@@ -102,8 +102,7 @@ func (s *testSessionSuite) TestGetTSFailDirtyStateInretry(c *C) {
 	tk.MustExec("create table t (id int)")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockGetTSErrorInRetry",
-		`return(true)->return(false)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockGetTSErrorInRetry", `return(true)`), IsNil)
 	tk.MustExec("insert into t values (2)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2"))
 }
