@@ -331,3 +331,15 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{Zero, One})
 	c.Assert(err, IsNil)
 }
+
+func (s *testEvaluatorSuite) TestGetAccurateCmpType(c *C) {
+	defer testleak.AfterTest(c)()
+	stringCol := &Column{RetType: types.NewFieldType(mysql.TypeVarString)}
+	intCon := &Constant{RetType: types.NewFieldType(mysql.TypeInt24)}
+	floatCon := &Constant{RetType: types.NewFieldType(mysql.TypeFloat)}
+	//cmpType := GetAccurateCmpType(stringCol,intCon)
+	c.Assert(GetAccurateCmpType(stringCol, intCon), Equals, types.ETString)
+	c.Assert(GetAccurateCmpType(stringCol, floatCon), Equals, types.ETString)
+	c.Assert(GetAccurateCmpType(intCon, stringCol), Equals, types.ETString)
+	c.Assert(GetAccurateCmpType(floatCon, stringCol), Equals, types.ETString)
+}

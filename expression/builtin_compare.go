@@ -1030,6 +1030,8 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 			} else {
 				cmpType = types.ETDatetime
 			}
+		} else if (lhsEvalType == types.ETString && !isLHSConst) || (rhsEvalType == types.ETString && !isRHSConst) {
+			cmpType = types.ETString
 		}
 	}
 	return cmpType
