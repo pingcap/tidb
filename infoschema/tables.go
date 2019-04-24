@@ -563,7 +563,7 @@ var tableTiDBHotRegionsCols = []columnInfo{
 
 func dataForCharacterSets() (records [][]types.Datum) {
 
-	charsets := charset.GetAllCharsets()
+	charsets := charset.GetSupportedCharsets()
 
 	for _, charset := range charsets {
 
@@ -579,7 +579,7 @@ func dataForCharacterSets() (records [][]types.Datum) {
 
 func dataForCollations() (records [][]types.Datum) {
 
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 
 	for _, collation := range collations {
 
@@ -600,7 +600,7 @@ func dataForCollations() (records [][]types.Datum) {
 
 func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
 
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 
 	for _, collation := range collations {
 
@@ -642,7 +642,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	loginUser := ctx.GetSessionVars().User
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
 			hasProcessPriv = true
 		}
 	}
@@ -905,7 +905,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 			if charset == "" {
 				charset = mysql.DefaultCharset
 			}
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			record := types.MakeDatums(
@@ -949,7 +949,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 
 			createOptions := ""
 
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -1029,7 +1029,7 @@ func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, tb := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -1091,7 +1091,7 @@ func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.D
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 

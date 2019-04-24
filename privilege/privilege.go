@@ -29,7 +29,7 @@ func (k keyType) String() string {
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
-	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) ([]string, error)
+	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
 	// GetEncodedPassword shows the encoded password for user.
 	GetEncodedPassword(user, host string) string
@@ -39,7 +39,7 @@ type Manager interface {
 	// If table is not "", check global/db/table scope privileges.
 	// priv should be a defined constant like CreatePriv, if pass AllPrivMask to priv,
 	// this means any privilege would be OK.
-	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
+	RequestVerification(activeRole []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
 
 	// RequestVerificationWithUser verifies specific user privilege for the request.
 	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
