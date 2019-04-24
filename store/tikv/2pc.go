@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -42,6 +43,11 @@ const (
 	actionPrewrite twoPhaseCommitAction = 1
 	actionCommit   twoPhaseCommitAction = 2
 	actionCleanup  twoPhaseCommitAction = 3
+)
+
+var (
+	tikvSecondaryLockCleanupFailureCounterCommit   = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
+	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
 )
 
 func (ca twoPhaseCommitAction) String() string {
@@ -302,7 +308,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 					zap.Uint64("conn", c.connID),
 					zap.Stringer("action type", action),
 					zap.Error(e))
-				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
+				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
 			}
 		}()
 	} else {
@@ -680,7 +686,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
 				err := c.cleanupKeys(NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
 				if err != nil {
-					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
+					tikvSecondaryLockCleanupFailureCounterRollback.Inc()
 					logutil.Logger(ctx).Info("2PC cleanup failed",
 						zap.Error(err),
 						zap.Uint64("txnStartTS", c.startTS))
@@ -734,10 +740,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// gofail: var tmpMaxTxnTime uint64
-	// if tmpMaxTxnTime > 0 {
-	//  c.maxTxnTimeUse = tmpMaxTxnTime
-	// }
+	failpoint.Inject("tmpMaxTxnTime", func(val failpoint.Value) {
+		if tmpMaxTxnTime := uint64(val.(int)); tmpMaxTxnTime > 0 {
+			c.maxTxnTimeUse = tmpMaxTxnTime
+		}
+	})
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
 		err = errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",

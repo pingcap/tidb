@@ -21,6 +21,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+var (
+	// ResettablePlanCacheCounterFortTest be used to support reset counter in test.
+	ResettablePlanCacheCounterFortTest = false
+)
+
 // Metrics
 var (
 	QueryDurationHistogram = prometheus.NewHistogramVec(
