@@ -40,7 +40,7 @@ type UserPrivileges struct {
 }
 
 // RequestVerification implements the Manager interface.
-func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
+func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
 	if SkipWithGrant {
 		return true
 	}
@@ -56,7 +56,7 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.RequestVerification(p.user, p.host, db, table, column, priv)
+	return mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv)
 }
 
 // RequestVerificationWithUser implements the Manager interface.
@@ -76,7 +76,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.RequestVerification(user.Username, user.Hostname, db, table, column, priv)
+	return mysqlPriv.RequestVerification(nil, user.Username, user.Hostname, db, table, column, priv)
 }
 
 // GetEncodedPassword implements the Manager interface.
@@ -175,7 +175,7 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
-func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) (grants []string, err error) {
+func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
 	mysqlPrivilege := p.Handle.Get()
 	u := user.Username
 	h := user.Hostname
@@ -183,7 +183,7 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	grants = mysqlPrivilege.showGrants(u, h)
+	grants = mysqlPrivilege.showGrants(u, h, roles)
 	if len(grants) == 0 {
 		err = errNonexistingGrant.GenWithStackByArgs(u, h)
 	}

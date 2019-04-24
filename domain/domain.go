@@ -15,7 +15,6 @@ package domain
 
 import (
 	"context"
-	"crypto/tls"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -23,10 +22,10 @@ import (
 	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -300,10 +300,11 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
-	// gofail: var ErrorMockReloadFailed bool
-	// if ErrorMockReloadFailed {
-	// 		return errors.New("mock reload failed")
-	// }
+	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock reload failed"))
+		}
+	})
 
 	// Lock here for only once at the same time.
 	do.m.Lock()
@@ -563,13 +564,6 @@ func (c *ddlCallback) OnChanged(err error) error {
 	return nil
 }
 
-// EtcdBackend is used for judging a storage is a real TiKV.
-type EtcdBackend interface {
-	EtcdAddrs() []string
-	TLSConfig() *tls.Config
-	StartGCWorker() error
-}
-
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
@@ -589,7 +583,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
-	if ebd, ok := do.store.(EtcdBackend); ok {
+	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
@@ -597,8 +591,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 				AutoSyncInterval: 30 * time.Second,
 				DialTimeout:      5 * time.Second,
 				DialOptions: []grpc.DialOption{
-					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
 					grpc.WithBackoffMaxDelay(time.Second * 3),
 					grpc.WithKeepaliveParams(keepalive.ClientParameters{
 						Time:                time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,

@@ -239,7 +239,7 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.MustQuery(`describe t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
+	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1"))
 	tk.MustQuery("show tables").Check(testkit.Rows("t", "v"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE", "v VIEW"))
 	ctx := tk.Se.(sessionctx.Context)
@@ -380,6 +380,12 @@ func (s *testSuite2) TestShowSlow(c *C) {
 	tk.MustQuery(`admin show slow top 3`)
 	tk.MustQuery(`admin show slow top internal 3`)
 	tk.MustQuery(`admin show slow top all 3`)
+}
+
+func (s *testSuite2) TestShowOpenTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("show open tables")
+	tk.MustQuery("show open tables in test")
 }
 
 func (s *testSuite2) TestShowCreateTable(c *C) {
