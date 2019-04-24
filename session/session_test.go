@@ -2415,6 +2415,15 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	c.Assert(err, NotNil)
 	tk1.MustExec("rollback")
 
+	// other errors could retry
+	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
+	tk1.MustExec("begin")
+	tk2.MustExec("alter table no_retry add index idx(id)")
+	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
+	tk1.MustExec("update no_retry set id = 10")
+	_, err = tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(err, NotNil)
+
 	// set autocommit to begin and commit
 	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
 	tk1.MustExec("set autocommit = 0")

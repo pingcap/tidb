@@ -440,8 +440,7 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError",
-				`return(true)->return(false)`), IsNil)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`), IsNil)
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`), IsNil)
 		}
 	}

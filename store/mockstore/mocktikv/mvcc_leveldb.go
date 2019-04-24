@@ -571,7 +571,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	}
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if ok && dec1.value.commitTS >= startTS {
-		return ErrRetryable("write conflict")
+		return ErrRetryable(writeConflictMarker)
 	}
 
 	op := mutation.GetOp()
