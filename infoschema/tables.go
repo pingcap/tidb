@@ -1077,11 +1077,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	if err != nil {
 		return 0, err
 	}
-	autoIncID, err := tbl.Allocator(ctx).NextGlobalAutoID(tblInfo.ID)
-	if err != nil {
-		return 0, err
-	}
-	return autoIncID, nil
+	return tbl.Allocator(ctx).Base(), nil
 }
 
 func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
