@@ -273,6 +273,12 @@ type SessionVars struct {
 	// AllowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
 	AllowInSubqToJoinAndAgg bool
 
+	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
+	CorrelationThreshold float64
+
+	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
+	CorrelationExpFactor int
+
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues chunk.Row
@@ -390,6 +396,8 @@ func NewSessionVars() *SessionVars {
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:            kv.PriorityLow,
 		AllowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
+		CorrelationThreshold:        DefOptCorrelationThreshold,
+		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		EnableRadixJoin:             false,
 		L2CacheSize:                 cpuid.CPU.Cache.L2,
 		CommandValue:                uint32(mysql.ComSleep),
@@ -662,6 +670,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqToJoinAndAgg:
 		s.AllowInSubqToJoinAndAgg = TiDBOptOn(val)
+	case TiDBOptCorrelationThreshold:
+		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
+	case TiDBOptCorrelationExpFactor:
+		s.CorrelationExpFactor = tidbOptPositiveInt32(val, DefOptCorrelationExpFactor)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
