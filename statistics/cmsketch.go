@@ -208,7 +208,7 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	oriCount := c.queryHashValue(h1, h2)
 	if c.considerDefVal(oriCount) {
-		// We should alse update c.defaultValue since we used c.defaultValue when getting the estimate count.
+		// We should update c.defaultValue if we used c.defaultValue when getting the estimate count.
 		// This should make estimation better, remove this line if it does not work as expected.
 		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05)
 		if c.defaultValue == 0 {
