@@ -14,7 +14,6 @@
 package bindinfo
 
 import (
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser"
@@ -24,14 +23,14 @@ import (
 
 // SessionHandle is used to handle all session sql bind operations.
 type SessionHandle struct {
-	atomic.Value
+	ch     cache
 	parser *parser.Parser
 }
 
 // NewSessionBindHandle creates a new SessionBindHandle.
 func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 	sessionHandle := &SessionHandle{parser: parser}
-	sessionHandle.Store(make(cache))
+	sessionHandle.ch = make(cache)
 	return sessionHandle
 }
 
@@ -39,10 +38,8 @@ func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 // removed from the cache after this operation.
 func (h *SessionHandle) appendBindMeta(hash string, meta *bindMeta) {
 	// Make sure there is only one goroutine writes the cache.
-	newCache := h.Load().(cache).copy()
-	newCache.removeStaleBindMetas(hash, meta)
-	newCache[hash] = append(newCache[hash], meta)
-	h.Store(newCache)
+	h.ch.removeStaleBindMetas(hash, meta)
+	h.ch[hash] = append(h.ch[hash], meta)
 }
 
 func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *bindMeta, err error) {
@@ -76,7 +73,7 @@ func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
 // GetBindRecord return the bindMeta of the (normdOrigSQL,db) if bindMeta exist.
 func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *bindMeta {
 	hash := parser.DigestHash(normdOrigSQL)
-	bindRecords := h.Load().(cache)[hash]
+	bindRecords := h.ch[hash]
 	if bindRecords != nil {
 		for _, bindRecord := range bindRecords {
 			if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
