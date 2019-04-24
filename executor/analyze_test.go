@@ -183,6 +183,7 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 		IdxsInfo:        indicesInfo,
 		Concurrency:     1,
 		PhysicalTableID: tbl.(table.PhysicalTable).GetPhysicalID(),
+		TblInfo:         tblInfo,
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
@@ -197,5 +198,87 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 			vals[i] = append(vals[i], s)
 		}
 	}
-	c.Assert(fmt.Sprintln(vals), Equals, "[[0 34 35 57 4 24 6 25 58 9 10 11 12 30 14 52 29 17 44 54] [0 34 35 57 4 24 6 25 58 9 10 11 12 30 14 52 29 17 44 54]]\n")
+	c.Assert(fmt.Sprintln(vals), Equals, "[[0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58] [0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58]]\n")
+}
+
+func (s *testSuite1) TestFastAnalyze(c *C) {
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(cluster),
+	)
+	c.Assert(err, IsNil)
+	var dom *domain.Domain
+	dom, err = session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	executor.MaxSampleSize = 1000
+	executor.RandSeed = 123
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	for i := 0; i < 3000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tid := tblInfo.Meta().ID
+
+	// construct 5 regions split by {600, 1200, 1800, 2400}
+	splitKeys := generateTableSplitKeyForInt(tid, []int{600, 1200, 1800, 2400})
+	manipulateCluster(cluster, splitKeys)
+
+	tk.MustExec("analyze table t with 5 buckets")
+
+	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+	sTbl := fmt.Sprintln(tbl)
+	matched := false
+	if sTbl == "Table:37 Count:3000\n"+
+		"column:1 ndv:3000 totColSize:3639\n"+
+		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
+		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
+		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
+		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
+		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
+		"column:2 ndv:3000 totColSize:3639\n"+
+		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
+		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
+		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
+		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
+		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
+		"index:1 ndv:3000\n"+
+		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
+		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
+		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
+		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
+		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" ||
+		sTbl == "Table:37 Count:3000\n"+
+			"column:2 ndv:3000 totColSize:3639\n"+
+			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
+			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
+			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
+			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
+			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
+			"column:1 ndv:3000 totColSize:3639\n"+
+			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
+			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
+			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
+			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
+			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
+			"index:1 ndv:3000\n"+
+			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
+			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
+			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
+			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
+			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" {
+		matched = true
+	}
+	c.Assert(matched, Equals, true)
 }

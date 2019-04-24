@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/parser/model"
@@ -190,6 +192,8 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			task.job.Start()
 			resultCh <- analyzeIndexPushdown(task.idxExec)
 		case fastTask:
+			task.fastExec.job = task.job
+			task.job.Start()
 			for _, result := range analyzeFastExec(task.fastExec) {
 				resultCh <- result
 			}
@@ -507,7 +511,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 	hists, cms, err := exec.buildStats()
 	if err != nil {
-		return []analyzeResult{{Err: err}}
+		return []analyzeResult{{Err: err, job: exec.job}}
 	}
 	var results []analyzeResult
 	hasPKInfo := 0
@@ -522,6 +526,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 				Cms:             []*statistics.CMSketch{cms[i]},
 				IsIndex:         1,
 				Count:           hists[i].NullCount,
+				job:             exec.job,
 			}
 			if hists[i].Len() > 0 {
 				idxResult.Count += hists[i].Buckets[hists[i].Len()-1].Count
@@ -535,6 +540,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 		Hist:            hists[:hasPKInfo+len(exec.colsInfo)],
 		Cms:             cms[:hasPKInfo+len(exec.colsInfo)],
 		Count:           hist.NullCount,
+		job:             exec.job,
 	}
 	if hist.Len() > 0 {
 		colResult.Count += hist.Buckets[hist.Len()-1].Count
@@ -570,6 +576,7 @@ type AnalyzeFastExec struct {
 	scanTasks       []*tikv.KeyLocation
 	collectors      []*statistics.SampleCollector
 	randSeed        int64
+	job             *statistics.AnalyzeJob
 }
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
@@ -899,24 +906,24 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 
 func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
 	// build collector properties.
-	collector.UpdateTotalSize()
 	collector.Samples = collector.Samples[:e.sampCursor]
+	err := collector.UpdateTotalSize()
+	if err != nil {
+		return nil, err
+	}
 	collector.Count = int64(e.sampCursor)
 	data := make([][]byte, 0, len(collector.Samples))
 	for _, sample := range collector.Samples {
 		bytes, err := sample.Value.ToString()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		data = append(data, []byte(bytes))
 		if sample.Value.IsNull() {
 			collector.NullCount++
 		}
 	}
-	rowCount := domain.GetDomain(e.ctx).StatsHandle().GetTableStats(e.tblInfo).Count
-	if int64(e.rowCount) < rowCount {
-		rowCount = int64(e.rowCount)
-	}
+	rowCount := mathutil.MinInt64(domain.GetDomain(e.ctx).StatsHandle().GetTableStats(e.tblInfo).Count, int64(e.rowCount))
 	// build CMSketch
 	collector.CMSketch = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, uint32(e.sampCursor), uint64(rowCount))
 	// build Histogram
@@ -1035,6 +1042,7 @@ type AnalyzeTestFastExec struct {
 	IdxsInfo        []*model.IndexInfo
 	Concurrency     int
 	Collectors      []*statistics.SampleCollector
+	TblInfo         *model.TableInfo
 }
 
 // TestFastSample only test the fast sample in unit test.
@@ -1046,6 +1054,7 @@ func (e *AnalyzeTestFastExec) TestFastSample() error {
 	e.concurrency = e.Concurrency
 	e.physicalTableID = e.PhysicalTableID
 	e.wg = &sync.WaitGroup{}
+	e.tblInfo = e.TblInfo
 	_, _, err := e.buildStats()
 	e.Collectors = e.collectors
 	return err

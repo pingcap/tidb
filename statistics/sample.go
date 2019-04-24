@@ -17,6 +17,7 @@ import (
 	"context"
 	"math/rand"
 	"sort"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -174,11 +175,16 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 }
 
 // UpdateTotalSize is to calculate total size based on samples.
-func (c *SampleCollector) UpdateTotalSize() {
+func (c *SampleCollector) UpdateTotalSize() error {
 	c.TotalSize = 0
 	for _, item := range c.Samples {
-		c.TotalSize += int64(len(item.Value.GetBytes()))
+		str, err := item.Value.ToString()
+		if err != nil {
+			return err
+		}
+		c.TotalSize += int64(utf8.RuneCountInString(str))
 	}
+	return nil
 }
 
 // SampleBuilder is used to build samples for columns.
