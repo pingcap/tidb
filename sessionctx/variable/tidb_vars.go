@@ -152,6 +152,12 @@ const (
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
+	// tidb_opt_correlation_threshold is a guard to enable row count estimation using column order correlation.
+	TiDBOptCorrelationThreshold = "tidb_opt_correlation_threshold"
+
+	// tidb_opt_correlation_exp_factor is an exponential factor to control heuristic approach when tidb_opt_correlation_threshold is not satisfied.
+	TiDBOptCorrelationExpFactor = "tidb_opt_correlation_exp_factor"
+
 	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
 	// This value controls how much of data in a batch to do the index join.
@@ -265,6 +271,8 @@ const (
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
 	DefOptWriteRowID                 = false
+	DefOptCorrelationThreshold       = 0.9
+	DefOptCorrelationExpFactor       = 0
 	DefOptInSubqToJoinAndAgg         = true
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
