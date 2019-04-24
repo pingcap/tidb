@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -38,6 +39,8 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
+
+var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -279,7 +282,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
 	}
-	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
+	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
 	return tasks, nil
 }
 
@@ -636,11 +639,11 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
-
-	// gofail: var handleTaskOnceError bool
-	// if handleTaskOnceError {
-	// 	return nil, errors.New("mock handleTaskOnce error")
-	// }
+	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
+		}
+	})
 
 	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
 	req := &tikvrpc.Request{

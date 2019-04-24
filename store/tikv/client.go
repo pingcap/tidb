@@ -22,9 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/debugpb"
@@ -133,13 +131,17 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 			}
 			logutil.Logger(context.Background()).Error("batchRecvLoop error when receive", zap.Error(err))
 
-			// Hold the lock to forbid batchSendLoop using the old client.
-			c.clientLock.Lock()
-			c.failPendingRequests(err) // fail all pending requests.
-			for {                      // try to re-create the streaming in the loop.
+			now := time.Now()
+			for { // try to re-create the streaming in the loop.
+				// Hold the lock to forbid batchSendLoop using the old client.
+				c.clientLock.Lock()
+				c.failPendingRequests(err) // fail all pending requests.
+
 				// Re-establish a application layer stream. TCP layer is handled by gRPC.
 				tikvClient := tikvpb.NewTikvClient(c.conn)
 				streamClient, err := tikvClient.BatchCommands(context.TODO())
+				c.clientLock.Unlock()
+
 				if err == nil {
 					logutil.Logger(context.Background()).Info("batchRecvLoop re-create streaming success")
 					c.client = streamClient
@@ -149,7 +151,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				// TODO: Use a more smart backoff strategy.
 				time.Sleep(time.Second)
 			}
-			c.clientLock.Unlock()
+			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
 			continue
 		}
 
@@ -205,18 +207,14 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
-	unaryInterceptor := grpc_prometheus.UnaryClientInterceptor
-	streamInterceptor := grpc_prometheus.StreamClientInterceptor
 	cfg := config.GetGlobalConfig()
+	var (
+		unaryInterceptor  grpc.UnaryClientInterceptor
+		streamInterceptor grpc.StreamClientInterceptor
+	)
 	if cfg.OpenTracing.Enable {
-		unaryInterceptor = grpc_middleware.ChainUnaryClient(
-			unaryInterceptor,
-			grpc_opentracing.UnaryClientInterceptor(),
-		)
-		streamInterceptor = grpc_middleware.ChainStreamClient(
-			streamInterceptor,
-			grpc_opentracing.StreamClientInterceptor(),
-		)
+		unaryInterceptor = grpc_opentracing.UnaryClientInterceptor()
+		streamInterceptor = grpc_opentracing.StreamClientInterceptor()
 	}
 
 	allowBatch := cfg.TiKVClient.MaxBatchSize > 0

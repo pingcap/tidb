@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -46,8 +47,21 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+)
+
+var (
+	executorCounterMergeJoinExec       = metrics.ExecutorCounter.WithLabelValues("MergeJoinExec")
+	executorCountHashJoinExec          = metrics.ExecutorCounter.WithLabelValues("HashJoinExec")
+	executorCounterHashAggExec         = metrics.ExecutorCounter.WithLabelValues("HashAggExec")
+	executorStreamAggExec              = metrics.ExecutorCounter.WithLabelValues("StreamAggExec")
+	executorCounterSortExec            = metrics.ExecutorCounter.WithLabelValues("SortExec")
+	executorCounterTopNExec            = metrics.ExecutorCounter.WithLabelValues("TopNExec")
+	executorCounterNestedLoopApplyExec = metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec")
+	executorCounterIndexLookUpJoin     = metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin")
+	executorCounterIndexLookUpExecutor = metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor")
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -178,6 +192,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
+	case *plannercore.SQLBindPlan:
+		return b.buildSQLBindExec(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -520,6 +536,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		Table:        v.Table,
 		Column:       v.Column,
 		User:         v.User,
+		Roles:        v.Roles,
 		IfNotExists:  v.IfNotExists,
 		Flag:         v.Flag,
 		Full:         v.Full,
@@ -663,9 +680,14 @@ func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 	return replaceExec
 }
 
+var (
+	grantStmtLabel  fmt.Stringer = stringutil.StringerStr("GrantStmt")
+	revokeStmtLabel fmt.Stringer = stringutil.StringerStr("RevokeStmt")
+)
+
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 	e := &GrantExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, "GrantStmt"),
+		baseExecutor: newBaseExecutor(b.ctx, nil, grantStmtLabel),
 		Privs:        grant.Privs,
 		ObjectType:   grant.ObjectType,
 		Level:        grant.Level,
@@ -678,7 +700,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 
 func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 	e := &RevokeExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, "RevokeStmt"),
+		baseExecutor: newBaseExecutor(b.ctx, nil, revokeStmtLabel),
 		ctx:          b.ctx,
 		Privs:        revoke.Privs,
 		ObjectType:   revoke.ObjectType,
@@ -872,7 +894,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 		return nil
 	}
 
-	metrics.ExecutorCounter.WithLabelValues("MergeJoinExec").Inc()
+	executorCounterMergeJoinExec.Inc()
 	return e
 }
 
@@ -938,7 +960,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
-	metrics.ExecutorCounter.WithLabelValues("HashJoinExec").Inc()
+	executorCountHashJoinExec.Inc()
 	if e.ctx.GetSessionVars().EnableRadixJoin {
 		return &RadixHashJoinExec{HashJoinExec: e}
 	}
@@ -1021,7 +1043,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 		}
 	}
 
-	metrics.ExecutorCounter.WithLabelValues("HashAggExec").Inc()
+	executorCounterHashAggExec.Inc()
 	return e
 }
 
@@ -1049,7 +1071,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 		}
 	}
 
-	metrics.ExecutorCounter.WithLabelValues("StreamAggExec").Inc()
+	executorStreamAggExec.Inc()
 	return e
 }
 
@@ -1143,7 +1165,7 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	metrics.ExecutorCounter.WithLabelValues("SortExec").Inc()
+	executorCounterSortExec.Inc()
 	return &sortExec
 }
 
@@ -1157,7 +1179,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	metrics.ExecutorCounter.WithLabelValues("TopNExec").Inc()
+	executorCounterTopNExec.Inc()
 	return &TopNExec{
 		SortExec: sortExec,
 		limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
@@ -1197,7 +1219,7 @@ func (b *executorBuilder) buildApply(apply *plannercore.PhysicalApply) *NestedLo
 		joiner:       tupleJoiner,
 		outerSchema:  apply.OuterSchema,
 	}
-	metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec").Inc()
+	executorCounterNestedLoopApplyExec.Inc()
 	return e
 }
 
@@ -1251,7 +1273,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 
 // cols2Handle represents an mapper from column index to handle index.
 type cols2Handle struct {
-	// start/end represent the ordinal range [start, end) of the consecutive columns.
+	// start and end represent the ordinal range [start, end) of the consecutive columns.
 	start, end int32
 	// handleOrdinal represents the ordinal of the handle column.
 	handleOrdinal int32
@@ -1456,6 +1478,10 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		wg:           &sync.WaitGroup{},
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
+	autoAnalyze := ""
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		autoAnalyze = "auto "
+	}
 	for _, task := range v.ColTasks {
 		if enableFastAnalyze {
 			b.buildAnalyzeFastColumn(e, task, v.MaxNumBuckets)
@@ -1463,6 +1489,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			e.tasks = append(e.tasks, &analyzeTask{
 				taskType: colTask,
 				colExec:  b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets),
+				job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"},
 			})
 		}
 		if b.err != nil {
@@ -1476,6 +1503,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			e.tasks = append(e.tasks, &analyzeTask{
 				taskType: idxTask,
 				idxExec:  b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets),
+				job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O},
 			})
 		}
 		if b.err != nil {
@@ -1609,7 +1637,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = e.newFirstChunk()
-	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
+	executorCounterIndexLookUpJoin.Inc()
 	return e
 }
 
@@ -1816,7 +1844,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 
 	ret.ranges = is.Ranges
-	metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor").Inc()
+	executorCounterIndexLookUpExecutor.Inc()
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
@@ -2006,6 +2034,23 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		processor:    processor,
 		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
 	}
+}
+
+func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = chunk.ZeroCapacity
+
+	e := &SQLBindExec{
+		baseExecutor: base,
+		sqlBindOp:    v.SQLBindOp,
+		normdOrigSQL: v.NormdOrigSQL,
+		bindSQL:      v.BindSQL,
+		charset:      v.Charset,
+		collation:    v.Collation,
+		isGlobal:     v.IsGlobal,
+		bindAst:      v.BindStmt,
+	}
+	return e
 }
 
 func getPhysicalTableID(t table.Table) int64 {
