@@ -22,7 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
@@ -69,8 +69,10 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorMockPanic")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/errorMockPanic"), IsNil)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -377,8 +379,8 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
-			gofail.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`)
-			gofail.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`), IsNil)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`), IsNil)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()
@@ -387,8 +389,8 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 
 	// do recover table.
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
-	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
-	gofail.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr"), IsNil)
 
 	// make sure enable GC after recover table.
 	enable, err := gcutil.CheckGCEnable(tk.Se)
@@ -437,8 +439,8 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
-			gofail.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`)
-			gofail.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`), IsNil)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`), IsNil)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()
@@ -447,8 +449,8 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 
 	// do recover table.
 	tk.MustExec("recover table t_recover")
-	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
-	gofail.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr"), IsNil)
 
 	// make sure enable GC after recover table.
 	enable, err := gcutil.CheckGCEnable(tk.Se)
@@ -464,8 +466,10 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 
 func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	gofail.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit"), IsNil)
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	_, err := tk.Exec("create table t (a int)")

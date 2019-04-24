@@ -14,6 +14,7 @@
 package bindinfo_test
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -161,6 +162,22 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(bindData.CreateTime, NotNil)
 	c.Check(bindData.UpdateTime, NotNil)
 
+	rs, err := tk.Exec("show global bindings")
+	c.Assert(err, IsNil)
+	chk := rs.NewRecordBatch()
+	err = rs.Next(context.TODO(), chk)
+	c.Check(err, IsNil)
+	c.Check(chk.NumRows(), Equals, 1)
+	row := chk.GetRow(0)
+	c.Check(row.GetString(0), Equals, "select * from t where i > ?")
+	c.Check(row.GetString(1), Equals, "select * from t use index(index_t) where i>99")
+	c.Check(row.GetString(2), Equals, "test")
+	c.Check(row.GetString(3), Equals, "using")
+	c.Check(row.GetTime(4), NotNil)
+	c.Check(row.GetTime(5), NotNil)
+	c.Check(row.GetString(6), NotNil)
+	c.Check(row.GetString(7), NotNil)
+
 	bindHandle := bindinfo.NewBindHandle(tk.Se, s.Parser)
 	err = bindHandle.Update(true)
 	c.Check(err, IsNil)
@@ -176,6 +193,26 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(bindData.Collation, NotNil)
 	c.Check(bindData.CreateTime, NotNil)
 	c.Check(bindData.UpdateTime, NotNil)
+
+	_, err = tk.Exec("DROP global binding for select * from t where i>100")
+	c.Check(err, IsNil)
+	bindData = s.domain.BindHandle().GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, IsNil)
+
+	bindHandle = bindinfo.NewBindHandle(tk.Se, s.Parser)
+	err = bindHandle.Update(true)
+	c.Check(err, IsNil)
+	c.Check(bindHandle.Size(), Equals, 0)
+
+	bindData = bindHandle.GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, IsNil)
+
+	rs, err = tk.Exec("show global bindings")
+	c.Assert(err, IsNil)
+	chk = rs.NewRecordBatch()
+	err = rs.Next(context.TODO(), chk)
+	c.Check(err, IsNil)
+	c.Check(chk.NumRows(), Equals, 0)
 
 	_, err = tk.Exec("delete from mysql.bind_info")
 	c.Assert(err, IsNil)

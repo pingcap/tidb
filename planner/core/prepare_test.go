@@ -154,6 +154,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 
 	var cnt [2]float64
 	var planStr [2]string
+	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	for i := 0; i < 2; i++ {
