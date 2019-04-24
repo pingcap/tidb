@@ -1797,7 +1797,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	// If newBase < autoIncID, we can't just return here, we still need to do rebase job.
 	// If has 2 TiDB-server, TiDB-A: allocator range is: 0 ~ 30000, TiDB-B: allocator range is: 30001 ~ 60000,
 	// if user send SQL `alter table t1 auto_increment = 100` to TiDB-B,
-	// and if TiDB-B just return here and return here,
+	// and if TiDB-B just return here,
 	// then TiDB-A maybe allocate 99 for auto_increment column, this is not reasonable for the user.
 	newBase = mathutil.MaxInt64(newBase, autoIncID)
 	job := &model.Job{
