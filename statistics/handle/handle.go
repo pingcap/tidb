@@ -325,7 +325,21 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*stati
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	return statistics.DecodeCMSketch(rows[0].GetBytes(0))
+	selSQL2 := fmt.Sprintf("select value_id, content from mysql.stats_topnstore where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
+	topnrows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL2)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	topn := make([][]byte, len(topnrows))
+	for i := range topnrows {
+		p := topnrows[i].GetInt64(0)
+		if p > int64(len(topnrows)) {
+			continue
+		}
+		topn[p] = topnrows[i].GetBytes(1)
+	}
+	cms, err := statistics.DecodeCMSketch(rows[0].GetBytes(0), topn)
+	return cms, errors.Trace(err)
 }
 
 func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
@@ -524,9 +538,16 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return
 	}
-	data, err := statistics.EncodeCMSketch(cms)
+	data, topNData, err := statistics.EncodeCMSketch(cms)
 	if err != nil {
 		return
+	}
+	for i, v := range topNData {
+		insertSQL := fmt.Sprintf("replace into mysql.stats_topnstore (table_id, is_index, hist_id, value_id, content) values (%d, %d, %d, %d, X'%X')", tableID, isIndex, hg.ID, i, v)
+		_, err1 := exec.Execute(ctx, insertSQL)
+		if err1 != nil {
+			return
+		}
 	}
 	flag := 0
 	if isAnalyzed == 1 {

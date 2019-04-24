@@ -204,6 +204,13 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 	return cnt < 2*(c.count/uint64(c.width)) && c.defaultValue > 0
 }
 
+// SetValueBytes sets value of d to count.
+func (c *CMSketch) SetValueBytes(d []byte, count uint64) {
+	oriCount := c.QueryBytes(d)
+	deltaCount := count - oriCount
+	c.updateBytesWithDelta(d, deltaCount)
+}
+
 // setValue sets the count for value that hashed into (h1, h2).
 func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	oriCount := c.queryHashValue(h1, h2)
@@ -288,7 +295,6 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 }
 
 // CMSketchToProto converts CMSketch to its protobuf representation.
-// TODO: Encode/Decode cmsketch with Top-N
 func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 	protoSketch := &tipb.CMSketch{Rows: make([]*tipb.CMSketchRow, c.depth)}
 	for i := range c.table {
@@ -297,11 +303,15 @@ func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 			protoSketch.Rows[i].Counters[j] = c.table[i][j]
 		}
 	}
+	for _, dataSlice := range c.topN {
+		for _, dataMeta := range dataSlice {
+			protoSketch.TopN = append(protoSketch.TopN, &tipb.CMSketchTopN{Data: dataMeta.data, Count: dataMeta.count})
+		}
+	}
 	return protoSketch
 }
 
 // CMSketchFromProto converts CMSketch from its protobuf representation.
-// TODO: Encode/Decode cmsketch with Top-N
 func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 	if protoSketch == nil {
 		return nil
@@ -314,20 +324,34 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 			c.count = c.count + uint64(counter)
 		}
 	}
+	c.topN = make(map[uint64][]topNMeta)
+	for _, e := range protoSketch.TopN {
+		h1, h2 := murmur3.Sum128(e.Data)
+		c.topN[h1] = append(c.topN[h1], topNMeta{h1, h2, e.Data, e.Count})
+	}
 	return c
 }
 
 // EncodeCMSketch encodes the given CMSketch to byte slice.
-func EncodeCMSketch(c *CMSketch) ([]byte, error) {
+func EncodeCMSketch(c *CMSketch) ([]byte, [][]byte, error) {
 	if c == nil || c.count == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	p := CMSketchToProto(c)
-	return p.Marshal()
+	topNData := make([][]byte, 0, len(p.TopN))
+	for _, e := range p.TopN {
+		topNData = append(topNData, e.Data)
+		e.Data = nil
+	}
+	protoData, err := p.Marshal()
+	if err != nil {
+		return nil, nil, err
+	}
+	return protoData, topNData, nil
 }
 
 // DecodeCMSketch decode a CMSketch from the given byte slice.
-func DecodeCMSketch(data []byte) (*CMSketch, error) {
+func DecodeCMSketch(data []byte, topNData [][]byte) (*CMSketch, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -338,6 +362,13 @@ func DecodeCMSketch(data []byte) (*CMSketch, error) {
 	}
 	if len(p.Rows) == 0 {
 		return nil, nil
+	}
+	// Sometimes, topNData mightcontains older top n elements when count of new top n is less than old top n.
+	if len(topNData) < len(p.TopN) {
+		return nil, errors.New("length of topNData and p.TopN mismatch")
+	}
+	for i, v := range p.TopN {
+		v.Data = topNData[i]
 	}
 	return CMSketchFromProto(p), nil
 }
@@ -358,6 +389,26 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 	for i := range c.table {
 		for j := range c.table[i] {
 			if c.table[i][j] != rc.table[i][j] {
+				return false
+			}
+		}
+	}
+	if len(c.topN) != len(rc.topN) {
+		return false
+	}
+	for k, topNData := range c.topN {
+		if len(topNData) != len(rc.topN[k]) {
+			return false
+		}
+		for _, val := range topNData {
+			found := false
+			for _, val2 := range rc.topN[k] {
+				if val.h2 == val2.h2 && bytes.Equal(val.data, val2.data) {
+					found = true
+					break
+				}
+			}
+			if !found {
 				return false
 			}
 		}

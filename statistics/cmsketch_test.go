@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/spaolacci/murmur3"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
@@ -147,10 +149,11 @@ func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
 			lSketch.table[i][j] = math.MaxUint32
 		}
 	}
-	bytes, err := EncodeCMSketch(lSketch)
+	bytes, topn, err := EncodeCMSketch(lSketch)
 	c.Assert(err, IsNil)
+	c.Assert(len(topn), Equals, 0)
 	c.Assert(len(bytes), Equals, 61455)
-	rSketch, err := DecodeCMSketch(bytes)
+	rSketch, err := DecodeCMSketch(bytes, topn)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }
@@ -211,4 +214,28 @@ func (s *testStatisticsSuite) TestCMSketchTopNUniqueData(c *C) {
 	c.Check(cms.defaultValue, Equals, uint64(1))
 	c.Check(avg, Equals, uint64(0))
 	c.Check(len(cms.topN), Equals, 0)
+}
+
+func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
+	lSketch := NewCMSketch(5, 2048)
+	lSketch.count = 2048 * (math.MaxUint32)
+	for i := range lSketch.table {
+		for j := range lSketch.table[i] {
+			lSketch.table[i][j] = math.MaxUint32
+		}
+	}
+	lSketch.topN = make(map[uint64][]topNMeta)
+	for i := 0; i < 20; i++ {
+		tString := []byte(fmt.Sprintf("%20000d", i))
+		h1, h2 := murmur3.Sum128(tString)
+		lSketch.topN[h1] = []topNMeta{{h1, h2, tString, math.MaxUint64}}
+	}
+
+	bytes, topn, err := EncodeCMSketch(lSketch)
+	c.Assert(err, IsNil)
+	c.Assert(len(topn), Equals, 20)
+	c.Assert(len(bytes), Equals, 61717)
+	rSketch, err := DecodeCMSketch(bytes, topn)
+	c.Assert(err, IsNil)
+	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }
