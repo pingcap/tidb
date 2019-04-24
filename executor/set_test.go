@@ -339,6 +339,13 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
 	_, err = tk.Exec("set global read_only = abc")
 	c.Assert(err, NotNil)
+
+	// test for tidb_wait_table_split_finish
+	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_wait_table_split_finish = 1")
+	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_wait_table_split_finish = 0")
+	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("0"))
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {
