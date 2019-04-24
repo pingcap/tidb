@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -758,10 +759,11 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
-	// gofail: var errorMockPanic bool
-	// if errorMockPanic {
-	// 		panic("panic test")
-	// }
+	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("panic test")
+		}
+	})
 
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
@@ -861,8 +863,6 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	return result
 }
 
-var gofailMockAddindexErrOnceGuard bool
-
 func (w *addIndexWorker) run(d *ddlCtx) {
 	logutil.Logger(ddlLogCtx).Info("[ddl] add index worker start", zap.Int("workerID", w.id))
 	defer func() {
@@ -881,13 +881,13 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		}
 
 		logutil.Logger(ddlLogCtx).Debug("[ddl] add index worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
-		// gofail: var mockAddIndexErr bool
-		//if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
-		//	gofailMockAddindexErrOnceGuard = true
-		//	result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
-		//	w.resultCh <- result
-		//	continue
-		//}
+		failpoint.Inject("mockAddIndexErr", func() {
+			if w.id == 0 {
+				result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
+				w.resultCh <- result
+				failpoint.Continue()
+			}
+		})
 
 		// Dynamic change batch size.
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
@@ -1159,20 +1159,21 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 			closeAddIndexWorkers(workers)
 		}
 
-		// gofail: var checkIndexWorkerNum bool
-		// if checkIndexWorkerNum {
-		//	num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
-		//	if num != 0 {
-		//		if num > len(kvRanges) {
-		//			if len(idxWorkers) != len(kvRanges) {
-		//				return errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers))
-		//			}
-		//		} else if num != len(idxWorkers) {
-		//			return errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers))
-		//		}
-		//		TestCheckWorkerNumCh <- struct{}{}
-		//	}
-		//}
+		failpoint.Inject("checkIndexWorkerNum", func(val failpoint.Value) {
+			if val.(bool) {
+				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
+				if num != 0 {
+					if num > len(kvRanges) {
+						if len(idxWorkers) != len(kvRanges) {
+							failpoint.Return(errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers)))
+						}
+					} else if num != len(idxWorkers) {
+						failpoint.Return(errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers)))
+					}
+					TestCheckWorkerNumCh <- struct{}{}
+				}
+			}
+		})
 
 		logutil.Logger(ddlLogCtx).Info("[ddl] start add index workers to reorg index", zap.Int("workerCnt", len(idxWorkers)), zap.Int("regionCnt", len(kvRanges)), zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
 		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges)

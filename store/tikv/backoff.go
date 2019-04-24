@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -42,6 +43,37 @@ const (
 	// DecorrJitter increases the maximum jitter based on the last random value.
 	DecorrJitter
 )
+
+var (
+	tikvBackoffCounterRPC          = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
+	tikvBackoffCounterLock         = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
+	tikvBackoffCounterLockFast     = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
+	tikvBackoffCounterPD           = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
+	tikvBackoffCounterRegionMiss   = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
+	tikvBackoffCounterUpdateLeader = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
+	tikvBackoffCounterServerBusy   = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
+	tikvBackoffCounterEmpty        = metrics.TiKVBackoffCounter.WithLabelValues("")
+)
+
+func (t backoffType) Counter() prometheus.Counter {
+	switch t {
+	case boTiKVRPC:
+		return tikvBackoffCounterRPC
+	case BoTxnLock:
+		return tikvBackoffCounterLock
+	case boTxnLockFast:
+		return tikvBackoffCounterLockFast
+	case BoPDRPC:
+		return tikvBackoffCounterPD
+	case BoRegionMiss:
+		return tikvBackoffCounterRegionMiss
+	case BoUpdateLeader:
+		return tikvBackoffCounterUpdateLeader
+	case boServerBusy:
+		return tikvBackoffCounterServerBusy
+	}
+	return tikvBackoffCounterEmpty
+}
 
 // NewBackoffFn creates a backoff func which implements exponential backoff with
 // optional jitters.
@@ -222,7 +254,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	default:
 	}
 
-	metrics.TiKVBackoffCounter.WithLabelValues(typ.String()).Inc()
+	typ.Counter().Inc()
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func(context.Context) int)

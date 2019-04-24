@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -76,7 +77,7 @@ var (
 
 type baseExecutor struct {
 	ctx           sessionctx.Context
-	id            string
+	id            fmt.Stringer
 	schema        *expression.Schema
 	initCap       int
 	maxChunkSize  int
@@ -130,7 +131,7 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	return nil
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id string, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -140,7 +141,9 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.id)
+		if e.id != nil {
+			e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.id.String())
+		}
 	}
 	if schema != nil {
 		cols := schema.Columns
@@ -1291,7 +1294,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
 		TimeZone:   vars.Location(),
-		MemTracker: memory.NewTracker(s.Text(), vars.MemQuotaQuery),
+		MemTracker: memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
@@ -1398,18 +1401,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
-	err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
+	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
+	err = vars.SetSystemVar("warning_count", warnCount)
 	if err != nil {
 		return err
 	}
-	err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
+	err = vars.SetSystemVar("error_count", errCount)
 	if err != nil {
 		return err
 	}
-	if s != nil {
-		// execute missed stmtID uses empty sql
-		sc.OriginalSQL = s.Text()
-	}
+	// execute missed stmtID uses empty sql
+	sc.OriginalSQL = s.Text()
 	vars.StmtCtx = sc
 	return
 }
