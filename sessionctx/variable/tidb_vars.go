@@ -232,6 +232,9 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// TiDBWaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
+	TiDBWaitTableSplitFinish = "tidb_wait_table_split_finish"
+
 	// tidb_force_priority defines the operations priority of all statements.
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
 	TiDBForcePriority = "tidb_force_priority"
@@ -309,6 +312,7 @@ const (
 	DefTiDBDDLSlowOprThreshold       = 300
 	DefTiDBUseFastAnalyze            = false
 	DefTiDBSkipIsolationLevelCheck   = false
+	DefTiDBWaitTableSplitFinish      = false
 )
 
 // Process global variables.
