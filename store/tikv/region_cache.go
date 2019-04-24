@@ -424,11 +424,13 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 			continue
 		}
 		region := &Region{
-			meta: meta,
-			peer: meta.Peers[0],
+			meta:     meta,
+			subPeers: make([]*metapb.Peer, 0, len(meta.Peers)-1),
 		}
 		if leader != nil {
 			region.SwitchPeer(leader.GetStoreId())
+		} else {
+			region.tryFirstPeer()
 		}
 		return region, nil
 	}
@@ -462,11 +464,13 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 			return nil, errors.New("receive Region with no peer")
 		}
 		region := &Region{
-			meta: meta,
-			peer: meta.Peers[0],
+			meta:     meta,
+			subPeers: make([]*metapb.Peer, 0, len(meta.Peers)-1),
 		}
 		if leader != nil {
 			region.SwitchPeer(leader.GetStoreId())
+		} else {
+			region.tryFirstPeer()
 		}
 		return region, nil
 	}
@@ -532,36 +536,55 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	}
 }
 
-// DropStoreOnSendRequestFail is used for clearing cache when a tikv server does not respond.
-func (c *RegionCache) DropStoreOnSendRequestFail(ctx *RPCContext, err error) {
-	// We need to drop the store only when the request is the first one failed on this store.
-	// Because too many concurrently requests trying to drop the store will be blocked on the lock.
-	failedRegionID := ctx.Region
-	failedStoreID := ctx.Peer.StoreId
-	c.mu.Lock()
-	_, ok := c.mu.regions[failedRegionID]
-	if !ok {
-		// The failed region is dropped already by another request, we don't need to iterate the regions
-		// and find regions on the failed store to drop.
-		c.mu.Unlock()
+// trySubPeers give up unreachable peer and tries to select another valid peer.
+// It returns false if all peers are unreachable.
+func (r *Region) trySubPeers(storeID uint64) (hasReachable bool) {
+	// other has switch peer during wait mutex.
+	if r.peer.GetStoreId() != storeID {
+		hasReachable = true
 		return
 	}
-	for id, r := range c.mu.regions {
-		if r.region.peer.GetStoreId() == failedStoreID {
-			c.dropRegionFromCache(id)
+	// try other peers in order.
+	if len(r.subPeers) > 0 {
+		r.peer = r.subPeers[0]
+		r.subPeers = r.subPeers[1:]
+		hasReachable = true
+		return
+	}
+	// return quickly if no other reachable peers.
+	return
+}
+
+// OnSendRequestFail is used for clearing cache when a tikv server does not respond.
+func (c *RegionCache) OnSendRequestFail(ctx *RPCContext, err error) {
+	failedStoreID := ctx.Peer.StoreId
+
+	// try to drop failed store.
+	var failedStoreAddr string
+	c.storeMu.Lock()
+	store, exists := c.storeMu.stores[failedStoreID]
+	if !exists {
+		// store already be dropped by others return quickly.
+		// only success-drop-store-guy will handle `switch peer` or `drop region logic`.
+		c.storeMu.Unlock()
+		return
+	}
+	failedStoreAddr = store.Addr
+	delete(c.storeMu.stores, failedStoreID)
+	c.storeMu.Unlock()
+
+	// make regions on fail store try other follower peers.
+	// drop region if this store is last peer to this region.
+	c.mu.Lock()
+	for regionID, cacheItem := range c.mu.regions {
+		if cacheItem.region.peer.GetStoreId() == failedStoreID {
+			if !cacheItem.region.trySubPeers(failedStoreID) {
+				c.dropRegionFromCache(regionID)
+			}
 		}
 	}
 	c.mu.Unlock()
 
-	// Store's meta may be out of date.
-	var failedStoreAddr string
-	c.storeMu.Lock()
-	store, ok := c.storeMu.stores[failedStoreID]
-	if ok {
-		failedStoreAddr = store.Addr
-		delete(c.storeMu.stores, failedStoreID)
-	}
-	c.storeMu.Unlock()
 	logutil.Logger(context.Background()).Info("drop regions that on the store due to send request fail",
 		zap.Uint64("store", failedStoreID),
 		zap.String("store addr", failedStoreAddr),
@@ -594,8 +617,8 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 			}
 		}
 		region := &Region{
-			meta: meta,
-			peer: meta.Peers[0],
+			meta:     meta,
+			subPeers: make([]*metapb.Peer, len(meta.Peers)-1),
 		}
 		region.SwitchPeer(ctx.Peer.GetStoreId())
 		c.insertRegionToCache(region)
@@ -633,8 +656,9 @@ func (item *btreeItem) Less(other btree.Item) bool {
 
 // Region stores region's meta and its leader peer.
 type Region struct {
-	meta *metapb.Region
-	peer *metapb.Peer
+	meta     *metapb.Region
+	peer     *metapb.Peer
+	subPeers []*metapb.Peer
 }
 
 // GetID returns id.
@@ -685,13 +709,28 @@ func (r *Region) GetContext() *kvrpcpb.Context {
 // SwitchPeer switches current peer to the one on specific store. It returns
 // false if no peer matches the storeID.
 func (r *Region) SwitchPeer(storeID uint64) bool {
-	for _, p := range r.meta.Peers {
-		if p.GetStoreId() == storeID {
-			r.peer = p
-			return true
+	r.subPeers = r.subPeers[:0]
+	var leaderFound bool
+	for i := range r.meta.Peers {
+		v := r.meta.Peers[i]
+		if v.GetStoreId() == storeID {
+			leaderFound = true
+			r.peer = v
+		} else {
+			r.subPeers = append(r.subPeers, v)
 		}
 	}
-	return false
+	if !leaderFound && r.peer == nil {
+		r.peer = r.meta.Peers[0]
+	}
+	return leaderFound
+}
+
+func (r *Region) tryFirstPeer() {
+	r.peer = r.meta.Peers[0]
+	for i := 1; i < len(r.meta.Peers); i++ {
+		r.subPeers = append(r.subPeers, r.meta.Peers[i])
+	}
 }
 
 // Contains checks whether the key is in the region, for the maximum region endKey is empty.

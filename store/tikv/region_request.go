@@ -163,7 +163,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	s.regionCache.DropStoreOnSendRequestFail(ctx, err)
+	s.regionCache.OnSendRequestFail(ctx, err)
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.

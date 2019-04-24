@@ -261,14 +261,14 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 
 func (s *testRegionCacheSuite) TestRequestFail(c *C) {
 	region := s.getRegion(c, []byte("a"))
-
+	c.Assert(region.subPeers, HasLen, len(region.meta.Peers)-1)
 	ctx, _ := s.cache.GetRPCContext(s.bo, region.VerID())
-	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
-	c.Assert(s.cache.mu.regions, HasLen, 0)
+	s.cache.OnSendRequestFail(ctx, errors.New("test error"))
+	c.Assert(region.subPeers, HasLen, len(region.meta.Peers)-2)
 	region = s.getRegion(c, []byte("a"))
 	c.Assert(s.cache.mu.regions, HasLen, 1)
 	ctx, _ = s.cache.GetRPCContext(s.bo, region.VerID())
-	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
+	s.cache.OnSendRequestFail(ctx, errors.New("test error"))
 	c.Assert(len(s.cache.mu.regions), Equals, 0)
 	s.getRegion(c, []byte("a"))
 	c.Assert(s.cache.mu.regions, HasLen, 1)
@@ -292,10 +292,13 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
 	c.Assert(s.cache.storeMu.stores, HasLen, 1)
 	s.checkCache(c, 2)
-	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
+	s.cache.OnSendRequestFail(ctx, errors.New("test error"))
 	// Both region2 and store should be dropped from cache.
 	c.Assert(s.cache.storeMu.stores, HasLen, 0)
-	c.Assert(s.cache.searchCachedRegion([]byte("x"), true), IsNil)
+	ctx2, _ := s.cache.GetRPCContext(s.bo, loc2.Region)
+	s.cache.OnSendRequestFail(ctx2, errors.New("test error"))
+	r := s.cache.searchCachedRegion([]byte("x"), true)
+	c.Assert(r, IsNil)
 	s.checkCache(c, 0)
 }
 
@@ -322,8 +325,8 @@ func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
-	regionCnt := 999
-	cluster := createClusterWithStoresAndRegions(regionCnt)
+	regionCnt, storeCount := 999, 3
+	cluster := createClusterWithStoresAndRegions(regionCnt, storeCount)
 
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 	loadRegionsToCache(cache, regionCnt)
@@ -333,10 +336,18 @@ func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
 	loc, err := cache.LocateKey(bo, []byte{})
 	c.Assert(err, IsNil)
 
-	// Drop the regions on one store, should drop only 1/3 of the regions.
+	// First two drop attempts just switch peer.
+	for i := 0; i < storeCount-1; i++ {
+		rpcCtx, err := cache.GetRPCContext(bo, loc.Region)
+		c.Assert(err, IsNil)
+		cache.OnSendRequestFail(rpcCtx, errors.New("test error"))
+		c.Assert(len(cache.mu.regions), Equals, regionCnt+1)
+	}
+
+	// Drop the regions on one store, should drop only 1/3 of the regions after try all stores
 	rpcCtx, err := cache.GetRPCContext(bo, loc.Region)
 	c.Assert(err, IsNil)
-	cache.DropStoreOnSendRequestFail(rpcCtx, errors.New("test error"))
+	cache.OnSendRequestFail(rpcCtx, errors.New("test error"))
 	c.Assert(len(cache.mu.regions), Equals, regionCnt*2/3)
 
 	loadRegionsToCache(cache, regionCnt)
@@ -345,9 +356,9 @@ func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
 
 const regionSplitKeyFormat = "t%08d"
 
-func createClusterWithStoresAndRegions(regionCnt int) *mocktikv.Cluster {
+func createClusterWithStoresAndRegions(regionCnt, storeCount int) *mocktikv.Cluster {
 	cluster := mocktikv.NewCluster()
-	_, _, regionID, _ := mocktikv.BootstrapWithMultiStores(cluster, 3)
+	_, _, regionID, _ := mocktikv.BootstrapWithMultiStores(cluster, storeCount)
 	for i := 0; i < regionCnt; i++ {
 		rawKey := []byte(fmt.Sprintf(regionSplitKeyFormat, i))
 		ids := cluster.AllocIDs(4)
@@ -449,12 +460,12 @@ func (s *testRegionCacheSuite) TestContainsByEnd(c *C) {
 
 func BenchmarkOnRequestFail(b *testing.B) {
 	/*
-			This benchmark simulate many concurrent requests call DropStoreOnSendRequestFail method
+			This benchmark simulate many concurrent requests call OnSendRequestFail method
 			after failed on a store, validate that on this scene, requests don't get blocked on the
 		    RegionCache lock.
 	*/
-	regionCnt := 999
-	cluster := createClusterWithStoresAndRegions(regionCnt)
+	regionCnt, storeCount := 998, 3
+	cluster := createClusterWithStoresAndRegions(regionCnt, storeCount)
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 	loadRegionsToCache(cache, regionCnt)
 	bo := NewBackoffer(context.Background(), 1)
@@ -471,7 +482,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 				Meta:   region.meta,
 				Peer:   region.peer,
 			}
-			cache.DropStoreOnSendRequestFail(rpcCtx, nil)
+			cache.OnSendRequestFail(rpcCtx, nil)
 		}
 	})
 	if len(cache.mu.regions) != regionCnt*2/3 {
