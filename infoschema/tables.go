@@ -563,7 +563,7 @@ var tableTiDBHotRegionsCols = []columnInfo{
 
 func dataForCharacterSets() (records [][]types.Datum) {
 
-	charsets := charset.GetAllCharsets()
+	charsets := charset.GetSupportedCharsets()
 
 	for _, charset := range charsets {
 
@@ -579,7 +579,7 @@ func dataForCharacterSets() (records [][]types.Datum) {
 
 func dataForCollations() (records [][]types.Datum) {
 
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 
 	for _, collation := range collations {
 
@@ -600,7 +600,7 @@ func dataForCollations() (records [][]types.Datum) {
 
 func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
 
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 
 	for _, collation := range collations {
 
