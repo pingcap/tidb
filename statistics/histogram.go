@@ -994,8 +994,7 @@ func (idx *Index) outOfRange(val types.Datum) bool {
 // It is used when merge stats for incremental analyze.
 func (idx *Index) RemoveUpperBound(sc *stmtctx.StatementContext, values []types.Datum) (*Histogram, *CMSketch, error) {
 	hist, cms := idx.Histogram.Copy(), idx.CMSketch.Copy()
-	buckets := hist.Buckets
-	buckets[hist.Len()-1].Count -= hist.Buckets[hist.Len()-1].Repeat
+	hist.Buckets[hist.Len()-1].Count -= hist.Buckets[hist.Len()-1].Repeat
 	hist.Buckets[hist.Len()-1].Repeat = 0
 	if cms == nil {
 		return hist, nil, nil
