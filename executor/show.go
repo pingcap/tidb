@@ -174,6 +174,9 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowPrivileges()
 	case ast.ShowBindings:
 		return e.fetchShowBind()
+	case ast.ShowAnalyzeStatus:
+		e.fetchShowAnalyzeStatus()
+		return nil
 	}
 	return nil
 }
