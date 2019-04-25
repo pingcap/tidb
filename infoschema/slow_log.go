@@ -49,6 +49,16 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogStatsInfoStr, mysql.TypeVarchar, 512, 0, nil, nil},
+	{variable.SlowLogNumCopTasksStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{variable.SlowLogCopProcAvg, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcP90, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcMax, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcAddr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogCopWaitAvg, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitP90, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitMax, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeVarchar, 4096, 0, nil, nil},
 }
 
@@ -125,23 +135,33 @@ func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, e
 }
 
 type slowQueryTuple struct {
-	time         time.Time
-	txnStartTs   uint64
-	user         string
-	connID       uint64
-	queryTime    float64
-	processTime  float64
-	waitTime     float64
-	backOffTime  float64
-	requestCount uint64
-	totalKeys    uint64
-	processKeys  uint64
-	db           string
-	indexIDs     string
-	isInternal   bool
-	digest       string
-	statsInfo    string
-	sql          string
+	time              time.Time
+	txnStartTs        uint64
+	user              string
+	connID            uint64
+	queryTime         float64
+	processTime       float64
+	waitTime          float64
+	backOffTime       float64
+	requestCount      uint64
+	totalKeys         uint64
+	processKeys       uint64
+	db                string
+	indexIDs          string
+	isInternal        bool
+	digest            string
+	statsInfo         string
+	numCopTasks       uint64
+	avgProcessTime    float64
+	p90ProcessTime    float64
+	maxProcessTime    float64
+	maxProcessAddress string
+	AvgWaitTime       float64
+	P90WaitTime       float64
+	MaxWaitTime       float64
+	MaxWaitAddress    string
+	memMax            int64
+	sql               string
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
@@ -221,6 +241,58 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.digest = value
 	case variable.SlowLogStatsInfoStr:
 		st.statsInfo = value
+	case variable.SlowLogNumCopTasksStr:
+		num, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.numCopTasks = num
+	case variable.SlowLogCopProcAvg:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.avgProcessTime = num
+	case variable.SlowLogCopProcP90:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.p90ProcessTime = num
+	case variable.SlowLogCopProcMax:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.maxProcessTime = num
+	case variable.SlowLogCopProcAddr:
+		st.maxProcessAddress = value
+	case variable.SlowLogCopWaitAvg:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.AvgWaitTime = num
+	case variable.SlowLogCopWaitP90:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.P90WaitTime = num
+	case variable.SlowLogCopWaitMax:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.MaxWaitTime = num
+	case variable.SlowLogCopWaitAddr:
+		st.MaxWaitAddress = value
+	case variable.SlowLogMemMax:
+		num, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.memMax = num
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
 	}
@@ -249,6 +321,16 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewDatum(st.isInternal))
 	record = append(record, types.NewStringDatum(st.digest))
 	record = append(record, types.NewStringDatum(st.statsInfo))
+	record = append(record, types.NewUintDatum(st.numCopTasks))
+	record = append(record, types.NewFloat64Datum(st.avgProcessTime))
+	record = append(record, types.NewFloat64Datum(st.p90ProcessTime))
+	record = append(record, types.NewFloat64Datum(st.maxProcessTime))
+	record = append(record, types.NewStringDatum(st.maxProcessAddress))
+	record = append(record, types.NewFloat64Datum(st.AvgWaitTime))
+	record = append(record, types.NewFloat64Datum(st.P90WaitTime))
+	record = append(record, types.NewFloat64Datum(st.MaxWaitTime))
+	record = append(record, types.NewStringDatum(st.MaxWaitAddress))
+	record = append(record, types.NewIntDatum(st.memMax))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
 }
