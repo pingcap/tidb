@@ -36,6 +36,9 @@ type SampleItem struct {
 	// Ordinal is original position of this item in SampleCollector before sorting. This
 	// is used for computing correlation.
 	Ordinal int
+	// RowID is the row id of the sample in its key.
+	// This property is used to calculate Ordinal in fast analyze.
+	RowID int64
 }
 
 // SortSampleItems sorts a slice of SampleItem.

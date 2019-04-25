@@ -161,8 +161,8 @@ var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- analyzeResult, isCloseChanThread bool) {
 	defer func() {
 		e.wg.Done()
-		e.wg.Wait()
 		if isCloseChanThread {
+			e.wg.Wait()
 			close(resultCh)
 		}
 		if r := recover(); r != nil {
@@ -728,6 +728,11 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	if err != nil {
 		return err
 	}
+	var rowID int64
+	rowID, err = tablecodec.DecodeRowKey(sKey)
+	if err != nil {
+		return err
+	}
 	// Update the primary key collector.
 	if hasPKInfo > 0 {
 		v, ok := values[e.pkInfo.ID]
@@ -742,7 +747,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 		if e.collectors[0].Samples[samplePos] == nil {
 			e.collectors[0].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		e.collectors[0].Samples[samplePos].Ordinal = int(samplePos)
+		e.collectors[0].Samples[samplePos].RowID = rowID
 		e.collectors[0].Samples[samplePos].Value = v
 	}
 	// Update the columns' collectors.
@@ -754,7 +759,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 		if e.collectors[hasPKInfo+j].Samples[samplePos] == nil {
 			e.collectors[hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		e.collectors[hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
+		e.collectors[hasPKInfo+j].Samples[samplePos].RowID = rowID
 		e.collectors[hasPKInfo+j].Samples[samplePos].Value = v
 	}
 	// Update the indexes' collectors.
@@ -780,7 +785,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 		if e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] == nil {
 			e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Ordinal = int(samplePos)
+		e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].RowID = rowID
 		e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
 	}
 	return nil
@@ -876,9 +881,6 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 		if *err != nil {
 			return
 		}
-		if maxRowID <= minRowID {
-			continue
-		}
 
 		keys := make([]kv.Key, 0, task.SampSize)
 		for i := 0; i < int(task.SampSize); i++ {
@@ -906,13 +908,14 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
 	// build collector properties.
 	collector.Samples = collector.Samples[:e.sampCursor]
+	sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].RowID < collector.Samples[j].RowID })
 	err := collector.CalcTotalSize()
 	if err != nil {
 		return nil, err
 	}
-	collector.Count = int64(e.sampCursor)
 	data := make([][]byte, 0, len(collector.Samples))
-	for _, sample := range collector.Samples {
+	for i, sample := range collector.Samples {
+		sample.Ordinal = i
 		if sample.Value.IsNull() {
 			collector.NullCount++
 			continue
@@ -926,7 +929,7 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	rowCount := mathutil.MinInt64(domain.GetDomain(e.ctx).StatsHandle().GetTableStats(e.tblInfo).Count, int64(e.rowCount))
 	// build CMSketch
 	var ndv, scaleRatio uint64
-	collector.CMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, uint32(len(data)), uint64(rowCount))
+	collector.CMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, 20, uint64(rowCount))
 	// build Histogram
 	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, rowCount, int64(ndv), int64(scaleRatio))
 	if err != nil {
@@ -1008,6 +1011,8 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		return nil, nil, errors.Errorf(errMsg, maxBuildTimes)
 	}
 
+	defer e.job.Update(int64(e.rowCount))
+
 	// If total row count of the table is smaller than 2*MaxSampleSize, we
 	// translate all the sample tasks to scan tasks.
 	if e.rowCount < uint64(MaxSampleSize)*2 {
@@ -1055,6 +1060,7 @@ func (e *AnalyzeTestFastExec) TestFastSample() error {
 	e.concurrency = e.Concurrency
 	e.physicalTableID = e.PhysicalTableID
 	e.wg = &sync.WaitGroup{}
+	e.job = &statistics.AnalyzeJob{}
 	e.tblInfo = e.TblInfo
 	_, _, err := e.buildStats()
 	e.Collectors = e.collectors
