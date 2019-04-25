@@ -220,3 +220,40 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	_, err = tk.Exec("create global binding for select * from t using select * from t1 use index for join(index_t)")
 	c.Assert(err, NotNil, Commentf("err %v", err))
 }
+
+func (s *testSuite) TestSessionBinding(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(i int, s varchar(20))")
+	tk.MustExec("create table t1(i int, s varchar(20))")
+	tk.MustExec("create index index_t on t(i,s)")
+
+	_, err := tk.Exec("create session binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
+	c.Assert(err, IsNil, Commentf("err %v", err))
+
+	time.Sleep(time.Second * 1)
+	_, err = tk.Exec("create session binding for select * from t where i>99 using select * from t use index(index_t) where i>99")
+	c.Assert(err, IsNil)
+
+	handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindData := handle.GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
+	c.Check(bindData.BindSQL, Equals, "select * from t use index(index_t) where i>99")
+	c.Check(bindData.Db, Equals, "test")
+	c.Check(bindData.Status, Equals, "using")
+	c.Check(bindData.Charset, NotNil)
+	c.Check(bindData.Collation, NotNil)
+	c.Check(bindData.CreateTime, NotNil)
+	c.Check(bindData.UpdateTime, NotNil)
+
+	rs, err := tk.Exec("show global bindings")
+	c.Assert(err, IsNil)
+	chk := rs.NewRecordBatch()
+	err = rs.Next(context.TODO(), chk)
+	c.Check(err, IsNil)
+	c.Check(chk.NumRows(), Equals, 0)
+}
