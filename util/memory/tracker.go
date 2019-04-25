@@ -43,10 +43,10 @@ type Tracker struct {
 		children []*Tracker // The children memory trackers
 	}
 
-	label          string // Label of this "Tracker".
-	bytesConsumed  int64  // Consumed bytes.
-	bytesLimit     int64  // Negative value means no limit.
-	maxConsumed    int64  // max number of bytes consumed during execution.
+	label          fmt.Stringer // Label of this "Tracker".
+	bytesConsumed  int64        // Consumed bytes.
+	bytesLimit     int64        // Negative value means no limit.
+	maxConsumed    int64        // max number of bytes consumed during execution.
 	actionOnExceed ActionOnExceed
 	parent         *Tracker // The parent memory tracker.
 }
@@ -54,7 +54,7 @@ type Tracker struct {
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit < 0" means no limit.
-func NewTracker(label string, bytesLimit int64) *Tracker {
+func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 	return &Tracker{
 		label:          label,
 		bytesLimit:     bytesLimit,
@@ -68,7 +68,7 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 }
 
 // SetLabel sets the label of a Tracker.
-func (t *Tracker) SetLabel(label string) {
+func (t *Tracker) SetLabel(label fmt.Stringer) {
 	t.label = label
 }
 
