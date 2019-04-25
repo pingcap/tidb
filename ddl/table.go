@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -73,20 +72,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		err = t.CreateTableOrView(schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
-		}
-		if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
-			// TODO: Add restrictions to this operation.
-			pi := tbInfo.GetPartitionInfo()
-			if pi != nil {
-				// Max partition count is 4096, should we sample and just choose some of the partition to split?
-				go func(pi *model.PartitionInfo) {
-					for _, def := range pi.Definitions {
-						splitTableRegion(d.store, def.ID)
-					}
-				}(pi)
-			} else {
-				go splitTableRegion(d.store, tbInfo.ID)
-			}
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -348,6 +333,13 @@ type splitableStore interface {
 	SplitRegion(splitKey kv.Key) error
 	SplitRegionAndScatter(splitKey kv.Key) (uint64, error)
 	WaitScatterRegionFinish(regionID uint64) error
+}
+
+func splitPartitionTableRegion(store kv.Storage, pi *model.PartitionInfo) {
+	// Max partition count is 4096, should we sample and just choose some of the partition to split?
+	for _, def := range pi.Definitions {
+		splitTableRegion(store, def.ID)
+	}
 }
 
 func splitTableRegion(store kv.Storage, tableID int64) {

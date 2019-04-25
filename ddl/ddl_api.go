@@ -1202,14 +1202,26 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
+		var preSplitAndScatter func()
 		// do pre-split and scatter.
 		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-			if ctx.GetSessionVars().WaitTableSplitFinish {
-				preSplitTableRegion(d.store, tbInfo, true)
+			preSplitAndScatter = func() { preSplitTableRegion(d.store, tbInfo, ctx.GetSessionVars().WaitTableSplitFinish) }
+		} else if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
+			pi := tbInfo.GetPartitionInfo()
+			if pi != nil {
+				preSplitAndScatter = func() { splitPartitionTableRegion(d.store, pi) }
 			} else {
-				go preSplitTableRegion(d.store, tbInfo, false)
+				preSplitAndScatter = func() { splitTableRegion(d.store, tbInfo.ID) }
 			}
 		}
+		if preSplitAndScatter != nil {
+			if ctx.GetSessionVars().WaitTableSplitFinish {
+				preSplitAndScatter()
+			} else {
+				go preSplitAndScatter()
+			}
+		}
+
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
