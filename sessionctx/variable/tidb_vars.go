@@ -219,6 +219,9 @@ const (
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
+	// tidb_back_off_weight is used to control the max back off time in TiDB.
+	TiDBBackOffWeight = "tidb_back_off_weight"
+
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 

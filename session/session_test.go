@@ -2320,9 +2320,12 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 	tk.MustExec("insert kvvars values (1, 1)")
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("set @@tidb_backoff_lock_fast = 1")
+	tk2.MustExec("set @@tidb_back_off_weight = 100")
 	backoffVal := new(int64)
+	backOffWeightVal := new(int32)
 	tk2.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
 		atomic.StoreInt64(backoffVal, int64(vars.BackoffLockFast))
+		atomic.StoreInt32(backOffWeightVal, int32(vars.BackOffWeight))
 	}
 	wg := new(sync.WaitGroup)
 	wg.Add(2)
@@ -2345,7 +2348,14 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 		wg.Done()
 	}()
 	wg.Wait()
+	for {
+		tk2.MustQuery("select * from kvvars")
+		if atomic.LoadInt32(backOffWeightVal) != 0 {
+			break
+		}
+	}
 	c.Assert(atomic.LoadInt64(backoffVal), Equals, int64(1))
+	c.Assert(atomic.LoadInt32(backOffWeightVal), Equals, int32(100))
 }
 
 func (s *testSessionSuite) TestCommitRetryCount(c *C) {
