@@ -49,7 +49,6 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogStatsInfoStr, mysql.TypeVarchar, 512, 0, nil, nil},
-	{variable.SlowLogNumCopTasksStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogCopProcAvg, mysql.TypeDouble, 22, 0, nil, nil},
 	{variable.SlowLogCopProcP90, mysql.TypeDouble, 22, 0, nil, nil},
 	{variable.SlowLogCopProcMax, mysql.TypeDouble, 22, 0, nil, nil},
@@ -151,7 +150,6 @@ type slowQueryTuple struct {
 	isInternal        bool
 	digest            string
 	statsInfo         string
-	numCopTasks       uint64
 	avgProcessTime    float64
 	p90ProcessTime    float64
 	maxProcessTime    float64
@@ -241,12 +239,6 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.digest = value
 	case variable.SlowLogStatsInfoStr:
 		st.statsInfo = value
-	case variable.SlowLogNumCopTasksStr:
-		num, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		st.numCopTasks = num
 	case variable.SlowLogCopProcAvg:
 		num, err := strconv.ParseFloat(value, 64)
 		if err != nil {
@@ -321,7 +313,6 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewDatum(st.isInternal))
 	record = append(record, types.NewStringDatum(st.digest))
 	record = append(record, types.NewStringDatum(st.statsInfo))
-	record = append(record, types.NewUintDatum(st.numCopTasks))
 	record = append(record, types.NewFloat64Datum(st.avgProcessTime))
 	record = append(record, types.NewFloat64Datum(st.p90ProcessTime))
 	record = append(record, types.NewFloat64Datum(st.maxProcessTime))
