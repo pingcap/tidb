@@ -1573,6 +1573,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBDDLReorgBatchSize,
 	variable.TiDBDDLErrorCountLimit,
 	variable.TiDBOptInSubqToJoinAndAgg,
+	variable.TiDBOptCorrelationThreshold,
+	variable.TiDBOptCorrelationExpFactor,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBInitChunkSize,
 	variable.TiDBMaxChunkSize,
