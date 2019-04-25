@@ -111,10 +111,15 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 
 // AvgColSize is the average column size of the histogram.
 func (c *Column) AvgColSize(count int64) float64 {
+	return CalculateAvgColSize(c.Histogram.Tp.Tp, c.TotColSize, count)
+}
+
+// CalculateAvgColSize calculates the average column size of the histogram.
+func CalculateAvgColSize(tp byte, totColSize, count int64) float64 {
 	if count == 0 {
 		return 0
 	}
-	switch c.Histogram.Tp.Tp {
+	switch tp {
 	case mysql.TypeFloat:
 		return 4
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
@@ -126,7 +131,7 @@ func (c *Column) AvgColSize(count int64) float64 {
 		return types.MyDecimalStructSize
 	default:
 		// Keep two decimal place.
-		return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
+		return math.Round(float64(totColSize)/float64(count)*100) / 100
 	}
 }
 

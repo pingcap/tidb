@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -2075,6 +2076,86 @@ func (s *testSuite) TestHistoryRead(c *C) {
 
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
+}
+
+func (s *testSuite) TestReadHistoryStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1), (2), (3)")
+
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select * from t where a = 1").Check(testkit.Rows("1"))
+	snapshotTime := time.Now()
+	tsoStr := strconv.FormatUint(oracle.EncodeTSO(snapshotTime.UnixNano()/int64(time.Millisecond)), 10)
+
+	showStatsMetaSQL := "show stats_meta where db_name='test' and table_name='t'"
+	showStatsHistSQL := "show stats_histograms where db_name='test' and table_name='t'"
+	showStatsBucketsSQL := "show stats_buckets where db_name='test' and table_name='t'"
+	result := tk.MustQuery(showStatsMetaSQL)
+	c.Assert(len(result.Rows()), Equals, 1)
+	historyStatsMeta := bytes.NewBufferString("")
+	for _, row := range result.Rows() {
+		fmt.Fprintf(historyStatsMeta, "%s\n", row)
+	}
+	result = tk.MustQuery(showStatsHistSQL)
+	c.Assert(len(result.Rows()), Equals, 1)
+	historyStatsHist := bytes.NewBufferString("")
+	for _, row := range result.Rows() {
+		fmt.Fprintf(historyStatsHist, "%s\n", row)
+	}
+	result = tk.MustQuery(showStatsBucketsSQL)
+	c.Assert(len(result.Rows()), Greater, 1)
+	historyStatsBuckets := bytes.NewBufferString("")
+	for _, row := range result.Rows() {
+		fmt.Fprintf(historyStatsBuckets, "%s\n", row)
+	}
+
+	tk.MustExec("drop table t")
+
+	result = tk.MustQuery(showStatsMetaSQL)
+	c.Assert(len(result.Rows()), Equals, 0)
+	result = tk.MustQuery(showStatsHistSQL)
+	c.Assert(len(result.Rows()), Equals, 0)
+	result = tk.MustQuery(showStatsBucketsSQL)
+	c.Assert(len(result.Rows()), Equals, 0)
+
+	tk.MustExec("set @@tidb_snapshot = '" + tsoStr + "'")
+
+	result = tk.MustQuery(showStatsMetaSQL)
+	c.Assert(len(result.Rows()), Equals, 1)
+	toBeCheck := bytes.NewBufferString("")
+	for _, row := range result.Rows() {
+		fmt.Fprintf(toBeCheck, "%s\n", row)
+	}
+	c.Assert(toBeCheck.String(), Equals, historyStatsMeta.String())
+
+	result = tk.MustQuery(showStatsHistSQL)
+	c.Assert(len(result.Rows()), Equals, 1)
+	toBeCheck = bytes.NewBufferString("")
+	for _, row := range result.Rows() {
+		fmt.Fprintf(toBeCheck, "%s\n", row)
+	}
+	c.Assert(toBeCheck.String(), Equals, historyStatsHist.String())
+
+	result = tk.MustQuery(showStatsBucketsSQL)
+	c.Assert(len(result.Rows()), Greater, 1)
+	toBeCheck = bytes.NewBufferString("")
+	for _, row := range result.Rows() {
+		fmt.Fprintf(toBeCheck, "%s\n", row)
+	}
+	c.Assert(toBeCheck.String(), Equals, historyStatsBuckets.String())
 }
 
 func (s *testSuite) TestScanControlSelection(c *C) {
