@@ -367,22 +367,26 @@ func (r *RegionFrameRange) GetIndexFrame(tableID, indexID int64, dbName, tableNa
 	return nil
 }
 
+// RegionPeer stores information of one peer.
 type RegionPeer struct {
 	ID        int64 `json:"id"`
 	StoreID   int64 `json:"store_id"`
 	IsLearner bool  `json:"is_learner"`
 }
 
+// RegionEpoch stores the information about its epoch.
 type RegionEpoch struct {
 	ConfVer int64 `json:"conf_ver"`
 	Version int64 `json:"version"`
 }
 
+// RegionPeerStat stores one field `DownSec` which indicates how long it's down than `RegionPeer`.
 type RegionPeerStat struct {
 	RegionPeer
 	DownSec int64 `json:"down_seconds"`
 }
 
+// RegionInfo stores the information of one region.
 type RegionInfo struct {
 	ID              int64            `json:"id"`
 	StartKey        string           `json:"start_key"`
@@ -398,11 +402,13 @@ type RegionInfo struct {
 	ApproximateKeys int64            `json:"approximate_keys"`
 }
 
+// RegionsInfo stores the information of regions.
 type RegionsInfo struct {
 	Count   int64        `json:"count"`
 	Regions []RegionInfo `json:"regions"`
 }
 
+// GetRegionsInfo gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {

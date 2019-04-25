@@ -82,9 +82,20 @@ func (s *HelperTestSuite) TestHotRegion(c *C) {
 	c.Assert(fmt.Sprintf("%v", regionMetric), Equals, "map[1:{100 1 0}]")
 }
 
+func (s *HelperTestSuite) TestTiKVRegionsInfo(c *C) {
+	h := helper.Helper{
+		Store:       s.store,
+		RegionCache: s.store.GetRegionCache(),
+	}
+	regionsInfo, err := h.GetRegionsInfo()
+	c.Assert(err, IsNil, Commentf("err: %+v", err))
+	c.Assert(fmt.Sprintf("%v", regionsInfo), Equals, "&{1 [{1 test testtest {1 1} [{2 1 false}] {2 1 false} [] [] 100 1000 500 200}]}")
+}
+
 func (s *HelperTestSuite) mockPDHTTPServer(c *C) {
 	router := mux.NewRouter()
-	router.HandleFunc("/pd/api/v1/hotspot/regions/read", s.mockHotRegionResponse)
+	router.HandleFunc(pdapi.HotRead, s.mockHotRegionResponse)
+	router.HandleFunc(pdapi.Regions, s.mockTiKVRegionsInfoResponse)
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
 	server := &http.Server{Addr: "127.0.0.1:10100", Handler: serverMux}
@@ -117,4 +128,49 @@ func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http
 		log.Panic("write http response failed", zap.Error(err))
 	}
 
+}
+
+func (s *HelperTestSuite) mockTiKVRegionsInfoResponse(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	resp := helper.RegionsInfo{
+		Count: 1,
+		Regions: []helper.RegionInfo{
+			{
+				ID:       1,
+				StartKey: "test",
+				EndKey:   "testtest",
+				Epoch: helper.RegionEpoch{
+					ConfVer: 1,
+					Version: 1,
+				},
+				Peers: []helper.RegionPeer{
+					{
+						ID:        2,
+						StoreID:   1,
+						IsLearner: false,
+					},
+				},
+				Leader: helper.RegionPeer{
+					ID:        2,
+					StoreID:   1,
+					IsLearner: false,
+				},
+				DownPeers:       nil,
+				PendingPeers:    nil,
+				WrittenBytes:    100,
+				ReadBytes:       1000,
+				ApproximateKeys: 200,
+				ApproximateSize: 500,
+			},
+		},
+	}
+	data, err := json.MarshalIndent(resp, "", "	")
+	if err != nil {
+		log.Panic("json marshal failed", zap.Error(err))
+	}
+	_, err = w.Write(data)
+	if err != nil {
+		log.Panic("write http response failed", zap.Error(err))
+	}
 }
