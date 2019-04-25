@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -74,6 +75,8 @@ const (
 	tableSlowLog                            = "SLOW_QUERY"
 	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
 	tableAnalyzeStatus                      = "ANALYZE_STATUS"
+	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
+	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 )
 
 type columnInfo struct {
@@ -571,6 +574,118 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{"PROCESSED_ROWS", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{"START_TIME", mysql.TypeDatetime, 0, 0, nil, nil},
 	{"STATE", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableTiKVRegionStatusCols = []columnInfo{
+	{"ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"START_KEY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"END_KEY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"EPOCH_CONF_VER", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"EPOCH_VERSION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"WRITTEN_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"READ_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"APPROXIMATE_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"APPROXIMATE_KEYS", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var tableTiKVRegionPeersCols = []columnInfo{
+	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"START_KEY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"END_KEY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PEER_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"IS_LEARNER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
+	{"IS_LEADER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
+	{"STATUS", mysql.TypeString, 1, 0, 0, nil},
+	{"DOWN_SECONDS", mysql.TypeLonglong, 21, 0, 0, nil},
+}
+
+func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	regionsStat, err := tikvHelper.GetRegionsInfo()
+	if err != nil {
+		return nil, err
+	}
+	for _, regionStat := range regionsStat.Regions {
+		row := make([]types.Datum, len(tableTiKVRegionStatusCols))
+		row[0].SetInt64(regionStat.ID)
+		row[1].SetString(regionStat.StartKey)
+		row[2].SetString(regionStat.EndKey)
+		row[3].SetInt64(regionStat.Epoch.ConfVer)
+		row[4].SetInt64(regionStat.Epoch.Version)
+		row[5].SetInt64(regionStat.WrittenBytes)
+		row[6].SetInt64(regionStat.ReadBytes)
+		row[7].SetInt64(regionStat.ApproximateSize)
+		row[8].SetInt64(regionStat.ApproximateKeys)
+		records = append(records, row)
+	}
+	return records, nil
+}
+
+const (
+	normalPeer  = "NORMAL"
+	pendingPeer = "PENDING"
+	downPeer    = "DOWN"
+)
+
+func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	regionsStat, err := tikvHelper.GetRegionsInfo()
+	if err != nil {
+		return nil, err
+	}
+	for _, regionStat := range regionsStat.Regions {
+		pendingPeerIDSet := set.NewInt64Set()
+		for _, peer := range regionStat.PendingPeers {
+			pendingPeerIDSet.Insert(peer.ID)
+		}
+		downPeerMap := make(map[int64]int64)
+		for _, peerStat := range regionStat.DownPeers {
+			downPeerMap[peerStat.ID] = peerStat.DownSec
+		}
+		for _, peer := range regionStat.Peers {
+			row := make([]types.Datum, len(tableTiKVRegionPeersCols))
+			row[0].SetInt64(regionStat.ID)
+			row[1].SetString(regionStat.StartKey)
+			row[2].SetString(regionStat.EndKey)
+			row[3].SetInt64(peer.ID)
+			row[4].SetInt64(peer.StoreID)
+			if peer.ID == regionStat.Leader.ID {
+				row[5].SetInt64(1)
+			} else {
+				row[5].SetInt64(0)
+			}
+			if peer.IsLearner {
+				row[6].SetInt64(1)
+			} else {
+				row[6].SetInt64(0)
+			}
+			if pendingPeerIDSet.Exist(peer.ID) {
+				row[7].SetString(pendingPeer)
+			} else if downSec, ok := downPeerMap[peer.ID]; ok {
+				row[7].SetString(downPeer)
+				row[8].SetInt64(downSec)
+			} else {
+				row[7].SetString(normalPeer)
+			}
+			records = append(records, row)
+		}
+	}
+	return records, nil
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -1553,6 +1668,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSlowLog:                            slowQueryCols,
 	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
 	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
+	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
+	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1650,6 +1767,10 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiDBHotRegions(ctx)
 	case tableAnalyzeStatus:
 		fullRows = DataForAnalyzeStatus()
+	case tableTiKVRegionStatus:
+		fullRows, err = dataForTiKVRegionStatus(ctx)
+	case tableTiKVRegionPeers:
+		fullRows, err = dataForTikVRegionPeers(ctx)
 	}
 	if err != nil {
 		return nil, err

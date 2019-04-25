@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
 )
 
@@ -364,4 +365,73 @@ func (r *RegionFrameRange) GetIndexFrame(tableID, indexID int64, dbName, tableNa
 		}
 	}
 	return nil
+}
+
+type RegionPeer struct {
+	ID        int64 `json:"id"`
+	StoreID   int64 `json:"store_id"`
+	IsLearner bool  `json:"is_learner"`
+}
+
+type RegionEpoch struct {
+	ConfVer int64 `json:"conf_ver"`
+	Version int64 `json:"version"`
+}
+
+type RegionPeerStat struct {
+	RegionPeer
+	DownSec int64 `json:"down_seconds"`
+}
+
+type RegionInfo struct {
+	ID              int64            `json:"id"`
+	StartKey        string           `json:"start_key"`
+	EndKey          string           `json:"end_key"`
+	Epoch           RegionEpoch      `json:"epoch"`
+	Peers           []RegionPeer     `json:"peers"`
+	Leader          RegionPeer       `json:"leader"`
+	DownPeers       []RegionPeerStat `json:"down_peers"`
+	PendingPeers    []RegionPeer     `json:"pending_peers"`
+	WrittenBytes    int64            `json:"written_bytes"`
+	ReadBytes       int64            `json:"read_bytes"`
+	ApproximateSize int64            `json:"approximate_size"`
+	ApproximateKeys int64            `json:"approximate_keys"`
+}
+
+type RegionsInfo struct {
+	Count   int64        `json:"count"`
+	Regions []RegionInfo `json:"regions"`
+}
+
+func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
+	etcd, ok := h.Store.(tikv.EtcdBackend)
+	if !ok {
+		return nil, errors.WithStack(errors.New("not implemented"))
+	}
+	pdHosts := etcd.EtcdAddrs()
+	if len(pdHosts) == 0 {
+		return nil, errors.New("pd unavailable")
+	}
+	req, err := http.NewRequest("GET", protocol+pdHosts[0]+pdapi.Regions, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	timeout, cancelFunc := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
+	cancelFunc()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
+		}
+	}()
+	var regionsInfo RegionsInfo
+	err = json.NewDecoder(resp.Body).Decode(&regionsInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &regionsInfo, nil
 }
