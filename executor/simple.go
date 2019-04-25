@@ -630,7 +630,8 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 		h = e.ctx.GetSessionVars().User.AuthHostname
 	} else {
 		checker := privilege.GetPrivilegeManager(e.ctx)
-		if checker != nil && !checker.RequestVerification("", "", "", mysql.SuperPriv) {
+		activeRoles := e.ctx.GetSessionVars().ActiveRoles
+		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			return ErrDBaccessDenied.GenWithStackByArgs(u, h, "mysql")
 		}
 		u = s.User.Username
