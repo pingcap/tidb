@@ -69,14 +69,15 @@ func (ca twoPhaseCommitAction) MetricsTag() string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store     *tikvStore
-	txn       *tikvTxn
-	startTS   uint64
-	keys      [][]byte
-	mutations map[string]*mutationEx
-	lockTTL   uint64
-	commitTS  uint64
-	mu        struct {
+	store      *tikvStore
+	txn        *tikvTxn
+	startTS    uint64
+	keys       [][]byte
+	primaryIdx uint64
+	mutations  map[string]*mutationEx
+	lockTTL    uint64
+	commitTS   uint64
+	mu         struct {
 		sync.RWMutex
 		committed       bool
 		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
@@ -214,11 +215,22 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: len(keys)}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
+
+	// Choose the shortest key as primary key
+	var primaryIdx uint64 = 0
+	shortestLen := len(keys[0])
+	for i := 1; i < len(keys); i++ {
+		if len(keys[i]) < shortestLen {
+			primaryIdx = uint64(i)
+			shortestLen = len(keys[i])
+		}
+	}
 	return &twoPhaseCommitter{
 		store:         txn.store,
 		txn:           txn,
 		startTS:       txn.StartTS(),
 		keys:          keys,
+		primaryIdx:    primaryIdx,
 		mutations:     mutations,
 		lockTTL:       txnLockTTL(txn.startTime, size),
 		priority:      getTxnPriority(txn),
@@ -230,7 +242,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 }
 
 func (c *twoPhaseCommitter) primary() []byte {
-	return c.keys[0]
+	return c.keys[c.primaryIdx]
 }
 
 const bytesPerMiB = 1024 * 1024
