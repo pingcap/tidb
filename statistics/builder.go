@@ -192,7 +192,7 @@ func BuildColumnWithSamples(ctx sessionctx.Context, numBuckets, id int64, collec
 	for _, sample := range collector.Samples {
 		bytes, err := sample.Value.ToBytes()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		samplesBytes = append(samplesBytes, bytes)
 	}

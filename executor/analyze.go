@@ -913,14 +913,15 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	collector.Count = int64(e.sampCursor)
 	data := make([][]byte, 0, len(collector.Samples))
 	for _, sample := range collector.Samples {
+		if sample.Value.IsNull() {
+			collector.NullCount++
+			continue
+		}
 		bytes, err := sample.Value.ToBytes()
 		if err != nil {
 			return nil, err
 		}
 		data = append(data, bytes)
-		if sample.Value.IsNull() {
-			collector.NullCount++
-		}
 	}
 	rowCount := mathutil.MinInt64(domain.GetDomain(e.ctx).StatsHandle().GetTableStats(e.tblInfo).Count, int64(e.rowCount))
 	// build CMSketch
@@ -928,7 +929,7 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	// build Histogram
 	hist, err := statistics.BuildColumnWithSamples(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, rowCount)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return hist, nil
 }
