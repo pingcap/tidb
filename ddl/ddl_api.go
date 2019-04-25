@@ -1363,10 +1363,7 @@ func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *as
 	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
 		return err
 	}
-	if err := checkPartitionFuncType(ctx, s, nil, tbInfo); err != nil {
-		return err
-	}
-	return nil
+	return checkPartitionFuncType(ctx, s, nil, tbInfo)
 }
 
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
@@ -1390,10 +1387,7 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 		return err
 	}
 
-	if err := checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
-		return err
-	}
-	return nil
+	return checkPartitionFuncType(ctx, s, cols, tbInfo)
 }
 
 func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt) error {
