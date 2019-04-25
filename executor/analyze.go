@@ -634,12 +634,12 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 	}
 }
 
-// buildSampTask return tow variable, the first bool is whether the task meeting region error
+// buildSampTask returns tow variables, the first bool is whether the task meets region error
 // and need to rebuild.
 func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
 	bo := tikv.NewBackoffer(context.Background(), 500)
-	atomic.StoreUint64(&e.rowCount, 0)
+	e.rowCount = 0
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
 	sampTasksForRoutine := make([][]*AnalyzeFastTask, e.concurrency)
@@ -917,7 +917,7 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 			collector.NullCount++
 			continue
 		}
-		bytes, err := sample.Value.ToBytes()
+		bytes, err := tablecodec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, sample.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -925,9 +925,10 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	}
 	rowCount := mathutil.MinInt64(domain.GetDomain(e.ctx).StatsHandle().GetTableStats(e.tblInfo).Count, int64(e.rowCount))
 	// build CMSketch
-	collector.CMSketch = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, uint32(e.sampCursor), uint64(rowCount))
+	var ndv, scaleRatio uint64
+	collector.CMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, uint32(len(data)), uint64(rowCount))
 	// build Histogram
-	hist, err := statistics.BuildColumnWithSamples(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, rowCount)
+	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, rowCount, int64(ndv), int64(scaleRatio))
 	if err != nil {
 		return nil, err
 	}

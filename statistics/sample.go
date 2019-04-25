@@ -17,7 +17,6 @@ import (
 	"context"
 	"math/rand"
 	"sort"
-	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -178,11 +177,7 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 func (c *SampleCollector) CalcTotalSize() error {
 	c.TotalSize = 0
 	for _, item := range c.Samples {
-		str, err := item.Value.ToString()
-		if err != nil {
-			return err
-		}
-		c.TotalSize += int64(utf8.RuneCountInString(str))
+		c.TotalSize += int64(len(item.Value.GetBytes()))
 	}
 	return nil
 }

@@ -93,7 +93,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 	return nil
 }
 
-// buildColumnHist build a histogram for a table.
+// BuildColumnHist build a histogram for a column.
 // numBuckets: number of buckets for the histogram.
 // id: the id of the table.
 // collector: the collector of samples.
@@ -101,7 +101,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 // count: represents the row count for the column.
 // ndv: represents the number of distinct values for the column.
 // nullCount: represents the number of null values for the column.
-func buildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
+func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
 	if ndv > count {
 		ndv = count
 	}
@@ -182,21 +182,5 @@ func buildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 
 // BuildColumn builds histogram from samples for column.
 func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
-	return buildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
-}
-
-// BuildColumnWithSamples builds histogram from samples for column.
-// It was used in that collector.Count is not the entire count but the sample count.
-func BuildColumnWithSamples(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64) (*Histogram, error) {
-	samplesBytes := make([][]byte, 0, len(collector.Samples))
-	for _, sample := range collector.Samples {
-		bytes, err := sample.Value.ToBytes()
-		if err != nil {
-			return nil, err
-		}
-		samplesBytes = append(samplesBytes, bytes)
-	}
-	ndv, scaleRatio := calculateEstimateNDV(newTopNHelper(samplesBytes, 0), uint64(count))
-	nullCount := collector.NullCount * int64(scaleRatio)
-	return buildColumnHist(ctx, numBuckets, id, collector, tp, count, int64(ndv), nullCount)
+	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }
