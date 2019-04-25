@@ -160,12 +160,20 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 }
 
 // DBIsVisible implements the Manager interface.
-func (p *UserPrivileges) DBIsVisible(db string) bool {
+func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string) bool {
 	if SkipWithGrant {
 		return true
 	}
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.DBIsVisible(p.user, p.host, db)
+	if mysqlPriv.DBIsVisible(p.user, p.host, db) {
+		return true
+	}
+	for _, role := range activeRoles {
+		if mysqlPriv.DBIsVisible(role.Username, role.Hostname, db) {
+			return true
+		}
+	}
+	return false
 }
 
 // UserPrivilegesTable implements the Manager interface.

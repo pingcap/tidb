@@ -434,7 +434,7 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	mustExec(c, se1, "drop user 'r3@example.com'@'localhost'")
 }
 
-func (s *testPrivilegeSuite) TestUseDb(c *C) {
+func (s *testPrivilegeSuite) TestUseDB(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
 	// high privileged user
@@ -454,6 +454,21 @@ func (s *testPrivilegeSuite) TestUseDb(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "use mysql")
 	c.Assert(err, IsNil)
+
+	// test `use db` for role.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `CREATE DATABASE app_db`)
+	mustExec(c, se, `CREATE ROLE 'app_developer'`)
+	mustExec(c, se, `GRANT ALL ON app_db.* TO 'app_developer'`)
+	mustExec(c, se, `CREATE USER 'dev'@'localhost'`)
+	mustExec(c, se, `GRANT 'app_developer' TO 'dev'@'localhost'`)
+	mustExec(c, se, `SET DEFAULT ROLE 'app_developer' TO 'dev'@'localhost'`)
+	mustExec(c, se, `FLUSH PRIVILEGES`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "use app_db")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use mysql")
+	c.Assert(err, NotNil)
 }
 
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
