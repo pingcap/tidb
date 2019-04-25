@@ -154,10 +154,10 @@ type slowQueryTuple struct {
 	p90ProcessTime    float64
 	maxProcessTime    float64
 	maxProcessAddress string
-	AvgWaitTime       float64
-	P90WaitTime       float64
-	MaxWaitTime       float64
-	MaxWaitAddress    string
+	avgWaitTime       float64
+	p90WaitTime       float64
+	maxWaitTime       float64
+	maxWaitAddress    string
 	memMax            int64
 	sql               string
 }
@@ -264,21 +264,21 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		if err != nil {
 			return errors.AddStack(err)
 		}
-		st.AvgWaitTime = num
+		st.avgWaitTime = num
 	case variable.SlowLogCopWaitP90:
 		num, err := strconv.ParseFloat(value, 64)
 		if err != nil {
 			return errors.AddStack(err)
 		}
-		st.P90WaitTime = num
+		st.p90WaitTime = num
 	case variable.SlowLogCopWaitMax:
 		num, err := strconv.ParseFloat(value, 64)
 		if err != nil {
 			return errors.AddStack(err)
 		}
-		st.MaxWaitTime = num
+		st.maxWaitTime = num
 	case variable.SlowLogCopWaitAddr:
-		st.MaxWaitAddress = value
+		st.maxWaitAddress = value
 	case variable.SlowLogMemMax:
 		num, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
@@ -317,10 +317,10 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.p90ProcessTime))
 	record = append(record, types.NewFloat64Datum(st.maxProcessTime))
 	record = append(record, types.NewStringDatum(st.maxProcessAddress))
-	record = append(record, types.NewFloat64Datum(st.AvgWaitTime))
-	record = append(record, types.NewFloat64Datum(st.P90WaitTime))
-	record = append(record, types.NewFloat64Datum(st.MaxWaitTime))
-	record = append(record, types.NewStringDatum(st.MaxWaitAddress))
+	record = append(record, types.NewFloat64Datum(st.avgWaitTime))
+	record = append(record, types.NewFloat64Datum(st.p90WaitTime))
+	record = append(record, types.NewFloat64Datum(st.maxWaitTime))
+	record = append(record, types.NewStringDatum(st.maxWaitAddress))
 	record = append(record, types.NewIntDatum(st.memMax))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
