@@ -14,8 +14,6 @@
 package statistics
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -95,6 +93,14 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 	return nil
 }
 
+// buildColumnHist build a histogram for a table.
+// numBuckets: number of buckets for the histogram.
+// id: the id of the table.
+// collector: the collector of samples.
+// tp: the FieldType for the column.
+// count: represents the row count for the column.
+// ndv: represents the number of distinct values for the column.
+// nullCount: represents the number of null values for the column.
 func buildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
 	if ndv > count {
 		ndv = count
@@ -184,13 +190,13 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 func BuildColumnWithSamples(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64) (*Histogram, error) {
 	samplesBytes := make([][]byte, 0, len(collector.Samples))
 	for _, sample := range collector.Samples {
-		str, err := sample.Value.ToString()
+		bytes, err := sample.Value.ToBytes()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		samplesBytes = append(samplesBytes, []byte(str))
+		samplesBytes = append(samplesBytes, bytes)
 	}
-	ndv, _ := calculateEstimateNDV(newTopNHelper(samplesBytes, 0), uint64(count))
-	nullCount := collector.NullCount * int64(math.Round(float64(count)/float64(collector.Count)))
+	ndv, scaleRatio := calculateEstimateNDV(newTopNHelper(samplesBytes, 0), uint64(count))
+	nullCount := collector.NullCount * int64(scaleRatio)
 	return buildColumnHist(ctx, numBuckets, id, collector, tp, count, int64(ndv), nullCount)
 }

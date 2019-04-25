@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/parser/model"
@@ -907,18 +906,18 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollector, tp *types.FieldType) (*statistics.Histogram, error) {
 	// build collector properties.
 	collector.Samples = collector.Samples[:e.sampCursor]
-	err := collector.UpdateTotalSize()
+	err := collector.CalcTotalSize()
 	if err != nil {
 		return nil, err
 	}
 	collector.Count = int64(e.sampCursor)
 	data := make([][]byte, 0, len(collector.Samples))
 	for _, sample := range collector.Samples {
-		bytes, err := sample.Value.ToString()
+		bytes, err := sample.Value.ToBytes()
 		if err != nil {
 			return nil, err
 		}
-		data = append(data, []byte(bytes))
+		data = append(data, bytes)
 		if sample.Value.IsNull() {
 			collector.NullCount++
 		}

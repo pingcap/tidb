@@ -174,8 +174,8 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 	return nil
 }
 
-// UpdateTotalSize is to calculate total size based on samples.
-func (c *SampleCollector) UpdateTotalSize() error {
+// CalcTotalSize is to calculate total size based on samples.
+func (c *SampleCollector) CalcTotalSize() error {
 	c.TotalSize = 0
 	for _, item := range c.Samples {
 		str, err := item.Value.ToString()
