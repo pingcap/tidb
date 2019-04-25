@@ -26,6 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// SplitIndexRegionExec represents a split index regions executor.
 type SplitIndexRegionExec struct {
 	baseExecutor
 
@@ -39,6 +40,7 @@ type splitableStore interface {
 	WaitScatterRegionFinish(regionID uint64) error
 }
 
+// Next implements the Executor Next interface.
 func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) error {
 	store := e.ctx.GetStore()
 	s, ok := store.(splitableStore)
