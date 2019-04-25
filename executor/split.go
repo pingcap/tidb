@@ -55,7 +55,10 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 
 		regionID, err := s.SplitRegionAndScatter(idxKey)
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("split table index region failed", zap.String("table", e.table.Meta().Name.L), zap.String("index", e.indexInfo.Name.L), zap.Error(err))
+			logutil.Logger(context.Background()).Warn("split table index region failed",
+				zap.String("table", e.table.Meta().Name.L),
+				zap.String("index", e.indexInfo.Name.L),
+				zap.Error(err))
 			continue
 		}
 		regionIDs = append(regionIDs, regionID)
@@ -64,7 +67,9 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 	for _, regionID := range regionIDs {
 		err := s.WaitScatterRegionFinish(regionID)
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
+			logutil.Logger(context.Background()).Warn("wait scatter region failed",
+				zap.Uint64("regionID", regionID),
+				zap.Error(err))
 		}
 	}
 	return nil
