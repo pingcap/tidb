@@ -167,11 +167,11 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 		// The first two tests produces almost same avg.
 		{
 			zipfFactor: 1.0000001,
-			avgError:   12,
+			avgError:   48,
 		},
 		{
 			zipfFactor: 1.1,
-			avgError:   12,
+			avgError:   48,
 		},
 		{
 			zipfFactor: 2,

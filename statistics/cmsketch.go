@@ -194,7 +194,7 @@ func (c *CMSketch) updateBytesWithDelta(bytes []byte, delta uint64) {
 }
 
 func (c *CMSketch) considerDefVal(cnt uint64) bool {
-	return cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)) && c.defaultValue > 0
+	return (cnt == 0 || (cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)))) && c.defaultValue > 0
 }
 
 // SetValueBytes sets value of d to count.
