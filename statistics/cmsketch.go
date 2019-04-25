@@ -132,7 +132,7 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64) (c *CMS
 			h1, h2 := murmur3.Sum128(data)
 			c.topN[h1] = append(c.topN[h1], topNMeta{h1, h2, data, scaledCount})
 		} else {
-			c.updateBytesWithDelta(data, scaledCount)
+			c.insertBytesByCount(data, scaledCount)
 		}
 	}
 	return
@@ -177,19 +177,19 @@ func (c *CMSketch) queryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
 
 // InsertBytes inserts the bytes value into the CM Sketch.
 func (c *CMSketch) InsertBytes(bytes []byte) {
-	c.updateBytesWithDelta(bytes, 1)
+	c.insertBytesByCount(bytes, 1)
 }
 
-// updateBytesWithDelta adds the bytes value into the CM Sketch by delta.
-func (c *CMSketch) updateBytesWithDelta(bytes []byte, delta uint64) {
+// updateBytesWithDelta adds the bytes value into the TopN (if value already in TopN) or CM Sketch by delta, this does not updates c.defaultValue.
+func (c *CMSketch) insertBytesByCount(bytes []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(bytes)
-	if c.updateTopNWithDelta(h1, h2, bytes, delta) {
+	if c.updateTopNWithDelta(h1, h2, bytes, count) {
 		return
 	}
-	c.count += delta
+	c.count += count
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
-		c.table[i][j] += uint32(delta)
+		c.table[i][j] += uint32(count)
 	}
 }
 
@@ -197,15 +197,18 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 	return (cnt == 0 || (cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)))) && c.defaultValue > 0
 }
 
-// setValueBytes sets value of d to count.
-func (c *CMSketch) setValueBytes(d []byte, count uint64) {
-	oriCount := c.QueryBytes(d)
-	deltaCount := count - oriCount
-	c.updateBytesWithDelta(d, deltaCount)
+// updateValueBytes updates value of d to count.
+func (c *CMSketch) updateValueBytes(d []byte, count uint64) {
+	h1, h2 := murmur3.Sum128(d)
+	if oriCount, ok := c.queryTopN(h1, h2, d); ok {
+		deltaCount := count - oriCount
+		c.updateTopNWithDelta(h1, h2, d, deltaCount)
+	}
+	c.setValue(h1, h2, count)
 }
 
-// setValue sets the count for value that hashed into (h1, h2).
-func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
+// setValue sets the count for value that hashed into (h1, h2), and update defaultValue if necessary.
+func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
 	oriCount := c.queryHashValue(h1, h2)
 	if c.considerDefVal(oriCount) {
 		// We should update c.defaultValue if we used c.defaultValue when getting the estimate count.
@@ -217,9 +220,9 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 		}
 	}
 
-	c.count += uint64(count) - oriCount
+	c.count += count - oriCount
 	// let it overflow naturally
-	deltaCount := count - uint32(oriCount)
+	deltaCount := uint32(count) - uint32(oriCount)
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		c.table[i][j] = c.table[i][j] + deltaCount
@@ -361,8 +364,8 @@ func DecodeCMSketch(data []byte, topNData [][]byte) (*CMSketch, error) {
 	if len(p.Rows) == 0 {
 		return nil, nil
 	}
-	// Sometimes, topNData mightcontains older top n elements when count of new top n is less than old top n.
-	if len(topNData) < len(p.TopN) {
+	// Sometimes, topNData might contains older top n elements when count of new top n is less than old top n.
+	if len(topNData) != len(p.TopN) {
 		return nil, errors.Trace(errors.New("length of topNData and p.TopN mismatch"))
 	}
 	for i, v := range p.TopN {
@@ -402,6 +405,9 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 			found := false
 			for _, val2 := range rc.topN[k] {
 				if val.h2 == val2.h2 && bytes.Equal(val.data, val2.data) {
+					if val.count != val2.count {
+						return false
+					}
 					found = true
 					break
 				}

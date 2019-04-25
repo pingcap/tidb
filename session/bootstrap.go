@@ -250,6 +250,9 @@ const (
 	)`
 
 	// CreateStatsTopNStoreTable stores topn data of a cmsketch with top n.
+	// It stores data of topn of stats_histograms(table_id, is_index, hist_id)
+	// value_id is the position this data lies in the TopN array of serialized CMSketch.
+	// content is the raw data, since a single column can be atmost 6MiB, we do not store other data.
 	CreateStatsTopNStoreTable = `CREATE TABLE if not exists mysql.stats_topnstore (
 		table_id bigint(64) NOT NULL,
 		is_index tinyint(2) NOT NULL,

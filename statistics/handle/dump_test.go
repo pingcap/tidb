@@ -151,11 +151,16 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	cmsBackup := cms.Copy()
 
 	h.SaveStatsToStorage(stat.PhysicalID, 0, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, 0)
+
+	stat = h.GetTableStats(tableInfo)
+	cmsFromStore := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
+	c.Check(cmsBackup.Equal(cmsFromStore), IsTrue)
+
 	jsonTable, err := h.DumpStatsToJSON("test", tableInfo)
 	c.Check(err, IsNil)
 	err = h.LoadStatsFromJSON(is, jsonTable)
 	c.Check(err, IsNil)
 	stat = h.GetTableStats(tableInfo)
-	cms2 := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
-	c.Check(cmsBackup.Equal(cms2), IsTrue)
+	cmsFromJSON := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
+	c.Check(cmsBackup.Equal(cmsFromJSON), IsTrue)
 }
