@@ -122,6 +122,11 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	if err != nil {
 		return
 	}
+	// delete top n data
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_topnstore where table_id = %d and hist_id = %d and is_index = %d", physicalID, histID, isIndex))
+	if err != nil {
+		return
+	}
 	// delete all buckets
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and hist_id = %d and is_index = %d", physicalID, histID, isIndex))
 	return

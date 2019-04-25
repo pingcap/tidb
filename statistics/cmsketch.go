@@ -197,8 +197,8 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 	return (cnt == 0 || (cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)))) && c.defaultValue > 0
 }
 
-// SetValueBytes sets value of d to count.
-func (c *CMSketch) SetValueBytes(d []byte, count uint64) {
+// setValueBytes sets value of d to count.
+func (c *CMSketch) setValueBytes(d []byte, count uint64) {
 	oriCount := c.QueryBytes(d)
 	deltaCount := count - oriCount
 	c.updateBytesWithDelta(d, deltaCount)

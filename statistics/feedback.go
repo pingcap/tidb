@@ -609,7 +609,7 @@ func UpdateCMSketch(c *CMSketch, eqFeedbacks []Feedback) *CMSketch {
 	}
 	newCMSketch := c.Copy()
 	for _, fb := range eqFeedbacks {
-		newCMSketch.SetValueBytes(fb.Lower.GetBytes(), uint64(fb.Count))
+		newCMSketch.setValueBytes(fb.Lower.GetBytes(), uint64(fb.Count))
 	}
 	return newCMSketch
 }
