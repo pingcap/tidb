@@ -839,12 +839,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 
 		if len(w.idxLookup.tblPlans) == 1 {
+			// table scan in double read can never has conditions according to convertToIndexScan.
 			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
-			tblScan, ok := w.idxLookup.tblPlans[0].(*plannercore.PhysicalTableScan)
-			if ok && tblScan.NoCondition() {
-				return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
-					w.idxLookup.index.Name.O, handleCnt, len(task.rows))
-			}
+			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
+				w.idxLookup.index.Name.O, handleCnt, len(task.rows))
 		}
 	}
 
