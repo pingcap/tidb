@@ -231,7 +231,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 }
 
 func (c *twoPhaseCommitter) primary() []byte {
-	return c.keys[len(c.keys)]
+	return c.keys[len(c.keys)-1]
 }
 
 const bytesPerMiB = 1024 * 1024
