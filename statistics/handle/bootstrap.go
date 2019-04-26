@@ -103,20 +103,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables Stat
 			if idxInfo == nil {
 				continue
 			}
-			selSQL2 := fmt.Sprintf("select HIGH_PRIORITY value_id, content from mysql.stats_topnstore where table_id = %d and is_index = %d and hist_id = %d", row.GetInt64(0), row.GetInt64(1), row.GetInt64(2))
-			topnrows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL2)
-			if err != nil {
-				continue
-			}
-			topn := make([][]byte, len(topnrows))
-			for i := range topnrows {
-				p := topnrows[i].GetInt64(0)
-				if p > int64(len(topnrows)) {
-					continue
-				}
-				topn[p] = topnrows[i].GetBytes(1)
-			}
-			cms, err := statistics.DecodeCMSketch(row.GetBytes(6), topn)
+			cms, err := statistics.LoadCMSketchWithTopN(h.restrictedExec, row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetBytes(6))
 			if err != nil {
 				cms = nil
 				terror.Log(errors.Trace(err))

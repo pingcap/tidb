@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sort"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
 )
@@ -350,8 +352,8 @@ func EncodeCMSketch(c *CMSketch) ([]byte, [][]byte, error) {
 	return protoData, topNData, nil
 }
 
-// DecodeCMSketch decode a CMSketch from the given byte slice.
-func DecodeCMSketch(data []byte, topNData [][]byte) (*CMSketch, error) {
+// decodeCMSketch decode a CMSketch from the given byte slice.
+func decodeCMSketch(data []byte, topNData [][]byte) (*CMSketch, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -367,6 +369,24 @@ func DecodeCMSketch(data []byte, topNData [][]byte) (*CMSketch, error) {
 		v.Data = topNData[i]
 	}
 	return CMSketchFromProto(p), nil
+}
+
+// LoadCMSketchWithTopN loads the CM sketch with topN from storage.
+func LoadCMSketchWithTopN(exec sqlexec.RestrictedSQLExecutor, tableID, isIndex, histID int64, cms []byte) (*CMSketch, error) {
+	sql := fmt.Sprintf("select HIGH_PRIORITY value_id, content from mysql.stats_topnstore where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, histID)
+	topNRows, _, err := exec.ExecRestrictedSQL(nil, sql)
+	if err != nil {
+		return nil, err
+	}
+	topN := make([][]byte, len(topNRows))
+	for i := range topNRows {
+		p := topNRows[i].GetInt64(0)
+		if p > int64(len(topNRows)) {
+			continue
+		}
+		topN[p] = topNRows[i].GetBytes(1)
+	}
+	return decodeCMSketch(cms, topN)
 }
 
 // TotalCount returns the count, it is only used for test.

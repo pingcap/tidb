@@ -325,20 +325,7 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*stati
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	selSQL2 := fmt.Sprintf("select value_id, content from mysql.stats_topnstore where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
-	topnrows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL2)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	topn := make([][]byte, len(topnrows))
-	for i := range topnrows {
-		p := topnrows[i].GetInt64(0)
-		if p > int64(len(topnrows)) {
-			continue
-		}
-		topn[p] = topnrows[i].GetBytes(1)
-	}
-	return statistics.DecodeCMSketch(rows[0].GetBytes(0), topn)
+	return statistics.LoadCMSketchWithTopN(h.restrictedExec, tblID, isIndex, histID, rows[0].GetBytes(0))
 }
 
 func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {

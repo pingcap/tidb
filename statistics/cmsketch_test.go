@@ -153,7 +153,7 @@ func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(topn), Equals, 0)
 	c.Assert(len(bytes), Equals, 61457)
-	rSketch, err := DecodeCMSketch(bytes, topn)
+	rSketch, err := decodeCMSketch(bytes, topn)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }
@@ -235,7 +235,7 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(topn), Equals, 20)
 	c.Assert(len(bytes), Equals, 61717)
-	rSketch, err := DecodeCMSketch(bytes, topn)
+	rSketch, err := decodeCMSketch(bytes, topn)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }
