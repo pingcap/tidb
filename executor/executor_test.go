@@ -29,6 +29,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
@@ -66,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/debugger"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -1853,7 +1855,8 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
-		"select * from help_topic where name='aaa'":         true,
+		"select * from help_topic where name='aaa'":         false,
+		"select 1 from help_topic where name='aaa'":         true,
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
@@ -1870,6 +1873,31 @@ func (s *testSuite) TestIsPointGet(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, result)
 	}
+}
+
+func (s *testSuite) TestPointGetRepeatableRead(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest", `return(true)`), IsNil)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec(`create table point_get (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into point_get values (1, 1, 1)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	go func() {
+		result := tk1.MustQuery("select c from point_get where b = 1")
+		result.Check(testkit.Rows("1"))
+	}()
+
+	label := debugger.Bind("point-get-g2")
+	debugger.Continue("point-get-g1")
+	debugger.Break(label)
+	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
+	debugger.Continue("point-get-g1")
+
+	failpoint.Diable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest", `return(false)`)
 }
 
 func (s *testSuite) TestRow(c *C) {
