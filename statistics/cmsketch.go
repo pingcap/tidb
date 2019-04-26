@@ -45,7 +45,6 @@ type CMSketch struct {
 
 // topNMeta is a simple counter used by BuildTopN
 type topNMeta struct {
-	h1    uint64
 	h2    uint64
 	data  []byte
 	count uint64
@@ -130,7 +129,7 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64) (c *CMS
 		data, scaledCount := hack.Slice(string(counterKey)), cnt*scaleRatio
 		if enableTopN && cnt >= helper.lastVal {
 			h1, h2 := murmur3.Sum128(data)
-			c.topN[h1] = append(c.topN[h1], topNMeta{h1, h2, data, scaledCount})
+			c.topN[h1] = append(c.topN[h1], topNMeta{h2, data, scaledCount})
 		} else {
 			c.insertBytesByCount(data, scaledCount)
 		}
@@ -328,7 +327,7 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 	c.topN = make(map[uint64][]topNMeta)
 	for _, e := range protoSketch.TopN {
 		h1, h2 := murmur3.Sum128(e.Data)
-		c.topN[h1] = append(c.topN[h1], topNMeta{h1, h2, e.Data, e.Count})
+		c.topN[h1] = append(c.topN[h1], topNMeta{h2, e.Data, e.Count})
 	}
 	return c
 }
@@ -364,10 +363,6 @@ func DecodeCMSketch(data []byte, topNData [][]byte) (*CMSketch, error) {
 	if len(p.Rows) == 0 {
 		return nil, nil
 	}
-	// Sometimes, topNData might contains older top n elements when count of new top n is less than old top n.
-	if len(topNData) != len(p.TopN) {
-		return nil, errors.Trace(errors.New("length of topNData and p.TopN mismatch"))
-	}
 	for i, v := range p.TopN {
 		v.Data = topNData[i]
 	}
@@ -397,13 +392,13 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 	if len(c.topN) != len(rc.topN) {
 		return false
 	}
-	for k, topNData := range c.topN {
-		if len(topNData) != len(rc.topN[k]) {
+	for h1, topNData := range c.topN {
+		if len(topNData) != len(rc.topN[h1]) {
 			return false
 		}
 		for _, val := range topNData {
 			found := false
-			for _, val2 := range rc.topN[k] {
+			for _, val2 := range rc.topN[h1] {
 				if val.h2 == val2.h2 && bytes.Equal(val.data, val2.data) {
 					if val.count != val2.count {
 						return false
@@ -433,14 +428,14 @@ func (c *CMSketch) Copy() *CMSketch {
 	var topN map[uint64][]topNMeta
 	if c.topN != nil {
 		topN = make(map[uint64][]topNMeta)
-		for k, vals := range c.topN {
+		for h1, vals := range c.topN {
 			newVals := make([]topNMeta, 0, len(vals))
 			for _, val := range vals {
-				newVal := topNMeta{h1: val.h1, h2: val.h2, count: val.count, data: make([]byte, len(val.data))}
+				newVal := topNMeta{h2: val.h2, count: val.count, data: make([]byte, len(val.data))}
 				copy(newVal.data, val.data)
 				newVals = append(newVals, val)
 			}
-			topN[k] = newVals
+			topN[h1] = newVals
 		}
 	}
 	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, defaultValue: c.defaultValue, topN: topN}

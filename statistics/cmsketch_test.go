@@ -228,7 +228,7 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 	for i := 0; i < 20; i++ {
 		tString := []byte(fmt.Sprintf("%20000d", i))
 		h1, h2 := murmur3.Sum128(tString)
-		lSketch.topN[h1] = []topNMeta{{h1, h2, tString, math.MaxUint64}}
+		lSketch.topN[h1] = []topNMeta{{h2, tString, math.MaxUint64}}
 	}
 
 	bytes, topn, err := EncodeCMSketch(lSketch)
