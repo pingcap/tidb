@@ -93,7 +93,7 @@ func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, e
 
 		if startFlag {
 			// Parse slow log field.
-			if strings.Contains(line, variable.SlowLogPrefixStr) {
+			if strings.HasPrefix(line, variable.SlowLogPrefixStr) {
 				line = line[len(variable.SlowLogPrefixStr):]
 				fieldValues := strings.Split(line, " ")
 				for i := 0; i < len(fieldValues)-1; i += 2 {
