@@ -69,15 +69,14 @@ func (ca twoPhaseCommitAction) MetricsTag() string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store      *tikvStore
-	txn        *tikvTxn
-	startTS    uint64
-	keys       [][]byte
-	primaryIdx uint64
-	mutations  map[string]*mutationEx
-	lockTTL    uint64
-	commitTS   uint64
-	mu         struct {
+	store     *tikvStore
+	txn       *tikvTxn
+	startTS   uint64
+	keys      [][]byte
+	mutations map[string]*mutationEx
+	lockTTL   uint64
+	commitTS  uint64
+	mu        struct {
 		sync.RWMutex
 		committed       bool
 		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
