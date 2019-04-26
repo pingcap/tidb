@@ -216,21 +216,11 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
 
-	// Choose the shortest key as primary key
-	var primaryIdx uint64 = 0
-	shortestLen := len(keys[0])
-	for i := 1; i < len(keys); i++ {
-		if len(keys[i]) < shortestLen {
-			primaryIdx = uint64(i)
-			shortestLen = len(keys[i])
-		}
-	}
 	return &twoPhaseCommitter{
 		store:         txn.store,
 		txn:           txn,
 		startTS:       txn.StartTS(),
 		keys:          keys,
-		primaryIdx:    primaryIdx,
 		mutations:     mutations,
 		lockTTL:       txnLockTTL(txn.startTime, size),
 		priority:      getTxnPriority(txn),
@@ -242,7 +232,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 }
 
 func (c *twoPhaseCommitter) primary() []byte {
-	return c.keys[c.primaryIdx]
+	return c.keys[len(c.keys)]
 }
 
 const bytesPerMiB = 1024 * 1024
@@ -278,7 +268,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if len(keys) == 0 {
 		return nil
 	}
-	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys)
+	groups, lastRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -292,20 +282,21 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
 	}
 	// Make sure the group that contains primary key goes first.
-	batches = appendBatchBySize(batches, firstRegion, groups[firstRegion], sizeFunc, txnCommitBatchSize)
-	delete(groups, firstRegion)
+	lastRegionKeys := groups[lastRegion]
+	delete(groups, lastRegion)
 	for id, g := range groups {
 		batches = appendBatchBySize(batches, id, g, sizeFunc, txnCommitBatchSize)
 	}
+	batches = appendBatchBySize(batches, lastRegion, lastRegionKeys, sizeFunc, txnCommitBatchSize)
 
-	firstIsPrimary := bytes.Equal(keys[0], c.primary())
-	if firstIsPrimary && (action == actionCommit || action == actionCleanup) {
+	lastIsPrimary := bytes.Equal(keys[len(keys)-1], c.primary())
+	if lastIsPrimary && (action == actionCommit || action == actionCleanup) {
 		// primary should be committed/cleanup first
-		err = c.doActionOnBatches(bo, action, batches[:1])
+		err = c.doActionOnBatches(bo, action, batches[len(batches)-1:])
 		if err != nil {
 			return errors.Trace(err)
 		}
-		batches = batches[1:]
+		batches = batches[:len(batches)-1]
 	}
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
