@@ -177,12 +177,11 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 }
 
 // CalcTotalSize is to calculate total size based on samples.
-func (c *SampleCollector) CalcTotalSize() error {
+func (c *SampleCollector) CalcTotalSize() {
 	c.TotalSize = 0
 	for _, item := range c.Samples {
 		c.TotalSize += int64(len(item.Value.GetBytes()))
 	}
-	return nil
 }
 
 // SampleBuilder is used to build samples for columns.

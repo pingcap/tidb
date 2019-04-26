@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/parser/model"
@@ -907,10 +906,7 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	// build collector properties.
 	collector.Samples = collector.Samples[:e.sampCursor]
 	sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].RowID < collector.Samples[j].RowID })
-	err := collector.CalcTotalSize()
-	if err != nil {
-		return nil, err
-	}
+	collector.CalcTotalSize()
 	data := make([][]byte, 0, len(collector.Samples))
 	for i, sample := range collector.Samples {
 		sample.Ordinal = i
@@ -924,7 +920,11 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 		}
 		data = append(data, bytes)
 	}
-	rowCount := mathutil.MinInt64(domain.GetDomain(e.ctx).StatsHandle().GetTableStats(e.tblInfo).Count, int64(e.rowCount))
+	stats := domain.GetDomain(e.ctx).StatsHandle()
+	rowCount := int64(e.rowCount)
+	if stats.Lease > 0 {
+		rowCount = stats.GetTableStats(e.tblInfo).Count
+	}
 	// build CMSketch
 	var ndv, scaleRatio uint64
 	collector.CMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, 20, uint64(rowCount))
