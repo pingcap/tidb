@@ -856,9 +856,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) error {
 }
 
 func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *error) {
-	defer func() {
-		e.wg.Done()
-	}()
+	defer e.wg.Done()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
 	rander := rand.New(rand.NewSource(e.randSeed + int64(workID)))
