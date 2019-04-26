@@ -1897,7 +1897,7 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
 	debugger.Continue("point-get-g1")
 
-	failpoint.Diable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest", `return(false)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest", `return(false)`), IsNil)
 }
 
 func (s *testSuite) TestRow(c *C) {
