@@ -1807,7 +1807,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// If newBase < autoIncID, we can't just return here, we still need to do rebase job.
+	// If newBase < autoIncID, we need to do a rebase before returning.
 	// If has 2 TiDB-server, TiDB-A: allocator range is: 0 ~ 30000, TiDB-B: allocator range is: 30001 ~ 60000,
 	// if user send SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and if TiDB-B just return here,
