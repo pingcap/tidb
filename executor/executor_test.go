@@ -1886,8 +1886,11 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 
+	ctx := context.WithValue(context.Background(), "pointGetRepeatableReadTest", true)
 	go func() {
-		result := tk1.MustQuery("select c from point_get where b = 1")
+		rs, err := tk1.Se.Execute(ctx, "select c from point_get where b = 1")
+		c.Assert(err, IsNil)
+		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
 		result.Check(testkit.Rows("1"))
 	}()
 
