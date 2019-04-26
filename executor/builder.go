@@ -1456,7 +1456,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) {
 	findTask := false
 	for _, eTask := range e.tasks {
-		if eTask.fastExec.PhysicalTableID == task.PhysicalTableID {
+		if eTask.fastExec.physicalTableID == task.PhysicalTableID {
 			eTask.fastExec.colsInfo = append(eTask.fastExec.colsInfo, task.ColsInfo...)
 			findTask = true
 			break
@@ -1472,13 +1472,14 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 			taskType: fastTask,
 			fastExec: &AnalyzeFastExec{
 				ctx:             b.ctx,
-				PhysicalTableID: task.PhysicalTableID,
+				physicalTableID: task.PhysicalTableID,
 				colsInfo:        task.ColsInfo,
 				pkInfo:          task.PKInfo,
 				maxNumBuckets:   maxNumBuckets,
-				table:           task.Table,
 				concurrency:     concurrency,
+				wg:              &sync.WaitGroup{},
 			},
+			job: &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "fast analyze columns"},
 		})
 	}
 }
@@ -1486,7 +1487,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, maxNumBuckets uint64) {
 	findTask := false
 	for _, eTask := range e.tasks {
-		if eTask.fastExec.PhysicalTableID == task.PhysicalTableID {
+		if eTask.fastExec.physicalTableID == task.PhysicalTableID {
 			eTask.fastExec.idxsInfo = append(eTask.fastExec.idxsInfo, task.IndexInfo)
 			findTask = true
 			break
@@ -1502,12 +1503,13 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 			taskType: fastTask,
 			fastExec: &AnalyzeFastExec{
 				ctx:             b.ctx,
-				PhysicalTableID: task.PhysicalTableID,
+				physicalTableID: task.PhysicalTableID,
 				idxsInfo:        []*model.IndexInfo{task.IndexInfo},
 				maxNumBuckets:   maxNumBuckets,
-				table:           task.Table,
 				concurrency:     concurrency,
+				wg:              &sync.WaitGroup{},
 			},
+			job: &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: "fast analyze index " + task.IndexInfo.Name.O},
 		})
 	}
 }
@@ -1516,6 +1518,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	e := &AnalyzeExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
+		wg:           &sync.WaitGroup{},
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""

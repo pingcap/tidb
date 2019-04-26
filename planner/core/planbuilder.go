@@ -806,13 +806,9 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 		if err != nil {
 			return nil, err
 		}
-		table, ok := b.is.TableByID(tbl.TableInfo.ID)
-		if !ok {
-			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tbl.TableInfo.Name.O)
-		}
 		for _, idx := range idxInfo {
 			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Table: table, Incremental: as.Incremental}
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 					IndexInfo:   idx,
 					analyzeInfo: info,
@@ -821,7 +817,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
 			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Table: table, Incremental: as.Incremental}
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
 					PKInfo:      pkInfo,
 					ColsInfo:    colInfo,
