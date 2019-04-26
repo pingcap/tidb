@@ -1600,12 +1600,6 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitIndexRegionStmt) (Pla
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 
-	tps := make([]*types.FieldType, 0, len(indexInfo.Columns))
-	for _, c := range indexInfo.Columns {
-		col := tblInfo.Columns[c.Offset]
-		tps = append(tps, &col.FieldType)
-	}
-
 	indexValues := make([][]types.Datum, 0, len(node.ValueLists))
 	for i, valuesItem := range node.ValueLists {
 		if len(valuesItem) > len(indexInfo.Columns) {
@@ -1617,7 +1611,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitIndexRegionStmt) (Pla
 			if !ok {
 				return nil, errors.Trace(errors.New("expect constant values"))
 			}
-			value, err := x.Datum.ConvertTo(b.ctx.GetSessionVars().StmtCtx, tps[j])
+			value, err := x.Datum.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[indexInfo.Columns[j].Offset].FieldType)
 			if err != nil {
 				return nil, err
 			}
