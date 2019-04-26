@@ -1808,7 +1808,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		return errors.Trace(err)
 	}
 	// If newBase < autoIncID, we need to do a rebase before returning.
-	// If has 2 TiDB-server, TiDB-A: allocator range is: 0 ~ 30000, TiDB-B: allocator range is: 30001 ~ 60000,
+	// Assume there are 2 TiDB servers: TiDB-A with allocator range of 0 ~ 30000; TiDB-B with allocator range of 30001 ~ 60000.
 	// if user send SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and if TiDB-B just return here,
 	// then TiDB-A maybe allocate 99 for auto_increment column, this is not reasonable for the user.
