@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/parser/model"
@@ -923,7 +924,7 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	stats := domain.GetDomain(e.ctx).StatsHandle()
 	rowCount := int64(e.rowCount)
 	if stats.Lease > 0 {
-		rowCount = stats.GetTableStats(e.tblInfo).Count
+		rowCount = mathutil.MinInt64(stats.GetTableStats(e.tblInfo).Count, rowCount)
 	}
 	// build CMSketch
 	var ndv, scaleRatio uint64
