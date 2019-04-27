@@ -792,7 +792,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 	}
 
 	duration := 3 * time.Second
-	do.wg.Add(1)
+	do.wg.Add(2)
 	go func() {
 		defer do.wg.Done()
 		defer recoverInDomain("loadBindInfoLoop", false)
@@ -806,6 +806,20 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 			if err != nil {
 				logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
 			}
+		}
+	}()
+
+	handleInvaildTaskDuration := 3 * time.Second
+	go func() {
+		defer do.wg.Done()
+		defer recoverInDomain("loadBindInfoLoop-dropInvalidBindInfo", false)
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-time.After(handleInvaildTaskDuration):
+			}
+			do.bindHandle.HandleDropBindRecord()
 		}
 	}()
 	return nil

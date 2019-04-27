@@ -48,13 +48,12 @@ func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *bind
 	if err != nil {
 		return "", nil, err
 	}
-	meta = &bindMeta{BindRecord: record, ast: stmtNodes[0]}
+	meta = &bindMeta{BindRecord: record, Ast: stmtNodes[0]}
 	return hash, meta, nil
 }
 
 // AddBindRecord new a BindRecord with bindMeta, add it to the cache.
 func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
-	record.Status = using
 	record.CreateTime = types.Time{
 		Time: types.FromGoTime(time.Now()),
 		Type: mysql.TypeDatetime,
@@ -82,6 +81,17 @@ func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *bindMeta {
 		}
 	}
 	return nil
+}
+
+// DropBindRecord remove the bindRecord from session cache.
+func (h *SessionHandle) DropBindRecord(normdOrigSQL, db string) {
+	hash := parser.DigestHash(normdOrigSQL)
+	record := &BindRecord{
+		OriginalSQL: normdOrigSQL,
+		Db:          db,
+	}
+	meta := &bindMeta{BindRecord: record}
+	h.ch.removeDeletedBindMeta(hash, meta)
 }
 
 // sessionBindInfoKeyType is a dummy type to avoid naming collision in context.

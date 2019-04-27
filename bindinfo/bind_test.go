@@ -257,3 +257,159 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
 }
+
+func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+
+	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
+		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"│ └─TableReader_10 9990.00 root data:Selection_9",
+		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"  └─TableReader_14 9990.00 root data:Selection_13",
+		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+
+	tk.MustQuery("explain SELECT  /*+ TIDB_INLJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+		"HashLeftJoin_7 12487.50 root inner join, inner:TableReader_14, equal:[eq(test.t1.id, test.t2.id)]",
+		"├─TableReader_11 9990.00 root data:Selection_10",
+		"│ └─Selection_10 9990.00 cop not(isnull(test.t1.id))",
+		"│   └─TableScan_9 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_14 9990.00 root data:Selection_13",
+		"  └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"    └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+
+	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
+		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"│ └─TableReader_10 9990.00 root data:Selection_9",
+		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"  └─TableReader_14 9990.00 root data:Selection_13",
+		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+}
+
+func (s *testSuite) TestComplexSqlBinding(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+	tk.MustExec("create index index_t1 on t1(id)")
+	tk.MustExec("create index index_t1 on t2(id)")
+
+	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+		"MergeJoin_8 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
+		"├─IndexReader_20 9990.00 root index:IndexScan_19",
+		"│ └─IndexScan_19 9990.00 cop table:t1, index:id, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"└─IndexReader_22 9990.00 root index:IndexScan_21",
+		"  └─IndexScan_21 9990.00 cop table:t2, index:id, range:[-inf,+inf], keep order:true, stats:pseudo",
+	))
+
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using select * from t1 use index(index_t1), t2 use index(index_t2) where t1.id = t2.id")
+
+	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+		"MergeJoin_8 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
+		"├─IndexReader_20 9990.00 root index:IndexScan_19",
+		"│ └─IndexScan_19 9990.00 cop table:t1, index:id, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"└─IndexReader_22 9990.00 root index:IndexScan_21",
+		"  └─IndexScan_21 9990.00 cop table:t2, index:id, range:[-inf,+inf], keep order:true, stats:pseudo",
+	))
+
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+}
+
+func (s *testSuite) TestExplain(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+
+	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
+		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"│ └─TableReader_10 9990.00 root data:Selection_9",
+		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"  └─TableReader_14 9990.00 root data:Selection_13",
+		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+
+	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
+		"├─Sort_11 9990.00 root test.t1.id:asc",
+		"│ └─TableReader_10 9990.00 root data:Selection_9",
+		"│   └─Selection_9 9990.00 cop not(isnull(test.t1.id))",
+		"│     └─TableScan_8 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─Sort_15 9990.00 root test.t2.id:asc",
+		"  └─TableReader_14 9990.00 root data:Selection_13",
+		"    └─Selection_13 9990.00 cop not(isnull(test.t2.id))",
+		"      └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+}
+
+func (s *testSuite) TestErrorBind(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(i int, s varchar(20))")
+	tk.MustExec("create table t1(i int, s varchar(20))")
+	tk.MustExec("create index index_t on t(i,s)")
+
+	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
+	c.Assert(err, IsNil, Commentf("err %v", err))
+
+	bindData := s.domain.BindHandle().GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
+	c.Check(bindData.BindSQL, Equals, "select * from t use index(index_t) where i>100")
+	c.Check(bindData.Db, Equals, "test")
+	c.Check(bindData.Status, Equals, "using")
+	c.Check(bindData.Charset, NotNil)
+	c.Check(bindData.Collation, NotNil)
+	c.Check(bindData.CreateTime, NotNil)
+	c.Check(bindData.UpdateTime, NotNil)
+
+	tk.MustExec("drop index index_t on t")
+	_, err = tk.Exec("select * from t where i > 10")
+	c.Check(err, IsNil)
+
+	s.domain.BindHandle().HandleDropBindRecord()
+
+	rs, err := tk.Exec("show global bindings")
+	c.Assert(err, IsNil)
+	chk := rs.NewRecordBatch()
+	err = rs.Next(context.TODO(), chk)
+	c.Check(err, IsNil)
+	c.Check(chk.NumRows(), Equals, 0)
+}

@@ -20,6 +20,7 @@ import (
 	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
@@ -60,8 +61,18 @@ type BindHandle struct {
 		atomic.Value
 	}
 
+	dropBindRecordMap struct {
+		sync.Mutex
+		atomic.Value
+	}
+
 	parser         *parser.Parser
 	lastUpdateTime types.Time
+}
+
+type droppedBindRecord struct {
+	bindRecord  *BindRecord
+	droppedTime time.Time
 }
 
 // NewBindHandle creates a new BindHandle.
@@ -69,6 +80,7 @@ func NewBindHandle(ctx sessionctx.Context, parser *parser.Parser) *BindHandle {
 	handle := &BindHandle{parser: parser}
 	handle.sctx.Context = ctx
 	handle.bindInfo.Value.Store(make(cache, 32))
+	handle.dropBindRecordMap.Value.Store(make(map[string]*droppedBindRecord))
 	return handle
 }
 
@@ -106,7 +118,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		}
 
 		newCache.removeStaleBindMetas(hash, meta)
-		if meta.Status == using {
+		if meta.Status == Using {
 			newCache[hash] = append(newCache[hash], meta)
 		}
 	}
@@ -163,7 +175,7 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 		Fsp:  3,
 	}
 	record.UpdateTime = record.CreateTime
-	record.Status = using
+	record.Status = Using
 	record.BindSQL = h.getEscapeCharacter(record.BindSQL)
 
 	// insert the BindRecord to the storage.
@@ -217,6 +229,46 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 	return err
 }
 
+// HandleDropBindRecord execute the drop bindRecord task.
+func (h *BindHandle) HandleDropBindRecord() {
+	h.dropBindRecordMap.Lock()
+	dropBindRecordMap := copyDroppedBindRecordMap(h.dropBindRecordMap.Load().(map[string]*droppedBindRecord))
+	for key, droppedBindRecord := range dropBindRecordMap {
+		if droppedBindRecord.droppedTime.IsZero() {
+			err := h.DropBindRecord(droppedBindRecord.bindRecord)
+			if err != nil {
+				logutil.Logger(context.Background()).Error("handleDropBindRecord failed", zap.Error(err))
+			}
+			droppedBindRecord.droppedTime = time.Now()
+			continue
+		}
+
+		if time.Since(droppedBindRecord.droppedTime) > 6*time.Second {
+			delete(dropBindRecordMap, key)
+		}
+	}
+	h.dropBindRecordMap.Store(dropBindRecordMap)
+	h.dropBindRecordMap.Unlock()
+}
+
+// AddDropBindRecordTask add bindRecord to dropBindRecordMap when the bindRecord need to be deleted.
+func (h *BindHandle) AddDropBindRecordTask(dropBindRecord *BindRecord) {
+	key := dropBindRecord.OriginalSQL + ":" + dropBindRecord.Db
+	if _, ok := h.dropBindRecordMap.Value.Load().(map[string]*droppedBindRecord)[key]; ok {
+		return
+	}
+	h.dropBindRecordMap.Lock()
+	if _, ok := h.dropBindRecordMap.Value.Load().(map[string]*droppedBindRecord)[key]; ok {
+		return
+	}
+	newMap := copyDroppedBindRecordMap(h.dropBindRecordMap.Value.Load().(map[string]*droppedBindRecord))
+	newMap[key] = &droppedBindRecord{
+		bindRecord: dropBindRecord,
+	}
+	h.dropBindRecordMap.Store(newMap)
+	h.dropBindRecordMap.Unlock()
+}
+
 // Size return the size of bind info cache.
 func (h *BindHandle) Size() int {
 	size := 0
@@ -255,7 +307,7 @@ func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *bindMet
 	if err != nil {
 		return "", nil, err
 	}
-	meta = &bindMeta{BindRecord: record, ast: stmtNodes[0]}
+	meta = &bindMeta{BindRecord: record, Ast: stmtNodes[0]}
 	return hash, meta, nil
 }
 
@@ -335,6 +387,14 @@ func (c cache) copy() cache {
 		newCache[k] = v
 	}
 	return newCache
+}
+
+func copyDroppedBindRecordMap(oldMap map[string]*droppedBindRecord) map[string]*droppedBindRecord {
+	newMap := make(map[string]*droppedBindRecord, len(oldMap))
+	for k, v := range oldMap {
+		newMap[k] = v
+	}
+	return newMap
 }
 
 // isStale checks whether this bindMeta is stale compared with the other bindMeta.

@@ -997,8 +997,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sessionExecuteParseDurationGeneral.Observe(time.Since(startTS).Seconds())
 	}
 
+	var tempStmtNodes []ast.StmtNode
 	compiler := executor.Compiler{Ctx: s}
-	for _, stmtNode := range stmtNodes {
+	for idx, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -1009,11 +1010,19 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
-			s.rollbackOnError(ctx)
-			logutil.Logger(ctx).Warn("compile sql error",
-				zap.Error(err),
-				zap.String("sql", sql))
-			return nil, err
+			if tempStmtNodes == nil {
+				tempStmtNodes, _, _ = s.ParseSQL(ctx, sql, charsetInfo, collation)
+			}
+			stmtNode = tempStmtNodes[idx]
+			stmt, err = compiler.SkipBindCompile(ctx, stmtNode)
+			if err != nil {
+				s.rollbackOnError(ctx)
+				logutil.Logger(ctx).Warn("compile sql error",
+					zap.Error(err),
+					zap.String("sql", sql))
+				return nil, err
+			}
+			s.handleInValidBindRecord(ctx, stmtNode)
 		}
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(time.Since(startTS).Seconds())
@@ -1037,6 +1046,57 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	return recordSets, nil
+}
+
+func (s *session) handleInValidBindRecord(ctx context.Context, stmtNode ast.StmtNode) {
+	var stmt ast.StmtNode
+	switch x := stmtNode.(type) {
+	case *ast.ExplainStmt:
+		switch x.Stmt.(type) {
+		case *ast.SelectStmt:
+			x.Stmt.SetText(x.Text()[len("explain "):])
+			stmt = x.Stmt
+		}
+	case *ast.SelectStmt:
+		stmt = x
+	default:
+		return
+	}
+	normdOrigSQL := parser.Normalize(stmt.Text())
+	sessionHandle := s.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindMeta := sessionHandle.GetBindRecord(normdOrigSQL, s.GetSessionVars().CurrentDB)
+	if bindMeta != nil {
+		bindMeta.Status = bindinfo.Invalid
+		return
+	}
+
+	globalHandle := domain.GetDomain(s).BindHandle()
+	bindMeta = globalHandle.GetBindRecord(normdOrigSQL, s.GetSessionVars().CurrentDB)
+	if bindMeta == nil {
+		bindMeta = globalHandle.GetBindRecord(normdOrigSQL, "")
+	}
+	if bindMeta != nil {
+		record := &bindinfo.BindRecord{
+			OriginalSQL: bindMeta.OriginalSQL,
+			BindSQL:     bindMeta.BindSQL,
+			Db:          s.GetSessionVars().CurrentDB,
+			Charset:     bindMeta.Charset,
+			Collation:   bindMeta.Collation,
+			Status:      bindinfo.Invalid,
+		}
+
+		err := sessionHandle.AddBindRecord(record)
+		if err != nil {
+			logutil.Logger(ctx).Warn("handleInValidBindRecord failed", zap.Error(err))
+		}
+
+		globalHandle := domain.GetDomain(s).BindHandle()
+		dropBindRecord := &bindinfo.BindRecord{
+			OriginalSQL: bindMeta.OriginalSQL,
+			Db:          bindMeta.Db,
+		}
+		globalHandle.AddDropBindRecordTask(dropBindRecord)
+	}
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
