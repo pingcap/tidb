@@ -350,7 +350,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case EnforceGtidConsistency:
-		if strings.EqualFold(value, "OFF") || value == "o" {
+		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil
 		} else if strings.EqualFold(value, "ON") || value == "1" {
 			return "ON", nil
@@ -359,7 +359,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case QueryCacheType:
-		if strings.EqualFold(value, "OFF") || value == "o" {
+		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil
 		} else if strings.EqualFold(value, "ON") || value == "1" {
 			return "ON", nil
@@ -399,14 +399,18 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		InnodbStatsPersistent, InnodbBufferPoolLoadAbort, InnodbBufferPoolLoadNow, InnodbBufferPoolDumpNow,
 		InnodbCmpPerIndexEnabled, InnodbFilePerTable, InnodbPrintAllDeadlocks,
 		InnodbStrictMode, InnodbAdaptiveHashIndex, InnodbFtEnableStopword, InnodbStatusOutputLocks:
-		if strings.EqualFold(value, "ON") || value == "1" {
+		if strings.EqualFold(value, "ON") {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") {
 			return "0", nil
 		}
 		val, err := strconv.ParseInt(value, 10, 64)
-		if err == nil && val < 1 {
-			return "0", nil
+		if err == nil {
+			if val == 1 || val < 0 {
+				return "1", nil
+			} else if val == 0 {
+				return "0", nil
+			}
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
