@@ -92,7 +92,6 @@ func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 	return bindRecords
 }
 
-
 // sessionBindInfoKeyType is a dummy type to avoid naming collision in context.
 type sessionBindInfoKeyType int
 

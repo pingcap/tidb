@@ -257,7 +257,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
 
-	rs,err = tk.Exec("show session bindings")
+	rs, err = tk.Exec("show session bindings")
 	c.Assert(err, IsNil)
 	chk = rs.NewRecordBatch()
 	err = rs.Next(context.TODO(), chk)
