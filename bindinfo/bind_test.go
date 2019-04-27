@@ -256,4 +256,10 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
+
+	_, err = tk.Exec("drop session binding for select * from t where i>99")
+	c.Assert(err, IsNil)
+	bindData = handle.GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, IsNil)
+
 }
