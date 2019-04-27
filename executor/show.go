@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/bindinfo"
 	"sort"
 	"strconv"
 	"strings"
@@ -182,10 +183,13 @@ func (e *ShowExec) fetchAll() error {
 }
 
 func (e *ShowExec) fetchShowBind() error {
+	var bindRecords []*bindinfo.BindMeta
 	if !e.GlobalScope {
-		return errors.New("show non-global bind sql is not supported")
+		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		bindRecords = handle.GetAllBindRecord()
+	} else {
+		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
-	bindRecords := domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	for _, bindData := range bindRecords {
 		e.appendRow([]interface{}{
 			bindData.OriginalSQL,
