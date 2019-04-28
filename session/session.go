@@ -1011,7 +1011,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			if tempStmtNodes == nil {
-				tempStmtNodes, _, _ = s.ParseSQL(ctx, sql, charsetInfo, collation)
+				tempStmtNodes, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+				if err != nil || warns != nil{
+					//just skip errcheck, because parse will not return an error.
+				}
 			}
 			stmtNode = tempStmtNodes[idx]
 			stmt, err = compiler.SkipBindCompile(ctx, stmtNode)
