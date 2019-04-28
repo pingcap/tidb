@@ -258,6 +258,7 @@ func (h *BindHandle) AddDropBindRecordTask(dropBindRecord *BindRecord) {
 		return
 	}
 	h.dropBindRecordMap.Lock()
+	defer h.dropBindRecordMap.Unlock()
 	if _, ok := h.dropBindRecordMap.Value.Load().(map[string]*droppedBindRecord)[key]; ok {
 		return
 	}
@@ -266,7 +267,6 @@ func (h *BindHandle) AddDropBindRecordTask(dropBindRecord *BindRecord) {
 		bindRecord: dropBindRecord,
 	}
 	h.dropBindRecordMap.Store(newMap)
-	h.dropBindRecordMap.Unlock()
 }
 
 // Size return the size of bind info cache.
