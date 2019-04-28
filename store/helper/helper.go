@@ -428,7 +428,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	}
 	timeout, cancelFunc := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
-	cancelFunc()
+	defer cancelFunc()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

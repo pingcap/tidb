@@ -89,7 +89,9 @@ func (s *HelperTestSuite) TestTiKVStoresStat(c *C) {
 	}
 	stat, err := h.GetStoresStat()
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
-	c.Assert(fmt.Sprintf("%v", stat), Equals, "&{1 [{{1 127.0.0.1:20160 0 Up 3.0.0-beta [{test test}]} {60 GiB 100 GiB 10 1 1000 1000 200 1 1000 1000 2019-04-23 19:30:30 +0800 CST 2019-04-23 19:31:30 +0800 CST 1h30m}}]}")
+	data, err := json.Marshal(stat)
+	c.Assert(err, IsNil)
+	c.Assert(fmt.Sprintf("%s", data), Equals, "{\"count\":1,\"stores\":[{\"store\":{\"id\":1,\"address\":\"127.0.0.1:20160\",\"state\":0,\"state_name\":\"Up\",\"version\":\"3.0.0-beta\",\"labels\":[{\"key\":\"test\",\"value\":\"test\"}]},\"status\":{\"capacity\":\"60 GiB\",\"available\":\"100 GiB\",\"leader_count\":10,\"leader_weight\":1,\"leader_score\":1000,\"leader_size\":1000,\"region_count\":200,\"region_weight\":1,\"region_score\":1000,\"region_size\":1000,\"start_ts\":\"2019-04-23T19:30:30+08:00\",\"last_heartbeat_ts\":\"2019-04-23T19:31:30+08:00\",\"uptime\":\"1h30m\"}}]}")
 }
 
 func (s *HelperTestSuite) mockPDHTTPServer(c *C) {
