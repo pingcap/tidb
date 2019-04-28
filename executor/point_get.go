@@ -91,8 +91,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 			return err1
 		}
 
-		failpoint.Inject("pointGetRepeatableReadTest", func(val failpoint.Value) {
-			if val.(bool) && ctx.Value("pointGetRepeatableReadTest") != nil {
+		failpoint.InjectContext(nil, "pointGetRepeatableReadTest", func(val failpoint.Value) {
+			if val.(bool) != false {
 				label := debugger.Bind("point-get-g1")
 				debugger.Break(label)
 			}
@@ -110,8 +110,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 			return err1
 		}
 
-		failpoint.Inject("pointGetRepeatableReadTest", func(val failpoint.Value) {
-			if val.(bool) && ctx.Value("pointGetRepeatableReadTest") != nil {
+		failpoint.InjectContext(nil, "pointGetRepeatableReadTest", func(val failpoint.Value) {
+			if val.(bool) != false {
 				label := debugger.Bind("point-get-g1")
 				debugger.Continue("point-get-g2")
 				debugger.Break(label)
