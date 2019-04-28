@@ -67,7 +67,6 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tiancaiamao/debugger"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -1876,9 +1875,6 @@ func (s *testSuite) TestIsPointGet(c *C) {
 }
 
 func (s *testSuite) TestPointGetRepeatableRead(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest")
-
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 	tk1.MustExec(`create table point_get (a int, b int, c int,
@@ -1888,19 +1884,24 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 
+	// Create a failpoint to block `POINT GET` until `UPDATE` finished
+	const pointGet1Pause = "github.com/pingcap/tidb/executor/pointGetQuery1Pause"
+	c.Assert(failpoint.Enable(pointGet1Pause, `return`), IsNil)
+	defer func() { c.Assert(failpoint.Disable(pointGet1Pause), IsNil) }()
+	pointGetWaitCh := make(chan struct{})
+	updateWaitCh := make(chan struct{})
 	go func() {
-		ctx := context.WithValue(context.Background(), "pointGetRepeatableReadTest", true)
+		chs := []chan struct{}{updateWaitCh, pointGetWaitCh}
+		ctx := context.WithValue(context.Background(), "pointGetRepeatableReadTest", chs)
 		rs, err := tk1.Se.Execute(ctx, "select c from point_get where b = 1")
 		c.Assert(err, IsNil)
 		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
 		result.Check(testkit.Rows("1"))
 	}()
 
-	label := debugger.Bind("point-get-g2")
-	debugger.Continue("point-get-g1")
-	debugger.Breakpoint(label)
+	<-updateWaitCh
 	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
-	debugger.Continue("point-get-g1")
+	close(pointGetWaitCh) // Make `POINT GET` continue
 }
 
 func (s *testSuite) TestRow(c *C) {

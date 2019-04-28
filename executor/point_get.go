@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/tiancaiamao/debugger"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
@@ -91,10 +90,15 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 			return err1
 		}
 
-		failpoint.Inject("pointGetRepeatableReadTest", func(val failpoint.Value) {
-			if val.(bool) && ctx.Value("pointGetRepeatableReadTest") != nil {
-				label := debugger.Bind("point-get-g1")
-				debugger.Breakpoint(label)
+		// The injection is used to simulate following scenario:
+		// 1. Session A create a point get query but pause before `GET` kv from backend
+		// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
+		// 3. Then point get retrieve data from backend after step 2 finished
+		// 4. Check the result
+		failpoint.InjectContext(ctx, "pointGetQuery1Pause", func() {
+			if chs, ok := ctx.Value("pointGetRepeatableReadTest").([]chan struct{}); ok {
+				close(chs[0]) // Make `UPDATE` query continue
+				<-chs[1]      // Wait `UPDATE` finished
 			}
 		})
 
@@ -109,14 +113,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 		if err1 != nil {
 			return err1
 		}
-
-		failpoint.Inject("pointGetRepeatableReadTest", func(val failpoint.Value) {
-			if val.(bool) && ctx.Value("pointGetRepeatableReadTest") != nil {
-				label := debugger.Bind("point-get-g1")
-				debugger.Continue("point-get-g2")
-				debugger.Breakpoint(label)
-			}
-		})
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
