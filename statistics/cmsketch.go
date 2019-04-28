@@ -47,7 +47,7 @@ type CMSketch struct {
 
 // TopNMeta is a simple counter used by BuildTopN.
 type TopNMeta struct {
-	h2    uint64
+	h2    uint64 // h2 is the second part of `murmur3.Sum128()`, it is always used with the first part `h1`.
 	Data  []byte
 	Count uint64
 }
