@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-type joinReorderGreedySingleGroupSolver struct {
+type joinReorderGreedySolver struct {
 	*baseSingleGroupJoinOrderSolver
 	eqEdges []*expression.ScalarFunction
 }
@@ -40,7 +40,7 @@ type joinReorderGreedySingleGroupSolver struct {
 //
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
-func (s *joinReorderGreedySingleGroupSolver) solve(joinNodePlans []LogicalPlan) (LogicalPlan, error) {
+func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPlan, error) {
 	for _, node := range joinNodePlans {
 		_, err := node.recursiveDeriveStats()
 		if err != nil {
@@ -67,7 +67,7 @@ func (s *joinReorderGreedySingleGroupSolver) solve(joinNodePlans []LogicalPlan) 
 	return s.makeBushyJoin(cartesianGroup), nil
 }
 
-func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (*jrNode, error) {
+func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
 	for {
@@ -106,7 +106,7 @@ func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (*jrNo
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySingleGroupSolver) checkConnectionAndMakeJoin(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
 	var usedEdges []*expression.ScalarFunction
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
@@ -123,5 +123,10 @@ func (s *joinReorderGreedySingleGroupSolver) checkConnectionAndMakeJoin(leftNode
 	if len(usedEdges) == 0 {
 		return nil, nil
 	}
-	return s.newJoinWithEdges(usedEdges, remainOtherConds, leftNode, rightNode)
+	var otherConds []expression.Expression
+	mergedSchema := expression.MergeSchema(leftNode.Schema(), rightNode.Schema())
+	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		return expression.ExprFromSchema(expr, mergedSchema)
+	})
+	return s.newJoinWithEdges(leftNode, rightNode, usedEdges, otherConds), remainOtherConds
 }

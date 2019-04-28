@@ -1351,7 +1351,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	return deleteExec
 }
 
-func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, maxNumBuckets uint64) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, maxNumBuckets uint64, autoAnalyze string) *analyzeTask {
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	e := &AnalyzeIndexExec{
 		ctx:             b.ctx,
@@ -1374,13 +1374,14 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	width := int32(defaultCMSketchWidth)
 	e.analyzePB.IdxReq.CmsketchDepth = &depth
 	e.analyzePB.IdxReq.CmsketchWidth = &width
-	return &analyzeTask{taskType: idxTask, idxExec: e}
+	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
+	return &analyzeTask{taskType: idxTask, idxExec: e, job: job}
 }
 
 func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, maxNumBuckets uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.PhysicalTableID)
-	analyzeTask := b.buildAnalyzeIndexPushdown(task, maxNumBuckets)
+	analyzeTask := b.buildAnalyzeIndexPushdown(task, maxNumBuckets, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
 	}
@@ -1397,10 +1398,11 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	}
 	analyzeTask.taskType = idxIncrementalTask
 	analyzeTask.idxIncrementalExec = &analyzeIndexIncrementalExec{AnalyzeIndexExec: *analyzeTask.idxExec, index: idx}
+	analyzeTask.job = &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze incremental index " + task.IndexInfo.Name.O}
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64, autoAnalyze string) *analyzeTask {
 	cols := task.ColsInfo
 	if task.PKInfo != nil {
 		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
@@ -1432,13 +1434,14 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		CmsketchWidth: &width,
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
-	return &analyzeTask{taskType: colTask, colExec: e}
+	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
+	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
 func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.PhysicalTableID)
-	analyzeTask := b.buildAnalyzeColumnsPushdown(task, maxNumBuckets)
+	analyzeTask := b.buildAnalyzeColumnsPushdown(task, maxNumBuckets, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
 	}
@@ -1450,6 +1453,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 	exec := analyzeTask.colExec
 	analyzeTask.taskType = pkIncrementalTask
 	analyzeTask.colIncrementalExec = &analyzePKIncrementalExec{AnalyzeColumnsExec: *exec, pkStats: col}
+	analyzeTask.job = &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze incremental primary key"}
 	return analyzeTask
 }
 
@@ -1476,6 +1480,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 				colsInfo:        task.ColsInfo,
 				pkInfo:          task.PKInfo,
 				maxNumBuckets:   maxNumBuckets,
+				tblInfo:         task.TblInfo,
 				concurrency:     concurrency,
 				wg:              &sync.WaitGroup{},
 			},
@@ -1506,6 +1511,7 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 				physicalTableID: task.PhysicalTableID,
 				idxsInfo:        []*model.IndexInfo{task.IndexInfo},
 				maxNumBuckets:   maxNumBuckets,
+				tblInfo:         task.TblInfo,
 				concurrency:     concurrency,
 				wg:              &sync.WaitGroup{},
 			},
@@ -1526,20 +1532,13 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		autoAnalyze = "auto "
 	}
 	for _, task := range v.ColTasks {
-		job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName}
 		if task.Incremental {
-			job.JobInfo = "analyze incremental columns"
-			colJob := b.buildAnalyzePKIncremental(task, v.MaxNumBuckets)
-			colJob.job = job
-			e.tasks = append(e.tasks, colJob)
+			e.tasks = append(e.tasks, b.buildAnalyzePKIncremental(task, v.MaxNumBuckets))
 		} else {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastColumn(e, task, v.MaxNumBuckets)
 			} else {
-				colJob := b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets)
-				job.JobInfo = autoAnalyze + "analyze columns"
-				colJob.job = job
-				e.tasks = append(e.tasks, colJob)
+				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets, autoAnalyze))
 			}
 		}
 		if b.err != nil {
@@ -1547,20 +1546,13 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		}
 	}
 	for _, task := range v.IdxTasks {
-		job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName}
 		if task.Incremental {
-			job.JobInfo = "analyze incremental index " + task.IndexInfo.Name.O
-			idxJob := b.buildAnalyzeIndexIncremental(task, v.MaxNumBuckets)
-			idxJob.job = job
-			e.tasks = append(e.tasks, idxJob)
+			e.tasks = append(e.tasks, b.buildAnalyzeIndexIncremental(task, v.MaxNumBuckets))
 		} else {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastIndex(e, task, v.MaxNumBuckets)
 			} else {
-				job.JobInfo = autoAnalyze + "analyze index " + task.IndexInfo.Name.O
-				idxJob := b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets)
-				idxJob.job = job
-				e.tasks = append(e.tasks, idxJob)
+				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets, autoAnalyze))
 			}
 		}
 		if b.err != nil {
