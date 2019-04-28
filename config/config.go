@@ -492,6 +492,7 @@ func (c *Config) Load(confFile string) error {
 	return err
 }
 
+// Valid checks if this config is valid.
 func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
