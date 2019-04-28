@@ -630,11 +630,10 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
-		select {
-		case <-ctx.Done():
-			return
-		}
+		go d.schemaSyncer.NotifyCleanExpiredPaths()
 	}
+	// TODO: test
+	d.schemaSyncer.NotifyCleanExpiredPaths()
 	logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version changed", zap.Int64("ver", latestSchemaVersion), zap.Duration("takeTime", time.Since(timeStart)), zap.String("job", job.String()))
 }
 

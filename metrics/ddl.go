@@ -65,10 +65,11 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{LblResult})
 
-	OwnerUpdateGlobalVersion   = "update_global_version"
-	OwnerGetGlobalVersion      = "get_global_version"
-	OwnerCheckAllVersions      = "check_all_versions"
-	OwnerHandleSyncerHistogram = prometheus.NewHistogramVec(
+	OwnerUpdateGlobalVersion    = "update_global_version"
+	OwnerGetGlobalVersion       = "get_global_version"
+	OwnerCheckAllVersions       = "check_all_versions"
+	OwnerNotifyCleanExpirePaths = "clean_expire_paths"
+	OwnerHandleSyncerHistogram  = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -93,6 +94,7 @@ var (
 
 	CreateDDLInstance = "create_ddl_instance"
 	CreateDDL         = "create_ddl"
+	StartCleanWork    = "start_clean_work"
 	DDLOwner          = "owner"
 	DDLCounter        = prometheus.NewCounterVec(
 		prometheus.CounterOpts{

@@ -369,7 +369,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		syncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
-		syncer = NewSchemaSyncer(etcdCli, id)
+		syncer = NewSchemaSyncer(etcdCli, id, manager)
 	}
 
 	ddlCtx := &ddlCtx{
@@ -452,6 +452,16 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
 		}
+
+		go tidbutil.WithRecovery(
+			func() { d.schemaSyncer.StartCleanWork() },
+			func(r interface{}) {
+				if r != nil {
+					logutil.Logger(ddlLogCtx).Error("[ddl] DDL syncer clean worker meet panic", zap.String("ID", d.uuid))
+					metrics.PanicCounter.WithLabelValues(metrics.LabelDDLSyncer).Inc()
+				}
+			})
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s", metrics.StartCleanWork)).Inc()
 	}
 }
 
@@ -463,6 +473,7 @@ func (d *ddl) close() {
 	startTime := time.Now()
 	close(d.quitCh)
 	d.ownerManager.Cancel()
+	d.schemaSyncer.CloseCleanWork()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
 		logutil.Logger(ddlLogCtx).Error("[ddl] remove self version path failed", zap.Error(err))
