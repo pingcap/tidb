@@ -1877,6 +1877,8 @@ func (s *testSuite) TestIsPointGet(c *C) {
 
 func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest")
+
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 	tk1.MustExec(`create table point_get (a int, b int, c int,
@@ -1887,9 +1889,7 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 	tk2.MustExec("use test")
 
 	go func() {
-		ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
-			return fpname == "pointGetRepeatableReadTest"
-		})
+		ctx := context.WithValue(context.Background(), "pointGetRepeatableReadTest", true)
 		rs, err := tk1.Se.Execute(ctx, "select c from point_get where b = 1")
 		c.Assert(err, IsNil)
 		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
@@ -1901,8 +1901,6 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 	debugger.Breakpoint(label)
 	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
 	debugger.Continue("point-get-g1")
-
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest", `return(false)`), IsNil)
 }
 
 func (s *testSuite) TestRow(c *C) {
