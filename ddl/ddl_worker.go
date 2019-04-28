@@ -32,12 +32,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 var (
 	// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
-	RunWorker = true
+	RunWorker = atomic2.NewBool(true)
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = int32(0)
 )

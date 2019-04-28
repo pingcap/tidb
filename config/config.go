@@ -17,6 +17,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"io/ioutil"
 	"reflect"
 	"runtime"
@@ -425,8 +428,9 @@ func ReloadGlobalConfig() error {
 	if err := nc.Load(globalConfPath); err != nil {
 		return err
 	}
+	c := GetGlobalConfig()
 
-	diffs := collectsDiff(*nc, *GetGlobalConfig(), "")
+	diffs := collectsDiff(*nc, *c, "")
 	if len(diffs) == 0 {
 		return nil
 	}
@@ -445,8 +449,10 @@ func ReloadGlobalConfig() error {
 		}
 	}
 
+	reloadPerformance(&nc.Performance, &c.Performance)
+
 	globalConfLock.Lock()
-	globalConf = *nc
+	*c = *nc
 	globalConfLock.Unlock()
 
 	// TODO: do log
@@ -487,7 +493,21 @@ func reloadPerformance(nc, c *Performance) {
 	if nc.MaxProcs != c.MaxProcs {
 		runtime.GOMAXPROCS(int(nc.MaxProcs))
 	}
-
+	if nc.MaxMemory != c.MaxMemory {
+		core.PreparedPlanCacheMaxMemory.Store(nc.MaxMemory)
+	}
+	if nc.CrossJoin != c.CrossJoin {
+		core.AllowCartesianProduct.Store(nc.CrossJoin)
+	}
+	if nc.FeedbackProbability != c.FeedbackProbability {
+		statistics.FeedbackProbability.Store(nc.FeedbackProbability)
+	}
+	if nc.QueryFeedbackLimit != c.QueryFeedbackLimit {
+		handle.MaxQueryFeedbackCount.Store(int64(nc.QueryFeedbackLimit))
+	}
+	if nc.PseudoEstimateRatio != c.PseudoEstimateRatio {
+		statistics.RatioOfPseudoEstimate.Store(nc.PseudoEstimateRatio)
+	}
 }
 
 // Load loads config options from a toml file.

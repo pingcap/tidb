@@ -421,12 +421,12 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // start campaigns the owner and starts workers.
 // ctxPool is used for the worker's delRangeManager and creates sessions.
 func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
-	logutil.Logger(ddlLogCtx).Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
+	logutil.Logger(ddlLogCtx).Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker.Load()))
 	d.quitCh = make(chan struct{})
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
-	if RunWorker {
+	if RunWorker.Load() {
 		err := d.ownerManager.CampaignOwner(ctx)
 		terror.Log(errors.Trace(err))
 
@@ -547,7 +547,7 @@ func checkJobMaxInterval(job *model.Job) time.Duration {
 
 func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 	// If the workers don't run, we needn't to notify workers.
-	if !RunWorker {
+	if !RunWorker.Load() {
 		return
 	}
 

@@ -468,7 +468,7 @@ func setGlobalVars() {
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
 	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
-	ddl.RunWorker = cfg.RunDDL
+	ddl.RunWorker.Store(cfg.RunDDL)
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	}
