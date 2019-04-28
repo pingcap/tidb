@@ -196,7 +196,7 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 			return
 		}
 
-		hash, meta := h.newBindMetaWithoutAst(record)
+		hash, meta := newBindMetaWithoutAst(record)
 		h.removeBindMeta(hash, meta)
 	}()
 
@@ -226,18 +226,9 @@ func (h *BindHandle) Size() int {
 	return size
 }
 
-// GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
+// GetBindRecord return the bindMeta of the (normdOrigSQL,db) if bindMeta exist.
 func (h *BindHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
-	hash := parser.DigestHash(normdOrigSQL)
-	bindRecords := h.bindInfo.Load().(cache)[hash]
-	if bindRecords != nil {
-		for _, bindRecord := range bindRecords {
-			if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
-				return bindRecord
-			}
-		}
-	}
-	return nil
+	return h.bindInfo.Load().(cache).getBindRecord(normdOrigSQL, db)
 }
 
 // GetAllBindRecord return all bind record in cache.
@@ -259,7 +250,7 @@ func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMet
 	return hash, meta, nil
 }
 
-func (h *BindHandle) newBindMetaWithoutAst(record *BindRecord) (hash string, meta *BindMeta) {
+func newBindMetaWithoutAst(record *BindRecord) (hash string, meta *BindMeta) {
 	hash = parser.DigestHash(record.OriginalSQL)
 	meta = &BindMeta{BindRecord: record}
 	return hash, meta
@@ -335,6 +326,19 @@ func (c cache) copy() cache {
 		newCache[k] = v
 	}
 	return newCache
+}
+
+func (c cache) getBindRecord(normdOrigSQL, db string) *BindMeta {
+	hash := parser.DigestHash(normdOrigSQL)
+	bindRecords := c[hash]
+	if bindRecords != nil {
+		for _, bindRecord := range bindRecords {
+			if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
+				return bindRecord
+			}
+		}
+	}
+	return nil
 }
 
 // isStale checks whether this BindMeta is stale compared with the other BindMeta.
