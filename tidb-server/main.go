@@ -304,15 +304,7 @@ func loadConfig() string {
 	cfg = config.GetGlobalConfig()
 	if *configPath != "" {
 		// Not all config items are supported now.
-		config.SetConfReloader(*configPath, reloadConfig,
-			"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
-			"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit",
-			"Performance.PseudoEstimateRatio", "OOMAction", "MemQuotaQuery",
-			"EnableStreaming", "CompatibleKillQuery", "TreatOldVersionUTF8AsUTF8MB4",
-			"TxnLocalLatches.Enabled", "TxnLocalLatches.Capacity",
-			"TiKVClient.GrpcConnectionCount", "TiKVClient.CommitTimeout",
-			"TiKVClient.MaxTxnTimeUse", "TiKVClient.OverloadThreshold",
-			"TiKVClient.MaxBatchWaitTime", "TiKVClient.BatchWaitSize")
+		config.SetConfReloader(*configPath, reloadConfig, hotReloadConfigItems...)
 
 		err := cfg.Load(*configPath)
 		// This block is to accommodate an interim situation where strict config checking
@@ -326,6 +318,12 @@ func loadConfig() string {
 	}
 	return ""
 }
+
+var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
+	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
+	"OOMAction", "MemQuotaQuery", "EnableStreaming", "CompatibleKillQuery", "TreatOldVersionUTF8AsUTF8MB4",
+	"TxnLocalLatches.Enabled", "TxnLocalLatches.Capacity", "TiKVClient.GrpcConnectionCount", "TiKVClient.CommitTimeout",
+	"TiKVClient.MaxTxnTimeUse", "TiKVClient.OverloadThreshold", "TiKVClient.MaxBatchWaitTime", "TiKVClient.BatchWaitSize"}
 
 func reloadConfig(nc, c *config.Config) {
 	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
