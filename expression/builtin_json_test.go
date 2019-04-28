@@ -379,50 +379,54 @@ func (s *testEvaluatorSuite) TestJSONContains(c *C) {
 	tbl := []struct {
 		input    []interface{}
 		expected interface{}
-		success  bool
+		errMsg   string
 	}{
 		// Tests nil arguments
-		{[]interface{}{nil, `1`, "$.c"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, nil, "$.a[3]"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, nil}, nil, true},
+		{[]interface{}{nil, `1`, "$.c"}, nil, ""},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, nil, "$.a[3]"}, nil, ""},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, nil}, nil, ""},
 		// Tests with path expression
-		{[]interface{}{`[1,2,[1,[5,[3]]]]`, `[1,3]`, "$[2]"}, 1, true},
-		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`, "$[2]"}, 1, true},
-		{[]interface{}{`[{"a":1}]`, `{"a":1}`, "$"}, 1, true},
-		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1,"b":2}`, "$"}, 1, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`, "$.a"}, 0, true},
+		{[]interface{}{`[1,2,[1,[5,[3]]]]`, `[1,3]`, "$[2]"}, 1, ""},
+		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`, "$[2]"}, 1, ""},
+		{[]interface{}{`[{"a":1}]`, `{"a":1}`, "$"}, 1, ""},
+		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1,"b":2}`, "$"}, 1, ""},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`, "$.a"}, 0, ""},
 		// Tests without path expression
-		{[]interface{}{`{}`, `{}`}, 1, true},
-		{[]interface{}{`{"a":1}`, `{}`}, 1, true},
-		{[]interface{}{`{"a":1}`, `1`}, 0, true},
-		{[]interface{}{`{"a":[1]}`, `[1]`}, 0, true},
-		{[]interface{}{`{"b":2, "c":3}`, `{"c":3}`}, 1, true},
-		{[]interface{}{`1`, `1`}, 1, true},
-		{[]interface{}{`[1]`, `1`}, 1, true},
-		{[]interface{}{`[1,2]`, `[1]`}, 1, true},
-		{[]interface{}{`[1,2]`, `[1,3]`}, 0, true},
-		{[]interface{}{`[1,2]`, `["1"]`}, 0, true},
-		{[]interface{}{`[1,2,[1,3]]`, `[1,3]`}, 1, true},
-		{[]interface{}{`[1,2,[1,[5,[3]]]]`, `[1,3]`}, 1, true},
-		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`}, 1, true},
-		{[]interface{}{`[{"a":1}]`, `{"a":1}`}, 1, true},
-		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1}`}, 1, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`}, 0, true},
+		{[]interface{}{`{}`, `{}`}, 1, ""},
+		{[]interface{}{`{"a":1}`, `{}`}, 1, ""},
+		{[]interface{}{`{"a":1}`, `1`}, 0, ""},
+		{[]interface{}{`{"a":[1]}`, `[1]`}, 0, ""},
+		{[]interface{}{`{"b":2, "c":3}`, `{"c":3}`}, 1, ""},
+		{[]interface{}{`1`, `1`}, 1, ""},
+		{[]interface{}{`[1]`, `1`}, 1, ""},
+		{[]interface{}{`[1,2]`, `[1]`}, 1, ""},
+		{[]interface{}{`[1,2]`, `[1,3]`}, 0, ""},
+		{[]interface{}{`[1,2]`, `["1"]`}, 0, ""},
+		{[]interface{}{`[1,2,[1,3]]`, `[1,3]`}, 1, ""},
+		{[]interface{}{`[1,2,[1,3]]`, `[1,      3]`}, 1, ""},
+		{[]interface{}{`[1,2,[1,[5,[3]]]]`, `[1,3]`}, 1, ""},
+		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`}, 1, ""},
+		{[]interface{}{`[{"a":1}]`, `{"a":1}`}, 1, ""},
+		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1}`}, 1, ""},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`}, 0, ""},
 		// Tests path expression contains any asterisk
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, false},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, false},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, false},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, "[json:3149]In this situation, path expressions may not contain the * and ** tokens."},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, "[json:3149]In this situation, path expressions may not contain the * and ** tokens."},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, "[json:3149]In this situation, path expressions may not contain the * and ** tokens."},
 		// Tests path expression does not identify a section of the target document
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.c"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[3]"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[2].b"}, nil, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.c"}, nil, ""},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[3]"}, nil, ""},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[2].b"}, nil, ""},
+		// For issue 9957: test 'argument 1 and 2 as valid json object'
+		{[]interface{}{`[1,2,[1,3]]`, `a:1`}, 1, "[json:3140]Invalid JSON text: invalid character 'a' looking for beginning of value"},
+		{[]interface{}{`a:1`, `1`}, 1, "[json:3140]Invalid JSON text: invalid character 'a' looking for beginning of value"},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.input...)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if t.success {
+		if t.errMsg == "" {
 			c.Assert(err, IsNil)
 			if t.expected == nil {
 				c.Assert(d.IsNull(), IsTrue)
@@ -430,9 +434,18 @@ func (s *testEvaluatorSuite) TestJSONContains(c *C) {
 				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
 			}
 		} else {
-			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, t.errMsg)
 		}
 	}
+	// For issue 9957: test 'argument 1 and 2 as valid json object'
+	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1, ``)))
+	c.Assert(err.Error(), Equals, "[json:3146]Invalid data type for JSON data in argument 1 to function json_contains; a JSON string or JSON type is required.")
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(0.05, ``)))
+	c.Assert(err.Error(), Equals, "[json:3146]Invalid data type for JSON data in argument 1 to function json_contains; a JSON string or JSON type is required.")
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(``, 1)))
+	c.Assert(err.Error(), Equals, "[json:3146]Invalid data type for JSON data in argument 2 to function json_contains; a JSON string or JSON type is required.")
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(``, 0.05)))
+	c.Assert(err.Error(), Equals, "[json:3146]Invalid data type for JSON data in argument 2 to function json_contains; a JSON string or JSON type is required.")
 }
 
 func (s *testEvaluatorSuite) TestJSONContainsPath(c *C) {

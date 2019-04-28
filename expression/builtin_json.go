@@ -651,6 +651,19 @@ func (c *jsonContainsFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+
+	// This should actually do in `c.verifyArgs` but there's no way to inherit a method in Go.
+	evalType := args[0].GetType().EvalType()
+	if evalType != types.ETJson && evalType != types.ETString {
+		return nil, json.ErrInvalidJSONData.GenWithStack(
+			"Invalid data type for JSON data in argument 1 to function json_contains; a JSON string or JSON type is required.")
+	}
+	evalType = args[1].GetType().EvalType()
+	if evalType != types.ETJson && evalType != types.ETString {
+		return nil, json.ErrInvalidJSONData.GenWithStack(
+			"Invalid data type for JSON data in argument 2 to function json_contains; a JSON string or JSON type is required.")
+	}
+
 	argTps := []types.EvalType{types.ETJson, types.ETJson}
 	if len(args) == 3 {
 		argTps = append(argTps, types.ETString)
