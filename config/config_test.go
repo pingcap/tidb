@@ -169,3 +169,28 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	c.Assert(os.Remove(certFile), IsNil)
 	c.Assert(os.Remove(keyFile), IsNil)
 }
+
+func (s *testConfigSuite) TestConfigDiff(c *C) {
+	c1 := NewConfig()
+	c2 := &Config{}
+	*c2 = *c1
+	c1.Host = "c1"
+	c2.Host = "c2"
+	c1.Log.Format = "c1"
+	c2.Log.Format = "c2"
+	c1.Performance.CrossJoin = true
+	c2.Performance.CrossJoin = false
+	c1.Performance.FeedbackProbability = 2333
+	c2.Performance.FeedbackProbability = 23.33
+
+	diffs := collectsDiff(*c1, *c2, "")
+	c.Assert(len(diffs), Equals, 4)
+	c.Assert(diffs["Host"][0], Equals, "c1")
+	c.Assert(diffs["Host"][1], Equals, "c2")
+	c.Assert(diffs["Log.Format"][0], Equals, "c1")
+	c.Assert(diffs["Log.Format"][1], Equals, "c2")
+	c.Assert(diffs["Performance.CrossJoin"][0], Equals, true)
+	c.Assert(diffs["Performance.CrossJoin"][1], Equals, false)
+	c.Assert(diffs["Performance.FeedbackProbability"][0], Equals, float64(2333))
+	c.Assert(diffs["Performance.FeedbackProbability"][1], Equals, float64(23.33))
+}

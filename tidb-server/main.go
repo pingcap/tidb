@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -305,6 +305,7 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 func loadConfig() string {
 	cfg = config.GetGlobalConfig()
 	if *configPath != "" {
+		config.SetGlobalConfPath(*configPath)
 		err := cfg.Load(*configPath)
 		// This block is to accommodate an interim situation where strict config checking
 		// is not the default behavior of TiDB. The warning message must be deferred until

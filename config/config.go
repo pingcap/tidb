@@ -18,7 +18,9 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
+	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -370,7 +372,25 @@ var defaultConf = Config{
 	},
 }
 
-var globalConf = defaultConf
+var (
+	globalConf     = defaultConf
+	globalConfPath = ""
+	globalConfLock sync.RWMutex
+	confReloadLock sync.Mutex
+
+	supportedReloadConfigs = map[string]struct{}{
+		"RunDDL":              {},
+		"SplitTable":          {},
+		"TokenLimit":          {},
+		"OOMAction":           {},
+		"MemQuotaQuery":       {},
+		"EnableStreaming":     {},
+		"TxnLocalLatches":     {},
+		"Performance":         {},
+		"Binlog":              {},
+		"CompatibleKillQuery": {},
+	}
+)
 
 // NewConfig creates a new config instance with default value.
 func NewConfig() *Config {
@@ -378,11 +398,86 @@ func NewConfig() *Config {
 	return &conf
 }
 
+// SetGlobalConfPath sets the global config path.
+// It should be called only once at start time.
+func SetGlobalConfPath(cpath string) {
+	globalConfPath = cpath
+}
+
 // GetGlobalConfig returns the global configuration for this server.
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
+	// TODO: (refine it to atomic CAS)
+	globalConfLock.RLock()
+	defer globalConfLock.RUnlock()
 	return &globalConf
+}
+
+// ReloadGlobalConfig reloads global configuration for this server.
+// Not all config items are supported.
+func ReloadGlobalConfig() error {
+	confReloadLock.Lock()
+	defer confReloadLock.Unlock()
+
+	nc := NewConfig()
+	if err := nc.Load(globalConfPath); err != nil {
+		return err
+	}
+
+	diffs := collectsDiff(*nc, *GetGlobalConfig(), "")
+	if len(diffs) == 0 {
+		return nil
+	}
+	for k := range diffs {
+		supported := false
+		for i := len(k); i > 0; i-- {
+			if i == len(k) || k[i] == '.' {
+				if _, ok := supportedReloadConfigs[k[:i]]; ok {
+					supported = true
+					break
+				}
+			}
+		}
+		if !supported {
+			return fmt.Errorf("reloading config %s online is not supported", k)
+		}
+	}
+
+	globalConfLock.Lock()
+	defer globalConfLock.Unlock()
+	globalConf = *nc
+	return nil
+}
+
+// collectsDiff collects different config items.
+// map[string][]string -> map[field path][]{new value, old value}
+// i1 and i2 can't be pointer.
+func collectsDiff(i1, i2 interface{}, prefix string) map[string][]interface{} {
+	diff := make(map[string][]interface{})
+	t := reflect.TypeOf(i1)
+	if t.Kind() != reflect.Struct {
+		if reflect.DeepEqual(i1, i2) {
+			return diff
+		}
+		diff[prefix] = []interface{}{i1, i2}
+		return diff
+	}
+
+	v1 := reflect.ValueOf(i1)
+	v2 := reflect.ValueOf(i2)
+	for i := 0; i < v1.NumField(); i++ {
+		p := t.Field(i).Name
+		if prefix != "" {
+			p = prefix + "." + p
+		}
+
+		m := collectsDiff(v1.Field(i).Interface(), v2.Field(i).Interface(), p)
+		for k, v := range m {
+			diff[k] = v
+		}
+	}
+	return diff
 }
 
 // Load loads config options from a toml file.
