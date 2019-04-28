@@ -278,12 +278,5 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	bindData = handle.GetBindRecord("select * from t where i > ?", "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
-	c.Check(bindData.BindSQL, Equals, "select * from t use index(index_t) where i>99")
-	c.Check(bindData.Db, Equals, "test")
 	c.Check(bindData.Status, Equals, "deleted")
-	c.Check(bindData.Charset, NotNil)
-	c.Check(bindData.Collation, NotNil)
-	c.Check(bindData.CreateTime, NotNil)
-	c.Check(bindData.UpdateTime, NotNil)
-
 }
