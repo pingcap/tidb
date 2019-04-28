@@ -256,7 +256,7 @@ const (
 		hist_id bigint(64) NOT NULL,
 		value longblob,
 		count bigint(64) UNSIGNED NOT NULL,
-		unique index tbl(table_id, is_index, hist_id)
+		index tbl(table_id, is_index, hist_id)
 	);`
 )
 
