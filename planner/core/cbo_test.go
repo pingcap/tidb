@@ -1036,7 +1036,7 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		"  │   └─TopN_30 1.00 cop t1.a:asc, offset:0, count:1",
 		"  │     └─IndexScan_29 6.00 cop table:t1, index:b, range:[-inf,6], keep order:false",
 		"  └─IndexReader_57 1.04 root index:IndexScan_56",
-		"    └─IndexScan_56 1.04 cop table:t2, index:b, range: decided by [t1.a], keep order:false",
+		"    └─IndexScan_56 1.04 cop table:t2, index:b, range: decided by [eq(t2.b, t1.a)], keep order:false",
 	))
 	// Desc TableScan.
 	tk.MustExec("truncate table t")
