@@ -2550,6 +2550,9 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 }
 
 func (s *testSessionSuite) TestPessimisticTxn(c *C) {
+	if !config.GetGlobalConfig().PessimisticTxn.Enable {
+		c.Skip("pessimistic transaction is not enabled")
+	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// Make the name has different indent for easier read.
 	tk1 := testkit.NewTestKitWithInit(c, s.store)

@@ -289,6 +289,7 @@ type Plugin struct {
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
 	Enable        bool   `toml:"enable" json:"enable"`
+	Default       bool   `toml:"default" json:"default"`
 	MaxRetryCount uint   `toml:"max-retry-count" json:"max-retry-count"`
 	TTL           uint64 `toml:"ttl" json:"ttl"`
 }
@@ -378,6 +379,7 @@ var defaultConf = Config{
 	},
 	PessimisticTxn: PessimisticTxn{
 		Enable:        false,
+		Default:       false,
 		MaxRetryCount: 256,
 		TTL:           60 * 1000,
 	},

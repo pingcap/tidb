@@ -285,8 +285,11 @@ binlog-socket = ""
 strategy = "range"
 
 [pessimistic-txn]
-# enable pessimistic transaction by default.
+# enable pessimistic transaction.
 enable = false
+
+# start pessimistic transaction by default.
+default = false
 
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
