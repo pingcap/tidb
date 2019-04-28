@@ -3720,18 +3720,17 @@ type oomCapturer struct {
 }
 
 func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	if strings.Contains(entry.Message, "memory exceeds quota") {
-		err, _ := fields[0].Interface.(error)
-		str := err.Error()
-		begin := strings.Index(str, "8001]")
+	if strings.Contains(entry.Message, "# OOM_label:") {
+		str := entry.Message
+		begin := strings.Index(str, "OOM_label: ")
 		if begin == -1 {
 			panic("begin not found")
 		}
-		end := strings.Index(str, " holds")
+		end := strings.Index(str, " Bytes_consumed:")
 		if end == -1 {
 			panic("end not found")
 		}
-		h.tracker = str[begin+len("8001]") : end]
+		h.tracker = str[begin+len("OOM_label: ") : end]
 	}
 	return nil
 }
