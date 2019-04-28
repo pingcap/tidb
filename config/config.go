@@ -22,12 +22,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -453,18 +451,6 @@ func ReloadGlobalConfig() error {
 	}
 
 	reloadPerformance(&nc.Performance, &c.Performance)
-	if c.RunDDL != nc.RunDDL {
-		ddl.RunWorker.Store(nc.RunDDL)
-	}
-	if c.SplitTable != nc.SplitTable {
-		var v uint32
-		if nc.SplitTable {
-			v = 1
-		} else {
-			v = 0
-		}
-		atomic.StoreUint32(&ddl.EnableSplitTableRegion, v)
-	}
 
 	globalConfLock.Lock()
 	*c = *nc
