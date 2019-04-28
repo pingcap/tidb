@@ -63,7 +63,7 @@ func MoveToHistory(job *AnalyzeJob) {
 	analyzeStatus.Lock()
 	delete(analyzeStatus.jobs, job)
 	analyzeStatus.history = append(analyzeStatus.history, job)
-	numJobs := len(analyzeStatus.jobs)
+	numJobs := len(analyzeStatus.history)
 	if numJobs > numMaxHistoryJobs {
 		analyzeStatus.history = analyzeStatus.history[numJobs-numMaxHistoryJobs:]
 	}
