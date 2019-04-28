@@ -702,22 +702,11 @@ func (ijHelper *indexJoinBuildHelper) checkIndex(innerKeys []*expression.Column,
 // remainingRangeCandidates is the other conditions for future use.
 func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression) {
 	uselessFilters = make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
-	remainingRangeCandidates = make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
-	// This loop finds the possible filters which can be used to build ranges.
-	// If the filter contains index column covered by join keys, it will be useless since we always use join key to build range for that index column..
-	for _, innerFilter := range innerPlan.pushedDownConds {
-		affectedCols := expression.ExtractColumns(innerFilter)
-		if expression.ColumnSliceIsIntersect(affectedCols, ijHelper.curPossibleUsedKeys) {
-			uselessFilters = append(uselessFilters, innerFilter)
-			continue
-		}
-		remainingRangeCandidates = append(remainingRangeCandidates, innerFilter)
-	}
 	var remainedEqOrIn []expression.Expression
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
 	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _ = ranger.ExtractEqAndInCondition(
-		innerPlan.ctx, remainingRangeCandidates,
+		innerPlan.ctx, innerPlan.pushedDownConds,
 		ijHelper.curNotUsedIndexCols,
 		ijHelper.curNotUsedColLens,
 	)
