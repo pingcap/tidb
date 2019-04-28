@@ -70,6 +70,15 @@ func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
 	return err
 }
 
+// DropBindRecord drops a BindRecord in the cache.
+func (h *SessionHandle) DropBindRecord(record *BindRecord) {
+	meta := &BindMeta{BindRecord: record}
+	meta.Status = deleted
+	hash := parser.DigestHash(record.OriginalSQL)
+	h.ch.removeDeletedBindMeta(hash, meta)
+	h.appendBindMeta(hash, meta)
+}
+
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
 	hash := parser.DigestHash(normdOrigSQL)
