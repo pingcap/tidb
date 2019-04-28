@@ -79,6 +79,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
 	c.Assert(vars.EnableRadixJoin, Equals, DefTiDBUseRadixJoin)
 	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
+	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
 	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
@@ -253,6 +254,14 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "on")
 	c.Assert(v.EnableTablePartition, Equals, "on")
+
+	c.Assert(v.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
+	err = SetSessionSystemVar(v, TiDBOptJoinReorderThreshold, types.NewIntDatum(5))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptJoinReorderThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5")
+	c.Assert(v.TiDBOptJoinReorderThreshold, Equals, 5)
 
 	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("1"))
 	c.Assert(err, IsNil)
