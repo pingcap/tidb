@@ -16,7 +16,6 @@ package tikv
 import (
 	"context"
 	"fmt"
-	"go.uber.org/atomic"
 	"math"
 	"math/rand"
 	"strings"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

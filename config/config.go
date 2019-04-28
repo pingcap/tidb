@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"go.uber.org/atomic"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
+	"go.uber.org/atomic"
 )
 
 // Config number limitations
@@ -377,8 +377,7 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf = atomic.Value{}
-	//globalConf             = defaultConf
+	globalConf             = atomic.Value{}
 	reloadConfPath         = ""
 	confReloader           func(nc, c *Config)
 	confReloadLock         sync.Mutex
@@ -409,7 +408,6 @@ func GetGlobalConfig() *Config {
 }
 
 // ReloadGlobalConfig reloads global configuration for this server.
-// Not all config items are supported.
 func ReloadGlobalConfig() error {
 	confReloadLock.Lock()
 	defer confReloadLock.Unlock()
@@ -427,10 +425,9 @@ func ReloadGlobalConfig() error {
 	if len(diffs) == 0 {
 		return nil
 	}
-
 	for k := range diffs {
 		if _, ok := supportedReloadConfigs[k]; !ok {
-			return fmt.Errorf("reloading config %s online is not supported", k)
+			return fmt.Errorf("reloading config %s is not supported", k)
 		}
 	}
 
@@ -448,15 +445,14 @@ func ReloadGlobalConfig() error {
 
 // collectsDiff collects different config items.
 // map[string][]string -> map[field path][]{new value, old value}
-// i1 and i2 can't be pointer.
-func collectsDiff(i1, i2 interface{}, prefix string) map[string][]interface{} {
+func collectsDiff(i1, i2 interface{}, fieldPath string) map[string][]interface{} {
 	diff := make(map[string][]interface{})
 	t := reflect.TypeOf(i1)
 	if t.Kind() != reflect.Struct {
 		if reflect.DeepEqual(i1, i2) {
 			return diff
 		}
-		diff[prefix] = []interface{}{i1, i2}
+		diff[fieldPath] = []interface{}{i1, i2}
 		return diff
 	}
 
@@ -464,10 +460,9 @@ func collectsDiff(i1, i2 interface{}, prefix string) map[string][]interface{} {
 	v2 := reflect.ValueOf(i2)
 	for i := 0; i < v1.NumField(); i++ {
 		p := t.Field(i).Name
-		if prefix != "" {
-			p = prefix + "." + p
+		if fieldPath != "" {
+			p = fieldPath + "." + p
 		}
-
 		m := collectsDiff(v1.Field(i).Interface(), v2.Field(i).Interface(), p)
 		for k, v := range m {
 			diff[k] = v
@@ -537,6 +532,10 @@ func (c *Config) Valid() error {
 	return nil
 }
 
+func hasRootPrivilege() bool {
+	return os.Geteuid() == 0
+}
+
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
 	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp)
@@ -561,10 +560,6 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 	ret.Sampler.MaxOperations = t.Sampler.MaxOperations
 	ret.Sampler.SamplingRefreshInterval = t.Sampler.SamplingRefreshInterval
 	return ret
-}
-
-func hasRootPrivilege() bool {
-	return os.Geteuid() == 0
 }
 
 func init() {
