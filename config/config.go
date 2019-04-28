@@ -379,16 +379,10 @@ var (
 	confReloadLock sync.Mutex
 
 	supportedReloadConfigs = map[string]struct{}{
-		"RunDDL":              {},
-		"SplitTable":          {},
-		"TokenLimit":          {},
-		"OOMAction":           {},
-		"MemQuotaQuery":       {},
-		"EnableStreaming":     {},
-		"TxnLocalLatches":     {},
-		"Performance":         {},
-		"Binlog":              {},
-		"CompatibleKillQuery": {},
+		"OOMAction":       {},
+		"EnableStreaming": {},
+		"TxnLocalLatches": {},
+		"Performance":     {},
 	}
 )
 
@@ -445,8 +439,10 @@ func ReloadGlobalConfig() error {
 	}
 
 	globalConfLock.Lock()
-	defer globalConfLock.Unlock()
 	globalConf = *nc
+	globalConfLock.Unlock()
+
+	// TODO: do log
 	return nil
 }
 
@@ -499,6 +495,14 @@ func (c *Config) Load(confFile string) error {
 	}
 
 	return err
+}
+
+// Check checks if this config is valid.
+func (c *Config) Check() error {
+	if c.TxnLocalLatches.Enabled && c.TxnLocalLatches.Capacity == 0 {
+		return fmt.Errorf("txn-local-latches.capacity can not be 0")
+	}
+	return nil
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
