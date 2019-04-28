@@ -72,8 +72,10 @@ func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
 
 // DropBindRecord drops a BindRecord in the cache.
 func (h *SessionHandle) DropBindRecord(record *BindRecord) {
-	hash, meta := newBindMetaWithoutAst(record)
-	h.ch.removeDeletedBindMeta(hash, meta)
+	meta := h.ch.getBindRecord(record.OriginalSQL, record.Db)
+	if meta != nil {
+		meta.Status = deleted
+	}
 }
 
 // GetBindRecord return the bindMeta of the (normdOrigSQL,db) if bindMeta exist.
