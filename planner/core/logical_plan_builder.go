@@ -157,9 +157,6 @@ func (b *PlanBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 			col.OrigTblName = col.TblName
 			if x.AsName.L != "" {
 				col.TblName = x.AsName
-				if b.ctx.GetSessionVars().CurrentDB == col.DBName.L {
-					col.DBName = model.NewCIStr("")
-				}
 			}
 		}
 		// Duplicate column name in one table is not allowed.
