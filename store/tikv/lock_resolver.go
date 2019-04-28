@@ -403,7 +403,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			// Only resolve specified keys when it is a small transaction,
 			// prevent from scanning the whole region in this case.
 			cleanWholeRegion = false
-			req.ResolveLock.Keys = [][]byte { l.Key }
+			req.ResolveLock.Keys = [][]byte{l.Key}
 		}
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
