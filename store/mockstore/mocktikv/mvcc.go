@@ -48,6 +48,7 @@ type mvccLock struct {
 	value   []byte
 	op      kvrpcpb.Op
 	ttl     uint64
+	txnSize uint64
 }
 
 type mvccEntry struct {
@@ -424,7 +425,7 @@ type MVCCStore interface {
 	Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
-	Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error
+	Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64, txnSize uint64) []error
 	Commit(keys [][]byte, startTS, commitTS uint64) error
 	Rollback(keys [][]byte, startTS uint64) error
 	Cleanup(key []byte, startTS uint64) error

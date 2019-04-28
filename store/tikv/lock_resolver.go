@@ -33,6 +33,9 @@ import (
 // ResolvedCacheSize is max number of cached txn status.
 const ResolvedCacheSize = 2048
 
+// Transaction which involve keys exceed this threshold can treat as `Big Transaction`.
+const BigTxnThreshold = 256
+
 var (
 	tikvLockResolverCountWithBatchResolve             = metrics.TiKVLockResolverCounter.WithLabelValues("batch_resolve")
 	tikvLockResolverCountWithExpired                  = metrics.TiKVLockResolverCounter.WithLabelValues("expired")
@@ -124,6 +127,7 @@ type Lock struct {
 	Primary []byte
 	TxnID   uint64
 	TTL     uint64
+	TxnSize uint64
 }
 
 func (l *Lock) String() string {
@@ -136,11 +140,13 @@ func NewLock(l *kvrpcpb.LockInfo) *Lock {
 	if ttl == 0 {
 		ttl = defaultLockTTL
 	}
+	txnSize := l.GetTxnSize()
 	return &Lock{
 		Key:     l.GetKey(),
 		Primary: l.GetPrimaryLock(),
 		TxnID:   l.GetLockVersion(),
 		TTL:     ttl,
+		TxnSize: txnSize,
 	}
 }
 
@@ -375,6 +381,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cleanRegions map[RegionVerID]struct{}) error {
 	tikvLockResolverCountWithResolveLocks.Inc()
+	cleanWholeRegion := true
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
 		if err != nil {
@@ -391,6 +398,12 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		}
 		if status.IsCommitted() {
 			req.ResolveLock.CommitVersion = status.CommitTS()
+		}
+		if l.TxnSize < BigTxnThreshold {
+			// Only resolve specified keys when it is a small transaction,
+			// prevent from scanning the whole region in this case.
+			cleanWholeRegion = false
+			req.ResolveLock.Keys = [][]byte { l.Key }
 		}
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
@@ -416,7 +429,9 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			logutil.Logger(context.Background()).Error("resolveLock error", zap.Error(err))
 			return err
 		}
-		cleanRegions[loc.Region] = struct{}{}
+		if cleanWholeRegion {
+			cleanRegions[loc.Region] = struct{}{}
+		}
 		return nil
 	}
 }
