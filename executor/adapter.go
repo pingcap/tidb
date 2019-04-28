@@ -508,7 +508,6 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
 		return v.IndexInfo == nil, nil
-		// return true, nil
 	default:
 		return false, nil
 	}
