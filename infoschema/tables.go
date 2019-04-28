@@ -577,9 +577,9 @@ var tableAnalyzeStatusCols = []columnInfo{
 }
 
 var tableTiKVRegionStatusCols = []columnInfo{
-	{"ID", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"START_KEY", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"END_KEY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"START_KEY", mysql.TypeBlob, types.UnspecifiedLength, 0, nil, nil},
+	{"END_KEY", mysql.TypeBlob, types.UnspecifiedLength, 0, nil, nil},
 	{"EPOCH_CONF_VER", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"EPOCH_VERSION", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"WRITTEN_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
@@ -590,13 +590,11 @@ var tableTiKVRegionStatusCols = []columnInfo{
 
 var tableTiKVRegionPeersCols = []columnInfo{
 	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"START_KEY", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"END_KEY", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"PEER_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"IS_LEARNER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
 	{"IS_LEADER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
-	{"STATUS", mysql.TypeString, 1, 0, 0, nil},
+	{"STATUS", mysql.TypeVarchar, 10, 0, 0, nil},
 	{"DOWN_SECONDS", mysql.TypeLonglong, 21, 0, 0, nil},
 }
 
@@ -660,27 +658,25 @@ func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, er
 		for _, peer := range regionStat.Peers {
 			row := make([]types.Datum, len(tableTiKVRegionPeersCols))
 			row[0].SetInt64(regionStat.ID)
-			row[1].SetString(regionStat.StartKey)
-			row[2].SetString(regionStat.EndKey)
-			row[3].SetInt64(peer.ID)
-			row[4].SetInt64(peer.StoreID)
+			row[1].SetInt64(peer.ID)
+			row[2].SetInt64(peer.StoreID)
 			if peer.ID == regionStat.Leader.ID {
-				row[5].SetInt64(1)
+				row[3].SetInt64(1)
 			} else {
-				row[5].SetInt64(0)
+				row[3].SetInt64(0)
 			}
 			if peer.IsLearner {
-				row[6].SetInt64(1)
+				row[4].SetInt64(1)
 			} else {
-				row[6].SetInt64(0)
+				row[4].SetInt64(0)
 			}
 			if pendingPeerIDSet.Exist(peer.ID) {
-				row[7].SetString(pendingPeer)
+				row[5].SetString(pendingPeer)
 			} else if downSec, ok := downPeerMap[peer.ID]; ok {
-				row[7].SetString(downPeer)
-				row[8].SetInt64(downSec)
+				row[5].SetString(downPeer)
+				row[6].SetInt64(downSec)
 			} else {
-				row[7].SetString(normalPeer)
+				row[5].SetString(normalPeer)
 			}
 			records = append(records, row)
 		}
