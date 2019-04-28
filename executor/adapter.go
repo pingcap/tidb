@@ -326,7 +326,7 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, sctx se
 			return nil, err
 		}
 		if retryCnt == config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
-			return nil, errors.New("pessimistic max retry count reached.")
+			return nil, errors.New("pessimistic max retry count reached")
 		}
 		retryCnt++
 		conflictTS := extractConflictTS(err.Error())
@@ -497,6 +497,7 @@ func extractConflictTS(errStr string) uint64 {
 
 type pessimisticTxn interface {
 	kv.Transaction
+	// KeysNeedToLock returns the keys need to be locked.
 	KeysNeedToLock() ([]kv.Key, error)
 }
 
