@@ -390,7 +390,7 @@ func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 		joinPlan.JoinType = RightOuterJoin
 		resetNotNullFlag(joinPlan.schema, 0, leftPlan.Schema().Len())
 	default:
-		b.optFlag = b.optFlag | flagJoinReOrderGreedy
+		b.optFlag = b.optFlag | flagJoinReOrder
 		joinPlan.JoinType = InnerJoin
 	}
 
