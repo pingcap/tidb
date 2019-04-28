@@ -15,6 +15,7 @@ package server
 
 import (
 	"time"
+	"net/http"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/parser/model"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/sirupsen/logrus"
-	"net/http"
 )
 
 // StatsHandler is the handler for dumping statistics.
