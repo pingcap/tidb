@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -394,6 +395,7 @@ var (
 		"Performance.FeedbackProbability": {},
 		"Performance.QueryFeedbackLimit":  {},
 		"Performance.PseudoEstimateRatio": {},
+		"SplitTable":                      {},
 	}
 )
 
@@ -453,6 +455,15 @@ func ReloadGlobalConfig() error {
 	reloadPerformance(&nc.Performance, &c.Performance)
 	if c.RunDDL != nc.RunDDL {
 		ddl.RunWorker.Store(nc.RunDDL)
+	}
+	if c.SplitTable != nc.SplitTable {
+		var v uint32
+		if nc.SplitTable {
+			v = 1
+		} else {
+			v = 0
+		}
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, v)
 	}
 
 	globalConfLock.Lock()
