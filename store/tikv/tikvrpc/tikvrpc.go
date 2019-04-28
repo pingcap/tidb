@@ -64,6 +64,8 @@ const (
 	CmdSplitRegion
 
 	CmdDebugGetRegionProperties CmdType = 2048 + iota
+
+	CmdBatchTest CmdType = 4096 + iota
 )
 
 func (t CmdType) String() string {
@@ -120,6 +122,8 @@ func (t CmdType) String() string {
 		return "SplitRegion"
 	case CmdDebugGetRegionProperties:
 		return "DebugGetRegionProperties"
+	case CmdBatchTest:
+		return "BatchTest"
 	}
 	return "Unknown"
 }
@@ -154,6 +158,8 @@ type Request struct {
 	SplitRegion        *kvrpcpb.SplitRegionRequest
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
+
+	BatchTest *tikvpb.BatchCommandTestRequest
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -199,6 +205,8 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawScan{RawScan: req.RawScan}}
 	case CmdCop:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Coprocessor{Coprocessor: req.Cop}}
+	case CmdBatchTest:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Test{Test: req.BatchTest}}
 	}
 	return nil
 }
@@ -242,6 +250,8 @@ type Response struct {
 	SplitRegion        *kvrpcpb.SplitRegionResponse
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesResponse
+
+	Test *tikvpb.BatchCommandTestResponse
 }
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
@@ -287,6 +297,8 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 		return &Response{Type: CmdRawScan, RawScan: res.RawScan}
 	case *tikvpb.BatchCommandsResponse_Response_Coprocessor:
 		return &Response{Type: CmdCop, Cop: res.Coprocessor}
+	case *tikvpb.BatchCommandsResponse_Response_Test:
+		return &Response{Type: CmdBatchTest, Test:res.Test}
 	}
 	return nil
 }
