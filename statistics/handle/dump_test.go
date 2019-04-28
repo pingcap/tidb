@@ -122,39 +122,33 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t(c1 int, c2 int)")
-	testKit.MustExec("insert into t values(1,1),(3,12),(4,20),(2,7),(5,21)")
-
-	oriLease := s.do.StatsHandle().Lease
-	s.do.StatsHandle().Lease = 1
-	defer func() {
-		s.do.StatsHandle().Lease = oriLease
-	}()
+	testKit.MustExec("create table t(a int)")
+	testKit.MustExec("insert into t values (1),(3),(4),(2),(5)")
 	testKit.MustExec("analyze table t")
 
 	is := s.do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-
 	h := s.do.StatsHandle()
-	stat := h.GetTableStats(tableInfo)
-	cms := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
+	h.Update(is)
 
 	// Insert 30 fake data
-	fakeData := make([][]byte, 30)
+	fakeData := make([][]byte, 0, 30)
 	for i := 0; i < 30; i++ {
 		fakeData = append(fakeData, []byte(fmt.Sprintf("%01024d", i)))
 	}
+	cms := statistics.NewCMSketchWithTopN(5, 2048, fakeData, 20, 100)
 
-	statistics.NewCMSketchWithTopN(5, 2048, fakeData, 20, 100)
-	cmsBackup := cms.Copy()
-
-	h.SaveStatsToStorage(stat.PhysicalID, 0, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, 0)
+	stat := h.GetTableStats(tableInfo)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, 1)
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
 
 	stat = h.GetTableStats(tableInfo)
-	cmsFromStore := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
-	c.Check(cmsBackup.Equal(cmsFromStore), IsTrue)
+	cmsFromStore := stat.Columns[tableInfo.Columns[0].ID].CMSketch
+	c.Assert(cmsFromStore, NotNil)
+	c.Check(cms.Equal(cmsFromStore), IsTrue)
 
 	jsonTable, err := h.DumpStatsToJSON("test", tableInfo)
 	c.Check(err, IsNil)
@@ -162,5 +156,5 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	c.Check(err, IsNil)
 	stat = h.GetTableStats(tableInfo)
 	cmsFromJSON := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
-	c.Check(cmsBackup.Equal(cmsFromJSON), IsTrue)
+	c.Check(cms.Equal(cmsFromJSON), IsTrue)
 }

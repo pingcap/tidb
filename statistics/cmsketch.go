@@ -337,16 +337,13 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 // EncodeCMSketchWithoutTopN encodes the given CMSketch to byte slice.
 // Note that it does not include the topN.
 func EncodeCMSketchWithoutTopN(c *CMSketch) ([]byte, error) {
-	if c == nil || c.count == 0 {
+	if c == nil {
 		return nil, nil
 	}
 	p := CMSketchToProto(c)
 	p.TopN = nil
 	protoData, err := p.Marshal()
-	if err != nil {
-		return nil, err
-	}
-	return protoData, nil
+	return protoData, err
 }
 
 // decodeCMSketch decode a CMSketch from the given byte slice.
@@ -359,7 +356,7 @@ func decodeCMSketch(data []byte, topN []TopNMeta) (*CMSketch, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(p.Rows) == 0 {
+	if len(p.Rows) == 0 && len(topN) == 0 {
 		return nil, nil
 	}
 	for _, meta := range topN {
@@ -375,7 +372,7 @@ func LoadCMSketchWithTopN(exec sqlexec.RestrictedSQLExecutor, tableID, isIndex, 
 	if err != nil {
 		return nil, err
 	}
-	topN := make([]TopNMeta, len(topNRows))
+	topN := make([]TopNMeta, 0, len(topNRows))
 	for _, row := range topNRows {
 		topN = append(topN, TopNMeta{Data: row.GetBytes(0), Count: row.GetUint64(1)})
 	}
