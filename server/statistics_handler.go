@@ -14,8 +14,8 @@
 package server
 
 import (
-	"time"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/parser/model"
