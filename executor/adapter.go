@@ -129,7 +129,6 @@ func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.logAudit()
 	return err
 }
@@ -290,16 +289,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 	var err error
 	defer func() {
 		terror.Log(e.Close())
-		txnTS := uint64(0)
-		// Don't active pending txn here.
-		if txn, err1 := sctx.Txn(false); err1 != nil {
-			logutil.Logger(ctx).Error("get current transaction failed", zap.Error(err))
-		} else {
-			if txn.Valid() {
-				txnTS = txn.StartTS()
-			}
-		}
-		a.LogSlowQuery(txnTS, err == nil)
 		a.logAudit()
 	}()
 
