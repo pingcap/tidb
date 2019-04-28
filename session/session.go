@@ -1052,20 +1052,23 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 }
 
 func (s *session) handleInValidBindRecord(ctx context.Context, stmtNode ast.StmtNode) {
-	var stmt ast.StmtNode
+	var normdOrigSQL string
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt:
-			x.Stmt.SetText(x.Text()[len("explain "):])
-			stmt = x.Stmt
+			normalizeExplainSQL := parser.Normalize(x.Text())
+			lowerSQL := strings.ToLower(normalizeExplainSQL)
+			idx := strings.Index(lowerSQL, "select")
+			normdOrigSQL = normalizeExplainSQL[idx:]
+		default:
+			return
 		}
 	case *ast.SelectStmt:
-		stmt = x
+		normdOrigSQL = parser.Normalize(x.Text())
 	default:
 		return
 	}
-	normdOrigSQL := parser.Normalize(stmt.Text())
 	sessionHandle := s.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindMeta := sessionHandle.GetBindRecord(normdOrigSQL, s.GetSessionVars().CurrentDB)
 	if bindMeta != nil {

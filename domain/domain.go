@@ -791,8 +791,14 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 		return err
 	}
 
+	do.loadBindInfoLoop()
+	do.handleInvalidBindTaskLoop()
+	return nil
+}
+
+func (do *Domain) loadBindInfoLoop() {
 	duration := 3 * time.Second
-	do.wg.Add(2)
+	do.wg.Add(1)
 	go func() {
 		defer do.wg.Done()
 		defer recoverInDomain("loadBindInfoLoop", false)
@@ -802,14 +808,17 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 				return
 			case <-time.After(duration):
 			}
-			err = do.bindHandle.Update(false)
+			err := do.bindHandle.Update(false)
 			if err != nil {
 				logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
 			}
 		}
 	}()
+}
 
-	handleInvaildTaskDuration := 3 * time.Second
+func (do *Domain) handleInvalidBindTaskLoop() {
+	handleInvalidTaskDuration := 3 * time.Second
+	do.wg.Add(1)
 	go func() {
 		defer do.wg.Done()
 		defer recoverInDomain("loadBindInfoLoop-dropInvalidBindInfo", false)
@@ -817,12 +826,11 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 			select {
 			case <-do.exit:
 				return
-			case <-time.After(handleInvaildTaskDuration):
+			case <-time.After(handleInvalidTaskDuration):
 			}
 			do.bindHandle.HandleDropBindRecord()
 		}
 	}()
-	return nil
 }
 
 // StatsHandle returns the statistic handle.
