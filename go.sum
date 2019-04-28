@@ -190,6 +190,8 @@ github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2/go.mod h1:UETIi67q
 github.com/yookoala/realpath v1.0.0/go.mod h1:gJJMA9wuX7AcqLy1+ffPatSCySA1FQ2S8Ya9AIoYBpE=
 github.com/zhangjinpeng1987/kvproto v0.0.0-20190428020753-c045b5046df1 h1:kUt9Efc5O5YeD3uenuIgtcpcReovgtB0oEC02VFJW5Y=
 github.com/zhangjinpeng1987/kvproto v0.0.0-20190428020753-c045b5046df1/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
+github.com/zhangjinpeng1987/kvproto v0.0.0-20190428053437-4a05742ac748 h1:CoAwrdqIy1A2aqMnNXCiWN5HmTrmDoxpvOdRZG/OHQ8=
+github.com/zhangjinpeng1987/kvproto v0.0.0-20190428053437-4a05742ac748/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
 go.etcd.io/bbolt v1.3.2/go.mod h1:IbVyRI1SCnLcuJnV2u8VeU0CEYM7e686BmAb1XKL+uU=
 go.etcd.io/etcd v0.0.0-20190320044326-77d4b742cdbf/go.mod h1:KSGwdbiFchh5KIC9My2+ZVl5/3ANcwohw50dpPwa2cw=
 go.uber.org/atomic v1.3.2 h1:2Oa65PReHzfn29GpvgsYwloV9AVFHPDk8tYxt2c2tr4=
