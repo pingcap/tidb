@@ -160,7 +160,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false)
+		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false, nil)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			logutil.Logger(context.Background()).Debug("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
@@ -452,7 +452,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 }
 
 // tableStatsFromStorage loads table stats info from storage.
-func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool) (*statistics.Table, error) {
+func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, historyStatsExec sqlexec.RestrictedSQLExecutor) (_ *statistics.Table, err error) {
 	table, ok := h.StatsCache.Load().(StatsCache)[physicalID]
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
@@ -472,9 +472,14 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	}
 	table.Pseudo = false
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation from mysql.stats_histograms where table_id = %d", physicalID)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
+	var rows []chunk.Row
+	if historyStatsExec != nil {
+		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(nil, selSQL)
+	} else {
+		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
+	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	// Check deleted table.
 	if len(rows) == 0 {
