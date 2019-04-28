@@ -1012,7 +1012,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		if err != nil {
 			if tempStmtNodes == nil {
 				tempStmtNodes, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
-				if err != nil || warns != nil{
+				if err != nil || warns != nil {
 					//just skip errcheck, because parse will not return an error.
 				}
 			}
