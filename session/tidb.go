@@ -204,7 +204,11 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	}
 	se := sctx.(*session)
 	defer func() {
-		s.(*executor.ExecStmt).LogSlowQuery(se.GetSessionVars().TxnCtx.StartTS, err != nil)
+		// If it is not a select statement, we record its slow log here,
+		// then it could include the transaction commit time.
+		if rs == nil {
+			s.(*executor.ExecStmt).LogSlowQuery(se.GetSessionVars().TxnCtx.StartTS, err != nil)
+		}
 	}()
 
 	err = se.checkTxnAborted(s)

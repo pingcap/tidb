@@ -129,6 +129,7 @@ func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.logAudit()
 	return err
 }
