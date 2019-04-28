@@ -14,6 +14,8 @@
 package config
 
 import (
+	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -26,9 +28,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	//"github.com/pingcap/tidb/planner/core"
-	//"github.com/pingcap/tidb/statistics"
-	//"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -376,17 +375,12 @@ var defaultConf = Config{
 	},
 }
 
-// ConfReloader is used to reload a specific config and
-// it can solve cycle dependency problems.
-type ConfReloader func(nc, c *Config)
-
 var (
-	globalConf     = defaultConf
-	globalConfPath = ""
-	globalConfLock sync.RWMutex
-	confReloader   func(nc, c *Config)
-	confReloadLock sync.Mutex
-
+	globalConf             = defaultConf
+	globalConfLock         sync.RWMutex
+	reloadConfPath         = ""
+	confReloader           func(nc, c *Config)
+	confReloadLock         sync.Mutex
 	supportedReloadConfigs = make(map[string]struct{}, 32)
 )
 
@@ -396,10 +390,10 @@ func NewConfig() *Config {
 	return &conf
 }
 
-// SetConfReloader sets the global config path.
+// SetConfReloader sets reload config path and a reloader.
 // It should be called only once at start time.
 func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...string) {
-	globalConfPath = cpath
+	reloadConfPath = cpath
 	confReloader = reloader
 	for _, item := range confItems {
 		supportedReloadConfigs[item] = struct{}{}
@@ -423,7 +417,7 @@ func ReloadGlobalConfig() error {
 	defer confReloadLock.Unlock()
 
 	nc := NewConfig()
-	if err := nc.Load(globalConfPath); err != nil {
+	if err := nc.Load(reloadConfPath); err != nil {
 		return err
 	}
 	if err := nc.Valid(); err != nil {
@@ -447,7 +441,12 @@ func ReloadGlobalConfig() error {
 	*c = *nc
 	globalConfLock.Unlock()
 
-	// TODO: do log
+	var buf bytes.Buffer
+	buf.WriteString("reload config")
+	for k, vs := range diffs {
+		buf.WriteString(fmt.Sprintf(", %v:%v->%v", k, vs[1], vs[0]))
+	}
+	logutil.Logger(context.Background()).Info(buf.String())
 	return nil
 }
 
