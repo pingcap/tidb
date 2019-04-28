@@ -256,6 +256,29 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
+
+	rs, err = tk.Exec("show session bindings")
+	c.Assert(err, IsNil)
+	chk = rs.NewRecordBatch()
+	err = rs.Next(context.TODO(), chk)
+	c.Check(err, IsNil)
+	c.Check(chk.NumRows(), Equals, 1)
+	row := chk.GetRow(0)
+	c.Check(row.GetString(0), Equals, "select * from t where i > ?")
+	c.Check(row.GetString(1), Equals, "select * from t use index(index_t) where i>99")
+	c.Check(row.GetString(2), Equals, "test")
+	c.Check(row.GetString(3), Equals, "using")
+	c.Check(row.GetTime(4), NotNil)
+	c.Check(row.GetTime(5), NotNil)
+	c.Check(row.GetString(6), NotNil)
+	c.Check(row.GetString(7), NotNil)
+
+	_, err = tk.Exec("drop session binding for select * from t where i>99")
+	c.Assert(err, IsNil)
+	bindData = handle.GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
+	c.Check(bindData.Status, Equals, "deleted")
 }
 
 func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {

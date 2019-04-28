@@ -28,14 +28,14 @@ const (
 	Invalid = "invalid"
 )
 
-// bindMeta stores the basic bind info and bindSql astNode.
-type bindMeta struct {
+// BindMeta stores the basic bind info and bindSql astNode.
+type BindMeta struct {
 	*BindRecord
 	Ast ast.StmtNode //ast will be used to do query sql bind check
 }
 
-// cache is a k-v map, key is original sql, value is a slice of bindMeta.
-type cache map[string][]*bindMeta
+// cache is a k-v map, key is original sql, value is a slice of BindMeta.
+type cache map[string][]*BindMeta
 
 // BindRecord represents a sql bind record retrieved from the storage.
 type BindRecord struct {
