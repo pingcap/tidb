@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -302,8 +303,12 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
-	if _, err := e.ctx.Txn(true); err != nil {
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
 		return err
+	}
+	if s.Pessimistic || config.GetGlobalConfig().PessimisticTxn.Enable || e.ctx.GetSessionVars().PessimisticLock {
+		txn.SetOption(kv.Pessimistic, true)
 	}
 	return nil
 }

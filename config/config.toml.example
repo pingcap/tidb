@@ -283,3 +283,13 @@ binlog-socket = ""
 
 # the strategy for sending binlog to pump, value can be "range" or "hash" now.
 strategy = "range"
+
+[pessimistic-txn]
+# enable pessimistic transaction by default.
+enable = false
+
+# max retry count for a statement in a pessimistic transaction.
+max-retry-count = 256
+
+# default TTL for pessimistic lock.
+ttl = 60000

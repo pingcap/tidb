@@ -100,6 +100,7 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	ForUpdate     bool
+	forUpdateTS   uint64
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
@@ -143,6 +144,21 @@ func (tc *TransactionContext) Cleanup() {
 // ClearDelta clears the delta map.
 func (tc *TransactionContext) ClearDelta() {
 	tc.TableDeltaMap = nil
+}
+
+// GetForUpdateTS returns the ts for update.
+func (tc *TransactionContext) GetForUpdateTS() uint64 {
+	if tc.forUpdateTS > tc.StartTS {
+		return tc.forUpdateTS
+	}
+	return tc.StartTS
+}
+
+// SetForUpdateTS sets the ts for update.
+func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
+	if forUpdateTS > tc.forUpdateTS {
+		tc.forUpdateTS = forUpdateTS
+	}
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -356,6 +372,9 @@ type SessionVars struct {
 
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
+
+	// PessimisticLock indicates whether new transaction should be pessimistic .
+	PessimisticLock bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -769,6 +788,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableFastAnalyze = TiDBOptOn(val)
 	case TiDBWaitTableSplitFinish:
 		s.WaitTableSplitFinish = TiDBOptOn(val)
+	case TiDBPessimisticLock:
+		s.PessimisticLock = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

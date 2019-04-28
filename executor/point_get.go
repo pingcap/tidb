@@ -156,8 +156,15 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 		return nil, err
 	}
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
-		return txn.Get(key)
+		val, err = txn.GetMemBuffer().Get(key)
+		if err == nil {
+			return val, err
+		}
+		if !kv.IsErrNotFound(err) {
+			return nil, err
+		}
 	}
+	// In pessimistic txn, this snapshot may be using the 'for update ts' instead of start ts.
 	return e.snapshot.Get(key)
 }
 
