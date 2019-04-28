@@ -123,7 +123,7 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 		return
 	}
 	// delete top n data
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_topnstore where table_id = %d and hist_id = %d and is_index = %d", physicalID, histID, isIndex))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and hist_id = %d and is_index = %d", physicalID, histID, isIndex))
 	if err != nil {
 		return
 	}

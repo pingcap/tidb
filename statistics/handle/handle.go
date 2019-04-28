@@ -524,18 +524,18 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return
 	}
-	data, topNData, err := statistics.EncodeCMSketch(cms)
+	data, err := statistics.EncodeCMSketchWithoutTopN(cms)
 	if err != nil {
 		return
 	}
 	// Delete outdated data
-	deleteOutdatedTopNSQL := fmt.Sprintf("delete from mysql.stats_topnstore where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
+	deleteOutdatedTopNSQL := fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
 	_, err = exec.Execute(ctx, deleteOutdatedTopNSQL)
 	if err != nil {
 		return
 	}
-	for i, v := range topNData {
-		insertSQL := fmt.Sprintf("insert into mysql.stats_topnstore (table_id, is_index, hist_id, value_id, content) values (%d, %d, %d, %d, X'%X')", tableID, isIndex, hg.ID, i, v)
+	for _, meta := range cms.TopN() {
+		insertSQL := fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count)
 		_, err = exec.Execute(ctx, insertSQL)
 		if err != nil {
 			return

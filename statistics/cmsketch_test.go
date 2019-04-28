@@ -149,11 +149,10 @@ func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
 			lSketch.table[i][j] = math.MaxUint32
 		}
 	}
-	bytes, topn, err := EncodeCMSketch(lSketch)
+	bytes, err := EncodeCMSketchWithoutTopN(lSketch)
 	c.Assert(err, IsNil)
-	c.Assert(len(topn), Equals, 0)
 	c.Assert(len(bytes), Equals, 61457)
-	rSketch, err := decodeCMSketch(bytes, topn)
+	rSketch, err := decodeCMSketch(bytes, nil)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }
@@ -224,18 +223,17 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 			lSketch.table[i][j] = math.MaxUint32
 		}
 	}
-	lSketch.topN = make(map[uint64][]topNMeta)
+	lSketch.topN = make(map[uint64][]TopNMeta)
 	for i := 0; i < 20; i++ {
 		tString := []byte(fmt.Sprintf("%20000d", i))
 		h1, h2 := murmur3.Sum128(tString)
-		lSketch.topN[h1] = []topNMeta{{h2, tString, math.MaxUint64}}
+		lSketch.topN[h1] = []TopNMeta{{h2, tString, math.MaxUint64}}
 	}
 
-	bytes, topn, err := EncodeCMSketch(lSketch)
+	bytes, err := EncodeCMSketchWithoutTopN(lSketch)
 	c.Assert(err, IsNil)
-	c.Assert(len(topn), Equals, 20)
-	c.Assert(len(bytes), Equals, 61717)
-	rSketch, err := decodeCMSketch(bytes, topn)
+	c.Assert(len(bytes), Equals, 61457)
+	rSketch, err := decodeCMSketch(bytes, lSketch.TopN())
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }

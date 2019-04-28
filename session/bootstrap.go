@@ -249,17 +249,14 @@ const (
 		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER)
 	)`
 
-	// CreateStatsTopNStoreTable stores topn data of a cmsketch with top n.
-	// It stores data of topn of stats_histograms(table_id, is_index, hist_id)
-	// value_id is the position this data lies in the TopN array of serialized CMSketch.
-	// content is the raw data, since a single column can be atmost 6MiB, we do not store other data.
-	CreateStatsTopNStoreTable = `CREATE TABLE if not exists mysql.stats_topnstore (
+	// CreateStatsTopNTable stores topn data of a cmsketch with top n.
+	CreateStatsTopNTable = `CREATE TABLE if not exists mysql.stats_top_n (
 		table_id bigint(64) NOT NULL,
 		is_index tinyint(2) NOT NULL,
 		hist_id bigint(64) NOT NULL,
-		value_id bigint(64) NOT NULL,
-		content longblob,
-		unique index tbl(table_id, is_index, hist_id, value_id)
+		value longblob,
+		count bigint(64) UNSIGNED NOT NULL,
+		unique index tbl(table_id, is_index, hist_id)
 	);`
 )
 
@@ -799,7 +796,7 @@ func upgradeToVer29(s Session) {
 }
 
 func upgradeToVer30(s Session) {
-	mustExecute(s, CreateStatsTopNStoreTable)
+	mustExecute(s, CreateStatsTopNTable)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -859,7 +856,7 @@ func doDDLWorks(s Session) {
 	// Create bind_info table.
 	mustExecute(s, CreateBindInfoTable)
 	// Create stats_topn_store table.
-	mustExecute(s, CreateStatsTopNStoreTable)
+	mustExecute(s, CreateStatsTopNTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
