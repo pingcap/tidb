@@ -161,7 +161,7 @@ func (n *neededColumnMap) Delete(col tableColumnID) {
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
 // and use pseudo estimation.
-var RatioOfPseudoEstimate = atomic.Float64{}
+var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
 
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {

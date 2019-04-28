@@ -14,7 +14,6 @@
 package core
 
 import (
-	atomic2 "go.uber.org/atomic"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	atomic2 "go.uber.org/atomic"
 )
 
 var (

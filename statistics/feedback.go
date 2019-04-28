@@ -84,7 +84,7 @@ var (
 	// MaxNumberOfRanges is the max number of ranges before split to collect feedback.
 	MaxNumberOfRanges = 20
 	// FeedbackProbability is the probability to collect the feedback.
-	FeedbackProbability atomic.Float64
+	FeedbackProbability = atomic.NewFloat64(0)
 )
 
 // CalcErrorRate calculates the error rate the current QueryFeedback.

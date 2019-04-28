@@ -90,7 +90,7 @@ func (h *Handle) Clear() {
 }
 
 // MaxQueryFeedbackCount is the max number of feedback that cache in memory.
-var MaxQueryFeedbackCount atomic2.Int64
+var MaxQueryFeedbackCount = atomic2.NewInt64(1 << 10)
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
