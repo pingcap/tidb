@@ -33,12 +33,43 @@ func selectBind(originalNode, hintedNode *ast.SelectStmt) *ast.SelectStmt {
 		originalNode.From.TableRefs = resultSetNodeBind(originalNode.From.TableRefs, hintedNode.From.TableRefs).(*ast.Join)
 	}
 	if originalNode.Where != nil {
-		originalNode.Where = selectionBind(originalNode.Where, hintedNode.Where).(ast.ExprNode)
+		originalNode.Where = exprBind(originalNode.Where, hintedNode.Where).(ast.ExprNode)
+	}
+
+	if originalNode.Having != nil {
+		originalNode.Having = havingBind(originalNode.Having, hintedNode.Having)
+	}
+
+	if originalNode.OrderBy != nil {
+		originalNode.OrderBy = orderByBind(originalNode.OrderBy, hintedNode.OrderBy)
+	}
+
+	if originalNode.Fields != nil {
+		for idx := 0; idx < len(originalNode.Fields.Fields); idx++ {
+			originalNode.Fields.Fields[idx] = selectFieldBind(originalNode.Fields.Fields[idx], hintedNode.Fields.Fields[idx])
+		}
 	}
 	return originalNode
 }
 
-func selectionBind(where ast.ExprNode, hintedWhere ast.ExprNode) ast.ExprNode {
+func selectFieldBind(originalNode, hintedNode *ast.SelectField) *ast.SelectField {
+	originalNode.Expr = exprBind(originalNode.Expr, hintedNode.Expr)
+	return originalNode
+}
+
+func orderByBind(originalNode, hintedNode *ast.OrderByClause) *ast.OrderByClause {
+	for idx := 0; idx < len(originalNode.Items); idx++ {
+		originalNode.Items[idx].Expr = exprBind(originalNode.Items[idx].Expr, hintedNode.Items[idx].Expr)
+	}
+	return originalNode
+}
+
+func havingBind(originalNode, hintedNode *ast.HavingClause) *ast.HavingClause {
+	originalNode.Expr = exprBind(originalNode.Expr, hintedNode.Expr)
+	return originalNode
+}
+
+func exprBind(where ast.ExprNode, hintedWhere ast.ExprNode) ast.ExprNode {
 	switch v := where.(type) {
 	case *ast.SubqueryExpr:
 		if v.Query != nil {
