@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -379,10 +380,16 @@ var (
 	confReloadLock sync.Mutex
 
 	supportedReloadConfigs = map[string]struct{}{
-		"OOMAction":       {},
-		"EnableStreaming": {},
-		"TxnLocalLatches": {},
-		"Performance":     {},
+		"OOMAction":                       {},
+		"EnableStreaming":                 {},
+		"TxnLocalLatches":                 {},
+		"Performance.MaxProcs":            {},
+		"Performance.MaxMemory":           {},
+		"Performance.CrossJoin":           {},
+		"Performance.StmtCountLimit":      {},
+		"Performance.FeedbackProbability": {},
+		"Performance.QueryFeedbackLimit":  {},
+		"Performance.PseudoEstimateRatio": {},
 	}
 )
 
@@ -474,6 +481,13 @@ func collectsDiff(i1, i2 interface{}, prefix string) map[string][]interface{} {
 		}
 	}
 	return diff
+}
+
+func reloadPerformance(nc, c *Performance) {
+	if nc.MaxProcs != c.MaxProcs {
+		runtime.GOMAXPROCS(int(nc.MaxProcs))
+	}
+
 }
 
 // Load loads config options from a toml file.

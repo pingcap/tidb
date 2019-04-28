@@ -14,6 +14,7 @@
 package core
 
 import (
+	atomic2 "go.uber.org/atomic"
 	"sync/atomic"
 	"time"
 
@@ -34,7 +35,7 @@ var (
 	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
 	PreparedPlanCacheMemoryGuardRatio float64
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-max-memory".
-	PreparedPlanCacheMaxMemory uint64
+	PreparedPlanCacheMaxMemory atomic2.Uint64
 )
 
 const (

@@ -465,14 +465,14 @@ func setGlobalVars() {
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
-	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
-	handle.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
-	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
+	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
+	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
+	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	}
-	plannercore.AllowCartesianProduct = cfg.Performance.CrossJoin
+	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
@@ -496,11 +496,11 @@ func setGlobalVars() {
 		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
 			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		}
-		plannercore.PreparedPlanCacheMaxMemory = cfg.Performance.MaxMemory
+		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.MaxMemory)
 		total, err := memory.MemTotal()
 		terror.MustNil(err)
-		if plannercore.PreparedPlanCacheMaxMemory > total || plannercore.PreparedPlanCacheMaxMemory <= 0 {
-			plannercore.PreparedPlanCacheMaxMemory = total
+		if plannercore.PreparedPlanCacheMaxMemory.Load() > total || plannercore.PreparedPlanCacheMaxMemory.Load() <= 0 {
+			plannercore.PreparedPlanCacheMaxMemory.Store(total)
 		}
 	}
 
