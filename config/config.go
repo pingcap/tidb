@@ -19,16 +19,15 @@ import (
 	"fmt"
 	"io/ioutil"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
+	//"github.com/pingcap/tidb/planner/core"
+	//"github.com/pingcap/tidb/statistics"
+	//"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -376,25 +375,18 @@ var defaultConf = Config{
 	},
 }
 
+// ConfReloader is used to reload a specific config and
+// it can solve cycle dependency problems.
+type ConfReloader func(nc, c *Config)
+
 var (
 	globalConf     = defaultConf
 	globalConfPath = ""
 	globalConfLock sync.RWMutex
+	confReloader   func(nc, c *Config)
 	confReloadLock sync.Mutex
 
-	supportedReloadConfigs = map[string]struct{}{
-		"OOMAction":                       {},
-		"EnableStreaming":                 {},
-		"TxnLocalLatches":                 {},
-		"Performance.MaxProcs":            {},
-		"Performance.MaxMemory":           {},
-		"Performance.CrossJoin":           {},
-		"Performance.StmtCountLimit":      {},
-		"Performance.FeedbackProbability": {},
-		"Performance.QueryFeedbackLimit":  {},
-		"Performance.PseudoEstimateRatio": {},
-		"SplitTable":                      {},
-	}
+	supportedReloadConfigs = make(map[string]struct{}, 32)
 )
 
 // NewConfig creates a new config instance with default value.
@@ -403,10 +395,14 @@ func NewConfig() *Config {
 	return &conf
 }
 
-// SetGlobalConfPath sets the global config path.
+// SetConfReloader sets the global config path.
 // It should be called only once at start time.
-func SetGlobalConfPath(cpath string) {
+func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...string) {
 	globalConfPath = cpath
+	confReloader = reloader
+	for _, item := range confItems {
+		supportedReloadConfigs[item] = struct{}{}
+	}
 }
 
 // GetGlobalConfig returns the global configuration for this server.
@@ -435,23 +431,14 @@ func ReloadGlobalConfig() error {
 	if len(diffs) == 0 {
 		return nil
 	}
+
 	for k := range diffs {
-		supported := false
-		for i := len(k); i > 0; i-- {
-			if i == len(k) || k[i] == '.' {
-				if _, ok := supportedReloadConfigs[k[:i]]; ok {
-					supported = true
-					break
-				}
-			}
-		}
-		if !supported {
+		if _, ok := supportedReloadConfigs[k]; !ok {
 			return fmt.Errorf("reloading config %s online is not supported", k)
 		}
 	}
 
-	reloadPerformance(&nc.Performance, &c.Performance)
-
+	confReloader(nc, c)
 	globalConfLock.Lock()
 	*c = *nc
 	globalConfLock.Unlock()
@@ -488,27 +475,6 @@ func collectsDiff(i1, i2 interface{}, prefix string) map[string][]interface{} {
 		}
 	}
 	return diff
-}
-
-func reloadPerformance(nc, c *Performance) {
-	if nc.MaxProcs != c.MaxProcs {
-		runtime.GOMAXPROCS(int(nc.MaxProcs))
-	}
-	if nc.MaxMemory != c.MaxMemory {
-		core.PreparedPlanCacheMaxMemory.Store(nc.MaxMemory)
-	}
-	if nc.CrossJoin != c.CrossJoin {
-		core.AllowCartesianProduct.Store(nc.CrossJoin)
-	}
-	if nc.FeedbackProbability != c.FeedbackProbability {
-		statistics.FeedbackProbability.Store(nc.FeedbackProbability)
-	}
-	if nc.QueryFeedbackLimit != c.QueryFeedbackLimit {
-		handle.MaxQueryFeedbackCount.Store(int64(nc.QueryFeedbackLimit))
-	}
-	if nc.PseudoEstimateRatio != c.PseudoEstimateRatio {
-		statistics.RatioOfPseudoEstimate.Store(nc.PseudoEstimateRatio)
-	}
 }
 
 // Load loads config options from a toml file.

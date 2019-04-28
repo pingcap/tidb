@@ -305,7 +305,11 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 func loadConfig() string {
 	cfg = config.GetGlobalConfig()
 	if *configPath != "" {
-		config.SetGlobalConfPath(*configPath)
+		// Not all config items are supported now.
+		config.SetConfReloader(*configPath, reloadConfig,
+			"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
+			"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio")
+
 		err := cfg.Load(*configPath)
 		// This block is to accommodate an interim situation where strict config checking
 		// is not the default behavior of TiDB. The warning message must be deferred until
@@ -317,6 +321,27 @@ func loadConfig() string {
 		terror.MustNil(err)
 	}
 	return ""
+}
+
+func reloadConfig(nc, c *config.Config) {
+	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
+		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
+	}
+	if nc.Performance.MaxMemory != c.Performance.MaxMemory {
+		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.MaxMemory)
+	}
+	if nc.Performance.CrossJoin != c.Performance.CrossJoin {
+		plannercore.AllowCartesianProduct.Store(nc.Performance.CrossJoin)
+	}
+	if nc.Performance.FeedbackProbability != c.Performance.FeedbackProbability {
+		statistics.FeedbackProbability.Store(nc.Performance.FeedbackProbability)
+	}
+	if nc.Performance.QueryFeedbackLimit != c.Performance.QueryFeedbackLimit {
+		handle.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
+	}
+	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
+		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
+	}
 }
 
 func overrideConfig() {
@@ -468,7 +493,7 @@ func setGlobalVars() {
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
 	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
-	ddl.RunWorker.Store(cfg.RunDDL)
+	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	}
