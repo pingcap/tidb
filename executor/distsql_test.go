@@ -25,7 +25,10 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -183,4 +186,54 @@ func (s *testSuite3) TestIssue10178(c *C) {
 	tk.MustQuery("select max(a) from t").Check(testkit.Rows("18446744073709551615"))
 	tk.MustQuery("select * from t where a > 9223372036854775807").Check(testkit.Rows("18446744073709551615"))
 	tk.MustQuery("select * from t where a < 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+}
+
+func (s *testSuite3) TestInconsistentIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a))")
+	is := s.domain.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	idx := tbl.Meta().FindIndexByName("idx_a")
+	idxOp := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)
+	ctx := mock.NewContext()
+	ctx.Store = s.store
+
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i))
+		c.Assert(tk.QueryToErr("select * from t where a>=0"), IsNil)
+	}
+
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("update t set a=%d where a=%d", i, i+10))
+		c.Assert(tk.QueryToErr("select * from t where a>=0"), IsNil)
+	}
+
+	for i := 0; i < 10; i++ {
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), int64(100+i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+
+		err = tk.QueryToErr("select * from t use index(idx_a) where a >= 0")
+		c.Assert(err.Error(), Equals, fmt.Sprintf("inconsistent index idx_a handle count %d isn't equal to value count 10", i+11))
+
+		// if has other conditions, the inconsistent index check doesn't work.
+		err = tk.QueryToErr("select * from t where a>=0 and b<10")
+		c.Assert(err, IsNil)
+	}
+
+	// fix inconsistent problem to pass CI
+	for i := 0; i < 10; i++ {
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(i+10), int64(100+i), nil)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}
 }
