@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser"
@@ -389,23 +390,25 @@ func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt:
-			x.Stmt.SetText(x.Text()[len("explain "):])
-			x.Stmt = addHintForSelect(ctx, x.Stmt)
+			normalizeExplainSQL := parser.Normalize(x.Text())
+			lowerSQL := strings.ToLower(normalizeExplainSQL)
+			idx := strings.Index(lowerSQL, "select")
+			normalizeSQL := normalizeExplainSQL[idx:]
+			x.Stmt = addHintForSelect(normalizeSQL, ctx, x.Stmt)
 		}
 		return x
 	case *ast.SelectStmt:
-		return addHintForSelect(ctx, x)
+		return addHintForSelect(parser.Normalize(x.Text()), ctx, x)
 	default:
 		return stmtNode
 	}
 }
 
-func addHintForSelect(ctx sessionctx.Context, stmt ast.StmtNode) ast.StmtNode {
+func addHintForSelect(normdOrigSQL string, ctx sessionctx.Context, stmt ast.StmtNode) ast.StmtNode {
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil { //when the domain is initializing, the bind will be nil.
 		return stmt
 	}
 
-	normdOrigSQL := parser.Normalize(stmt.Text())
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord != nil {
