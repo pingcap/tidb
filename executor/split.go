@@ -66,6 +66,9 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 		regionIDs = append(regionIDs, regionID)
 
 	}
+	if !e.ctx.GetSessionVars().WaitTableSplitFinish {
+		return nil
+	}
 	for _, regionID := range regionIDs {
 		err := s.WaitScatterRegionFinish(regionID)
 		if err != nil {
