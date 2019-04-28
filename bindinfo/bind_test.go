@@ -273,4 +273,10 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	c.Check(row.GetString(6), NotNil)
 	c.Check(row.GetString(7), NotNil)
 
+	_, err = tk.Exec("drop session binding for select * from t where i>99")
+	c.Assert(err, IsNil)
+	bindData = handle.GetBindRecord("select * from t where i > ?", "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
+	c.Check(bindData.Status, Equals, "deleted")
 }
