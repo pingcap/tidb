@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/sirupsen/logrus"
 )
 
 // StatsHandler is the handler for dumping statistics.
@@ -95,8 +94,6 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
-	logrus.Warning("time.Local", time.Local)
-	logrus.Warning("params[pSnapshot] ", params[pSnapshot])
 	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[pSnapshot], mysql.TypeTimestamp, 6)
 	if err != nil {
 		writeError(w, err)
@@ -107,7 +104,6 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, err)
 		return
 	}
-	logrus.Warning("t1", t1.String())
 	snapshot := variable.GoTimeToTS(t1)
 	err = gcutil.ValidateSnapshot(se, snapshot)
 	if err != nil {
@@ -120,11 +116,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, err)
 		return
 	}
-	if is == nil {
-		logrus.Warning("is is nil")
-	}
 	h := sh.do.StatsHandle()
-	logrus.Warning("is ", is, " params ", params)
 	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
 	if err != nil {
 		writeError(w, err)
