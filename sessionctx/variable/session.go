@@ -325,6 +325,9 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
+	// WaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
+	WaitTableSplitFinish bool
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -757,6 +760,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SlowQueryFile = val
 	case TiDBEnableFastAnalyze:
 		s.EnableFastAnalyze = TiDBOptOn(val)
+	case TiDBWaitTableSplitFinish:
+		s.WaitTableSplitFinish = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
