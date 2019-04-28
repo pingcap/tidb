@@ -71,7 +71,7 @@ func (d *ddl) generalWorker() *worker {
 // It only starts the original workers.
 func (d *ddl) restartWorkers(ctx context.Context) {
 	d.quitCh = make(chan struct{})
-	if !RunWorker {
+	if !RunWorker.Load() {
 		return
 	}
 

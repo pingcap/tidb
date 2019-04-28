@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -450,6 +451,9 @@ func ReloadGlobalConfig() error {
 	}
 
 	reloadPerformance(&nc.Performance, &c.Performance)
+	if c.RunDDL != nc.RunDDL {
+		ddl.RunWorker.Store(nc.RunDDL)
+	}
 
 	globalConfLock.Lock()
 	*c = *nc

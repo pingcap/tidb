@@ -66,7 +66,7 @@ func (s *testDDLSuite) testRunWorker(c *C) {
 	store := testCreateStore(c, "test_run_worker")
 	defer store.Close()
 
-	RunWorker = false
+	RunWorker.Store(false)
 	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	testCheckOwner(c, d, false)
 	defer d.Stop()
@@ -75,7 +75,7 @@ func (s *testDDLSuite) testRunWorker(c *C) {
 	worker := d.generalWorker()
 	c.Assert(worker, IsNil)
 	// Make sure the DDL job can be done and exit that goroutine.
-	RunWorker = true
+	RunWorker.Store(true)
 	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	testCheckOwner(c, d1, true)
 	defer d1.Stop()
