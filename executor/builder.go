@@ -1435,9 +1435,11 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 				colsInfo:        task.ColsInfo,
 				pkInfo:          task.PKInfo,
 				maxNumBuckets:   maxNumBuckets,
+				tblInfo:         task.TblInfo,
 				concurrency:     concurrency,
 				wg:              &sync.WaitGroup{},
 			},
+			job: &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "fast analyze columns"},
 		})
 	}
 }
@@ -1464,9 +1466,11 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 				physicalTableID: task.PhysicalTableID,
 				idxsInfo:        []*model.IndexInfo{task.IndexInfo},
 				maxNumBuckets:   maxNumBuckets,
+				tblInfo:         task.TblInfo,
 				concurrency:     concurrency,
 				wg:              &sync.WaitGroup{},
 			},
+			job: &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: "fast analyze index " + task.IndexInfo.Name.O},
 		})
 	}
 }
