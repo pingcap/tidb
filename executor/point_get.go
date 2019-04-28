@@ -94,7 +94,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 		failpoint.InjectContext(nil, "pointGetRepeatableReadTest", func(val failpoint.Value) {
 			if val.(bool) != false {
 				label := debugger.Bind("point-get-g1")
-				debugger.Break(label)
+				debugger.Breakpoint(label)
 			}
 		})
 
@@ -114,7 +114,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 			if val.(bool) != false {
 				label := debugger.Bind("point-get-g1")
 				debugger.Continue("point-get-g2")
-				debugger.Break(label)
+				debugger.Breakpoint(label)
 			}
 		})
 	}

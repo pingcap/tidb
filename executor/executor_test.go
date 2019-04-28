@@ -1898,7 +1898,7 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 
 	label := debugger.Bind("point-get-g2")
 	debugger.Continue("point-get-g1")
-	debugger.Break(label)
+	debugger.Breakpoint(label)
 	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
 	debugger.Continue("point-get-g1")
 
