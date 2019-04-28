@@ -286,5 +286,4 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	c.Check(bindData.CreateTime, NotNil)
 	c.Check(bindData.UpdateTime, NotNil)
 
-
 }

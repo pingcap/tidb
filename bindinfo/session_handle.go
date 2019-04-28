@@ -78,7 +78,6 @@ func (h *SessionHandle) DropBindRecord(record *BindRecord) {
 	}
 }
 
-
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
 	hash := parser.DigestHash(normdOrigSQL)
