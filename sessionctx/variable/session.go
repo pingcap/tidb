@@ -347,6 +347,10 @@ type SessionVars struct {
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
 
+	// TIDBOptJoinOrderAlgoThreshold defines the minimal number of join nodes
+	// to use the greedy join reorder algorithm.
+	TiDBOptJoinReorderThreshold int
+
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
 
@@ -377,30 +381,31 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                     make(map[string]string),
-		systems:                   make(map[string]string),
-		PreparedStmts:             make(map[uint32]*ast.Prepared),
-		PreparedStmtNameToID:      make(map[string]uint32),
-		PreparedParams:            make([]types.Datum, 0, 10),
-		TxnCtx:                    &TransactionContext{},
-		KVVars:                    kv.NewVariables(),
-		RetryInfo:                 &RetryInfo{},
-		ActiveRoles:               make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:             true,
-		Status:                    mysql.ServerStatusAutocommit,
-		StmtCtx:                   new(stmtctx.StatementContext),
-		AllowAggPushDown:          false,
-		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
-		RetryLimit:                DefTiDBRetryLimit,
-		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:          kv.PriorityLow,
-		AllowInSubqToJoinAndAgg:   DefOptInSubqToJoinAndAgg,
-		CorrelationThreshold:      DefOptCorrelationThreshold,
-		CorrelationExpFactor:      DefOptCorrelationExpFactor,
-		EnableRadixJoin:           false,
-		L2CacheSize:               cpuid.CPU.Cache.L2,
-		CommandValue:              uint32(mysql.ComSleep),
-		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
+		Users:                       make(map[string]string),
+		systems:                     make(map[string]string),
+		PreparedStmts:               make(map[uint32]*ast.Prepared),
+		PreparedStmtNameToID:        make(map[string]uint32),
+		PreparedParams:              make([]types.Datum, 0, 10),
+		TxnCtx:                      &TransactionContext{},
+		KVVars:                      kv.NewVariables(),
+		RetryInfo:                   &RetryInfo{},
+		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:               true,
+		Status:                      mysql.ServerStatusAutocommit,
+		StmtCtx:                     new(stmtctx.StatementContext),
+		AllowAggPushDown:            false,
+		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
+		RetryLimit:                  DefTiDBRetryLimit,
+		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:            kv.PriorityLow,
+		AllowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
+		CorrelationThreshold:        DefOptCorrelationThreshold,
+		CorrelationExpFactor:        DefOptCorrelationExpFactor,
+		EnableRadixJoin:             false,
+		L2CacheSize:                 cpuid.CPU.Cache.L2,
+		CommandValue:                uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -754,6 +759,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBOptJoinReorderThreshold:
+		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
 	case TiDBCheckMb4ValueInUTF8:
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
