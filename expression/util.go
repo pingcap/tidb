@@ -44,6 +44,19 @@ func Filter(result []Expression, input []Expression, filter func(Expression) boo
 	return result
 }
 
+// FilterOutInPlace do the filtering out in place.
+// The remained are the ones who doesn't match the filter, storing in the original slice.
+// The filteredOut are the ones match the filter, storing in a new slice.
+func FilterOutInPlace(input []Expression, filter func(Expression) bool) (remained, filteredOut []Expression) {
+	for i := len(input) - 1; i >= 0; i-- {
+		if filter(input[i]) {
+			filteredOut = append(filteredOut, input[i])
+			input = append(input[:i], input[i+1:]...)
+		}
+	}
+	return input, filteredOut
+}
+
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) (cols []*Column) {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
@@ -572,11 +585,15 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expr
 
 // DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
 // We should not *PARSE* a string as JSON under some scenarios. ParseToJSONFlag
-// is 0 for JSON column yet, so we can skip it. Moreover, Column.RetType refers
-// to the infoschema, if we modify it, data race may happen if another goroutine
-// read from the infoschema at the same time.
+// is 0 for JSON column yet(as well as JSON correlated column), so we can skip
+// it. Moreover, Column.RetType refers to the infoschema, if we modify it, data
+// race may happen if another goroutine read from the infoschema at the same
+// time.
 func DisableParseJSONFlag4Expr(expr Expression) {
 	if _, isColumn := expr.(*Column); isColumn {
+		return
+	}
+	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
 		return
 	}
 	expr.GetType().Flag &= ^mysql.ParseToJSONFlag

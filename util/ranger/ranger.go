@@ -242,8 +242,8 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 	return ranges, nil
 }
 
-// BuildTableRange will build range of pk for PhysicalTableScan
-func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+// buildColumnRange builds range from CNF conditions.
+func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, tableRange bool, colLen int) (ranges []*Range, err error) {
 	rb := builder{sc: sc}
 	rangePoints := fullRange
 	for _, cond := range accessConditions {
@@ -253,29 +253,11 @@ func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 		}
 	}
 	newTp := newFieldType(tp)
-	ranges, err := points2TableRanges(sc, rangePoints, newTp)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if tableRange {
+		ranges, err = points2TableRanges(sc, rangePoints, newTp)
+	} else {
+		ranges, err = points2Ranges(sc, rangePoints, newTp)
 	}
-	return ranges, nil
-}
-
-// BuildColumnRange builds the range for sampling histogram to calculate the row count.
-func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, colLen int) ([]*Range, error) {
-	if len(conds) == 0 {
-		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
-	}
-
-	rb := builder{sc: sc}
-	rangePoints := fullRange
-	for _, cond := range conds {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond))
-		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
-		}
-	}
-	newTp := newFieldType(tp)
-	ranges, err := points2Ranges(sc, rangePoints, newTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -290,6 +272,19 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 		}
 	}
 	return ranges, nil
+}
+
+// BuildTableRange builds range of PK column for PhysicalTableScan.
+func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+	return buildColumnRange(accessConditions, sc, tp, true, types.UnspecifiedLength)
+}
+
+// BuildColumnRange builds range from access conditions for general columns.
+func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, colLen int) ([]*Range, error) {
+	if len(conds) == 0 {
+		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
+	}
+	return buildColumnRange(conds, sc, tp, false, colLen)
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.

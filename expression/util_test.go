@@ -83,11 +83,46 @@ func (s *testUtilSuite) TestFilter(c *check.C) {
 	c.Assert(result, check.HasLen, 1)
 }
 
+func (s *testUtilSuite) TestFilterOutInPlace(c *check.C) {
+	conditions := []Expression{
+		newFunction(ast.EQ, newColumn(0), newColumn(1)),
+		newFunction(ast.EQ, newColumn(1), newColumn(2)),
+		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+	}
+	remained, filtered := FilterOutInPlace(conditions, isLogicOrFunction)
+	c.Assert(len(remained), check.Equals, 2)
+	c.Assert(remained[0].(*ScalarFunction).FuncName.L, check.Equals, "eq")
+	c.Assert(remained[1].(*ScalarFunction).FuncName.L, check.Equals, "eq")
+	c.Assert(len(filtered), check.Equals, 1)
+	c.Assert(filtered[0].(*ScalarFunction).FuncName.L, check.Equals, "or")
+}
+
 func isLogicOrFunction(e Expression) bool {
 	if f, ok := e.(*ScalarFunction); ok {
 		return f.FuncName.L == ast.LogicOr
 	}
 	return false
+}
+
+func (s *testUtilSuite) TestDisableParseJSONFlag4Expr(c *check.C) {
+	var expr Expression
+	expr = &Column{RetType: newIntFieldType()}
+	ft := expr.GetType()
+	ft.Flag |= mysql.ParseToJSONFlag
+	DisableParseJSONFlag4Expr(expr)
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsTrue)
+
+	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
+	ft = expr.GetType()
+	ft.Flag |= mysql.ParseToJSONFlag
+	DisableParseJSONFlag4Expr(expr)
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsTrue)
+
+	expr = &ScalarFunction{RetType: newIntFieldType()}
+	ft = expr.GetType()
+	ft.Flag |= mysql.ParseToJSONFlag
+	DisableParseJSONFlag4Expr(expr)
+	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsFalse)
 }
 
 func BenchmarkExtractColumns(b *testing.B) {

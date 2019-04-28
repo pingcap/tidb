@@ -130,12 +130,12 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
-	return "data:" + p.tablePlan.ExplainID()
+	return "data:" + p.tablePlan.ExplainID().String()
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.indexPlan.ExplainID()
+	return "index:" + p.indexPlan.ExplainID().String()
 }
 
 // ExplainInfo implements PhysicalPlan interface.

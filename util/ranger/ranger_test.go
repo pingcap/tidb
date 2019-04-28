@@ -312,7 +312,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
 		c.Assert(col, NotNil)
 		var filter []expression.Expression
-		conds, filter = ranger.DetachCondsForTableRange(ctx, conds, col)
+		conds, filter = ranger.DetachCondsForColumn(ctx, conds, col)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildTableRange(conds, new(stmtctx.StatementContext), col.RetType)
@@ -988,5 +988,37 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"1 2",
 		"1 2",
+	))
+}
+
+func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx(b,c,d))")
+	testKit.MustExec("insert into t values(1,1,1,1,2),(2,1,2,1,0)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("explain select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
+		"Projection_11 2.00 root 9_aux_0",
+		"└─Apply_13 2.00 root left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, 7_col_0)",
+		"  ├─TableReader_15 2.00 root data:TableScan_14",
+		"  │ └─TableScan_14 2.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"  └─StreamAgg_20 1.00 root funcs:count(1)",
+		"    └─IndexJoin_32 2.00 root inner join, inner:TableReader_31, outer key:s.a, inner key:t1.a",
+		"      ├─IndexReader_27 2.00 root index:IndexScan_26",
+		"      │ └─IndexScan_26 2.00 cop table:s, index:b, c, d, range: decided by [eq(s.b, 1) in(s.c, 1, 2) eq(s.d, test.t.a)], keep order:false",
+		"      └─TableReader_31 1.00 root data:TableScan_30",
+		"        └─TableScan_30 1.00 cop table:t1, range: decided by [s.a], keep order:false",
+	))
+	testKit.MustQuery("select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t").Check(testkit.Rows(
+		"1",
+		"1",
 	))
 }

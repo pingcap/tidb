@@ -273,6 +273,12 @@ type SessionVars struct {
 	// AllowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
 	AllowInSubqToJoinAndAgg bool
 
+	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
+	CorrelationThreshold float64
+
+	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
+	CorrelationExpFactor int
+
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues chunk.Row
@@ -319,6 +325,9 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
+	// WaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
+	WaitTableSplitFinish bool
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -337,6 +346,10 @@ type SessionVars struct {
 
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
+
+	// TIDBOptJoinOrderAlgoThreshold defines the minimal number of join nodes
+	// to use the greedy join reorder algorithm.
+	TiDBOptJoinReorderThreshold int
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
@@ -368,28 +381,31 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                     make(map[string]string),
-		systems:                   make(map[string]string),
-		PreparedStmts:             make(map[uint32]*ast.Prepared),
-		PreparedStmtNameToID:      make(map[string]uint32),
-		PreparedParams:            make([]types.Datum, 0, 10),
-		TxnCtx:                    &TransactionContext{},
-		KVVars:                    kv.NewVariables(),
-		RetryInfo:                 &RetryInfo{},
-		ActiveRoles:               make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:             true,
-		Status:                    mysql.ServerStatusAutocommit,
-		StmtCtx:                   new(stmtctx.StatementContext),
-		AllowAggPushDown:          false,
-		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
-		RetryLimit:                DefTiDBRetryLimit,
-		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:          kv.PriorityLow,
-		AllowInSubqToJoinAndAgg:   DefOptInSubqToJoinAndAgg,
-		EnableRadixJoin:           false,
-		L2CacheSize:               cpuid.CPU.Cache.L2,
-		CommandValue:              uint32(mysql.ComSleep),
-		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
+		Users:                       make(map[string]string),
+		systems:                     make(map[string]string),
+		PreparedStmts:               make(map[uint32]*ast.Prepared),
+		PreparedStmtNameToID:        make(map[string]uint32),
+		PreparedParams:              make([]types.Datum, 0, 10),
+		TxnCtx:                      &TransactionContext{},
+		KVVars:                      kv.NewVariables(),
+		RetryInfo:                   &RetryInfo{},
+		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:               true,
+		Status:                      mysql.ServerStatusAutocommit,
+		StmtCtx:                     new(stmtctx.StatementContext),
+		AllowAggPushDown:            false,
+		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
+		RetryLimit:                  DefTiDBRetryLimit,
+		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:            kv.PriorityLow,
+		AllowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
+		CorrelationThreshold:        DefOptCorrelationThreshold,
+		CorrelationExpFactor:        DefOptCorrelationExpFactor,
+		EnableRadixJoin:             false,
+		L2CacheSize:                 cpuid.CPU.Cache.L2,
+		CommandValue:                uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -657,6 +673,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqToJoinAndAgg:
 		s.AllowInSubqToJoinAndAgg = TiDBOptOn(val)
+	case TiDBOptCorrelationThreshold:
+		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
+	case TiDBOptCorrelationExpFactor:
+		s.CorrelationExpFactor = tidbOptPositiveInt32(val, DefOptCorrelationExpFactor)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
@@ -739,12 +759,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBOptJoinReorderThreshold:
+		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
 	case TiDBCheckMb4ValueInUTF8:
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
 	case TiDBEnableFastAnalyze:
 		s.EnableFastAnalyze = TiDBOptOn(val)
+	case TiDBWaitTableSplitFinish:
+		s.WaitTableSplitFinish = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -899,10 +923,22 @@ const (
 	SlowLogStatsInfoStr = "Stats"
 	// SlowLogNumCopTasksStr is the number of cop-tasks.
 	SlowLogNumCopTasksStr = "Num_cop_tasks"
-	// SlowLogCopProcessStr includes some useful information about cop-tasks' process time.
-	SlowLogCopProcessStr = "Cop_process"
-	// SlowLogCopWaitStr includes some useful information about cop-tasks' wait time.
-	SlowLogCopWaitStr = "Cop_wait"
+	// SlowLogCopProcAvg is the average process time of all cop-tasks.
+	SlowLogCopProcAvg = "Cop_proc_avg"
+	// SlowLogCopProcP90 is the p90 process time of all cop-tasks.
+	SlowLogCopProcP90 = "Cop_proc_p90"
+	// SlowLogCopProcMax is the max process time of all cop-tasks.
+	SlowLogCopProcMax = "Cop_proc_max"
+	// SlowLogCopProcAddr is the address of TiKV where the cop-task which cost max process time run.
+	SlowLogCopProcAddr = "Cop_proc_addr"
+	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
+	SlowLogCopWaitAvg = "Cop_wait_avg"
+	// SlowLogCopWaitP90 is the p90 wait time of all cop-tasks.
+	SlowLogCopWaitP90 = "Cop_wait_p90"
+	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
+	SlowLogCopWaitMax = "Cop_wait_max"
+	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
+	SlowLogCopWaitAddr = "Cop_wait_addr"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
 )
@@ -972,12 +1008,16 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 	}
 	if copTasks != nil {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopProcessStr + SlowLogSpaceMarkStr +
-			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_addr: %v", copTasks.AvgProcessTime,
-				copTasks.P90ProcessTime, copTasks.MaxProcessTime, copTasks.MaxProcessAddress) + "\n")
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogCopWaitStr + SlowLogSpaceMarkStr +
-			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v Max_Addr: %v", copTasks.AvgWaitTime,
-				copTasks.P90WaitTime, copTasks.MaxWaitTime, copTasks.MaxWaitAddress) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
+			SlowLogCopProcAvg, SlowLogSpaceMarkStr, copTasks.AvgProcessTime.Seconds(),
+			SlowLogCopProcP90, SlowLogSpaceMarkStr, copTasks.P90ProcessTime.Seconds(),
+			SlowLogCopProcMax, SlowLogSpaceMarkStr, copTasks.MaxProcessTime.Seconds(),
+			SlowLogCopProcAddr, SlowLogSpaceMarkStr, copTasks.MaxProcessAddress) + "\n")
+		buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
+			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, copTasks.AvgWaitTime.Seconds(),
+			SlowLogCopWaitP90, SlowLogSpaceMarkStr, copTasks.P90WaitTime.Seconds(),
+			SlowLogCopWaitMax, SlowLogSpaceMarkStr, copTasks.MaxWaitTime.Seconds(),
+			SlowLogCopWaitAddr, SlowLogSpaceMarkStr, copTasks.MaxWaitAddress) + "\n")
 	}
 	if memMax > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")

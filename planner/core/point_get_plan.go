@@ -98,7 +98,7 @@ func (p *PointGetPlan) StatsCount() float64 {
 	return 1
 }
 
-// StatsCount will return the the RowCount of property.StatsInfo for this plan.
+// statsInfo will return the the RowCount of property.StatsInfo for this plan.
 func (p *PointGetPlan) statsInfo() *property.StatsInfo {
 	if p.stats == nil {
 		p.stats = &property.StatsInfo{}
@@ -241,7 +241,7 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointGetPlan, chec
 	}
 	dbName := ctx.GetSessionVars().CurrentDB
 	for _, checkType := range checkTypes {
-		if !pm.RequestVerification(dbName, fastPlan.TblInfo.Name.L, "", checkType) {
+		if !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, fastPlan.TblInfo.Name.L, "", checkType) {
 			return errors.New("privilege check fail")
 		}
 	}
