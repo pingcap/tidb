@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"go.uber.org/atomic"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -376,8 +377,8 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf             = defaultConf
-	globalConfLock         sync.RWMutex
+	globalConf = atomic.Value{}
+	//globalConf             = defaultConf
 	reloadConfPath         = ""
 	confReloader           func(nc, c *Config)
 	confReloadLock         sync.Mutex
@@ -404,10 +405,7 @@ func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...st
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	// TODO: (refine it to atomic CAS)
-	globalConfLock.RLock()
-	defer globalConfLock.RUnlock()
-	return &globalConf
+	return globalConf.Load().(*Config)
 }
 
 // ReloadGlobalConfig reloads global configuration for this server.
@@ -437,9 +435,7 @@ func ReloadGlobalConfig() error {
 	}
 
 	confReloader(nc, c)
-	globalConfLock.Lock()
-	*c = *nc
-	globalConfLock.Unlock()
+	globalConf.Store(nc)
 
 	var buf bytes.Buffer
 	buf.WriteString("reload config")
@@ -572,6 +568,7 @@ func hasRootPrivilege() bool {
 }
 
 func init() {
+	globalConf.Store(&defaultConf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}
