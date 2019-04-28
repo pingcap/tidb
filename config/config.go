@@ -17,10 +17,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	"io/ioutil"
 	"reflect"
 	"runtime"
@@ -30,6 +26,10 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
