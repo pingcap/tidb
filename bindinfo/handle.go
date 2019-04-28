@@ -113,7 +113,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	return nil
 }
 
-// AddBindRecord adds a BindRecord to the storage and bindMeta to the cache.
+// AddBindRecord adds a BindRecord to the storage and BindMeta to the cache.
 func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	h.sctx.Lock()
@@ -137,7 +137,7 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 			return
 		}
 
-		// update the bindMeta to the cache.
+		// update the BindMeta to the cache.
 		hash, meta, err1 := h.newBindMeta(record)
 		if err1 != nil {
 			err = err1
@@ -171,7 +171,7 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 	return err
 }
 
-// DropBindRecord drops a BindRecord to the storage and bindMeta int the cache.
+// DropBindRecord drops a BindRecord to the storage and BindMeta int the cache.
 func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	h.sctx.Lock()
@@ -226,8 +226,8 @@ func (h *BindHandle) Size() int {
 	return size
 }
 
-// GetBindRecord return the bindMeta of the (normdOrigSQL,db) if bindMeta exist.
-func (h *BindHandle) GetBindRecord(normdOrigSQL, db string) *bindMeta {
+// GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
+func (h *BindHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
 	hash := parser.DigestHash(normdOrigSQL)
 	bindRecords := h.bindInfo.Load().(cache)[hash]
 	if bindRecords != nil {
@@ -241,7 +241,7 @@ func (h *BindHandle) GetBindRecord(normdOrigSQL, db string) *bindMeta {
 }
 
 // GetAllBindRecord return all bind record in cache.
-func (h *BindHandle) GetAllBindRecord() (bindRecords []*bindMeta) {
+func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 	bindRecordMap := h.bindInfo.Load().(cache)
 	for _, bindRecord := range bindRecordMap {
 		bindRecords = append(bindRecords, bindRecord...)
@@ -249,25 +249,25 @@ func (h *BindHandle) GetAllBindRecord() (bindRecords []*bindMeta) {
 	return bindRecords
 }
 
-func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *bindMeta, err error) {
+func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
 	hash = parser.DigestHash(record.OriginalSQL)
 	stmtNodes, _, err := h.parser.Parse(record.BindSQL, record.Charset, record.Collation)
 	if err != nil {
 		return "", nil, err
 	}
-	meta = &bindMeta{BindRecord: record, ast: stmtNodes[0]}
+	meta = &BindMeta{BindRecord: record, ast: stmtNodes[0]}
 	return hash, meta, nil
 }
 
-func (h *BindHandle) newBindMetaWithoutAst(record *BindRecord) (hash string, meta *bindMeta) {
+func (h *BindHandle) newBindMetaWithoutAst(record *BindRecord) (hash string, meta *BindMeta) {
 	hash = parser.DigestHash(record.OriginalSQL)
-	meta = &bindMeta{BindRecord: record}
+	meta = &BindMeta{BindRecord: record}
 	return hash, meta
 }
 
-// appendBindMeta addes the bindMeta to the cache, all the stale bindMetas are
+// appendBindMeta addes the BindMeta to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *BindHandle) appendBindMeta(hash string, meta *bindMeta) {
+func (h *BindHandle) appendBindMeta(hash string, meta *BindMeta) {
 	// Make sure there is only one goroutine writes the cache.
 	h.bindInfo.Lock()
 	newCache := h.bindInfo.Value.Load().(cache).copy()
@@ -280,8 +280,8 @@ func (h *BindHandle) appendBindMeta(hash string, meta *bindMeta) {
 	newCache[hash] = append(newCache[hash], meta)
 }
 
-// removeBindMeta removes the bindMeta from the cache.
-func (h *BindHandle) removeBindMeta(hash string, meta *bindMeta) {
+// removeBindMeta removes the BindMeta from the cache.
+func (h *BindHandle) removeBindMeta(hash string, meta *BindMeta) {
 	h.bindInfo.Lock()
 	newCache := h.bindInfo.Value.Load().(cache).copy()
 	defer func() {
@@ -292,8 +292,8 @@ func (h *BindHandle) removeBindMeta(hash string, meta *bindMeta) {
 	newCache.removeDeletedBindMeta(hash, meta)
 }
 
-// removeDeletedBindMeta removes all the bindMeta which originSQL and db are the same with the parameter's meta.
-func (c cache) removeDeletedBindMeta(hash string, meta *bindMeta) {
+// removeDeletedBindMeta removes all the BindMeta which originSQL and db are the same with the parameter's meta.
+func (c cache) removeDeletedBindMeta(hash string, meta *BindMeta) {
 	metas, ok := c[hash]
 	if !ok {
 		return
@@ -310,8 +310,8 @@ func (c cache) removeDeletedBindMeta(hash string, meta *bindMeta) {
 	}
 }
 
-// removeStaleBindMetas removes all the stale bindMeta in the cache.
-func (c cache) removeStaleBindMetas(hash string, meta *bindMeta) {
+// removeStaleBindMetas removes all the stale BindMeta in the cache.
+func (c cache) removeStaleBindMetas(hash string, meta *BindMeta) {
 	metas, ok := c[hash]
 	if !ok {
 		return
@@ -337,13 +337,13 @@ func (c cache) copy() cache {
 	return newCache
 }
 
-// isStale checks whether this bindMeta is stale compared with the other bindMeta.
-func (m *bindMeta) isStale(other *bindMeta) bool {
+// isStale checks whether this BindMeta is stale compared with the other BindMeta.
+func (m *BindMeta) isStale(other *BindMeta) bool {
 	return m.OriginalSQL == other.OriginalSQL && m.Db == other.Db &&
 		m.UpdateTime.Compare(other.UpdateTime) <= 0
 }
 
-func (m *bindMeta) isSame(other *bindMeta) bool {
+func (m *BindMeta) isSame(other *BindMeta) bool {
 	return m.OriginalSQL == other.OriginalSQL && m.Db == other.Db
 }
 
