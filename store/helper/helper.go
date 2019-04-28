@@ -441,3 +441,82 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	}
 	return &regionsInfo, nil
 }
+
+// StoresStat stores all information get from PD's api.
+type StoresStat struct {
+	Count  int         `json:"count"`
+	Stores []StoreStat `json:"stores"`
+}
+
+// StoreStat stores information of one store.
+type StoreStat struct {
+	Store  StoreBaseStat   `json:"store"`
+	Status StoreDetailStat `json:"status"`
+}
+
+// StoreBaseStat stores the basic information of one store.
+type StoreBaseStat struct {
+	ID        int64        `json:"id"`
+	Address   string       `json:"address"`
+	State     int64        `json:"state"`
+	StateName string       `json:"state_name"`
+	Version   string       `json:"version"`
+	Labels    []StoreLabel `json:"labels"`
+}
+
+// StoreLabel stores the information of one store label.
+type StoreLabel struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// StoreDetailStat stores the detail information of one store.
+type StoreDetailStat struct {
+	Capacity        string    `json:"capacity"`
+	Available       string    `json:"available"`
+	LeaderCount     int64     `json:"leader_count"`
+	LeaderWeight    int64     `json:"leader_weight"`
+	LeaderScore     int64     `json:"leader_score"`
+	LeaderSize      int64     `json:"leader_size"`
+	RegionCount     int64     `json:"region_count"`
+	RegionWeight    int64     `json:"region_weight"`
+	RegionScore     int64     `json:"region_score"`
+	RegionSize      int64     `json:"region_size"`
+	StartTs         time.Time `json:"start_ts"`
+	LastHeartbeatTs time.Time `json:"last_heartbeat_ts"`
+	Uptime          string    `json:"uptime"`
+}
+
+// GetStoresStat gets the TiKV store information by accessing PD's api.
+func (h *Helper) GetStoresStat() (*StoresStat, error) {
+	etcd, ok := h.Store.(tikv.EtcdBackend)
+	if !ok {
+		return nil, errors.WithStack(errors.New("not implemented"))
+	}
+	pdHosts := etcd.EtcdAddrs()
+	if len(pdHosts) == 0 {
+		return nil, errors.New("pd unavailable")
+	}
+	req, err := http.NewRequest("GET", protocol+pdHosts[0]+pdapi.Stores, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	timeout, cancelFunc := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
+	defer cancelFunc()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.Logger(context.Background()).Error("close body failed", zap.Error(err))
+		}
+	}()
+	var storesStat StoresStat
+	err = json.NewDecoder(resp.Body).Decode(&storesStat)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &storesStat, nil
+}

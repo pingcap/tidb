@@ -69,16 +69,16 @@ func (e *SQLBindExec) dropSQLBind() error {
 }
 
 func (e *SQLBindExec) createSQLBind() error {
-	if !e.isGlobal {
-		return errors.New("create non-global sql bind is not supported")
-	}
-
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
 		BindSQL:     e.bindSQL,
 		Db:          e.ctx.GetSessionVars().CurrentDB,
 		Charset:     e.charset,
 		Collation:   e.collation,
+	}
+	if !e.isGlobal {
+		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		return handle.AddBindRecord(record)
 	}
 	return domain.GetDomain(e.ctx).BindHandle().AddBindRecord(record)
 }

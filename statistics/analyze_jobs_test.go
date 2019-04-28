@@ -11,12 +11,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package pdapi
+package statistics
 
-// HotRead / HotWrite is the pd apis to get the corresponding hot region information.
-const (
-	HotRead  = "/pd/api/v1/hotspot/regions/read"
-	HotWrite = "/pd/api/v1/hotspot/regions/read"
-	Regions  = "/pd/api/v1/regions"
-	Stores   = "/pd/api/v1/stores"
+import (
+	. "github.com/pingcap/check"
 )
+
+func (s *testStatisticsSuite) TestMoveToHistory(c *C) {
+	numJobs := numMaxHistoryJobs*2 + 1
+	jobs := make([]*AnalyzeJob, 0, numJobs)
+	for i := 0; i < numJobs; i++ {
+		job := &AnalyzeJob{}
+		AddNewAnalyzeJob(job)
+		jobs = append(jobs, job)
+	}
+	MoveToHistory(jobs[0])
+	c.Assert(len(GetAllAnalyzeJobs()), Equals, numJobs)
+	for i := 1; i < numJobs; i++ {
+		MoveToHistory(jobs[i])
+	}
+	c.Assert(len(GetAllAnalyzeJobs()), Equals, numMaxHistoryJobs)
+}

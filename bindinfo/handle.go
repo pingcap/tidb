@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// BindHandle is used to handle all the sql bind operations.
+// BindHandle is used to handle all global sql bind operations.
 type BindHandle struct {
 	sctx struct {
 		sync.Mutex
