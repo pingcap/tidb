@@ -109,8 +109,8 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	return &topNHelper{uint64(len(sample)), numTop, counter, sorted, onlyOnceItems, sumTopN, last}
 }
 
-// NewCMSketchWithTopN returns a new CM sketch with TopN elements.
-func NewCMSketchWithTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) *CMSketch {
+// NewCMSketchWithTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.
+func NewCMSketchWithTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (*CMSketch, uint64, uint64) {
 	helper := newTopNHelper(sample, numTop)
 	// rowCount is not a accurate value when fast analyzing
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
@@ -118,7 +118,7 @@ func NewCMSketchWithTopN(d, w int32, sample [][]byte, numTop uint32, rowCount ui
 	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
 	c := buildCMSWithTopN(helper, d, w, scaleRatio)
 	c.calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
-	return c
+	return c, estimateNDV, scaleRatio
 }
 
 func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64) (c *CMSketch) {
