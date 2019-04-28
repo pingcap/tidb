@@ -20,7 +20,6 @@ import (
 	"os"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -148,7 +147,10 @@ func main() {
 	registerMetrics()
 	configWarning := loadConfig()
 	overrideConfig()
-	validateConfig()
+	if err := cfg.Valid(); err != nil {
+		log.Error("invalid config", zap.Error(err))
+		os.Exit(-1)
+	}
 	if *configCheck {
 		fmt.Println("config check successful")
 		os.Exit(0)
@@ -289,10 +291,6 @@ func parseDuration(lease string) time.Duration {
 	return dur
 }
 
-func hasRootPrivilege() bool {
-	return os.Geteuid() == 0
-}
-
 func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	if !defaultVal {
 		// Fix #4125, golang do not print default false value in usage, so we append it.
@@ -308,7 +306,13 @@ func loadConfig() string {
 		// Not all config items are supported now.
 		config.SetConfReloader(*configPath, reloadConfig,
 			"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
-			"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio")
+			"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit",
+			"Performance.PseudoEstimateRatio", "OOMAction", "MemQuotaQuery",
+			"EnableStreaming", "CompatibleKillQuery", "TreatOldVersionUTF8AsUTF8MB4",
+			"TxnLocalLatches.Enabled", "TxnLocalLatches.Capacity",
+			"TiKVClient.GrpcConnectionCount", "TiKVClient.CommitTimeout",
+			"TiKVClient.MaxTxnTimeUse", "TiKVClient.OverloadThreshold",
+			"TiKVClient.MaxBatchWaitTime", "TiKVClient.BatchWaitSize")
 
 		err := cfg.Load(*configPath)
 		// This block is to accommodate an interim situation where strict config checking
@@ -341,6 +345,20 @@ func reloadConfig(nc, c *config.Config) {
 	}
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
+	}
+	if nc.TiKVClient.CommitTimeout != c.TiKVClient.CommitTimeout {
+		tikv.CommitMaxBackoff.Store(uint64(parseDuration(nc.TiKVClient.CommitTimeout).Seconds() * 1000))
+	}
+	if nc.PreparedPlanCache.Enabled {
+		if nc.PreparedPlanCache.Capacity != c.PreparedPlanCache.Capacity {
+			plannercore.PreparedPlanCacheCapacity.Store(uint64(nc.PreparedPlanCache.Capacity))
+		}
+		if nc.PreparedPlanCache.MemoryGuardRatio != c.PreparedPlanCache.MemoryGuardRatio {
+			plannercore.PreparedPlanCacheMemoryGuardRatio.Store(nc.PreparedPlanCache.MemoryGuardRatio)
+			if plannercore.PreparedPlanCacheMemoryGuardRatio.Load() < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio.Load() > 1.0 {
+				plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+			}
+		}
 	}
 }
 
@@ -436,53 +454,6 @@ func overrideConfig() {
 	}
 }
 
-func validateConfig() {
-	if cfg.Security.SkipGrantTable && !hasRootPrivilege() {
-		log.Error("TiDB run with skip-grant-table need root privilege.")
-		os.Exit(-1)
-	}
-	if _, ok := config.ValidStorage[cfg.Store]; !ok {
-		nameList := make([]string, 0, len(config.ValidStorage))
-		for k, v := range config.ValidStorage {
-			if v {
-				nameList = append(nameList, k)
-			}
-		}
-		log.Error("validate config", zap.Strings("valid storages", nameList))
-		os.Exit(-1)
-	}
-	if cfg.Store == "mocktikv" && !cfg.RunDDL {
-		log.Error("can't disable DDL on mocktikv")
-		os.Exit(-1)
-	}
-	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
-		log.Error("validate config", zap.Int("log max-size should not be larger than", config.MaxLogFileSize))
-		os.Exit(-1)
-	}
-	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
-
-	// lower_case_table_names is allowed to be 0, 1, 2
-	if cfg.LowerCaseTableNames < 0 || cfg.LowerCaseTableNames > 2 {
-		log.Error("lower-case-table-names should be 0 or 1 or 2.")
-		os.Exit(-1)
-	}
-
-	if cfg.TxnLocalLatches.Enabled && cfg.TxnLocalLatches.Capacity == 0 {
-		log.Error("txn-local-latches.capacity can not be 0")
-		os.Exit(-1)
-	}
-
-	// For tikvclient.
-	if cfg.TiKVClient.GrpcConnectionCount == 0 {
-		log.Error("grpc-connection-count should be greater than 0")
-		os.Exit(-1)
-	}
-	if cfg.TiKVClient.MaxTxnTimeUse == 0 {
-		log.Error("max-txn-time-use should be greater than 0")
-		os.Exit(-1)
-	}
-}
-
 func setGlobalVars() {
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
@@ -516,10 +487,10 @@ func setGlobalVars() {
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
 	if plannercore.PreparedPlanCacheEnabled() {
-		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
-		plannercore.PreparedPlanCacheMemoryGuardRatio = cfg.PreparedPlanCache.MemoryGuardRatio
-		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
-			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		plannercore.PreparedPlanCacheCapacity.Store(uint64(cfg.PreparedPlanCache.Capacity))
+		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(cfg.PreparedPlanCache.MemoryGuardRatio)
+		if plannercore.PreparedPlanCacheMemoryGuardRatio.Load() < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio.Load() > 1.0 {
+			plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
 		}
 		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.MaxMemory)
 		total, err := memory.MemTotal()
@@ -529,7 +500,7 @@ func setGlobalVars() {
 		}
 	}
 
-	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
+	tikv.CommitMaxBackoff.Store(uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000))
 }
 
 func setupLog() {

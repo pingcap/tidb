@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"fmt"
+	"go.uber.org/atomic"
 	"math"
 	"math/rand"
 	"strings"
@@ -210,7 +211,7 @@ const (
 )
 
 // CommitMaxBackoff is max sleep time of the 'commit' command
-var CommitMaxBackoff = 41000
+var CommitMaxBackoff = atomic.NewUint64(41000)
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {

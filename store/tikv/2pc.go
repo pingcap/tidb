@@ -300,7 +300,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		// The backoffer instance is created outside of the goroutine to avoid
 		// potencial data race in unit test since `CommitMaxBackoff` will be updated
 		// by test suites.
-		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff)
+		secondaryBo := NewBackoffer(context.Background(), int(CommitMaxBackoff.Load()))
 		go func() {
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
@@ -753,7 +753,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}
 
 	start = time.Now()
-	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
+	commitBo := NewBackoffer(ctx, int(CommitMaxBackoff.Load())).WithVars(c.txn.vars)
 	err = c.commitKeys(commitBo, c.keys)
 	c.detail.CommitTime = time.Since(start)
 	c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond

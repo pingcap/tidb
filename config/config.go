@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -425,6 +426,9 @@ func ReloadGlobalConfig() error {
 	if err := nc.Load(globalConfPath); err != nil {
 		return err
 	}
+	if err := nc.Valid(); err != nil {
+		return err
+	}
 	c := GetGlobalConfig()
 
 	diffs := collectsDiff(*nc, *c, "")
@@ -498,10 +502,42 @@ func (c *Config) Load(confFile string) error {
 	return err
 }
 
-// Check checks if this config is valid.
-func (c *Config) Check() error {
+func (c *Config) Valid() error {
+	if c.Security.SkipGrantTable && !hasRootPrivilege() {
+		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+	}
+	if _, ok := ValidStorage[c.Store]; !ok {
+		nameList := make([]string, 0, len(ValidStorage))
+		for k, v := range ValidStorage {
+			if v {
+				nameList = append(nameList, k)
+			}
+		}
+		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, nameList)
+	}
+	if c.Store == "mocktikv" && !c.RunDDL {
+		return fmt.Errorf("can't disable DDL on mocktikv")
+	}
+	if c.Log.File.MaxSize > MaxLogFileSize {
+		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
+	}
+	c.OOMAction = strings.ToLower(c.OOMAction)
+
+	// lower_case_table_names is allowed to be 0, 1, 2
+	if c.LowerCaseTableNames < 0 || c.LowerCaseTableNames > 2 {
+		return fmt.Errorf("lower-case-table-names should be 0 or 1 or 2")
+	}
+
 	if c.TxnLocalLatches.Enabled && c.TxnLocalLatches.Capacity == 0 {
 		return fmt.Errorf("txn-local-latches.capacity can not be 0")
+	}
+
+	// For tikvclient.
+	if c.TiKVClient.GrpcConnectionCount == 0 {
+		return fmt.Errorf("grpc-connection-count should be greater than 0")
+	}
+	if c.TiKVClient.MaxTxnTimeUse == 0 {
+		return fmt.Errorf("max-txn-time-use should be greater than 0")
 	}
 	return nil
 }
@@ -530,6 +566,10 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 	ret.Sampler.MaxOperations = t.Sampler.MaxOperations
 	ret.Sampler.SamplingRefreshInterval = t.Sampler.SamplingRefreshInterval
 	return ret
+}
+
+func hasRootPrivilege() bool {
+	return os.Geteuid() == 0
 }
 
 func init() {

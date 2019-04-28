@@ -31,9 +31,9 @@ var (
 	// Otherwise, preparedPlanCacheEnabledValue's value is 0.
 	preparedPlanCacheEnabledValue int32
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
-	PreparedPlanCacheCapacity uint
+	PreparedPlanCacheCapacity atomic2.Uint64
 	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
-	PreparedPlanCacheMemoryGuardRatio float64
+	PreparedPlanCacheMemoryGuardRatio atomic2.Float64
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-max-memory".
 	PreparedPlanCacheMaxMemory atomic2.Uint64
 )
