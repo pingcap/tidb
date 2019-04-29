@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tiancaiamao/debugger"
 	"golang.org/x/net/context"
 )
 
@@ -88,6 +89,13 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
+
+		// gofail: var pointGetRepeatableReadTest1 bool
+		// if pointGetRepeatableReadTest1 && ctx.Value("pointGetRepeatableReadTest") != nil {
+		// 	label := debugger.Bind("point-get-g1")
+		// 	debugger.Breakpoint(label)
+		// }
+
 		handleVal, err1 := e.get(idxKey)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return errors.Trace(err1)
@@ -99,7 +107,15 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
+
+		// gofail: var pointGetRepeatableReadTest2 bool
+		// if pointGetRepeatableReadTest2 && ctx.Value("pointGetRepeatableReadTest") != nil {
+		// 	label := debugger.Bind("point-get-g1")
+		// 	debugger.Continue("point-get-g2")
+		// 	debugger.Breakpoint(label)
+		// }
 	}
+
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
 	val, err := e.get(key)
 	if err != nil && !kv.ErrNotExist.Equal(err) {
