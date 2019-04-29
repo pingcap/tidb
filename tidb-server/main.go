@@ -319,6 +319,7 @@ func loadConfig() string {
 	return ""
 }
 
+// hotReloadConfigItems lists all config items which support hot-reload.
 var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
 	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
 	"OOMAction", "MemQuotaQuery"}
