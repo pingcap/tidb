@@ -764,7 +764,6 @@ func (s *testIntegrationSuite7) TestCaseInsensitiveCharsetAndCollate(c *C) {
 
 	tblInfo.Version = model.TableInfoVersion2
 	tblInfo.Charset = "UTF8MB4"
-	// colInfo := tblInfo.Columns[0].Clone()
 
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
