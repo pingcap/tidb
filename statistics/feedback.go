@@ -609,8 +609,7 @@ func UpdateCMSketch(c *CMSketch, eqFeedbacks []Feedback) *CMSketch {
 	}
 	newCMSketch := c.Copy()
 	for _, fb := range eqFeedbacks {
-		h1, h2 := murmur3.Sum128(fb.Lower.GetBytes())
-		newCMSketch.setValue(h1, h2, uint32(fb.Count))
+		newCMSketch.updateValueBytes(fb.Lower.GetBytes(), uint64(fb.Count))
 	}
 	return newCMSketch
 }
@@ -728,7 +727,8 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
 		// decode the index point feedback, just set value count in CM Sketch
 		start := len(pb.IndexRanges) / 2
 		for i := 0; i < len(pb.HashValues); i += 2 {
-			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint32(pb.Counts[start+i/2]))
+			// TODO: update using raw bytes instead of hash values.
+			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint64(pb.Counts[start+i/2]))
 		}
 	}
 }
