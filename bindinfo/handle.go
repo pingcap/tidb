@@ -63,7 +63,7 @@ type BindHandle struct {
 
 	// invalidBindRecordMap indicates the invalid bind records found during querying.
 	// A record will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
-	dropBindRecordMap struct {
+	invalidBindRecordMap struct {
 		sync.Mutex
 		atomic.Value
 	}
@@ -82,7 +82,7 @@ func NewBindHandle(ctx sessionctx.Context, parser *parser.Parser) *BindHandle {
 	handle := &BindHandle{parser: parser}
 	handle.sctx.Context = ctx
 	handle.bindInfo.Value.Store(make(cache, 32))
-	handle.dropBindRecordMap.Value.Store(make(map[string]*invalidBindRecordMap))
+	handle.invalidBindRecordMap.Value.Store(make(map[string]*invalidBindRecordMap))
 	return handle
 }
 
@@ -233,7 +233,7 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 
 // DropInvalidBindRecord execute the drop bindRecord task.
 func (h *BindHandle) DropInvalidBindRecord() {
-	invalidBindRecordMap := copyInvalidBindRecordMap(h.dropBindRecordMap.Load().(map[string]*invalidBindRecordMap))
+	invalidBindRecordMap := copyInvalidBindRecordMap(h.invalidBindRecordMap.Load().(map[string]*invalidBindRecordMap))
 	for key, invalidBindRecord := range invalidBindRecordMap {
 		if invalidBindRecord.droppedTime.IsZero() {
 			err := h.DropBindRecord(invalidBindRecord.bindRecord)
@@ -248,25 +248,25 @@ func (h *BindHandle) DropInvalidBindRecord() {
 			delete(invalidBindRecordMap, key)
 		}
 	}
-	h.dropBindRecordMap.Store(invalidBindRecordMap)
+	h.invalidBindRecordMap.Store(invalidBindRecordMap)
 }
 
-// AddDropInvalidBindTask add bindRecord to dropBindRecordMap when the bindRecord need to be deleted.
+// AddDropInvalidBindTask add bindRecord to invalidBindRecordMap when the bindRecord need to be deleted.
 func (h *BindHandle) AddDropInvalidBindTask(invalidBindRecord *BindRecord) {
 	key := invalidBindRecord.OriginalSQL + ":" + invalidBindRecord.Db
-	if _, ok := h.dropBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap)[key]; ok {
+	if _, ok := h.invalidBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap)[key]; ok {
 		return
 	}
-	h.dropBindRecordMap.Lock()
-	defer h.dropBindRecordMap.Unlock()
-	if _, ok := h.dropBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap)[key]; ok {
+	h.invalidBindRecordMap.Lock()
+	defer h.invalidBindRecordMap.Unlock()
+	if _, ok := h.invalidBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap)[key]; ok {
 		return
 	}
-	newMap := copyInvalidBindRecordMap(h.dropBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap))
+	newMap := copyInvalidBindRecordMap(h.invalidBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap))
 	newMap[key] = &invalidBindRecordMap{
 		bindRecord: invalidBindRecord,
 	}
-	h.dropBindRecordMap.Store(newMap)
+	h.invalidBindRecordMap.Store(newMap)
 }
 
 // Size return the size of bind info cache.
