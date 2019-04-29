@@ -66,7 +66,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	if commitPrimary {
 		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 		c.Assert(err, IsNil)
-		err = tpc.commitKeys(NewBackoffer(ctx, int(CommitMaxBackoff)), [][]byte{primaryKey})
+		err = tpc.commitKeys(NewBackoffer(ctx, CommitMaxBackoff), [][]byte{primaryKey})
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS
