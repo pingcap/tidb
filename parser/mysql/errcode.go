@@ -882,6 +882,7 @@ const (
 	ErrMustChangePasswordLogin                                      = 1862
 	ErrRowInWrongPartition                                          = 1863
 	ErrErrorLast                                                    = 1863
+	ErrInvalidJSONData                                              = 3069
 	ErrGeneratedColumnFunctionIsNotAllowed                          = 3102
 	ErrBadGeneratedColumn                                           = 3105
 	ErrUnsupportedOnGeneratedColumn                                 = 3106
@@ -890,7 +891,7 @@ const (
 	ErrGeneratedColumnRefAutoInc                                    = 3109
 	ErrInvalidJSONText                                              = 3140
 	ErrInvalidJSONPath                                              = 3143
-	ErrInvalidJSONData                                              = 3146
+	ErrInvalidTypeForJSON                                           = 3146
 	ErrInvalidJSONPathWildcard                                      = 3149
 	ErrInvalidJSONContainsPathType                                  = 3150
 	ErrJSONUsedAsKey                                                = 3152
