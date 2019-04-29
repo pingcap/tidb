@@ -303,12 +303,15 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
+	pTxnConf := config.GetGlobalConfig().PessimisticTxn
+	if pTxnConf.Enable && s.Pessimistic {
+		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	pTxnConf := config.GetGlobalConfig().PessimisticTxn
-	if pTxnConf.Enable && (s.Pessimistic || pTxnConf.Default || e.ctx.GetSessionVars().PessimisticLock) {
+	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		txn.SetOption(kv.Pessimistic, true)
 	}
 	return nil

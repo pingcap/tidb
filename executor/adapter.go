@@ -249,11 +249,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
 	}
 
-	txn, err := sctx.Txn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	isPessimistic := txn.Valid() && txn.IsPessimistic()
+	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
 	// Special handle for "select for update statement" in pessimistic transaction.
 	if isPessimistic && a.isSelectForUpdate {
@@ -274,6 +270,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	}
 
 	var txnStartTS uint64
+	txn, err := sctx.Txn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if txn.Valid() {
 		txnStartTS = txn.StartTS()
 	}
@@ -420,7 +420,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 }
 
 func (a *ExecStmt) handlePessimisticDML(ctx context.Context, sctx sessionctx.Context, e Executor) error {
-	txn, err := sctx.Txn(false)
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}

@@ -1162,6 +1162,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			return &s.txn, err
 		}
 		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
+		if s.sessionVars.TxnCtx.IsPessimistic {
+			s.txn.SetOption(kv.Pessimistic, true)
+		}
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
@@ -1673,6 +1676,12 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
+	}
+	if !s.sessionVars.IsAutocommit() {
+		txnConf := config.GetGlobalConfig().PessimisticTxn
+		if txnConf.Enable && (txnConf.Default || s.sessionVars.PessimisticLock) {
+			s.sessionVars.TxnCtx.IsPessimistic = true
+		}
 	}
 }
 

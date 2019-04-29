@@ -109,6 +109,7 @@ type TransactionContext struct {
 	StartTS       uint64
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
+	IsPessimistic bool
 
 	// For metrics.
 	CreateTime     time.Time

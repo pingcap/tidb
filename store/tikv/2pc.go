@@ -540,10 +540,15 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batchKeys) error {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
-		mutations[i] = &pb.Mutation{
+		mut := &pb.Mutation{
 			Op:  pb.Op_PessimisticLock,
 			Key: k,
 		}
+		conditionPair := c.txn.us.LookupConditionPair(k)
+		if conditionPair != nil && conditionPair.ShouldNotExist() {
+			mut.Assertion = pb.Assertion_NotExist
+		}
+		mutations[i] = mut
 	}
 
 	req := &tikvrpc.Request{
