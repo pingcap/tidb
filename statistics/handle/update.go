@@ -160,7 +160,7 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 
 func mergeQueryFeedback(lq []*statistics.QueryFeedback, rq []*statistics.QueryFeedback) []*statistics.QueryFeedback {
 	for _, q := range rq {
-		if len(lq) >= MaxQueryFeedbackCount {
+		if len(lq) >= int(MaxQueryFeedbackCount.Load()) {
 			break
 		}
 		lq = append(lq, q)
@@ -198,7 +198,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	defer s.Unlock()
 	isIndex := q.Tp == statistics.IndexType
 	s.rateMap.update(q.PhysicalID, q.Hist.ID, rate, isIndex)
-	if len(s.feedback) < MaxQueryFeedbackCount {
+	if len(s.feedback) < int(MaxQueryFeedbackCount.Load()) {
 		s.feedback = append(s.feedback, q)
 	}
 	return nil
