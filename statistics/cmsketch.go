@@ -42,7 +42,7 @@ type CMSketch struct {
 	count        uint64 // TopN is not counted in count
 	defaultValue uint64 // In sampled data, if cmsketch returns a small value (less than avg value / 2), then this will returned.
 	table        [][]uint32
-	topN         map[uint64][]TopNMeta
+	topN         map[uint64][]*TopNMeta
 }
 
 // TopNMeta is a simple counter used by BuildTopN.
@@ -125,13 +125,13 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64) (c *CMS
 	c = NewCMSketch(d, w)
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
-		c.topN = make(map[uint64][]TopNMeta)
+		c.topN = make(map[uint64][]*TopNMeta)
 	}
 	for counterKey, cnt := range helper.counter {
 		data, scaledCount := hack.Slice(string(counterKey)), cnt*scaleRatio
 		if enableTopN && cnt >= helper.lastVal {
 			h1, h2 := murmur3.Sum128(data)
-			c.topN[h1] = append(c.topN[h1], TopNMeta{h2, data, scaledCount})
+			c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, scaledCount})
 		} else {
 			c.insertBytesByCount(data, scaledCount)
 		}
@@ -149,17 +149,25 @@ func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRat
 	}
 }
 
+func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
+	for _, meta := range c.topN[h1] {
+		if meta.h2 == h2 && bytes.Equal(d, meta.Data) {
+			return meta
+		}
+	}
+	return nil
+}
+
 // queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
 // If such elements does not in topn elements, nothing will happen and false will be returned.
 func (c *CMSketch) updateTopNWithDelta(h1, h2 uint64, d []byte, delta uint64) bool {
 	if c.topN == nil {
 		return false
 	}
-	for _, cnt := range c.topN[h1] {
-		if cnt.h2 == h2 && bytes.Equal(d, cnt.Data) {
-			cnt.Count += delta
-			return true
-		}
+	meta := c.findTopNMeta(h1, h2, d)
+	if meta != nil {
+		meta.Count += delta
+		return true
 	}
 	return false
 }
@@ -168,10 +176,9 @@ func (c *CMSketch) queryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
 	if c.topN == nil {
 		return 0, false
 	}
-	for _, cnt := range c.topN[h1] {
-		if cnt.h2 == h2 && bytes.Equal(d, cnt.Data) {
-			return cnt.Count, true
-		}
+	meta := c.findTopNMeta(h1, h2, d)
+	if meta != nil {
+		return meta.Count, true
 	}
 	return 0, false
 }
@@ -181,7 +188,7 @@ func (c *CMSketch) InsertBytes(bytes []byte) {
 	c.insertBytesByCount(bytes, 1)
 }
 
-// updateBytesWithDelta adds the bytes value into the TopN (if value already in TopN) or CM Sketch by delta, this does not updates c.defaultValue.
+// insertBytesByCount adds the bytes value into the TopN (if value already in TopN) or CM Sketch by delta, this does not updates c.defaultValue.
 func (c *CMSketch) insertBytesByCount(bytes []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(bytes)
 	if c.updateTopNWithDelta(h1, h2, bytes, count) {
@@ -326,10 +333,10 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 		return c
 	}
 	c.defaultValue = protoSketch.DefaultValue
-	c.topN = make(map[uint64][]TopNMeta)
+	c.topN = make(map[uint64][]*TopNMeta)
 	for _, e := range protoSketch.TopN {
 		h1, h2 := murmur3.Sum128(e.Data)
-		c.topN[h1] = append(c.topN[h1], TopNMeta{h2, e.Data, e.Count})
+		c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, e.Data, e.Count})
 	}
 	return c
 }
@@ -347,7 +354,7 @@ func EncodeCMSketchWithoutTopN(c *CMSketch) ([]byte, error) {
 }
 
 // decodeCMSketch decode a CMSketch from the given byte slice.
-func decodeCMSketch(data []byte, topN []TopNMeta) (*CMSketch, error) {
+func decodeCMSketch(data []byte, topN []*TopNMeta) (*CMSketch, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -372,9 +379,9 @@ func LoadCMSketchWithTopN(exec sqlexec.RestrictedSQLExecutor, tableID, isIndex, 
 	if err != nil {
 		return nil, err
 	}
-	topN := make([]TopNMeta, 0, len(topNRows))
+	topN := make([]*TopNMeta, 0, len(topNRows))
 	for _, row := range topNRows {
-		topN = append(topN, TopNMeta{Data: row.GetBytes(0), Count: row.GetUint64(1)})
+		topN = append(topN, &TopNMeta{Data: row.GetBytes(0), Count: row.GetUint64(1)})
 	}
 	return decodeCMSketch(cms, topN)
 }
@@ -407,17 +414,8 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 			return false
 		}
 		for _, val := range topNData {
-			found := false
-			for _, val2 := range rc.topN[h1] {
-				if val.h2 == val2.h2 && bytes.Equal(val.Data, val2.Data) {
-					if val.Count != val2.Count {
-						return false
-					}
-					found = true
-					break
-				}
-			}
-			if !found {
+			meta := rc.findTopNMeta(h1, val.h2, val.Data)
+			if meta == nil || meta.Count != val.Count {
 				return false
 			}
 		}
@@ -435,15 +433,15 @@ func (c *CMSketch) Copy() *CMSketch {
 		tbl[i] = make([]uint32, c.width)
 		copy(tbl[i], c.table[i])
 	}
-	var topN map[uint64][]TopNMeta
+	var topN map[uint64][]*TopNMeta
 	if c.topN != nil {
-		topN = make(map[uint64][]TopNMeta)
+		topN = make(map[uint64][]*TopNMeta)
 		for h1, vals := range c.topN {
-			newVals := make([]TopNMeta, 0, len(vals))
+			newVals := make([]*TopNMeta, 0, len(vals))
 			for _, val := range vals {
 				newVal := TopNMeta{h2: val.h2, Count: val.Count, Data: make([]byte, len(val.Data))}
 				copy(newVal.Data, val.Data)
-				newVals = append(newVals, val)
+				newVals = append(newVals, &newVal)
 			}
 			topN[h1] = newVals
 		}
@@ -452,11 +450,11 @@ func (c *CMSketch) Copy() *CMSketch {
 }
 
 // TopN gets all the topN meta.
-func (c *CMSketch) TopN() []TopNMeta {
+func (c *CMSketch) TopN() []*TopNMeta {
 	if c == nil {
 		return nil
 	}
-	topN := make([]TopNMeta, 0, len(c.topN))
+	topN := make([]*TopNMeta, 0, len(c.topN))
 	for _, meta := range c.topN {
 		topN = append(topN, meta...)
 	}
