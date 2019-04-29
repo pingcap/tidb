@@ -140,6 +140,8 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	)
 	c.Assert(err, IsNil)
 	var dom *domain.Domain
+	session.SetStatsLease(0)
+	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
@@ -209,6 +211,8 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	)
 	c.Assert(err, IsNil)
 	var dom *domain.Domain
+	session.SetStatsLease(0)
+	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
@@ -240,7 +244,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
 	sTbl := fmt.Sprintln(tbl)
 	matched := false
-	if sTbl == "Table:37 Count:3000\n"+
+	if sTbl == "Table:39 Count:3000\n"+
 		"column:1 ndv:3000 totColSize:0\n"+
 		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
 		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
@@ -259,7 +263,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
 		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
 		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" ||
-		sTbl == "Table:37 Count:3000\n"+
+		sTbl == "Table:39 Count:3000\n"+
 			"column:2 ndv:3000 totColSize:0\n"+
 			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
 			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
