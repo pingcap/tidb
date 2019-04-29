@@ -72,6 +72,13 @@ func (e *PointGetExecutor) Close() error {
 	return nil
 }
 
+func dummyUseDebuggerPackageToMakeGoLintHappy() {
+	// debugger is import and used in gofail only
+	// We need to **use** it, otherwise 'make check' would complain:
+	// imported and not used: "github.com/tiancaiamao/debugger"
+	debugger.Bind("xx")
+}
+
 // Next implements the Executor interface.
 func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
