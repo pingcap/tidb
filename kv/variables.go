@@ -39,5 +39,5 @@ var DefaultVars = NewVariables()
 // Default values
 const (
 	DefBackoffLockFast = 100
-	DefBackOffWeight   = 1
+	DefBackOffWeight   = 2
 )
