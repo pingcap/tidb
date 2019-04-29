@@ -61,6 +61,8 @@ type BindHandle struct {
 		atomic.Value
 	}
 
+	// invalidBindRecordMap indicates the invalid bind records found during querying.
+	// A record will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
 	dropBindRecordMap struct {
 		sync.Mutex
 		atomic.Value
@@ -70,7 +72,7 @@ type BindHandle struct {
 	lastUpdateTime types.Time
 }
 
-type droppedBindRecord struct {
+type invalidBindRecordMap struct {
 	bindRecord  *BindRecord
 	droppedTime time.Time
 }
@@ -80,7 +82,7 @@ func NewBindHandle(ctx sessionctx.Context, parser *parser.Parser) *BindHandle {
 	handle := &BindHandle{parser: parser}
 	handle.sctx.Context = ctx
 	handle.bindInfo.Value.Store(make(cache, 32))
-	handle.dropBindRecordMap.Value.Store(make(map[string]*droppedBindRecord))
+	handle.dropBindRecordMap.Value.Store(make(map[string]*invalidBindRecordMap))
 	return handle
 }
 
@@ -229,40 +231,40 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 	return err
 }
 
-// HandleDropBindRecord execute the drop bindRecord task.
-func (h *BindHandle) HandleDropBindRecord() {
-	dropBindRecordMap := copyDroppedBindRecordMap(h.dropBindRecordMap.Load().(map[string]*droppedBindRecord))
-	for key, droppedBindRecord := range dropBindRecordMap {
-		if droppedBindRecord.droppedTime.IsZero() {
-			err := h.DropBindRecord(droppedBindRecord.bindRecord)
+// DropInvalidBindRecord execute the drop bindRecord task.
+func (h *BindHandle) DropInvalidBindRecord() {
+	invalidBindRecordMap := copyInvalidBindRecordMap(h.dropBindRecordMap.Load().(map[string]*invalidBindRecordMap))
+	for key, invalidBindRecord := range invalidBindRecordMap {
+		if invalidBindRecord.droppedTime.IsZero() {
+			err := h.DropBindRecord(invalidBindRecord.bindRecord)
 			if err != nil {
-				logutil.Logger(context.Background()).Error("handleDropBindRecord failed", zap.Error(err))
+				logutil.Logger(context.Background()).Error("DropInvalidBindRecord failed", zap.Error(err))
 			}
-			droppedBindRecord.droppedTime = time.Now()
+			invalidBindRecord.droppedTime = time.Now()
 			continue
 		}
 
-		if time.Since(droppedBindRecord.droppedTime) > 6*time.Second {
-			delete(dropBindRecordMap, key)
+		if time.Since(invalidBindRecord.droppedTime) > 6*time.Second {
+			delete(invalidBindRecordMap, key)
 		}
 	}
-	h.dropBindRecordMap.Store(dropBindRecordMap)
+	h.dropBindRecordMap.Store(invalidBindRecordMap)
 }
 
-// AddDropBindRecordTask add bindRecord to dropBindRecordMap when the bindRecord need to be deleted.
-func (h *BindHandle) AddDropBindRecordTask(dropBindRecord *BindRecord) {
-	key := dropBindRecord.OriginalSQL + ":" + dropBindRecord.Db
-	if _, ok := h.dropBindRecordMap.Value.Load().(map[string]*droppedBindRecord)[key]; ok {
+// AddDropInvalidBindTask add bindRecord to dropBindRecordMap when the bindRecord need to be deleted.
+func (h *BindHandle) AddDropInvalidBindTask(invalidBindRecord *BindRecord) {
+	key := invalidBindRecord.OriginalSQL + ":" + invalidBindRecord.Db
+	if _, ok := h.dropBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap)[key]; ok {
 		return
 	}
 	h.dropBindRecordMap.Lock()
 	defer h.dropBindRecordMap.Unlock()
-	if _, ok := h.dropBindRecordMap.Value.Load().(map[string]*droppedBindRecord)[key]; ok {
+	if _, ok := h.dropBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap)[key]; ok {
 		return
 	}
-	newMap := copyDroppedBindRecordMap(h.dropBindRecordMap.Value.Load().(map[string]*droppedBindRecord))
-	newMap[key] = &droppedBindRecord{
-		bindRecord: dropBindRecord,
+	newMap := copyInvalidBindRecordMap(h.dropBindRecordMap.Value.Load().(map[string]*invalidBindRecordMap))
+	newMap[key] = &invalidBindRecordMap{
+		bindRecord: invalidBindRecord,
 	}
 	h.dropBindRecordMap.Store(newMap)
 }
@@ -378,8 +380,8 @@ func (c cache) copy() cache {
 	return newCache
 }
 
-func copyDroppedBindRecordMap(oldMap map[string]*droppedBindRecord) map[string]*droppedBindRecord {
-	newMap := make(map[string]*droppedBindRecord, len(oldMap))
+func copyInvalidBindRecordMap(oldMap map[string]*invalidBindRecordMap) map[string]*invalidBindRecordMap {
+	newMap := make(map[string]*invalidBindRecordMap, len(oldMap))
 	for k, v := range oldMap {
 		newMap[k] = v
 	}

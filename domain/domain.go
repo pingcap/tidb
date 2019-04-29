@@ -828,7 +828,7 @@ func (do *Domain) handleInvalidBindTaskLoop() {
 				return
 			case <-time.After(handleInvalidTaskDuration):
 			}
-			do.bindHandle.HandleDropBindRecord()
+			do.bindHandle.DropInvalidBindRecord()
 		}
 	}()
 }

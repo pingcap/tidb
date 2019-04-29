@@ -1025,7 +1025,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 					zap.String("sql", sql))
 				return nil, err
 			}
-			s.handleInValidBindRecord(ctx, stmtNode)
+			s.handleInvalidBindRecord(ctx, stmtNode)
 		}
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(time.Since(startTS).Seconds())
@@ -1051,7 +1051,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return recordSets, nil
 }
 
-func (s *session) handleInValidBindRecord(ctx context.Context, stmtNode ast.StmtNode) {
+func (s *session) handleInvalidBindRecord(ctx context.Context, stmtNode ast.StmtNode) {
 	var normdOrigSQL string
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
@@ -1092,7 +1092,7 @@ func (s *session) handleInValidBindRecord(ctx context.Context, stmtNode ast.Stmt
 
 		err := sessionHandle.AddBindRecord(record)
 		if err != nil {
-			logutil.Logger(ctx).Warn("handleInValidBindRecord failed", zap.Error(err))
+			logutil.Logger(ctx).Warn("handleInvalidBindRecord failed", zap.Error(err))
 		}
 
 		globalHandle := domain.GetDomain(s).BindHandle()
@@ -1100,7 +1100,7 @@ func (s *session) handleInValidBindRecord(ctx context.Context, stmtNode ast.Stmt
 			OriginalSQL: bindMeta.OriginalSQL,
 			Db:          bindMeta.Db,
 		}
-		globalHandle.AddDropBindRecordTask(dropBindRecord)
+		globalHandle.AddDropInvalidBindTask(dropBindRecord)
 	}
 }
 

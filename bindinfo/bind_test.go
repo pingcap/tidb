@@ -415,7 +415,7 @@ func (s *testSuite) TestErrorBind(c *C) {
 	_, err = tk.Exec("select * from t where i > 10")
 	c.Check(err, IsNil)
 
-	s.domain.BindHandle().HandleDropBindRecord()
+	s.domain.BindHandle().DropInvalidBindRecord()
 
 	rs, err := tk.Exec("show global bindings")
 	c.Assert(err, IsNil)
