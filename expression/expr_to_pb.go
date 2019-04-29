@@ -15,7 +15,6 @@ package expression
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -158,21 +157,11 @@ func (pc *PbConverter) encodeDatum(d types.Datum, ft *types.FieldType) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			t := d.GetMysqlTime()
-			// To be compatible with `encode` and `PBToExpr`, convert timestamp to UTC timezone.
-			if ft.Tp == mysql.TypeTimestamp && pc.sc.TimeZone != time.UTC {
-				err := t.ConvertTimeZone(pc.sc.TimeZone, time.UTC)
-				if err != nil {
-					logutil.Logger(context.Background()).Error("encode mysql time", zap.Error(err))
-					return tp, nil, false
-				}
-			}
-			v, err := t.ToPackedUint()
+			val, err := codec.EncodeMySQLTime(pc.sc, d, nil)
 			if err != nil {
 				logutil.Logger(context.Background()).Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
 			}
-			val = codec.EncodeUint(nil, v)
 			return tp, val, true
 		}
 		return tp, nil, false
