@@ -37,7 +37,7 @@ func selectBind(originalNode, hintedNode *ast.SelectStmt) *ast.SelectStmt {
 	}
 
 	if originalNode.Having != nil {
-		originalNode.Having = havingBind(originalNode.Having, hintedNode.Having)
+		originalNode.Having.Expr = exprBind(originalNode.Having.Expr, hintedNode.Having.Expr)
 	}
 
 	if originalNode.OrderBy != nil {
@@ -58,11 +58,6 @@ func orderByBind(originalNode, hintedNode *ast.OrderByClause) *ast.OrderByClause
 	for idx := 0; idx < len(originalNode.Items); idx++ {
 		originalNode.Items[idx].Expr = exprBind(originalNode.Items[idx].Expr, hintedNode.Items[idx].Expr)
 	}
-	return originalNode
-}
-
-func havingBind(originalNode, hintedNode *ast.HavingClause) *ast.HavingClause {
-	originalNode.Expr = exprBind(originalNode.Expr, hintedNode.Expr)
 	return originalNode
 }
 
