@@ -92,13 +92,32 @@ func exprBind(where ast.ExprNode, hintedWhere ast.ExprNode) ast.ExprNode {
 				v.L = exprBind(v.L, hintedWhere.(*ast.BinaryOperationExpr).L)
 			}
 		}
-		if v.R != nil{
+		if v.R != nil {
 			switch v.R.(type) {
 			case *ast.BinaryOperationExpr:
 				v.R = exprBind(v.R, hintedWhere.(*ast.BinaryOperationExpr).R)
 			case *ast.PatternInExpr:
 				v.R = exprBind(v.R, hintedWhere.(*ast.BinaryOperationExpr).R)
 			}
+		}
+	case *ast.IsNullExpr:
+		if v.Expr != nil {
+			v.Expr = exprBind(v.Expr, hintedWhere.(*ast.IsNullExpr).Expr)
+		}
+	case *ast.IsTruthExpr:
+		if v.Expr != nil {
+			v.Expr = exprBind(v.Expr, hintedWhere.(*ast.IsTruthExpr).Expr)
+		}
+	case *ast.PatternLikeExpr:
+		if v.Pattern != nil {
+			v.Pattern = exprBind(v.Pattern, hintedWhere.(*ast.PatternLikeExpr).Pattern)
+		}
+	case *ast.CompareSubqueryExpr:
+		if v.L != nil {
+			v.L = exprBind(v.L, hintedWhere.(*ast.CompareSubqueryExpr).L)
+		}
+		if v.R != nil {
+			v.R = exprBind(v.R, hintedWhere.(*ast.CompareSubqueryExpr).R)
 		}
 	}
 	return where
