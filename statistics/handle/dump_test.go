@@ -138,7 +138,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	for i := 0; i < 30; i++ {
 		fakeData = append(fakeData, []byte(fmt.Sprintf("%01024d", i)))
 	}
-	cms := statistics.NewCMSketchWithTopN(5, 2048, fakeData, 20, 100)
+	cms, _, _ := statistics.NewCMSketchWithTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
 	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, 1)
