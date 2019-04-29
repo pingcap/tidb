@@ -971,13 +971,6 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if err != nil {
 		return nil, err
 	}
-	flag := true
-	if err == nil {
-		flag = false
-	}
-	if flag {
-		return nil, errors.New("eurekaka")
-	}
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
