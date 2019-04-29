@@ -201,3 +201,13 @@ explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
 drop table t;
 create table t(a int not null, b int);
 explain select a in (select a from t t2 where t2.b = t1.b) from t t1;
+
+# issue 9764
+drop table if exists t1;
+create table t1 (f2 datetime);
+insert into t1 values('2001-01-01 01:01:01');
+# convert string to DATETIME if one of fields in between is DATETIME
+select f2 from t1 where '2001-04-10 12:34:56' between f2 and '01-05-01';
+# do not do that if one of them is int, convert them to int instead
+select 1 from t1 where 20010410123456 between cast('2001-01-01 12:34:56' as datetime) and 010501;
+drop table t1;

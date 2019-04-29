@@ -430,3 +430,12 @@ Projection_7	10000.00	root	6_aux_0
   │ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
   └─TableReader_12	10000.00	root	data:TableScan_11
     └─TableScan_11	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t1;
+create table t1 (f2 datetime);
+insert into t1 values('2001-01-01 01:01:01');
+select f2 from t1 where '2001-04-10 12:34:56' between f2 and '01-05-01';
+f2
+2001-01-01 01:01:01
+select 1 from t1 where 20010410123456 between cast('2001-01-01 12:34:56' as datetime) and 010501;
+1
+drop table t1;

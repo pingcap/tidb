@@ -954,9 +954,18 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
+// AggCmpType aggregates extends getBaseCmpType to get type when comparing three or more fields.
+func AggCmpType(fields ...*types.FieldType) types.EvalType {
+	ret := fields[0].EvalType()
+	for i := 1; i < len(fields); i++ {
+		ret = getBaseCmpType(ret, fields[i].EvalType(), nil, fields[i])
+	}
+	return ret
+}
+
 // getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
 func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
-	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
+	if lft != nil && rft != nil && (lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified) {
 		if lft.Tp == rft.Tp {
 			return types.ETString
 		}
@@ -968,10 +977,10 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	}
 	if lhs.IsStringKind() && rhs.IsStringKind() {
 		return types.ETString
-	} else if (lhs == types.ETInt || lft.Hybrid()) && (rhs == types.ETInt || rft.Hybrid()) {
+	} else if (lhs == types.ETInt || (lft != nil && lft.Hybrid())) && (rhs == types.ETInt || (rft != nil && rft.Hybrid())) {
 		return types.ETInt
-	} else if ((lhs == types.ETInt || lft.Hybrid()) || lhs == types.ETDecimal) &&
-		((rhs == types.ETInt || rft.Hybrid()) || rhs == types.ETDecimal) {
+	} else if ((lhs == types.ETInt || (lft != nil && lft.Hybrid())) || lhs == types.ETDecimal) &&
+		((rhs == types.ETInt || (rft != nil && rft.Hybrid())) || rhs == types.ETDecimal) {
 		return types.ETDecimal
 	}
 	return types.ETReal
