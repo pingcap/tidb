@@ -232,6 +232,7 @@ func (h *BindHandle) DropBindRecord(record *BindRecord) (err error) {
 // HandleDropBindRecord execute the drop bindRecord task.
 func (h *BindHandle) HandleDropBindRecord() {
 	h.dropBindRecordMap.Lock()
+	defer h.dropBindRecordMap.Unlock()
 	dropBindRecordMap := copyDroppedBindRecordMap(h.dropBindRecordMap.Load().(map[string]*droppedBindRecord))
 	for key, droppedBindRecord := range dropBindRecordMap {
 		if droppedBindRecord.droppedTime.IsZero() {
@@ -248,7 +249,6 @@ func (h *BindHandle) HandleDropBindRecord() {
 		}
 	}
 	h.dropBindRecordMap.Store(dropBindRecordMap)
-	h.dropBindRecordMap.Unlock()
 }
 
 // AddDropBindRecordTask add bindRecord to dropBindRecordMap when the bindRecord need to be deleted.
