@@ -14,6 +14,7 @@
 package core
 
 import (
+	atomic2 "go.uber.org/atomic"
 	"sync/atomic"
 	"time"
 
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
-	atomic2 "go.uber.org/atomic"
 )
 
 var (
@@ -31,9 +31,9 @@ var (
 	// Otherwise, preparedPlanCacheEnabledValue's value is 0.
 	preparedPlanCacheEnabledValue int32
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
-	PreparedPlanCacheCapacity atomic2.Uint64
+	PreparedPlanCacheCapacity uint
 	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
-	PreparedPlanCacheMemoryGuardRatio atomic2.Float64
+	PreparedPlanCacheMemoryGuardRatio float64
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-max-memory".
 	PreparedPlanCacheMaxMemory atomic2.Uint64
 )

@@ -47,8 +47,8 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
-	core.PreparedPlanCacheCapacity.Store(100)
-	core.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)

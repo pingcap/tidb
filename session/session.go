@@ -1457,8 +1457,8 @@ func createSession(store kv.Storage) (*session, error) {
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(plannercore.PreparedPlanCacheCapacity.Load()),
-			plannercore.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(plannercore.PreparedPlanCacheCapacity),
+			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
@@ -1480,8 +1480,8 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionVars: variable.NewSessionVars(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(plannercore.PreparedPlanCacheCapacity.Load()),
-			plannercore.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load())
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(uint(plannercore.PreparedPlanCacheCapacity),
+			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)

@@ -54,8 +54,8 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
-	core.PreparedPlanCacheCapacity.Store(100)
-	core.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -104,8 +104,8 @@ func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
 		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
-	core.PreparedPlanCacheCapacity.Store(100)
-	core.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -138,8 +138,8 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
-	core.PreparedPlanCacheCapacity.Store(100)
-	core.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -198,8 +198,8 @@ func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
 		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
-	core.PreparedPlanCacheCapacity.Store(100)
-	core.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -282,8 +282,8 @@ func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
-	core.PreparedPlanCacheCapacity.Store(100)
-	core.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)

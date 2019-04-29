@@ -321,9 +321,7 @@ func loadConfig() string {
 
 var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
 	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-	"OOMAction", "MemQuotaQuery", "EnableStreaming", "CompatibleKillQuery", "TreatOldVersionUTF8AsUTF8MB4",
-	"TxnLocalLatches.Enabled", "TxnLocalLatches.Capacity", "TiKVClient.GrpcConnectionCount", "TiKVClient.CommitTimeout",
-	"TiKVClient.MaxTxnTimeUse", "TiKVClient.OverloadThreshold", "TiKVClient.MaxBatchWaitTime", "TiKVClient.BatchWaitSize"}
+	"OOMAction", "MemQuotaQuery"}
 
 func reloadConfig(nc, c *config.Config) {
 	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
@@ -343,20 +341,6 @@ func reloadConfig(nc, c *config.Config) {
 	}
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
-	}
-	if nc.TiKVClient.CommitTimeout != c.TiKVClient.CommitTimeout {
-		tikv.CommitMaxBackoff.Store(uint64(parseDuration(nc.TiKVClient.CommitTimeout).Seconds() * 1000))
-	}
-	if nc.PreparedPlanCache.Enabled {
-		if nc.PreparedPlanCache.Capacity != c.PreparedPlanCache.Capacity {
-			plannercore.PreparedPlanCacheCapacity.Store(uint64(nc.PreparedPlanCache.Capacity))
-		}
-		if nc.PreparedPlanCache.MemoryGuardRatio != c.PreparedPlanCache.MemoryGuardRatio {
-			plannercore.PreparedPlanCacheMemoryGuardRatio.Store(nc.PreparedPlanCache.MemoryGuardRatio)
-			if plannercore.PreparedPlanCacheMemoryGuardRatio.Load() < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio.Load() > 1.0 {
-				plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
-			}
-		}
 	}
 }
 
@@ -485,10 +469,10 @@ func setGlobalVars() {
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
 	if plannercore.PreparedPlanCacheEnabled() {
-		plannercore.PreparedPlanCacheCapacity.Store(uint64(cfg.PreparedPlanCache.Capacity))
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(cfg.PreparedPlanCache.MemoryGuardRatio)
-		if plannercore.PreparedPlanCacheMemoryGuardRatio.Load() < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio.Load() > 1.0 {
-			plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = cfg.PreparedPlanCache.MemoryGuardRatio
+		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
+			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		}
 		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.MaxMemory)
 		total, err := memory.MemTotal()
@@ -498,7 +482,7 @@ func setGlobalVars() {
 		}
 	}
 
-	tikv.CommitMaxBackoff.Store(uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000))
+	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
 
 func setupLog() {

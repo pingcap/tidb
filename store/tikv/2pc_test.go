@@ -48,11 +48,11 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	store.EnableTxnLocalLatches(1024000)
 	s.store = store
-	CommitMaxBackoff.Store(2000)
+	CommitMaxBackoff = 2000
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
-	CommitMaxBackoff.Store(20000)
+	CommitMaxBackoff = 20000
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
@@ -159,7 +159,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 	c.Assert(err, IsNil)
-	err = committer.commitKeys(NewBackoffer(ctx, int(CommitMaxBackoff.Load())), [][]byte{[]byte("a")})
+	err = committer.commitKeys(NewBackoffer(ctx, int(CommitMaxBackoff)), [][]byte{[]byte("a")})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)

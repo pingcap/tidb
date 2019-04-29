@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -211,7 +210,7 @@ const (
 )
 
 // CommitMaxBackoff is max sleep time of the 'commit' command
-var CommitMaxBackoff = atomic.NewUint64(41000)
+var CommitMaxBackoff = 41000
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {

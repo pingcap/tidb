@@ -41,8 +41,8 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 	for _, flag := range flags {
 		var err error
 		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity.Store(100)
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -258,8 +258,8 @@ func (s *seqTestSuite) TestPreparedLimitOffset(c *C) {
 	for _, flag := range flags {
 		var err error
 		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity.Store(100)
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -301,8 +301,8 @@ func (s *seqTestSuite) TestPreparedNullParam(c *C) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity.Store(100)
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -345,8 +345,8 @@ func (s *seqTestSuite) TestPrepareWithAggregation(c *C) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity.Store(100)
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -380,8 +380,8 @@ func (s *seqTestSuite) TestPreparedIssue7579(c *C) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity.Store(100)
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -435,8 +435,8 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity.Store(100)
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -518,8 +518,8 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity.Store(100)
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -578,8 +578,8 @@ func (s *seqTestSuite) TestPreparedDelete(c *C) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity.Store(100)
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -632,8 +632,8 @@ func (s *seqTestSuite) TestPrepareDealloc(c *C) {
 		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	plannercore.SetPreparedPlanCache(true)
-	plannercore.PreparedPlanCacheCapacity.Store(3)
-	plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+	plannercore.PreparedPlanCacheCapacity = 3
+	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -677,8 +677,8 @@ func (s *seqTestSuite) TestPreparedIssue8153(c *C) {
 	for _, flag := range flags {
 		var err error
 		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity.Store(100)
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
@@ -735,8 +735,8 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity.Store(100)
-		plannercore.PreparedPlanCacheMemoryGuardRatio.Store(0.1)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
