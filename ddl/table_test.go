@@ -174,10 +174,48 @@ func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchem
 	c.Assert(err, IsNil)
 
 	v := getSchemaVer(c, ctx)
-	tblInfo.State = model.StatePublic
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	tblInfo.State = model.StateNone
 	return job
+}
+
+func testLockTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblInfo *model.TableInfo, lockTp model.TableLockType) *model.Job {
+	arg := &lockTablesArg{
+		TableIDs:  []int64{tblInfo.ID},
+		LockTypes: []model.TableLockType{lockTp},
+		ServerID:  d.GetID(),
+		SessionID: ctx.GetSessionVars().ConnectionID,
+	}
+	job := &model.Job{
+		SchemaID:   newSchemaID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionLockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func checkTableLocked(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp model.TableLockType) {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
+		c.Assert(err, IsNil)
+
+		c.Assert(info, NotNil)
+		c.Assert(info.Lock, NotNil)
+		c.Assert(len(info.Lock.ServerIDs) == 1, IsTrue)
+		c.Assert(info.Lock.ServerIDs[0], Equals, serverID)
+		c.Assert(info.Lock.SessionIDs[0], Equals, sessionID)
+		c.Assert(info.Lock.Tp, Equals, lockTp)
+		c.Assert(info.Lock.State, Equals, model.TableLockStatePublic)
+		return nil
+	})
+	c.Assert(err, IsNil)
 }
 
 func testDropTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
@@ -215,7 +253,7 @@ func testTruncateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInf
 }
 
 func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
 		c.Assert(err, IsNil)
@@ -229,6 +267,7 @@ func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Tabl
 		c.Assert(info.State, Equals, state)
 		return nil
 	})
+	c.Assert(err, IsNil)
 }
 
 func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
@@ -315,6 +354,12 @@ func (s *testTableSuite) TestTable(c *C) {
 	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
+
+	job = testLockTable(c, ctx, d, dbInfo1.ID, tblInfo, model.TableLockWrite)
+	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
+
+	checkTableLocked(c, d, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
 }
 
 func (s *testTableSuite) TestTableResume(c *C) {

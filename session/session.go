@@ -185,6 +185,8 @@ type session struct {
 	statsCollector *handle.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
+	// lockedTables use to record the table locks hold by the session.
+	lockedTables map[int64]model.TableLockType
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.

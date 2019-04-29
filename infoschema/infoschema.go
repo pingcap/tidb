@@ -58,6 +58,10 @@ var (
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
 	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
+
+	ErrTableNotLockedForWrite = terror.ClassOptimizer.New(codeErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
+	ErrTableNotLocked         = terror.ClassOptimizer.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
+	ErrTableLocked            = terror.ClassOptimizer.New(codeTableLocked, "Table '%s' was locked in %s by server %v session %v.")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -300,6 +304,8 @@ func (h *Handle) EmptyClone() *Handle {
 
 // Schema error codes.
 const (
+	codeTableLocked terror.ErrCode = 1
+
 	codeDBDropExists      terror.ErrCode = 1008
 	codeDatabaseNotExists                = 1049
 	codeTableNotExists                   = 1146
@@ -318,26 +324,31 @@ const (
 	codeTooManyKeyParts  = 1070
 	codeKeyNameDuplicate = 1061
 	codeKeyNotExists     = 1176
+
+	codeErrTableNotLockedForWrite = mysql.ErrTableNotLockedForWrite
+	codeErrTableNotLocked         = mysql.ErrTableNotLocked
 )
 
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDBDropExists:        mysql.ErrDBDropExists,
-		codeDatabaseNotExists:   mysql.ErrBadDB,
-		codeTableNotExists:      mysql.ErrNoSuchTable,
-		codeColumnNotExists:     mysql.ErrBadField,
-		codeCannotAddForeign:    mysql.ErrCannotAddForeign,
-		codeWrongFkDef:          mysql.ErrWrongFkDef,
-		codeForeignKeyNotExists: mysql.ErrCantDropFieldOrKey,
-		codeDatabaseExists:      mysql.ErrDBCreateExists,
-		codeTableExists:         mysql.ErrTableExists,
-		codeBadTable:            mysql.ErrBadTable,
-		codeColumnExists:        mysql.ErrDupFieldName,
-		codeIndexExists:         mysql.ErrDupIndex,
-		codeMultiplePriKey:      mysql.ErrMultiplePriKey,
-		codeTooManyKeyParts:     mysql.ErrTooManyKeyParts,
-		codeKeyNameDuplicate:    mysql.ErrDupKeyName,
-		codeKeyNotExists:        mysql.ErrKeyDoesNotExist,
+		codeDBDropExists:              mysql.ErrDBDropExists,
+		codeDatabaseNotExists:         mysql.ErrBadDB,
+		codeTableNotExists:            mysql.ErrNoSuchTable,
+		codeColumnNotExists:           mysql.ErrBadField,
+		codeCannotAddForeign:          mysql.ErrCannotAddForeign,
+		codeWrongFkDef:                mysql.ErrWrongFkDef,
+		codeForeignKeyNotExists:       mysql.ErrCantDropFieldOrKey,
+		codeDatabaseExists:            mysql.ErrDBCreateExists,
+		codeTableExists:               mysql.ErrTableExists,
+		codeBadTable:                  mysql.ErrBadTable,
+		codeColumnExists:              mysql.ErrDupFieldName,
+		codeIndexExists:               mysql.ErrDupIndex,
+		codeMultiplePriKey:            mysql.ErrMultiplePriKey,
+		codeTooManyKeyParts:           mysql.ErrTooManyKeyParts,
+		codeKeyNameDuplicate:          mysql.ErrDupKeyName,
+		codeKeyNotExists:              mysql.ErrKeyDoesNotExist,
+		codeErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
+		codeErrTableNotLocked:         mysql.ErrTableNotLocked,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

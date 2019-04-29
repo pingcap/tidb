@@ -3103,3 +3103,66 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 	}
 	return part, nil
 }
+
+func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
+	if len(stmt.TableLocks) > 1 {
+		return errors.New("Currently only support lock 1 table at the same time")
+	}
+	tb := stmt.TableLocks[0].Table
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(tb.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tb.Schema)
+	}
+
+	t, err := is.TableByName(tb.Schema, tb.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(tb.Schema, tb.Name))
+	}
+
+	arg := &lockTablesArg{
+		TableIDs:  []int64{t.Meta().ID},
+		LockTypes: []model.TableLockType{stmt.TableLocks[0].Type},
+		ServerID:  d.GetID(),
+		SessionID: ctx.GetSessionVars().ConnectionID,
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionLockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) UnlockTables(ctx sessionctx.Context, stmt *ast.UnlockTablesStmt) error {
+	arg := &lockTablesArg{
+		TableIDs:  []int64{0},
+		ServerID:  d.GetID(),
+		SessionID: ctx.GetSessionVars().ConnectionID,
+	}
+	job := &model.Job{
+		// todo: use real ID.
+		SchemaID:   0,
+		TableID:    0,
+		Type:       model.ActionLockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+type lockTablesArg struct {
+	TableIDs  []int64
+	LockTypes []model.TableLockType
+	ServerID  string
+	SessionID uint64
+}
