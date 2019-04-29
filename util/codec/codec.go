@@ -67,7 +67,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = encodeBytes(b, vals[i].GetBytes(), comparable)
 		case types.KindMysqlTime:
 			b = append(b, uintFlag)
-			b, err = EncodeMySQLTime(sc, vals[i], b)
+			b, err = EncodeMySQLTime(sc, vals[i], mysql.TypeUnspecified, b)
 			if err != nil {
 				return nil, err
 			}
@@ -124,11 +124,14 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 }
 
 // EncodeMySQLTime encodes datum of `KindMysqlTime` to []byte.
-func EncodeMySQLTime(sc *stmtctx.StatementContext, d types.Datum, b []byte) (_ []byte, err error) {
+func EncodeMySQLTime(sc *stmtctx.StatementContext, d types.Datum, tp byte, b []byte) (_ []byte, err error) {
 	t := d.GetMysqlTime()
 	// Encoding timestamp need to consider timezone. If it's not in UTC, transform to UTC first.
 	// This is compatible with `PBToExpr > convertTime`, and coprocessor assumes the passed timestamp is in UTC as well.
-	if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+	if tp == mysql.TypeUnspecified {
+		tp = t.Type
+	}
+	if tp == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
 		err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
 		if err != nil {
 			return nil, err
