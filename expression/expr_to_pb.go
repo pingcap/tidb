@@ -106,7 +106,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 		logutil.Logger(context.Background()).Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
 		return nil
 	}
-	tp, val, ok := pc.encodeDatum(d, ft)
+	tp, val, ok := pc.encodeDatum(d)
 	if !ok {
 		return nil
 	}
@@ -117,7 +117,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	return &tipb.Expr{Tp: tp, Val: val, FieldType: ToPBFieldType(ft)}
 }
 
-func (pc *PbConverter) encodeDatum(d types.Datum, ft *types.FieldType) (tipb.ExprType, []byte, bool) {
+func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) {
 	var (
 		tp  tipb.ExprType
 		val []byte
