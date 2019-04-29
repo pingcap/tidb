@@ -425,6 +425,10 @@ func ReloadGlobalConfig() error {
 	if len(diffs) == 0 {
 		return nil
 	}
+	var formattedDiff bytes.Buffer
+	for k, vs := range diffs {
+		formattedDiff.WriteString(fmt.Sprintf(", %v:%v->%v", k, vs[1], vs[0]))
+	}
 	unsupported := make([]string, 0, 2)
 	for k := range diffs {
 		if _, ok := supportedReloadConfigs[k]; !ok {
@@ -432,18 +436,13 @@ func ReloadGlobalConfig() error {
 		}
 	}
 	if len(unsupported) > 0 {
-		return fmt.Errorf("reloading config %v is not supported, only %v are supported now", unsupported, supportedReloadConfigs)
+		return fmt.Errorf("reloading config %v is not supported, only %v are supported now, "+
+			"your changes%s", unsupported, supportedReloadConfigs, formattedDiff.String())
 	}
 
 	confReloader(nc, c)
 	globalConf.Store(nc)
-
-	var buf bytes.Buffer
-	buf.WriteString("reload config")
-	for k, vs := range diffs {
-		buf.WriteString(fmt.Sprintf(", %v:%v->%v", k, vs[1], vs[0]))
-	}
-	logutil.Logger(context.Background()).Info(buf.String())
+	logutil.Logger(context.Background()).Info("reload config changes" + formattedDiff.String())
 	return nil
 }
 
