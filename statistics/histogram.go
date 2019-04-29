@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -565,6 +566,28 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
+// ContainsFeedback checks if the histogram contains feedback updates.
+// We can test it from the `repeat` field because only feedback will update it to 0.
+func (hg *Histogram) ContainsFeedback() bool {
+	for _, bkt := range hg.Buckets {
+		if bkt.Repeat == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// Copy deep copies the histogram.
+func (hg *Histogram) Copy() *Histogram {
+	newHist := *hg
+	newHist.Bounds = hg.Bounds.CopyConstruct()
+	newHist.Buckets = make([]Bucket, 0, len(hg.Buckets))
+	for _, bkt := range hg.Buckets {
+		newHist.Buckets = append(newHist.Buckets, bkt)
+	}
+	return &newHist
+}
+
 // ErrorRate is the error rate of estimate row count by bucket and cm sketch.
 type ErrorRate struct {
 	ErrorTotal float64
@@ -965,6 +988,28 @@ func (idx *Index) outOfRange(val types.Datum) bool {
 		matchPrefix(idx.Bounds.GetRow(0), 0, &val)
 	withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
 	return !withInLowBoundOrPrefixMatch || !withInHighBound
+}
+
+// RemoveUpperBound removes the upper bound the index stats.
+// It is used when merge stats for incremental analyze.
+func (idx *Index) RemoveUpperBound(sc *stmtctx.StatementContext, values []types.Datum) (*Histogram, *CMSketch, error) {
+	hist, cms := idx.Histogram.Copy(), idx.CMSketch.Copy()
+	hist.Buckets[hist.Len()-1].Count -= hist.Buckets[hist.Len()-1].Repeat
+	hist.Buckets[hist.Len()-1].Repeat = 0
+	if cms == nil {
+		return hist, nil, nil
+	}
+	var data []byte
+	var err error
+	for _, val := range values {
+		data, err = codec.EncodeKey(sc, data, val)
+		if err != nil {
+			return nil, nil, err
+		}
+		h1, h2 := murmur3.Sum128(data)
+		cms.setValue(h1, h2, 0)
+	}
+	return hist, cms, nil
 }
 
 // matchPrefix checks whether ad is the prefix of value
