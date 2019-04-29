@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"time"
 
+	"context"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -25,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // StatsHandler is the handler for dumping statistics.
@@ -36,12 +39,12 @@ type StatsHandler struct {
 func (s *Server) newStatsHandler() *StatsHandler {
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
-		panic("Illegal driver")
+		logutil.Logger(context.Background()).Error("Illegal driver")
 	}
 
 	do, err := session.GetDomain(store.store)
 	if err != nil {
-		panic("Failed to get domain")
+		logutil.Logger(context.Background()).Error("Failed to get domain", zap.Error(err))
 	}
 	return &StatsHandler{do}
 }
