@@ -325,7 +325,7 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*stati
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	return statistics.DecodeCMSketch(rows[0].GetBytes(0))
+	return statistics.LoadCMSketchWithTopN(h.restrictedExec, tblID, isIndex, histID, rows[0].GetBytes(0))
 }
 
 func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
@@ -529,9 +529,22 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return
 	}
-	data, err := statistics.EncodeCMSketch(cms)
+	data, err := statistics.EncodeCMSketchWithoutTopN(cms)
 	if err != nil {
 		return
+	}
+	// Delete outdated data
+	deleteOutdatedTopNSQL := fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
+	_, err = exec.Execute(ctx, deleteOutdatedTopNSQL)
+	if err != nil {
+		return
+	}
+	for _, meta := range cms.TopN() {
+		insertSQL := fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count)
+		_, err = exec.Execute(ctx, insertSQL)
+		if err != nil {
+			return
+		}
 	}
 	flag := 0
 	if isAnalyzed == 1 {
