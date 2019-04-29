@@ -325,6 +325,11 @@ var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemo
 	"OOMAction", "MemQuotaQuery"}
 
 func reloadConfig(nc, c *config.Config) {
+	// Just a part of config items need to be reload explicitly.
+	// Some of them like OOMAction are always used by getting from global config directly
+	// like config.GetGlobalConfig().OOMAction.
+	// These config items will become available naturally after the global config pointer
+	// is updated in function ReloadGlobalConfig.
 	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
 		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
 	}
