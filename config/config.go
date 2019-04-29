@@ -377,11 +377,12 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf             = atomic.Value{}
-	reloadConfPath         = ""
-	confReloader           func(nc, c *Config)
-	confReloadLock         sync.Mutex
-	supportedReloadConfigs = make(map[string]struct{}, 32)
+	globalConf              = atomic.Value{}
+	reloadConfPath          = ""
+	confReloader            func(nc, c *Config)
+	confReloadLock          sync.Mutex
+	supportedReloadConfigs  = make(map[string]struct{}, 32)
+	supportedReloadConfList = make([]string, 0, 32)
 )
 
 // NewConfig creates a new config instance with default value.
@@ -397,6 +398,7 @@ func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...st
 	confReloader = reloader
 	for _, item := range confItems {
 		supportedReloadConfigs[item] = struct{}{}
+		supportedReloadConfList = append(supportedReloadConfList, item)
 	}
 }
 
@@ -437,7 +439,7 @@ func ReloadGlobalConfig() error {
 	}
 	if len(unsupported) > 0 {
 		return fmt.Errorf("reloading config %v is not supported, only %v are supported now, "+
-			"your changes%s", unsupported, supportedReloadConfigs, formattedDiff.String())
+			"your changes%s", unsupported, supportedReloadConfList, formattedDiff.String())
 	}
 
 	confReloader(nc, c)
