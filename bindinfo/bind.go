@@ -85,20 +85,10 @@ func exprBind(where ast.ExprNode, hintedWhere ast.ExprNode) ast.ExprNode {
 		}
 	case *ast.BinaryOperationExpr:
 		if v.L != nil {
-			switch v.L.(type) {
-			case *ast.BinaryOperationExpr:
-				v.L = exprBind(v.L, hintedWhere.(*ast.BinaryOperationExpr).L)
-			case *ast.PatternInExpr:
-				v.L = exprBind(v.L, hintedWhere.(*ast.BinaryOperationExpr).L)
-			}
+			v.L = exprBind(v.L, hintedWhere.(*ast.BinaryOperationExpr).L)
 		}
 		if v.R != nil {
-			switch v.R.(type) {
-			case *ast.BinaryOperationExpr:
-				v.R = exprBind(v.R, hintedWhere.(*ast.BinaryOperationExpr).R)
-			case *ast.PatternInExpr:
-				v.R = exprBind(v.R, hintedWhere.(*ast.BinaryOperationExpr).R)
-			}
+			v.R = exprBind(v.R, hintedWhere.(*ast.BinaryOperationExpr).R)
 		}
 	case *ast.IsNullExpr:
 		if v.Expr != nil {
