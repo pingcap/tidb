@@ -392,7 +392,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	if len(ds.pushedDownConds) == 0 {
 		return false, nil
 	}
-	path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
+	path.accessConds, path.tableFilters = ranger.DetachCondsForColumn(ds.ctx, ds.pushedDownConds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
 	// can be used to access data.
 	corColInAccessConds := false
@@ -457,6 +457,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+	eqOrInCount := 0
 	if len(path.idxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
 		if err != nil {
@@ -466,6 +467,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.accessConds = res.AccessConds
 		path.tableFilters = res.RemainedConds
 		path.eqCondCount = res.EqCondCount
+		eqOrInCount = res.EqOrInCount
 		path.countAfterAccess, err = ds.stats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
 			return false, err
@@ -473,8 +475,8 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	} else {
 		path.tableFilters = ds.pushedDownConds
 	}
-	if path.eqCondCount == len(path.accessConds) {
-		accesses, remained := path.splitCorColAccessCondFromFilters()
+	if eqOrInCount == len(path.accessConds) {
+		accesses, remained := path.splitCorColAccessCondFromFilters(eqOrInCount)
 		path.accessConds = append(path.accessConds, accesses...)
 		path.tableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
@@ -482,7 +484,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		} else {
 			selectivity := path.countAfterAccess / float64(ds.statisticTable.Count)
 			for i := range accesses {
-				col := path.idxCols[path.eqCondCount+i]
+				col := path.idxCols[eqOrInCount+i]
 				ndv := ds.getColumnNDV(col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
@@ -529,24 +531,24 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	return noIntervalRanges && !haveNullVal, nil
 }
 
-func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []expression.Expression) {
-	access = make([]expression.Expression, len(path.idxCols)-path.eqCondCount)
+func (path *accessPath) splitCorColAccessCondFromFilters(eqOrInCount int) (access, remained []expression.Expression) {
+	access = make([]expression.Expression, len(path.idxCols)-eqOrInCount)
 	used := make([]bool, len(path.tableFilters))
-	for i := path.eqCondCount; i < len(path.idxCols); i++ {
+	for i := eqOrInCount; i < len(path.idxCols); i++ {
 		matched := false
 		for j, filter := range path.tableFilters {
 			if used[j] || !isColEqCorColOrConstant(filter, path.idxCols[i]) {
 				continue
 			}
 			matched = true
-			access[i-path.eqCondCount] = filter
+			access[i-eqOrInCount] = filter
 			if path.idxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
 			}
 			break
 		}
 		if !matched {
-			access = access[:i-path.eqCondCount]
+			access = access[:i-eqOrInCount]
 			break
 		}
 	}

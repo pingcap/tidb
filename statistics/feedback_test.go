@@ -237,7 +237,7 @@ func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
 	rq = &QueryFeedback{}
 	cms := NewCMSketch(4, 4)
 	c.Assert(DecodeFeedback(val, rq, cms, false), IsNil)
-	c.Assert(cms.QueryBytes(codec.EncodeInt(nil, 0)), Equals, uint32(1))
+	c.Assert(cms.QueryBytes(codec.EncodeInt(nil, 0)), Equals, uint64(1))
 	q.Feedback = q.Feedback[:1]
 	c.Assert(q.Equal(rq), IsTrue)
 }

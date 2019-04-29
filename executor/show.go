@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb-tools/pkg/etcd"
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -174,15 +175,21 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowPrivileges()
 	case ast.ShowBindings:
 		return e.fetchShowBind()
+	case ast.ShowAnalyzeStatus:
+		e.fetchShowAnalyzeStatus()
+		return nil
 	}
 	return nil
 }
 
 func (e *ShowExec) fetchShowBind() error {
+	var bindRecords []*bindinfo.BindMeta
 	if !e.GlobalScope {
-		return errors.New("show non-global bind sql is not supported")
+		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		bindRecords = handle.GetAllBindRecord()
+	} else {
+		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
-	bindRecords := domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	for _, bindData := range bindRecords {
 		e.appendRow([]interface{}{
 			bindData.OriginalSQL,
@@ -247,10 +254,10 @@ func (e *ShowExec) fetchShowProcessList() error {
 		return nil
 	}
 
-	loginUser := e.ctx.GetSessionVars().User
+	loginUser, activeRoles := e.ctx.GetSessionVars().User, e.ctx.GetSessionVars().ActiveRoles
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
-		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+		if pm.RequestVerification(activeRoles, "", "", "", mysql.ProcessPriv) {
 			hasProcessPriv = true
 		}
 	}
@@ -284,11 +291,12 @@ func (e *ShowExec) fetchShowTables() error {
 	}
 	// sort for tables
 	tableNames := make([]string, 0, len(e.is.SchemaTables(e.DBName)))
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	var tableTypes = make(map[string]string)
 	for _, v := range e.is.SchemaTables(e.DBName) {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
-		if checker != nil && !checker.RequestVerification(e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
@@ -332,8 +340,9 @@ func (e *ShowExec) fetchShowTableStatus() error {
 		return errors.Trace(err)
 	}
 
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	for _, row := range rows {
-		if checker != nil && !checker.RequestVerification(e.DBName.O, row.GetString(0), "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, row.GetString(0), "", mysql.AllPrivMask) {
 			continue
 		}
 		e.result.AppendRow(row)
@@ -356,7 +365,8 @@ func (e *ShowExec) fetchShowColumns() error {
 		return errors.Trace(err)
 	}
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -438,7 +448,8 @@ func (e *ShowExec) fetchShowIndex() error {
 	}
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -503,7 +514,7 @@ func (e *ShowExec) fetchShowIndex() error {
 // fetchShowCharset gets all charset information and fill them into e.rows.
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
-	descs := charset.GetAllCharsets()
+	descs := charset.GetSupportedCharsets()
 	for _, desc := range descs {
 		e.appendRow([]interface{}{
 			desc.Name,
@@ -590,7 +601,7 @@ func (e *ShowExec) fetchShowStatus() error {
 }
 
 func getDefaultCollate(charsetName string) string {
-	for _, c := range charset.GetAllCharsets() {
+	for _, c := range charset.GetSupportedCharsets() {
 		if strings.EqualFold(c.Name, charsetName) {
 			return c.DefaultCollation
 		}
@@ -784,7 +795,11 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if tb.Meta().ShardRowIDBits > 0 {
-		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits)
+		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tb.Meta().ShardRowIDBits)
+		if tb.Meta().PreSplitRegions > 0 {
+			fmt.Fprintf(&buf, "PRE_SPLIT_REGIONS=%d ", tb.Meta().PreSplitRegions)
+		}
+		buf.WriteString("*/")
 	}
 
 	if len(tb.Meta().Comment) > 0 {
@@ -893,7 +908,7 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 }
 
 func (e *ShowExec) fetchShowCollation() error {
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 	for _, v := range collations {
 		isDefault := ""
 		if v.IsDefault {
