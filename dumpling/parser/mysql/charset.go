@@ -343,6 +343,7 @@ var Collations = map[uint8]string{
 	245: "utf8mb4_croatian_ci",
 	246: "utf8mb4_unicode_520_ci",
 	247: "utf8mb4_vietnamese_ci",
+	255: "utf8mb4_0900_ai_ci",
 }
 
 // CollationNames maps MySQL collation name to its ID
@@ -566,6 +567,7 @@ var CollationNames = map[string]uint8{
 	"utf8mb4_croatian_ci":      245,
 	"utf8mb4_unicode_520_ci":   246,
 	"utf8mb4_vietnamese_ci":    247,
+	"utf8mb4_0900_ai_ci":       255,
 }
 
 // MySQL collation information.

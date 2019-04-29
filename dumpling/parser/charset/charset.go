@@ -18,6 +18,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+)
+
+const (
+	codeCollationCharsetMismatch = terror.ErrCode(mysql.ErrCollationCharsetMismatch)
+	codeUnknownCollation         = terror.ErrCode(mysql.ErrUnknownCollation)
+)
+
+var (
+	ErrUnknownCollation         = terror.ClassDDL.New(codeUnknownCollation, mysql.MySQLErrName[mysql.ErrUnknownCollation])
+	ErrCollationCharsetMismatch = terror.ClassDDL.New(codeCollationCharsetMismatch, mysql.MySQLErrName[mysql.ErrCollationCharsetMismatch])
 )
 
 // Charset is a charset.
@@ -40,7 +51,8 @@ type Collation struct {
 }
 
 var charsets = make(map[string]*Charset)
-var collationsMap = make(map[int]*Collation)
+var collationsIDMap = make(map[int]*Collation)
+var collationsNameMap = make(map[string]*Collation)
 var descs = make([]*Desc, 0, len(charsetInfos))
 var supportedCollations = make([]*Collation, 0, len(supportedCollationNames))
 
@@ -155,7 +167,7 @@ func GetCharsetInfoByID(coID int) (string, string, error) {
 	if coID == mysql.DefaultCollationID {
 		return mysql.DefaultCharset, mysql.DefaultCollationName, nil
 	}
-	if collation, ok := collationsMap[coID]; ok {
+	if collation, ok := collationsIDMap[coID]; ok {
 		return collation.CharsetName, collation.Name, nil
 	}
 	return "", "", errors.Errorf("Unknown charset id %d", coID)
@@ -164,6 +176,14 @@ func GetCharsetInfoByID(coID int) (string, string, error) {
 // GetCollations returns a list for all collations.
 func GetCollations() []*Collation {
 	return collations
+}
+
+func GetCollationByName(name string) (*Collation, error) {
+	collation, ok := collationsNameMap[strings.ToLower(name)]
+	if !ok {
+		return nil, ErrUnknownCollation.GenWithStackByArgs(name)
+	}
+	return collation, nil
 }
 
 const (
@@ -426,7 +446,7 @@ func init() {
 	}
 
 	for _, c := range collations {
-		collationsMap[c.ID] = c
+		collationsIDMap[c.ID] = c
 
 		if _, ok := supportedCollationNames[c.Name]; ok {
 			supportedCollations = append(supportedCollations, c)
@@ -435,5 +455,9 @@ func init() {
 		if charset, ok := charsets[c.CharsetName]; ok {
 			charset.Collations[c.Name] = c
 		}
+	}
+
+	for id, name := range mysql.Collations {
+		collationsNameMap[name] = collationsIDMap[int(id)]
 	}
 }
