@@ -18,7 +18,7 @@ type Variables struct {
 	// BackoffLockFast specifies the LockFast backoff base duration in milliseconds.
 	BackoffLockFast int
 
-	// BackOffWeight specifies the weight of the max back off time duration in milliseconds.
+	// BackOffWeight specifies the weight of the max back off time duration.
 	BackOffWeight int
 
 	// Hook is used for test to verify the variable take effect.
