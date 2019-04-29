@@ -1523,7 +1523,7 @@ func createSession(store kv.Storage) (*session, error) {
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory)
+			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
@@ -1546,7 +1546,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory)
+			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
