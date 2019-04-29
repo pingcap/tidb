@@ -1010,7 +1010,8 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
-			if tempStmtNodes == nil {
+			normolizedSQL := compiler.GetSelectTextFromStmtNode(stmtNode)
+			if tempStmtNodes == nil && normolizedSQL != "" && compiler.GetBindMeta(s, normolizedSQL) != nil {
 				tempStmtNodes, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
 				if err != nil || warns != nil {
 					//just skip errcheck, because parse will not return an error.
@@ -1058,8 +1059,7 @@ func (s *session) handleInValidBindRecord(ctx context.Context, stmtNode ast.Stmt
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt:
 			normalizeExplainSQL := parser.Normalize(x.Text())
-			lowerSQL := strings.ToLower(normalizeExplainSQL)
-			idx := strings.Index(lowerSQL, "select")
+			idx := strings.Index(normalizeExplainSQL, "select")
 			normdOrigSQL = normalizeExplainSQL[idx:]
 		default:
 			return

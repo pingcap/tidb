@@ -45,15 +45,12 @@ func selectBind(originalNode, hintedNode *ast.SelectStmt) *ast.SelectStmt {
 	}
 
 	if originalNode.Fields != nil {
-		for idx := 0; idx < len(originalNode.Fields.Fields); idx++ {
-			originalNode.Fields.Fields[idx] = selectFieldBind(originalNode.Fields.Fields[idx], hintedNode.Fields.Fields[idx])
+		origFields := originalNode.Fields.Fields
+		hintFields := hintedNode.Fields.Fields
+		for idx := range origFields {
+			origFields[idx].Expr = exprBind(origFields[idx].Expr, hintFields[idx].Expr)
 		}
 	}
-	return originalNode
-}
-
-func selectFieldBind(originalNode, hintedNode *ast.SelectField) *ast.SelectField {
-	originalNode.Expr = exprBind(originalNode.Expr, hintedNode.Expr)
 	return originalNode
 }
 
@@ -69,48 +66,66 @@ func havingBind(originalNode, hintedNode *ast.HavingClause) *ast.HavingClause {
 	return originalNode
 }
 
-func exprBind(where ast.ExprNode, hintedWhere ast.ExprNode) ast.ExprNode {
-	switch v := where.(type) {
+func exprBind(originalNode, hintedNode ast.ExprNode) ast.ExprNode {
+	switch v := originalNode.(type) {
 	case *ast.SubqueryExpr:
 		if v.Query != nil {
-			v.Query = resultSetNodeBind(v.Query, hintedWhere.(*ast.SubqueryExpr).Query)
+			v.Query = resultSetNodeBind(v.Query, hintedNode.(*ast.SubqueryExpr).Query)
 		}
 	case *ast.ExistsSubqueryExpr:
 		if v.Sel != nil {
-			v.Sel.(*ast.SubqueryExpr).Query = resultSetNodeBind(v.Sel.(*ast.SubqueryExpr).Query, hintedWhere.(*ast.ExistsSubqueryExpr).Sel.(*ast.SubqueryExpr).Query)
+			v.Sel.(*ast.SubqueryExpr).Query = resultSetNodeBind(v.Sel.(*ast.SubqueryExpr).Query, hintedNode.(*ast.ExistsSubqueryExpr).Sel.(*ast.SubqueryExpr).Query)
 		}
 	case *ast.PatternInExpr:
 		if v.Sel != nil {
-			v.Sel.(*ast.SubqueryExpr).Query = resultSetNodeBind(v.Sel.(*ast.SubqueryExpr).Query, hintedWhere.(*ast.PatternInExpr).Sel.(*ast.SubqueryExpr).Query)
+			v.Sel.(*ast.SubqueryExpr).Query = resultSetNodeBind(v.Sel.(*ast.SubqueryExpr).Query, hintedNode.(*ast.PatternInExpr).Sel.(*ast.SubqueryExpr).Query)
 		}
 	case *ast.BinaryOperationExpr:
 		if v.L != nil {
-			v.L = exprBind(v.L, hintedWhere.(*ast.BinaryOperationExpr).L)
+			v.L = exprBind(v.L, hintedNode.(*ast.BinaryOperationExpr).L)
 		}
 		if v.R != nil {
-			v.R = exprBind(v.R, hintedWhere.(*ast.BinaryOperationExpr).R)
+			v.R = exprBind(v.R, hintedNode.(*ast.BinaryOperationExpr).R)
 		}
 	case *ast.IsNullExpr:
 		if v.Expr != nil {
-			v.Expr = exprBind(v.Expr, hintedWhere.(*ast.IsNullExpr).Expr)
+			v.Expr = exprBind(v.Expr, hintedNode.(*ast.IsNullExpr).Expr)
 		}
 	case *ast.IsTruthExpr:
 		if v.Expr != nil {
-			v.Expr = exprBind(v.Expr, hintedWhere.(*ast.IsTruthExpr).Expr)
+			v.Expr = exprBind(v.Expr, hintedNode.(*ast.IsTruthExpr).Expr)
 		}
 	case *ast.PatternLikeExpr:
 		if v.Pattern != nil {
-			v.Pattern = exprBind(v.Pattern, hintedWhere.(*ast.PatternLikeExpr).Pattern)
+			v.Pattern = exprBind(v.Pattern, hintedNode.(*ast.PatternLikeExpr).Pattern)
 		}
 	case *ast.CompareSubqueryExpr:
 		if v.L != nil {
-			v.L = exprBind(v.L, hintedWhere.(*ast.CompareSubqueryExpr).L)
+			v.L = exprBind(v.L, hintedNode.(*ast.CompareSubqueryExpr).L)
 		}
 		if v.R != nil {
-			v.R = exprBind(v.R, hintedWhere.(*ast.CompareSubqueryExpr).R)
+			v.R = exprBind(v.R, hintedNode.(*ast.CompareSubqueryExpr).R)
+		}
+	case *ast.BetweenExpr:
+		if v.Left != nil {
+			v.Left = exprBind(v.Left, hintedNode.(*ast.BetweenExpr).Left)
+		}
+		if v.Right != nil {
+			v.Right = exprBind(v.Right, hintedNode.(*ast.BetweenExpr).Right)
+		}
+	case *ast.UnaryOperationExpr:
+		if v.V != nil {
+			v.V = exprBind(v.V, hintedNode.(*ast.UnaryOperationExpr).V)
+		}
+	case *ast.CaseExpr:
+		if v.Value != nil {
+			v.Value = exprBind(v.Value, hintedNode.(*ast.CaseExpr).Value)
+		}
+		if v.ElseClause != nil {
+			v.ElseClause = exprBind(v.ElseClause, hintedNode.(*ast.CaseExpr).ElseClause)
 		}
 	}
-	return where
+	return originalNode
 }
 
 func resultSetNodeBind(originalNode, hintedNode ast.ResultSetNode) ast.ResultSetNode {
@@ -125,7 +140,7 @@ func resultSetNodeBind(originalNode, hintedNode ast.ResultSetNode) ast.ResultSet
 		case *ast.UnionStmt:
 			x.Source = unionSelectBind(v, hintedNode.(*ast.TableSource).Source.(*ast.UnionStmt))
 		case *ast.TableName:
-			x.Source = dataSourceBind(v, ts.Source.(*ast.TableName))
+			x.Source.(*ast.TableName).IndexHints = ts.Source.(*ast.TableName).IndexHints
 		}
 		return x
 	case *ast.SelectStmt:
@@ -135,11 +150,6 @@ func resultSetNodeBind(originalNode, hintedNode ast.ResultSetNode) ast.ResultSet
 	default:
 		return x
 	}
-}
-
-func dataSourceBind(originalNode, hintedNode *ast.TableName) *ast.TableName {
-	originalNode.IndexHints = hintedNode.IndexHints
-	return originalNode
 }
 
 func joinBind(originalNode, hintedNode *ast.Join) *ast.Join {

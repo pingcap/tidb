@@ -95,6 +95,46 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 	}, nil
 }
 
+// GetSelectTextFromStmtNode return stmtNode's select text if select text exist.
+func (c *Compiler) GetSelectTextFromStmtNode(stmtNode ast.StmtNode) string {
+	switch x := stmtNode.(type) {
+	case *ast.ExplainStmt:
+		switch x.Stmt.(type) {
+		case *ast.SelectStmt:
+			normalizeExplainSQL := parser.Normalize(x.Text())
+			idx := strings.Index(normalizeExplainSQL, "select")
+			return normalizeExplainSQL[idx:]
+		}
+	case *ast.SelectStmt:
+		return parser.Normalize(x.Text())
+	}
+	return ""
+}
+
+// GetBindMeta return normdOriginSQL's bindMeta in session bind cache or global bind cache.
+func (c *Compiler) GetBindMeta(ctx sessionctx.Context, normalizeSQL string) *bindinfo.BindMeta {
+	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil { //when the domain is initializing, the bind will be nil.
+		return nil
+	}
+	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindMeta := sessionHandle.GetBindRecord(normalizeSQL, ctx.GetSessionVars().CurrentDB)
+	if bindMeta != nil {
+		if bindMeta.Status == bindinfo.Invalid {
+			return nil
+		}
+		if bindMeta.Status == bindinfo.Using {
+			return bindMeta
+		}
+	}
+
+	globalHandle := domain.GetDomain(ctx).BindHandle()
+	bindMeta = globalHandle.GetBindRecord(normalizeSQL, ctx.GetSessionVars().CurrentDB)
+	if bindMeta == nil {
+		bindMeta = globalHandle.GetBindRecord(normalizeSQL, "")
+	}
+	return bindMeta
+}
+
 func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plannercore.Plan) (expensive bool) {
 	expensive = isExpensiveQuery(finalPlan)
 	if !expensive {
@@ -386,13 +426,15 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 }
 
 func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
+	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil { //when the domain is initializing, the bind will be nil.
+		return stmtNode
+	}
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt:
 			normalizeExplainSQL := parser.Normalize(x.Text())
-			lowerSQL := strings.ToLower(normalizeExplainSQL)
-			idx := strings.Index(lowerSQL, "select")
+			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
 			x.Stmt = addHintForSelect(normalizeSQL, ctx, x.Stmt)
 		}
@@ -405,10 +447,6 @@ func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
 }
 
 func addHintForSelect(normdOrigSQL string, ctx sessionctx.Context, stmt ast.StmtNode) ast.StmtNode {
-	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil { //when the domain is initializing, the bind will be nil.
-		return stmt
-	}
-
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord != nil {
