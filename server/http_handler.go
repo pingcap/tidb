@@ -298,10 +298,6 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 type settingsHandler struct {
 }
 
-// configReloadHandler is the handler for reloading config online.
-type configReloadHandler struct {
-}
-
 // binlogRecover is used to recover binlog service.
 // When config binlog IgnoreError, binlog service will stop after meeting the first error.
 // It can be recovered using HTTP API.
@@ -592,6 +588,10 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
+}
+
+// configReloadHandler is the handler for reloading config online.
+type configReloadHandler struct {
 }
 
 // ServeHTTP handles request of reloading config for this server.

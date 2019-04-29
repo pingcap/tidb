@@ -149,7 +149,7 @@ func main() {
 	overrideConfig()
 	if err := cfg.Valid(); err != nil {
 		log.Error("invalid config", zap.Error(err))
-		os.Exit(-1)
+		os.Exit(1)
 	}
 	if *configCheck {
 		fmt.Println("config check successful")

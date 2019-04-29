@@ -425,10 +425,14 @@ func ReloadGlobalConfig() error {
 	if len(diffs) == 0 {
 		return nil
 	}
+	unsupported := make([]string, 0, 2)
 	for k := range diffs {
 		if _, ok := supportedReloadConfigs[k]; !ok {
-			return fmt.Errorf("reloading config %s is not supported", k)
+			unsupported = append(unsupported, k)
 		}
+	}
+	if len(unsupported) > 0 {
+		return fmt.Errorf("reloading config %v is not supported, only %v are supported now", unsupported, supportedReloadConfigs)
 	}
 
 	confReloader(nc, c)
