@@ -216,9 +216,9 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer func() {
 		dom.Close()
 		store.Close()
-		statistics.RatioOfPseudoEstimate = 0.7
+		statistics.RatioOfPseudoEstimate.Store(0.7)
 	}()
-	statistics.RatioOfPseudoEstimate = 10.0
+	statistics.RatioOfPseudoEstimate.Store(10.0)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
@@ -575,13 +575,13 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	h.DumpStatsDeltaToKV(handle.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	statistics.RatioOfPseudoEstimate = 10.0
+	statistics.RatioOfPseudoEstimate.Store(10.0)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableReader_7 35.91 root data:Selection_6",
 		"└─Selection_6 35.91 cop le(test.t.a, 5), le(test.t.b, 5)",
 		"  └─TableScan_5 80.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
-	statistics.RatioOfPseudoEstimate = 0.7
+	statistics.RatioOfPseudoEstimate.Store(0.7)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"IndexLookUp_11 8.84 root ",
 		"├─IndexScan_8 26.59 cop table:t, index:a, range:[-inf,5], keep order:false, stats:pseudo",

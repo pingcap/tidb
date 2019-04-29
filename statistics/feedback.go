@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/spaolacci/murmur3"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -83,7 +84,7 @@ var (
 	// MaxNumberOfRanges is the max number of ranges before split to collect feedback.
 	MaxNumberOfRanges = 20
 	// FeedbackProbability is the probability to collect the feedback.
-	FeedbackProbability = 0.0
+	FeedbackProbability = atomic.NewFloat64(0)
 )
 
 // CalcErrorRate calculates the error rate the current QueryFeedback.
@@ -106,7 +107,7 @@ func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	if q.Hist == nil || q.Hist.Len() == 0 {
 		return false
 	}
-	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability {
+	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability.Load() {
 		return false
 	}
 	return true
