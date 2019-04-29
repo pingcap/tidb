@@ -1010,8 +1010,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
-			normolizedSQL := compiler.GetSelectTextFromStmtNode(stmtNode)
-			if tempStmtNodes == nil && normolizedSQL != "" && compiler.GetBindMeta(s, normolizedSQL) != nil {
+			if tempStmtNodes == nil {
 				tempStmtNodes, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
 				if err != nil || warns != nil {
 					//just skip errcheck, because parse will not return an error.
