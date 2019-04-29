@@ -193,6 +193,19 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 			return err
 		}
 	}
+	if p.CompareFilters != nil {
+		err = p.CompareFilters.resolveIndices(p.children[p.OuterIndex].Schema())
+		if err != nil {
+			return err
+		}
+		for i := range p.CompareFilters.affectedColSchema.Columns {
+			resolvedCol, err1 := p.CompareFilters.affectedColSchema.Columns[i].ResolveIndices(p.children[p.OuterIndex].Schema())
+			if err1 != nil {
+				return err1
+			}
+			p.CompareFilters.affectedColSchema.Columns[i] = resolvedCol.(*expression.Column)
+		}
+	}
 	return
 }
 

@@ -477,7 +477,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		IdxColLens:       path.idxColLens,
 		AccessCondition:  path.accessConds,
 		Ranges:           path.ranges,
-		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
@@ -734,7 +733,7 @@ func (ds *DataSource) crossEstimateRowCount(path *accessPath, expectedCnt float6
 		return 0, false, corr
 	}
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	ranges, err := ranger.BuildColumnRange(accessConds, sc, col.RetType)
+	ranges, err := ranger.BuildColumnRange(accessConds, sc, col.RetType, types.UnspecifiedLength)
 	if len(ranges) == 0 || err != nil {
 		return 0, err == nil, corr
 	}
