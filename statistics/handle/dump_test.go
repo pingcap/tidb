@@ -150,7 +150,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	c.Assert(cmsFromStore, NotNil)
 	c.Check(cms.Equal(cmsFromStore), IsTrue)
 
-	jsonTable, err := h.DumpStatsToJSON("test", tableInfo)
+	jsonTable, err := h.DumpStatsToJSON("test", tableInfo, nil)
 	c.Check(err, IsNil)
 	err = h.LoadStatsFromJSON(is, jsonTable)
 	c.Check(err, IsNil)
