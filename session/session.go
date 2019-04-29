@@ -460,18 +460,12 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		defer span1.Finish()
 	}
 
-	stmt := executor.ExecStmt{
-		Text:      "commitTxn",
-		Ctx:       s,
-		StartTime: time.Now(),
-	}
 	var commitDetail *execdetails.CommitDetails
 	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
-	stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
 	s.sessionVars.TxnCtx.Cleanup()
 	s.recordTransactionCounter(err)
 	return err
@@ -1564,7 +1558,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 29
+	currentBootstrapVersion = 30
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
