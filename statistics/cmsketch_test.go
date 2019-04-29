@@ -45,7 +45,8 @@ func prepareCMSWithTopN(d, w int32, vals []*types.Datum, n uint32, total uint64)
 		}
 		data = append(data, bytes)
 	}
-	return NewCMSketchWithTopN(d, w, data, n, total), nil
+	cms, _, _ := NewCMSketchWithTopN(d, w, data, n, total)
+	return cms, nil
 }
 
 func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) (*CMSketch, map[int64]uint32, error) {
