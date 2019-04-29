@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -96,6 +96,9 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 
 	e.resultHandler = &tableResultHandler{}
+	if e.feedback != nil && e.feedback.Hist() != nil {
+		e.ranges = e.feedback.Hist().SplitRange(e.ranges)
+	}
 	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {

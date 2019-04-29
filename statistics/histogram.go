@@ -508,7 +508,15 @@ func validRange(ran *ranger.Range) bool {
 	if ran.LowVal[0].Kind() == types.KindBytes {
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
-		low, high = codec.EncodeInt(nil, ran.LowVal[0].GetInt64()), codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+		var err error
+		low, err = codec.EncodeKey(nil, nil, ran.LowVal[0])
+		if err != nil {
+			return false
+		}
+		high, err = codec.EncodeKey(nil, nil, ran.HighVal[0])
+		if err != nil {
+			return false
+		}
 	}
 	if ran.LowExclude {
 		low = kv.Key(low).PrefixNext()
