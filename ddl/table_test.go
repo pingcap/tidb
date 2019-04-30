@@ -180,10 +180,9 @@ func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchem
 
 func testLockTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblInfo *model.TableInfo, lockTp model.TableLockType) *model.Job {
 	arg := &lockTablesArg{
-		LockTableIDs: []int64{tblInfo.ID},
-		LockTypes:    []model.TableLockType{lockTp},
-		ServerID:     d.GetID(),
-		SessionID:    ctx.GetSessionVars().ConnectionID,
+		LockTables: []model.TableLockTpInfo{{SchemaID: newSchemaID, TableID: tblInfo.ID, Tp: lockTp}},
+		ServerID:   d.GetID(),
+		SessionID:  ctx.GetSessionVars().ConnectionID,
 	}
 	job := &model.Job{
 		SchemaID:   newSchemaID,
@@ -208,9 +207,9 @@ func checkTableLocked(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableIn
 
 		c.Assert(info, NotNil)
 		c.Assert(info.Lock, NotNil)
-		c.Assert(len(info.Lock.ServerIDs) == 1, IsTrue)
-		c.Assert(info.Lock.ServerIDs[0], Equals, serverID)
-		c.Assert(info.Lock.SessionIDs[0], Equals, sessionID)
+		c.Assert(len(info.Lock.Sessions) == 1, IsTrue)
+		c.Assert(info.Lock.Sessions[0].ServerID, Equals, serverID)
+		c.Assert(info.Lock.Sessions[0].SessionID, Equals, sessionID)
 		c.Assert(info.Lock.Tp, Equals, lockTp)
 		c.Assert(info.Lock.State, Equals, model.TableLockStatePublic)
 		return nil

@@ -3105,55 +3105,59 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 }
 
 func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
-	if len(stmt.TableLocks) > 1 {
-		return errors.New("Currently only support lock 1 table at the same time")
-	}
-	tb := stmt.TableLocks[0].Table
+	//if len(stmt.TableLocks) > 1 {
+	//	return errors.New("Currently only support lock 1 table at the same time")
+	//}
+
+	lockTables := make([]model.TableLockTpInfo, 0, len(stmt.TableLocks))
 	is := d.infoHandle.Get()
-	schema, ok := is.SchemaByName(tb.Schema)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tb.Schema)
+	for _, tl := range stmt.TableLocks {
+		tb := tl.Table
+		schema, ok := is.SchemaByName(tb.Schema)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tb.Schema)
+		}
+		t, err := is.TableByName(tb.Schema, tb.Name)
+		if err != nil {
+			return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(tb.Schema, tb.Name))
+		}
+		lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: tl.Type})
 	}
 
-	t, err := is.TableByName(tb.Schema, tb.Name)
-	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(tb.Schema, tb.Name))
-	}
+	unlockTables := ctx.GetAllTableLocks()
 
 	arg := &lockTablesArg{
-		LockTableIDs:  []int64{t.Meta().ID},
-		LockSchemaIDs: []int64{schema.ID},
-		LockTypes:     []model.TableLockType{stmt.TableLocks[0].Type},
-		ServerID:      d.GetID(),
-		SessionID:     ctx.GetSessionVars().ConnectionID,
+		LockTables:   lockTables,
+		UnlockTables: unlockTables,
+		ServerID:     d.GetID(),
+		SessionID:    ctx.GetSessionVars().ConnectionID,
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
+		SchemaID:   lockTables[0].SchemaID,
+		TableID:    lockTables[0].TableID,
 		Type:       model.ActionLockTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{arg},
 	}
-	ctx.AddTableLock(t.Meta().ID, schema.ID, stmt.TableLocks[0].Type)
-	err = d.doDDLJob(ctx, job)
+	ctx.AddTableLock(lockTables)
+	err := d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) UnlockTables(ctx sessionctx.Context, tbIDs, dbIDs []int64) error {
-	if len(tbIDs) == 0 {
+func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLockTpInfo) error {
+	if len(unlockTables) == 0 {
 		return nil
 	}
 	arg := &lockTablesArg{
-		LockTableIDs:  tbIDs,
-		LockSchemaIDs: dbIDs,
-		ServerID:      d.GetID(),
-		SessionID:     ctx.GetSessionVars().ConnectionID,
+		UnlockTables: unlockTables,
+		ServerID:     d.GetID(),
+		SessionID:    ctx.GetSessionVars().ConnectionID,
 	}
 	job := &model.Job{
-		SchemaID:   dbIDs[0],
-		TableID:    tbIDs[0],
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
 		Type:       model.ActionUnlockTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{arg},
@@ -3168,9 +3172,8 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, tbIDs, dbIDs []int64) error {
 }
 
 type lockTablesArg struct {
-	LockTableIDs  []int64
-	LockSchemaIDs []int64
-	LockTypes     []model.TableLockType
-	ServerID      string
-	SessionID     uint64
+	LockTables   []model.TableLockTpInfo
+	UnlockTables []model.TableLockTpInfo
+	ServerID     string
+	SessionID    uint64
 }

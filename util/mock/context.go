@@ -217,17 +217,17 @@ func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []typ
 }
 
 // AddTableLock implements the sessionctx.Context interface.
-func (s *Context) AddTableLock(_, _ int64, _ model.TableLockType) {
+func (s *Context) AddTableLock(_ []model.TableLockTpInfo) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.
-func (s *Context) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
+func (s *Context) CheckTableLocked(_ int64) (bool, model.TableLockType) {
 	return false, model.TableLockNone
 }
 
 // GetAllTableLocks implements the sessionctx.Context interface.
-func (s *Context) GetAllTableLocks() ([]int64, []int64) {
-	return nil, nil
+func (s *Context) GetAllTableLocks() []model.TableLockTpInfo {
+	return nil
 }
 
 // ReleaseAllTableLocks implements the sessionctx.Context interface.

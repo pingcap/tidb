@@ -84,11 +84,11 @@ type Context interface {
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.
-	AddTableLock(tblID, dbID int64, tp model.TableLockType)
+	AddTableLock([]model.TableLockTpInfo)
 	// CheckTableLocked checks the table lock.
 	CheckTableLocked(tblID int64) (bool, model.TableLockType)
 
-	GetAllTableLocks() (tbIDs []int64, dbIDs []int64)
+	GetAllTableLocks() []model.TableLockTpInfo
 
 	ReleaseAllTableLocks()
 }

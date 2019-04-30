@@ -70,32 +70,32 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 func checkLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
 	if tbInfo.Lock == nil || len(tbInfo.Lock.Sessions) == 0 {
 		tbInfo.Lock = &model.TableLockInfo{
-			Tp: arg.LockTypes[0],
+			Tp: arg.LockTables[idx].Tp,
 		}
-		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, model.SessionInfo{ServerID: arg.ServerID, SessionID:arg.SessionID})
+		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, model.SessionInfo{ServerID: arg.ServerID, SessionID: arg.SessionID})
 		return nil
 	}
 	if tbInfo.Lock.State == model.TableLockStatePreLock {
 		return nil
 	}
-	if tbInfo.Lock.Tp == model.TableLockRead && arg.LockTypes[idx] == model.TableLockRead {
+	if tbInfo.Lock.Tp == model.TableLockRead && arg.LockTables[idx].Tp == model.TableLockRead {
 		contain := hasServerAndSessionID(tbInfo.Lock.Sessions, arg.ServerID, arg.SessionID)
 		// repeat lock.
 		if contain {
 			return nil
 		}
-		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, model.SessionInfo{ServerID: arg.ServerID, SessionID:arg.SessionID})
+		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, model.SessionInfo{ServerID: arg.ServerID, SessionID: arg.SessionID})
 		return nil
 	}
 	contain := hasServerAndSessionID(tbInfo.Lock.Sessions, arg.ServerID, arg.SessionID)
 	// repeat lock.
 	if contain {
-		if tbInfo.Lock.Tp == arg.LockTypes[idx] {
+		if tbInfo.Lock.Tp == arg.LockTables[idx].Tp {
 			return nil
 		}
 		if len(tbInfo.Lock.Sessions) == 1 {
 			// just change lock tp directly.
-			tbInfo.Lock.Tp = arg.LockTypes[idx]
+			tbInfo.Lock.Tp = arg.LockTables[idx].Tp
 			return nil
 		}
 
@@ -136,7 +136,7 @@ func onUnlockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, nil
 }
 
-func hasServerAndSessionID(sessions []model.SessionInfo,serverID string, sessionID uint64) bool {
+func hasServerAndSessionID(sessions []model.SessionInfo, serverID string, sessionID uint64) bool {
 	for i := range sessions {
 		if sessions[i].ServerID == serverID && sessions[i].SessionID == sessionID {
 			return true

@@ -1206,7 +1206,7 @@ func (ctx *ctxForPartitionExpr) DDLOwnerChecker() owner.DDLOwnerChecker {
 }
 
 // AddTableLock implements the sessionctx.Context interface.
-func (ctx *ctxForPartitionExpr) AddTableLock(_, _ int64, _ model.TableLockType) {
+func (ctx *ctxForPartitionExpr) AddTableLock(_ []model.TableLockTpInfo) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.
@@ -1215,8 +1215,8 @@ func (ctx *ctxForPartitionExpr) CheckTableLocked(tblID int64) (bool, model.Table
 }
 
 // GetAllTableLocks implements the sessionctx.Context interface.
-func (ctx *ctxForPartitionExpr) GetAllTableLocks() ([]int64, []int64) {
-	return nil, nil
+func (ctx *ctxForPartitionExpr) GetAllTableLocks() []model.TableLockTpInfo {
+	return nil
 }
 
 // ReleaseAllTableLocks implements the sessionctx.Context interface.
