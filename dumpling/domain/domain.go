@@ -26,7 +26,6 @@ import (
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -784,9 +783,9 @@ func (do *Domain) BindHandle() *bindinfo.BindHandle {
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
-func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
+func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = bindinfo.NewBindHandle(ctx, parser)
+	do.bindHandle = bindinfo.NewBindHandle(ctx)
 	err := do.bindHandle.Update(true)
 	if err != nil {
 		return err
