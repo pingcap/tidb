@@ -3121,10 +3121,11 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	}
 
 	arg := &lockTablesArg{
-		TableIDs:  []int64{t.Meta().ID},
-		LockTypes: []model.TableLockType{stmt.TableLocks[0].Type},
-		ServerID:  d.GetID(),
-		SessionID: ctx.GetSessionVars().ConnectionID,
+		LockTableIDs:  []int64{t.Meta().ID},
+		LockSchemaIDs: []int64{schema.ID},
+		LockTypes:     []model.TableLockType{stmt.TableLocks[0].Type},
+		ServerID:      d.GetID(),
+		SessionID:     ctx.GetSessionVars().ConnectionID,
 	}
 
 	job := &model.Job{
@@ -3134,35 +3135,42 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{arg},
 	}
-
+	ctx.AddTableLock(t.Meta().ID, schema.ID, stmt.TableLocks[0].Type)
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) UnlockTables(ctx sessionctx.Context, stmt *ast.UnlockTablesStmt) error {
+func (d *ddl) UnlockTables(ctx sessionctx.Context, tbIDs, dbIDs []int64) error {
+	if len(tbIDs) == 0 {
+		return nil
+	}
 	arg := &lockTablesArg{
-		TableIDs:  []int64{0},
-		ServerID:  d.GetID(),
-		SessionID: ctx.GetSessionVars().ConnectionID,
+		LockTableIDs:  tbIDs,
+		LockSchemaIDs: dbIDs,
+		ServerID:      d.GetID(),
+		SessionID:     ctx.GetSessionVars().ConnectionID,
 	}
 	job := &model.Job{
-		// todo: use real ID.
-		SchemaID:   0,
-		TableID:    0,
-		Type:       model.ActionLockTable,
+		SchemaID:   dbIDs[0],
+		TableID:    tbIDs[0],
+		Type:       model.ActionUnlockTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{arg},
 	}
 
 	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseAllTableLocks()
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
 type lockTablesArg struct {
-	TableIDs  []int64
-	LockTypes []model.TableLockType
-	ServerID  string
-	SessionID uint64
+	LockTableIDs  []int64
+	LockSchemaIDs []int64
+	LockTypes     []model.TableLockType
+	ServerID      string
+	SessionID     uint64
 }

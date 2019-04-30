@@ -180,10 +180,10 @@ func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchem
 
 func testLockTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblInfo *model.TableInfo, lockTp model.TableLockType) *model.Job {
 	arg := &lockTablesArg{
-		TableIDs:  []int64{tblInfo.ID},
-		LockTypes: []model.TableLockType{lockTp},
-		ServerID:  d.GetID(),
-		SessionID: ctx.GetSessionVars().ConnectionID,
+		LockTableIDs: []int64{tblInfo.ID},
+		LockTypes:    []model.TableLockType{lockTp},
+		ServerID:     d.GetID(),
+		SessionID:    ctx.GetSessionVars().ConnectionID,
 	}
 	job := &model.Job{
 		SchemaID:   newSchemaID,

@@ -437,6 +437,7 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 }
 
 func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().UnlockTables(e.ctx, s)
+	tbIDs, dbIDs := e.ctx.GetAllTableLocks()
+	err := domain.GetDomain(e.ctx).DDL().UnlockTables(e.ctx, tbIDs, dbIDs)
 	return err
 }

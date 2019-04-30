@@ -16,14 +16,14 @@ package sessionctx
 import (
 	"context"
 	"fmt"
-
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 // Context is an interface for transaction and executive args environment.
@@ -83,6 +83,14 @@ type Context interface {
 	StmtAddDirtyTableOP(op int, physicalID int64, handle int64, row []types.Datum)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
+	// AddTableLock adds table lock to the session lock map.
+	AddTableLock(tblID, dbID int64, tp model.TableLockType)
+	// CheckTableLocked checks the table lock.
+	CheckTableLocked(tblID int64) (bool, model.TableLockType)
+
+	GetAllTableLocks() (tbIDs []int64, dbIDs []int64)
+
+	ReleaseAllTableLocks()
 }
 
 type basicCtxType int

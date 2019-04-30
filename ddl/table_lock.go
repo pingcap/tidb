@@ -38,23 +38,20 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		tbInfo.Lock = &model.TableLockInfo{}
 	}
 
+	err = checkLockTable(tbInfo, 0, arg)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, err
+	}
+
 	switch tbInfo.Lock.State {
 	case model.TableLockStateNone:
 		// none -> pre_lock
-		err = checkLockTable(tbInfo, 0, arg)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
-		}
-
-		tbInfo.Lock.Tp = arg.LockTypes[0]
-		tbInfo.Lock.ServerIDs = append(tbInfo.Lock.ServerIDs, arg.ServerID)
-		tbInfo.Lock.SessionIDs = append(tbInfo.Lock.SessionIDs, arg.SessionID)
 		tbInfo.Lock.State = model.TableLockStatePreLock
 		tbInfo.Lock.TS = t.StartTS
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
-	case model.TableLockStatePreLock:
+	case model.TableLockStatePreLock, model.TableLockStatePublic:
 		tbInfo.Lock.State = model.TableLockStatePublic
 		tbInfo.Lock.TS = t.StartTS
 		ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
@@ -71,14 +68,42 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 }
 
 func checkLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
-	if tbInfo.Lock == nil || len(tbInfo.Lock.ServerIDs) == 0 {
+	if tbInfo.Lock == nil || len(tbInfo.Lock.Sessions) == 0 {
+		tbInfo.Lock = &model.TableLockInfo{
+			Tp: arg.LockTypes[0],
+		}
+		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, model.SessionInfo{ServerID: arg.ServerID, SessionID:arg.SessionID})
+		return nil
+	}
+	if tbInfo.Lock.State == model.TableLockStatePreLock {
 		return nil
 	}
 	if tbInfo.Lock.Tp == model.TableLockRead && arg.LockTypes[idx] == model.TableLockRead {
+		contain := hasServerAndSessionID(tbInfo.Lock.Sessions, arg.ServerID, arg.SessionID)
+		// repeat lock.
+		if contain {
+			return nil
+		}
+		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, model.SessionInfo{ServerID: arg.ServerID, SessionID:arg.SessionID})
 		return nil
 	}
+	contain := hasServerAndSessionID(tbInfo.Lock.Sessions, arg.ServerID, arg.SessionID)
+	// repeat lock.
+	if contain {
+		if tbInfo.Lock.Tp == arg.LockTypes[idx] {
+			return nil
+		}
+		if len(tbInfo.Lock.Sessions) == 1 {
+			// just change lock tp directly.
+			tbInfo.Lock.Tp = arg.LockTypes[idx]
+			return nil
+		}
 
-	return infoschema.ErrTableLocked.GenWithStackByArgs(tbInfo.Name.L, tbInfo.Lock.Tp, tbInfo.Lock.ServerIDs, tbInfo.Lock.SessionIDs)
+		// todo: release lock.
+		return infoschema.ErrTableLocked.GenWithStackByArgs(tbInfo.Name.L, tbInfo.Lock.Tp, tbInfo.Lock.Sessions[0])
+	}
+
+	return infoschema.ErrTableLocked.GenWithStackByArgs(tbInfo.Name.L, tbInfo.Lock.Tp, tbInfo.Lock.Sessions[0])
 }
 
 func onUnlockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -109,4 +134,13 @@ func onUnlockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, nil
+}
+
+func hasServerAndSessionID(sessions []model.SessionInfo,serverID string, sessionID uint64) bool {
+	for i := range sessions {
+		if sessions[i].ServerID == serverID && sessions[i].SessionID == sessionID {
+			return true
+		}
+	}
+	return false
 }

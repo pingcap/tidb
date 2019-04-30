@@ -256,7 +256,7 @@ type DDL interface {
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
 	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error
 	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
-	UnlockTables(ctx sessionctx.Context, stmt *ast.UnlockTablesStmt) error
+	UnlockTables(ctx sessionctx.Context, tbIDs, dbIDs []int64) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration

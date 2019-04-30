@@ -186,7 +186,46 @@ type session struct {
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
 	// lockedTables use to record the table locks hold by the session.
-	lockedTables map[int64]model.TableLockType
+	lockedTables map[int64]tableLockInfo
+}
+
+type tableLockInfo struct {
+	tp   model.TableLockType
+	dbID int64
+}
+
+// AddTableLock adds table lock to the session lock map.
+func (s *session) AddTableLock(tblID, dbID int64, tp model.TableLockType) {
+	s.lockedTables[tblID] = tableLockInfo{
+		tp:   tp,
+		dbID: dbID,
+	}
+}
+
+// CheckTableLocked checks the table lock.
+func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
+	lt, ok := s.lockedTables[tblID]
+	if !ok {
+		return false, model.TableLockNone
+	}
+	return true, lt.tp
+}
+
+// GetAllTableLocks gets all table locks table id and db id hold by the session.
+func (s *session) GetAllTableLocks() ([]int64, []int64) {
+	tbIDs := make([]int64, 0, len(s.lockedTables))
+	dbIDs := make([]int64, 0, len(s.lockedTables))
+	for id, tl := range s.lockedTables {
+		tbIDs = append(tbIDs, id)
+		dbIDs = append(dbIDs, tl.dbID)
+	}
+	fmt.Printf("tb: %v, db: %v\n--------\n\n", tbIDs, dbIDs)
+	return tbIDs, dbIDs
+}
+
+// ReleaseAllTableLocks releases all table locks hold by the session.
+func (s *session) ReleaseAllTableLocks() {
+	s.lockedTables = make(map[int64]tableLockInfo)
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -1219,7 +1258,15 @@ func (s *session) ClearValue(key fmt.Stringer) {
 }
 
 // Close function does some clean work when session end.
+// Close should release the table locks which hold by the session.
 func (s *session) Close() {
+	if len(s.lockedTables) > 0 {
+		tbIDs, dbIDs := s.GetAllTableLocks()
+		err := domain.GetDomain(s).DDL().UnlockTables(s, tbIDs, dbIDs)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
+		}
+	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
@@ -1469,6 +1516,7 @@ func createSession(store kv.Storage) (*session, error) {
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.lockedTables = make(map[int64]tableLockInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -1492,6 +1540,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.lockedTables = make(map[int64]tableLockInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s

@@ -61,7 +61,7 @@ var (
 
 	ErrTableNotLockedForWrite = terror.ClassOptimizer.New(codeErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
 	ErrTableNotLocked         = terror.ClassOptimizer.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
-	ErrTableLocked            = terror.ClassOptimizer.New(codeTableLocked, "Table '%s' was locked in %s by server %v session %v.")
+	ErrTableLocked            = terror.ClassOptimizer.New(codeTableLocked, "Table '%s' was locked in %s by %v")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.

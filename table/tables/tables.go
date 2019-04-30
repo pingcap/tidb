@@ -1204,3 +1204,25 @@ func (ctx *ctxForPartitionExpr) StmtAddDirtyTableOP(op int, physicalID int64, ha
 func (ctx *ctxForPartitionExpr) DDLOwnerChecker() owner.DDLOwnerChecker {
 	panic("not support")
 }
+
+// AddTableLock implements the sessionctx.Context interface.
+func (ctx *ctxForPartitionExpr) AddTableLock(_, _ int64, _ model.TableLockType) {
+}
+
+// CheckTableLocked implements the sessionctx.Context interface.
+func (ctx *ctxForPartitionExpr) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
+	return false, model.TableLockNone
+}
+
+// GetAllTableLocks implements the sessionctx.Context interface.
+func (ctx *ctxForPartitionExpr) GetAllTableLocks() ([]int64, []int64) {
+	return nil, nil
+}
+
+// ReleaseAllTableLocks implements the sessionctx.Context interface.
+func (ctx *ctxForPartitionExpr) ReleaseAllTableLocks() {
+}
+
+// Close implements the sessionctx.Context interface.
+func (ctx *ctxForPartitionExpr) Close() {
+}

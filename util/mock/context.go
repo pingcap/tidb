@@ -17,6 +17,7 @@ package mock
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/model"
 	"sync"
 	"time"
 
@@ -213,6 +214,28 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface.
 func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+}
+
+// AddTableLock implements the sessionctx.Context interface.
+func (s *Context) AddTableLock(_, _ int64, _ model.TableLockType) {
+}
+
+// CheckTableLocked implements the sessionctx.Context interface.
+func (s *Context) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
+	return false, model.TableLockNone
+}
+
+// GetAllTableLocks implements the sessionctx.Context interface.
+func (s *Context) GetAllTableLocks() ([]int64, []int64) {
+	return nil, nil
+}
+
+// ReleaseAllTableLocks implements the sessionctx.Context interface.
+func (s *Context) ReleaseAllTableLocks() {
+}
+
+// Close implements the sessionctx.Context interface.
+func (s *Context) Close() {
 }
 
 // NewContext creates a new mocked sessionctx.Context.
