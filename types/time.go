@@ -1624,13 +1624,21 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, fl
 
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		return 0, 0, 0, fv * float64(gotime.Microsecond), nil
+		dayCount := iv / (3600000000 * 24)
+		fv -= float64(dayCount * 3600000000 * 24)
+		return 0, 0, dayCount, fv * float64(gotime.Microsecond), nil
 	case "SECOND":
-		return 0, 0, 0, fv * float64(gotime.Second), nil
+		dayCount := iv / (3600 * 24)
+		fv -= float64(dayCount * 3600 * 24)
+		return 0, 0, dayCount, fv * float64(gotime.Second), nil
 	case "MINUTE":
-		return 0, 0, 0, float64(iv * int64(gotime.Minute)), nil
+		dayCount := iv / (60 * 24)
+		iv %= 60 * 24
+		return 0, 0, dayCount, float64(iv * int64(gotime.Minute)), nil
 	case "HOUR":
-		return 0, 0, 0, float64(iv * int64(gotime.Hour)), nil
+		dayCount := iv / 24
+		iv %= 24
+		return 0, 0, dayCount, float64(iv * int64(gotime.Hour)), nil
 	case "DAY":
 		return 0, 0, iv, 0, nil
 	case "WEEK":
@@ -1703,8 +1711,12 @@ func extractTimeValue(format string, index, cnt int) (int64, int64, int64, float
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(originalFmt)
 	}
-	durations := hours*float64(gotime.Hour) + minutes*float64(gotime.Minute) +
-		seconds*float64(gotime.Second) + microseconds*float64(gotime.Microsecond)
+
+	secondDuration := int64(hours*3600 + minutes*60 + seconds)
+	days += secondDuration / (3600 * 24)
+	secondDuration %= 3600 * 24
+
+	durations := float64(secondDuration)*float64(gotime.Second) + microseconds*float64(gotime.Microsecond)
 
 	return years, months, days, durations, nil
 }
