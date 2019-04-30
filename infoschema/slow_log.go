@@ -16,16 +16,14 @@ package infoschema
 import (
 	"bufio"
 	"context"
+	"io"
 	"os"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -80,23 +78,45 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 			logutil.Logger(context.Background()).Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
 		}
 	}()
-	return ParseSlowLog(tz, bufio.NewScanner(file))
+	return ParseSlowLog(tz, bufio.NewReader(file))
 }
+
+const maxSingleLineLength = 1024 * 1024 * 1024
 
 // ParseSlowLog exports for testing.
 // TODO: optimize for parse huge log-file.
-func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, error) {
+func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, error) {
 	var rows [][]types.Datum
 	startFlag := false
 	var st *slowQueryTuple
-	var err error
 	// Adjust buffer size.
-	if atomic.LoadUint64(&config.QueryLogMaxLenRecord) > (bufio.MaxScanTokenSize - 100) {
-		maxBuf := int(atomic.LoadUint64(&config.QueryLogMaxLenRecord) + 100)
-		scanner.Buffer([]byte{}, maxBuf)
-	}
-	for scanner.Scan() {
-		line := scanner.Text()
+	//if atomic.LoadUint64(&config.QueryLogMaxLenRecord) > (bufio.MaxScanTokenSize - 100) {
+	//	maxBuf := int(atomic.LoadUint64(&config.QueryLogMaxLenRecord) + 100)
+	//	scanner.Buffer([]byte{}, maxBuf)
+	//}
+	var tempLine []byte
+	for {
+		lineByte, isPrefix, err := reader.ReadLine()
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return rows, err
+		}
+		for isPrefix {
+			tempLine, isPrefix, err = reader.ReadLine()
+			if err != nil {
+				if err == io.EOF {
+					err = nil
+				}
+				return rows, err
+			}
+			lineByte = append(lineByte, tempLine...)
+			if len(lineByte) > maxSingleLineLength {
+				return rows, errors.Errorf("single line length exceeds limit: %v", maxSingleLineLength)
+			}
+		}
+		line := string(hack.String(lineByte))
 		// Check slow log entry start flag.
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
@@ -134,13 +154,7 @@ func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, e
 			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		if terror.ErrorEqual(err, bufio.ErrTooLong) {
-			err = errors.Errorf("read file buffer overflow, please try to enlarge the variable 'tidb_query_log_max_len'")
-		}
-		return nil, errors.AddStack(err)
-	}
-	return rows, nil
+	//return rows, nil
 }
 
 type slowQueryTuple struct {
