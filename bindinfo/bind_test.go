@@ -117,7 +117,7 @@ func (s *testSuite) TestBindParse(c *C) {
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s')`,
 		originSQL, bindSQL, defaultDb, status, charset, collation)
 	tk.MustExec(sql)
-	bindHandle := bindinfo.NewBindHandle(tk.Se, s.Parser)
+	bindHandle := bindinfo.NewBindHandle(tk.Se)
 	err := bindHandle.Update(true)
 	c.Check(err, IsNil)
 	c.Check(bindHandle.Size(), Equals, 1)
@@ -178,7 +178,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(row.GetString(6), NotNil)
 	c.Check(row.GetString(7), NotNil)
 
-	bindHandle := bindinfo.NewBindHandle(tk.Se, s.Parser)
+	bindHandle := bindinfo.NewBindHandle(tk.Se)
 	err = bindHandle.Update(true)
 	c.Check(err, IsNil)
 	c.Check(bindHandle.Size(), Equals, 1)
@@ -199,7 +199,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	bindData = s.domain.BindHandle().GetBindRecord("select * from t where i > ?", "test")
 	c.Check(bindData, IsNil)
 
-	bindHandle = bindinfo.NewBindHandle(tk.Se, s.Parser)
+	bindHandle = bindinfo.NewBindHandle(tk.Se)
 	err = bindHandle.Update(true)
 	c.Check(err, IsNil)
 	c.Check(bindHandle.Size(), Equals, 0)

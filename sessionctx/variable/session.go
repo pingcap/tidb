@@ -945,7 +945,7 @@ const (
 
 // SlowLogFormat uses for formatting slow log.
 // The slow log output is like below:
-// # Time: 2019-02-12-19:33:56.571953 +0800
+// # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
 // # User: root@127.0.0.1
 // # Conn_ID: 6
