@@ -82,14 +82,14 @@ func (*testSuite) TestT(c *C) {
 	lease := 100 * time.Millisecond
 
 	// for updating the self schema version
-	goCtx, cancel := context.WithTimeout(context.Background(), 3*time.Millisecond)
+	goCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
 	_, err = dom.GetSnapshotInfoSchema(snapTS)
 	c.Assert(err, IsNil)
 	// Make sure that the self schema version doesn't be changed.
-	goCtx, cancel = context.WithTimeout(context.Background(), 3*time.Millisecond)
+	goCtx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
