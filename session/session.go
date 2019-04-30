@@ -991,8 +991,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sessionExecuteParseDurationGeneral.Observe(time.Since(startTS).Seconds())
 	}
 
+	var tempStmtNodes []ast.StmtNode
 	compiler := executor.Compiler{Ctx: s}
-	for _, stmtNode := range stmtNodes {
+	for idx, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -1003,11 +1004,22 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
-			s.rollbackOnError(ctx)
-			logutil.Logger(ctx).Warn("compile sql error",
-				zap.Error(err),
-				zap.String("sql", sql))
-			return nil, err
+			if tempStmtNodes == nil {
+				tempStmtNodes, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+				if err != nil || warns != nil {
+					//just skip errcheck, because parse will not return an error.
+				}
+			}
+			stmtNode = tempStmtNodes[idx]
+			stmt, err = compiler.SkipBindCompile(ctx, stmtNode)
+			if err != nil {
+				s.rollbackOnError(ctx)
+				logutil.Logger(ctx).Warn("compile sql error",
+					zap.Error(err),
+					zap.String("sql", sql))
+				return nil, err
+			}
+			s.handleInvalidBindRecord(ctx, stmtNode)
 		}
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(time.Since(startTS).Seconds())
@@ -1031,6 +1043,59 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	return recordSets, nil
+}
+
+func (s *session) handleInvalidBindRecord(ctx context.Context, stmtNode ast.StmtNode) {
+	var normdOrigSQL string
+	switch x := stmtNode.(type) {
+	case *ast.ExplainStmt:
+		switch x.Stmt.(type) {
+		case *ast.SelectStmt:
+			normalizeExplainSQL := parser.Normalize(x.Text())
+			idx := strings.Index(normalizeExplainSQL, "select")
+			normdOrigSQL = normalizeExplainSQL[idx:]
+		default:
+			return
+		}
+	case *ast.SelectStmt:
+		normdOrigSQL = parser.Normalize(x.Text())
+	default:
+		return
+	}
+	sessionHandle := s.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindMeta := sessionHandle.GetBindRecord(normdOrigSQL, s.GetSessionVars().CurrentDB)
+	if bindMeta != nil {
+		bindMeta.Status = bindinfo.Invalid
+		return
+	}
+
+	globalHandle := domain.GetDomain(s).BindHandle()
+	bindMeta = globalHandle.GetBindRecord(normdOrigSQL, s.GetSessionVars().CurrentDB)
+	if bindMeta == nil {
+		bindMeta = globalHandle.GetBindRecord(normdOrigSQL, "")
+	}
+	if bindMeta != nil {
+		record := &bindinfo.BindRecord{
+			OriginalSQL: bindMeta.OriginalSQL,
+			BindSQL:     bindMeta.BindSQL,
+			Db:          s.GetSessionVars().CurrentDB,
+			Charset:     bindMeta.Charset,
+			Collation:   bindMeta.Collation,
+			Status:      bindinfo.Invalid,
+		}
+
+		err := sessionHandle.AddBindRecord(record)
+		if err != nil {
+			logutil.Logger(ctx).Warn("handleInvalidBindRecord failed", zap.Error(err))
+		}
+
+		globalHandle := domain.GetDomain(s).BindHandle()
+		dropBindRecord := &bindinfo.BindRecord{
+			OriginalSQL: bindMeta.OriginalSQL,
+			Db:          bindMeta.Db,
+		}
+		globalHandle.AddDropInvalidBindTask(dropBindRecord)
+	}
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -1458,7 +1523,7 @@ func createSession(store kv.Storage) (*session, error) {
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory)
+			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
@@ -1481,7 +1546,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory)
+			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
