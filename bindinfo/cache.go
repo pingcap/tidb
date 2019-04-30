@@ -20,20 +20,22 @@ import (
 )
 
 const (
-	// using is the bind info's in use status.
-	using = "using"
+	// Using is the bind info's in use status.
+	Using = "using"
 	// deleted is the bind info's deleted status.
 	deleted = "deleted"
+	// Invalid is the bind info's invalid status.
+	Invalid = "invalid"
 )
 
-// bindMeta stores the basic bind info and bindSql astNode.
-type bindMeta struct {
+// BindMeta stores the basic bind info and bindSql astNode.
+type BindMeta struct {
 	*BindRecord
-	ast ast.StmtNode //ast will be used to do query sql bind check
+	Ast ast.StmtNode //ast will be used to do query sql bind check
 }
 
-// cache is a k-v map, key is original sql, value is a slice of bindMeta.
-type cache map[string][]*bindMeta
+// cache is a k-v map, key is original sql, value is a slice of BindMeta.
+type cache map[string][]*BindMeta
 
 // BindRecord represents a sql bind record retrieved from the storage.
 type BindRecord struct {

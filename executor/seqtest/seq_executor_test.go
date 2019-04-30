@@ -777,14 +777,14 @@ func (s *seqTestSuite) TestCartesianProduct(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int)")
-	plannercore.AllowCartesianProduct = false
+	plannercore.AllowCartesianProduct.Store(false)
 	err := tk.ExecToErr("select * from t t1, t t2")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	err = tk.ExecToErr("select * from t t1 left join t t2 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	err = tk.ExecToErr("select * from t t1 right join t t2 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	plannercore.AllowCartesianProduct = true
+	plannercore.AllowCartesianProduct.Store(true)
 }
 
 type checkPrioClient struct {

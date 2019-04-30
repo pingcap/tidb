@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/spaolacci/murmur3"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -83,7 +84,7 @@ var (
 	// MaxNumberOfRanges is the max number of ranges before split to collect feedback.
 	MaxNumberOfRanges = 20
 	// FeedbackProbability is the probability to collect the feedback.
-	FeedbackProbability = 0.0
+	FeedbackProbability = atomic.NewFloat64(0)
 )
 
 // CalcErrorRate calculates the error rate the current QueryFeedback.
@@ -106,7 +107,7 @@ func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	if q.Hist == nil || q.Hist.Len() == 0 {
 		return false
 	}
-	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability {
+	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability.Load() {
 		return false
 	}
 	return true
@@ -609,8 +610,7 @@ func UpdateCMSketch(c *CMSketch, eqFeedbacks []Feedback) *CMSketch {
 	}
 	newCMSketch := c.Copy()
 	for _, fb := range eqFeedbacks {
-		h1, h2 := murmur3.Sum128(fb.Lower.GetBytes())
-		newCMSketch.setValue(h1, h2, uint32(fb.Count))
+		newCMSketch.updateValueBytes(fb.Lower.GetBytes(), uint64(fb.Count))
 	}
 	return newCMSketch
 }
@@ -728,7 +728,8 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
 		// decode the index point feedback, just set value count in CM Sketch
 		start := len(pb.IndexRanges) / 2
 		for i := 0; i < len(pb.HashValues); i += 2 {
-			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint32(pb.Counts[start+i/2]))
+			// TODO: update using raw bytes instead of hash values.
+			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint64(pb.Counts[start+i/2]))
 		}
 	}
 }

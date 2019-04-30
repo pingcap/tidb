@@ -116,3 +116,45 @@ func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
 	_, err = h.DumpStatsToJSON("test", table.Meta())
 	c.Assert(err, IsNil)
 }
+
+func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
+	// Just test if we can store and recover the Top N elements stored in database.
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int)")
+	testKit.MustExec("insert into t values (1),(3),(4),(2),(5)")
+	testKit.MustExec("analyze table t")
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := s.do.StatsHandle()
+	h.Update(is)
+
+	// Insert 30 fake data
+	fakeData := make([][]byte, 0, 30)
+	for i := 0; i < 30; i++ {
+		fakeData = append(fakeData, []byte(fmt.Sprintf("%01024d", i)))
+	}
+	cms, _, _ := statistics.NewCMSketchWithTopN(5, 2048, fakeData, 20, 100)
+
+	stat := h.GetTableStats(tableInfo)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, 1)
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+
+	stat = h.GetTableStats(tableInfo)
+	cmsFromStore := stat.Columns[tableInfo.Columns[0].ID].CMSketch
+	c.Assert(cmsFromStore, NotNil)
+	c.Check(cms.Equal(cmsFromStore), IsTrue)
+
+	jsonTable, err := h.DumpStatsToJSON("test", tableInfo)
+	c.Check(err, IsNil)
+	err = h.LoadStatsFromJSON(is, jsonTable)
+	c.Check(err, IsNil)
+	stat = h.GetTableStats(tableInfo)
+	cmsFromJSON := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
+	c.Check(cms.Equal(cmsFromJSON), IsTrue)
+}
