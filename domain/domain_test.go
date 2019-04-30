@@ -86,13 +86,21 @@ func (*testSuite) TestT(c *C) {
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
-	_, err = dom.GetSnapshotInfoSchema(snapTS)
+	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
+	c.Assert(snapIs, NotNil)
 	c.Assert(err, IsNil)
 	// Make sure that the self schema version doesn't be changed.
 	goCtx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
+
+	// for GetSnapshotInfoSchema
+	snapTS = oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
+	snapIs, err = dom.GetSnapshotInfoSchema(snapTS)
+	c.Assert(err, IsNil)
+	c.Assert(snapIs, NotNil)
+	c.Assert(snapIs.SchemaMetaVersion(), Equals, is.SchemaMetaVersion())
 
 	// for schemaValidator
 	schemaVer := dom.SchemaValidator.(*schemaValidator).latestSchemaVer
