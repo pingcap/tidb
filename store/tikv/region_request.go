@@ -132,7 +132,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 }
 
 func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
-	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
+	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Store.peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
@@ -148,8 +148,8 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 }
 
 func (s *RegionRequestSender) onSendSuccess(ctx *RPCContext) {
-	store := s.regionCache.getStoreByStoreID(ctx.Peer.StoreId)
-	store.Mark(true)
+	store := s.regionCache.getStoreByStoreID(ctx.Store.peer)
+	store.markAccess(true)
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
@@ -226,7 +226,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.Logger(context.Background()).Warn("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
-		s.regionCache.ClearStoreByID(ctx.GetStoreID())
+		ctx.Store.markResolved(false)
 		return true, nil
 	}
 
