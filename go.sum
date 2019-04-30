@@ -120,8 +120,6 @@ github.com/spaolacci/murmur3 v0.0.0-20150829172844-0d12bf811670/go.mod h1:JwIasO
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.3.0 h1:TivCn/peBQ7UY8ooIcPgZFpTNSz0Q2U6UrFlUfqbe0Q=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
-github.com/tiancaiamao/debugger v0.0.0-20190428065433-3a10ffa41d22 h1:P4sgavMKEdqNOws2VfR2c/Bye9nYFgV8gHyiW1wpQhE=
-github.com/tiancaiamao/debugger v0.0.0-20190428065433-3a10ffa41d22/go.mod h1:qaShs3uDBYnvaQZJAJ6PjPg8kuAHR9zUJ8ilSLK1y/w=
 github.com/twinj/uuid v0.0.0-20150629100731-70cac2bcd273 h1:YqFyfcgqxQqjpRr0SEG0Z555J/3kPqDL/xmRyeAaX/0=
 github.com/twinj/uuid v0.0.0-20150629100731-70cac2bcd273/go.mod h1:mMgcE1RHFUFqe5AfiwlINXisXfDGro23fWdPUfOMjRY=
 github.com/uber/jaeger-client-go v2.8.0+incompatible h1:7DGH8Hqk6PirD+GE+bvCf0cLnspLuae7N1NcwMeQcyg=

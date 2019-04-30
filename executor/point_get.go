@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/tiancaiamao/debugger"
 	"golang.org/x/net/context"
 )
 
@@ -71,13 +70,6 @@ func (e *PointGetExecutor) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	return nil
-}
-
-func dummyUseDebuggerPackageToMakeGoLintHappy() {
-	// debugger is import and used in gofail only
-	// We need to **use** it, otherwise 'make check' would complain:
-	// imported and not used: "github.com/tiancaiamao/debugger"
-	debugger.Bind("xx")
 }
 
 // Next implements the Executor interface.
