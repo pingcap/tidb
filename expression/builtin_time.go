@@ -2857,7 +2857,7 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETReal:
-		sig = &builtinAddDateIntRealSig{
+		sig = &builtinAddDateDatetimeRealSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
@@ -3190,8 +3190,6 @@ func (b *builtinAddDateDatetimeIntSig) evalTime(row chunk.Row) (types.Time, bool
 	if isNull || err != nil {
 		return types.Time{}, true, err
 	}
-
-	fmt.Println(date.Type)
 
 	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
