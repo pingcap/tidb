@@ -537,6 +537,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	// No need to check `newBase` again, because `RebaseAutoID` will do this check.
 	tblInfo.AutoIncID = newBase
 	tbl, err := getTable(store, schemaID, tblInfo)
 	if err != nil {

@@ -551,7 +551,7 @@ func (s *testIntegrationSuite7) TestNullGeneratedColumn(c *C) {
 	tk.MustExec("CREATE TABLE `t` (" +
 		"`a` int(11) DEFAULT NULL," +
 		"`b` int(11) DEFAULT NULL," +
-		"`c` int(11) GENERATED ALWAYS AS (`a` + `b`) VIRTUAL DEFAULT NULL," +
+		"`c` int(11) GENERATED ALWAYS AS (`a` + `b`) VIRTUAL," +
 		"`h` varchar(10) DEFAULT NULL," +
 		"`m` int(11) DEFAULT NULL" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
@@ -751,6 +751,51 @@ func (s *testIntegrationSuite7) TestCaseInsensitiveCharsetAndCollate(c *C) {
 	tk.MustExec("create table t2(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8 COLLATE=utf8_BIN;")
 	tk.MustExec("create table t3(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8mb4 COLLATE=utf8MB4_BIN;")
 	tk.MustExec("create table t4(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8mb4 COLLATE=utf8MB4_general_ci;")
+
+	tk.MustExec("create table t5(a varchar(20)) ENGINE=InnoDB DEFAULT CHARSET=UTF8MB4 COLLATE=UTF8MB4_GENERAL_CI;")
+	tk.MustExec("insert into t5 values ('特克斯和凯科斯群岛')")
+
+	db, ok := domain.GetDomain(s.ctx).InfoSchema().SchemaByName(model.NewCIStr("test_charset_collate"))
+	c.Assert(ok, IsTrue)
+	tbl := testGetTableByName(c, s.ctx, "test_charset_collate", "t5")
+	tblInfo := tbl.Meta().Clone()
+	c.Assert(tblInfo.Charset, Equals, "utf8mb4")
+	c.Assert(tblInfo.Columns[0].Charset, Equals, "utf8mb4")
+
+	tblInfo.Version = model.TableInfoVersion2
+	tblInfo.Charset = "UTF8MB4"
+
+	updateTableInfo := func(tblInfo *model.TableInfo) {
+		mockCtx := mock.NewContext()
+		mockCtx.Store = s.store
+		err := mockCtx.NewTxn(context.Background())
+		c.Assert(err, IsNil)
+		txn, err := mockCtx.Txn(true)
+		c.Assert(err, IsNil)
+		mt := meta.NewMeta(txn)
+		c.Assert(ok, IsTrue)
+		err = mt.UpdateTable(db.ID, tblInfo)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+	}
+	updateTableInfo(tblInfo)
+	tk.MustExec("alter table t5 add column b varchar(10);") //  load latest schema.
+
+	tblInfo = testGetTableByName(c, s.ctx, "test_charset_collate", "t5").Meta()
+	c.Assert(tblInfo.Charset, Equals, "utf8mb4")
+	c.Assert(tblInfo.Columns[0].Charset, Equals, "utf8mb4")
+
+	// For model.TableInfoVersion3, it is believed that all charsets / collations are lower-cased, do not do case-convert
+	tblInfo = tblInfo.Clone()
+	tblInfo.Version = model.TableInfoVersion3
+	tblInfo.Charset = "UTF8MB4"
+	updateTableInfo(tblInfo)
+	tk.MustExec("alter table t5 add column c varchar(10);") //  load latest schema.
+
+	tblInfo = testGetTableByName(c, s.ctx, "test_charset_collate", "t5").Meta()
+	c.Assert(tblInfo.Charset, Equals, "UTF8MB4")
+	c.Assert(tblInfo.Columns[0].Charset, Equals, "utf8mb4")
 }
 
 func (s *testIntegrationSuite3) TestZeroFillCreateTable(c *C) {

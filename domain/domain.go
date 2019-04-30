@@ -194,6 +194,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 				// schema is not public, can't be used outside.
 				continue
 			}
+			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			di.Tables = append(di.Tables, tbl)
 		}
 	}
@@ -791,6 +792,12 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 		return err
 	}
 
+	do.loadBindInfoLoop()
+	do.handleInvalidBindTaskLoop()
+	return nil
+}
+
+func (do *Domain) loadBindInfoLoop() {
 	duration := 3 * time.Second
 	do.wg.Add(1)
 	go func() {
@@ -802,13 +809,29 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 				return
 			case <-time.After(duration):
 			}
-			err = do.bindHandle.Update(false)
+			err := do.bindHandle.Update(false)
 			if err != nil {
 				logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
 			}
 		}
 	}()
-	return nil
+}
+
+func (do *Domain) handleInvalidBindTaskLoop() {
+	handleInvalidTaskDuration := 3 * time.Second
+	do.wg.Add(1)
+	go func() {
+		defer do.wg.Done()
+		defer recoverInDomain("loadBindInfoLoop-dropInvalidBindInfo", false)
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-time.After(handleInvalidTaskDuration):
+			}
+			do.bindHandle.DropInvalidBindRecord()
+		}
+	}()
 }
 
 // StatsHandle returns the statistic handle.
