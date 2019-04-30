@@ -1615,7 +1615,7 @@ func ExtractDurationNum(d *Duration, unit string) (int64, error) {
 	}
 }
 
-func extractSingleTimeValue(unit string, format string) (int64, int64, int64, float64, error) {
+func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int64, error) {
 	fv, err := strconv.ParseFloat(format, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
@@ -1626,19 +1626,19 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, fl
 	case "MICROSECOND":
 		dayCount := iv / (3600000000 * 24)
 		fv -= float64(dayCount * 3600000000 * 24)
-		return 0, 0, dayCount, fv * float64(gotime.Microsecond), nil
+		return 0, 0, dayCount, int64(fv * float64(gotime.Microsecond)), nil
 	case "SECOND":
 		dayCount := iv / (3600 * 24)
 		fv -= float64(dayCount * 3600 * 24)
-		return 0, 0, dayCount, fv * float64(gotime.Second), nil
+		return 0, 0, dayCount, int64(fv * float64(gotime.Second)), nil
 	case "MINUTE":
 		dayCount := iv / (60 * 24)
 		iv %= 60 * 24
-		return 0, 0, dayCount, float64(iv * int64(gotime.Minute)), nil
+		return 0, 0, dayCount, iv * int64(gotime.Minute), nil
 	case "HOUR":
 		dayCount := iv / 24
 		iv %= 24
-		return 0, 0, dayCount, float64(iv * int64(gotime.Hour)), nil
+		return 0, 0, dayCount, iv * int64(gotime.Hour), nil
 	case "DAY":
 		return 0, 0, iv, 0, nil
 	case "WEEK":
@@ -1654,10 +1654,11 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, fl
 	return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
 }
 
-// extractTimeValue extracts years, months, days, microseconds from a string
+// parseTimeValue gets years, months, days, nanoseconds from a string
+// nanosecond will not exceed length of single day
 // MySQL permits any punctuation delimiter in the expr format.
 // See https://dev.mysql.com/doc/refman/8.0/en/expressions.html#temporal-intervals
-func extractTimeValue(format string, index, cnt int) (int64, int64, int64, float64, error) {
+func parseTimeValue(format string, index, cnt int) (int64, int64, int64, int64, error) {
 	neg := false
 	originalFmt := format
 	format = strings.TrimSpace(format)
@@ -1695,59 +1696,57 @@ func extractTimeValue(format string, index, cnt int) (int64, int64, int64, float
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(originalFmt)
 	}
 
-	hours, err := strconv.ParseFloat(fields[HourIndex], 64)
+	hours, err := strconv.ParseInt(fields[HourIndex], 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(originalFmt)
 	}
-	minutes, err := strconv.ParseFloat(fields[MinuteIndex], 64)
+	minutes, err := strconv.ParseInt(fields[MinuteIndex], 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(originalFmt)
 	}
-	seconds, err := strconv.ParseFloat(fields[SecondIndex], 64)
+	seconds, err := strconv.ParseInt(fields[SecondIndex], 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(originalFmt)
 	}
-	microseconds, err := strconv.ParseFloat(alignFrac(fields[MicrosecondIndex], MaxFsp), 64)
+	microseconds, err := strconv.ParseInt(alignFrac(fields[MicrosecondIndex], MaxFsp), 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(originalFmt)
 	}
-
-	secondDuration := int64(hours*3600 + minutes*60 + seconds)
-	days += secondDuration / (3600 * 24)
-	secondDuration %= 3600 * 24
-
-	durations := float64(secondDuration)*float64(gotime.Second) + microseconds*float64(gotime.Microsecond)
-
-	return years, months, days, durations, nil
+	seconds = hours*3600 + minutes*60 + seconds
+	days += seconds / (3600 * 24)
+	seconds %= 3600 * 24
+	return years, months, days, seconds*int64(gotime.Second) + microseconds*int64(gotime.Microsecond), nil
 }
 
-// ExtractTimeValue extracts time value from time unit and format.
-func ExtractTimeValue(unit string, format string) (int64, int64, int64, float64, error) {
+// ParseDurationValue parses time value from time unit and format.
+// Returns y years m months d days + n nanoseconds
+// Nanoseconds will no longer than one day.
+func ParseDurationValue(unit string, format string) (y int64, m int64, d int64, n int64, _ error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
-		return extractSingleTimeValue(unit, format)
+		return parseSingleTimeValue(unit, format)
 	case "SECOND_MICROSECOND":
-		return extractTimeValue(format, MicrosecondIndex, SecondMicrosecondMaxCnt)
+		return parseTimeValue(format, MicrosecondIndex, SecondMicrosecondMaxCnt)
 	case "MINUTE_MICROSECOND":
-		return extractTimeValue(format, MicrosecondIndex, MinuteMicrosecondMaxCnt)
+		return parseTimeValue(format, MicrosecondIndex, MinuteMicrosecondMaxCnt)
 	case "MINUTE_SECOND":
-		return extractTimeValue(format, SecondIndex, MinuteSecondMaxCnt)
+		return parseTimeValue(format, SecondIndex, MinuteSecondMaxCnt)
 	case "HOUR_MICROSECOND":
-		return extractTimeValue(format, MicrosecondIndex, HourMicrosecondMaxCnt)
+		return parseTimeValue(format, MicrosecondIndex, HourMicrosecondMaxCnt)
 	case "HOUR_SECOND":
-		return extractTimeValue(format, SecondIndex, HourSecondMaxCnt)
+		return parseTimeValue(format, SecondIndex, HourSecondMaxCnt)
 	case "HOUR_MINUTE":
-		return extractTimeValue(format, MinuteIndex, HourMinuteMaxCnt)
+		return parseTimeValue(format, MinuteIndex, HourMinuteMaxCnt)
 	case "DAY_MICROSECOND":
-		return extractTimeValue(format, MicrosecondIndex, DayMicrosecondMaxCnt)
+		return parseTimeValue(format, MicrosecondIndex, DayMicrosecondMaxCnt)
 	case "DAY_SECOND":
-		return extractTimeValue(format, SecondIndex, DaySecondMaxCnt)
+		return parseTimeValue(format, SecondIndex, DaySecondMaxCnt)
 	case "DAY_MINUTE":
-		return extractTimeValue(format, MinuteIndex, DayMinuteMaxCnt)
+		return parseTimeValue(format, MinuteIndex, DayMinuteMaxCnt)
 	case "DAY_HOUR":
-		return extractTimeValue(format, HourIndex, DayHourMaxCnt)
+		return parseTimeValue(format, HourIndex, DayHourMaxCnt)
 	case "YEAR_MONTH":
-		return extractTimeValue(format, MonthIndex, YearMonthMaxCnt)
+		return parseTimeValue(format, MonthIndex, YearMonthMaxCnt)
 	default:
 		return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
 	}
