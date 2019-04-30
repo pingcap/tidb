@@ -63,19 +63,19 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	c.Assert(workableRegionsInBtree(s.cache, s.cache.mu.sorted, ts), Equals, len)
 	for _, r := range s.cache.mu.regions {
 		if r.checkRegionCacheTTL(ts) {
-			if store, _ := s.cache.ensureRegionWorkPeer(r.region, ts); store != nil {
-				c.Assert(r.region, DeepEquals, s.cache.searchCachedRegion(r.region.StartKey(), false))
+			if store := s.cache.ensureRegionWorkStore(r, ts); store != nil {
+				c.Assert(r, DeepEquals, s.cache.searchCachedRegion(r.StartKey(), false))
 			}
 		}
 	}
 }
 
-func workableRegions(cache *RegionCache, regions map[RegionVerID]*CachedRegion, ts int64) (len int) {
+func workableRegions(cache *RegionCache, regions map[RegionVerID]*Region, ts int64) (len int) {
 	for _, region := range regions {
 		if !region.checkRegionCacheTTL(ts) {
 			continue
 		}
-		store, _ := cache.ensureRegionWorkPeer(region.region, ts)
+		store := cache.ensureRegionWorkStore(region, ts)
 		if store != nil {
 			len++
 		}
@@ -89,7 +89,7 @@ func workableRegionsInBtree(cache *RegionCache, t *btree.BTree, ts int64) (len i
 		if !r.checkRegionCacheTTL(ts) {
 			return true
 		}
-		store, _ := cache.ensureRegionWorkPeer(r.region, ts)
+		store := cache.ensureRegionWorkStore(r, ts)
 		if store != nil {
 			len++
 		}
@@ -100,7 +100,7 @@ func workableRegionsInBtree(cache *RegionCache, t *btree.BTree, ts int64) (len i
 
 func reachableStore(stores map[uint64]*Store, ts int64) (cnt int) {
 	for _, store := range stores {
-		if store.Reachable(ts) {
+		if store.Available(ts) {
 			cnt++
 		}
 	}
@@ -527,7 +527,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 			rpcCtx := &RPCContext{
 				Region: loc.Region,
 				Meta:   region.meta,
-				Peer:   region.WorkPeer(),
+				Store:  region.WorkStore(),
 			}
 			cache.OnSendRequestFail(rpcCtx, nil)
 		}
