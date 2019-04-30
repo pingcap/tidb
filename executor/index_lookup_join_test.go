@@ -56,3 +56,12 @@ func (s *testSuite) TestInapplicableIndexJoinHint(c *C) {
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t1 right join t2 on t1.a=t2.a;`).Check(testkit.Rows())
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ TIDB_INLJ(t2) */ is inapplicable`))
 }
+
+func (s *testSuite) TestIndexJoinOverflow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1(a int)`)
+	tk.MustExec(`insert into t1 values (-1)`)
+	tk.MustExec(`create table t2(a int unsigned, index idx(a));`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a;`).Check(testkit.Rows())
+}
