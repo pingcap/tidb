@@ -1904,13 +1904,10 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 		result.Check(testkit.Rows("1"))
 	}()
 
-	defer func() {
-		c.Assert(failpoint.Disable(step1), IsNil)
-		c.Assert(failpoint.Disable(step2), IsNil)
-	}()
-
 	<-updateWaitCh // Wait `POINT GET` first time `get`
+	c.Assert(failpoint.Disable(step1), IsNil)
 	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
+	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
 func (s *testSuite) TestRow(c *C) {
