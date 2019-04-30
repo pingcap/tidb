@@ -16,17 +16,34 @@ package executor
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+)
+
+var (
+	stmtNodeCounterUse      = metrics.StmtNodeCounter.WithLabelValues("Use")
+	stmtNodeCounterShow     = metrics.StmtNodeCounter.WithLabelValues("Show")
+	stmtNodeCounterBegin    = metrics.StmtNodeCounter.WithLabelValues("Begin")
+	stmtNodeCounterCommit   = metrics.StmtNodeCounter.WithLabelValues("Commit")
+	stmtNodeCounterRollback = metrics.StmtNodeCounter.WithLabelValues("Rollback")
+	stmtNodeCounterInsert   = metrics.StmtNodeCounter.WithLabelValues("Insert")
+	stmtNodeCounterReplace  = metrics.StmtNodeCounter.WithLabelValues("Replace")
+	stmtNodeCounterDelete   = metrics.StmtNodeCounter.WithLabelValues("Delete")
+	stmtNodeCounterUpdate   = metrics.StmtNodeCounter.WithLabelValues("Update")
+	stmtNodeCounterSelect   = metrics.StmtNodeCounter.WithLabelValues("Select")
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
@@ -36,19 +53,32 @@ type Compiler struct {
 
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
+	return c.compile(ctx, stmtNode, false)
+}
+
+// SkipBindCompile compiles an ast.StmtNode to a physical plan without SQL bind.
+func (c *Compiler) SkipBindCompile(ctx context.Context, node ast.StmtNode) (*ExecStmt, error) {
+	return c.compile(ctx, node, true)
+}
+
+func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind bool) (*ExecStmt, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 
+	if !skipBind {
+		stmtNode = addHint(c.Ctx, stmtNode)
+	}
+
 	infoSchema := GetInfoSchema(c.Ctx)
-	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
-		return nil, errors.Trace(err)
+	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
+		return nil, err
 	}
 
 	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
@@ -76,7 +106,7 @@ func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plannercore.Plan) (expen
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
-	log.Warnf("[EXPENSIVE_QUERY] %s", sql)
+	logutil.Logger(context.Background()).Warn("EXPENSIVE_QUERY", zap.String("SQL", sql))
 	return
 }
 
@@ -124,7 +154,30 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	}
 
 	typeLabel := GetStmtLabel(stmtNode)
-	metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
+	switch typeLabel {
+	case "Use":
+		stmtNodeCounterUse.Inc()
+	case "Show":
+		stmtNodeCounterShow.Inc()
+	case "Begin":
+		stmtNodeCounterBegin.Inc()
+	case "Commit":
+		stmtNodeCounterCommit.Inc()
+	case "Rollback":
+		stmtNodeCounterRollback.Inc()
+	case "Insert":
+		stmtNodeCounterInsert.Inc()
+	case "Replace":
+		stmtNodeCounterReplace.Inc()
+	case "Delete":
+		stmtNodeCounterDelete.Inc()
+	case "Update":
+		stmtNodeCounterUpdate.Inc()
+	case "Select":
+		stmtNodeCounterSelect.Inc()
+	default:
+		metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
+	}
 
 	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
 		return
@@ -188,6 +241,22 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
+	case *ast.CreateBindingStmt:
+		if x.OriginSel != nil {
+			originSelect := x.OriginSel.(*ast.SelectStmt)
+			dbLabels := getDbFromResultNode(originSelect.From.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
+
+		if len(dbLabelSet) == 0 && x.HintedSel != nil {
+			hintedSelect := x.HintedSel.(*ast.SelectStmt)
+			dbLabels := getDbFromResultNode(hintedSelect.From.TableRefs)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
 	}
 
 	return dbLabelSet
@@ -241,6 +310,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "AnalyzeTable"
 	case *ast.BeginStmt:
 		return "Begin"
+	case *ast.ChangeStmt:
+		return "Change"
 	case *ast.CommitStmt:
 		return "Commit"
 	case *ast.CreateDatabaseStmt:
@@ -294,6 +365,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Prepare"
 	case *ast.UseStmt:
 		return "Use"
+	case *ast.CreateBindingStmt:
+		return "CreateBinding"
 	}
 	return "other"
 }
@@ -305,9 +378,52 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 	var is infoschema.InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(infoschema.InfoSchema)
-		log.Infof("con:%d use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
+		logutil.Logger(context.Background()).Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
 	} else {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 	return is
+}
+
+func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
+	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil { //when the domain is initializing, the bind will be nil.
+		return stmtNode
+	}
+	switch x := stmtNode.(type) {
+	case *ast.ExplainStmt:
+		switch x.Stmt.(type) {
+		case *ast.SelectStmt:
+			normalizeExplainSQL := parser.Normalize(x.Text())
+			idx := strings.Index(normalizeExplainSQL, "select")
+			normalizeSQL := normalizeExplainSQL[idx:]
+			x.Stmt = addHintForSelect(normalizeSQL, ctx, x.Stmt)
+		}
+		return x
+	case *ast.SelectStmt:
+		return addHintForSelect(parser.Normalize(x.Text()), ctx, x)
+	default:
+		return stmtNode
+	}
+}
+
+func addHintForSelect(normdOrigSQL string, ctx sessionctx.Context, stmt ast.StmtNode) ast.StmtNode {
+	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
+	if bindRecord != nil {
+		if bindRecord.Status == bindinfo.Invalid {
+			return stmt
+		}
+		if bindRecord.Status == bindinfo.Using {
+			return bindinfo.BindHint(stmt, bindRecord.Ast)
+		}
+	}
+	globalHandle := domain.GetDomain(ctx).BindHandle()
+	bindRecord = globalHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
+	if bindRecord == nil {
+		bindRecord = globalHandle.GetBindRecord(normdOrigSQL, "")
+	}
+	if bindRecord != nil {
+		return bindinfo.BindHint(stmt, bindRecord.Ast)
+	}
+	return stmt
 }

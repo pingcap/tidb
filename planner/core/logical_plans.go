@@ -14,9 +14,9 @@
 package core
 
 import (
+	"context"
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -26,8 +26,9 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -66,6 +67,12 @@ const (
 	AntiLeftOuterSemiJoin
 )
 
+// IsOuterJoin returns if this joiner is a outer joiner
+func (tp JoinType) IsOuterJoin() bool {
+	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
 func (tp JoinType) String() string {
 	switch tp {
 	case InnerJoin:
@@ -97,10 +104,13 @@ const (
 type LogicalJoin struct {
 	logicalSchemaProducer
 
-	JoinType       JoinType
-	reordered      bool
-	cartesianJoin  bool
-	StraightJoin   bool
+	JoinType      JoinType
+	reordered     bool
+	cartesianJoin bool
+	StraightJoin  bool
+
+	// hintInfo stores the join algorithm hint information specified by client.
+	hintInfo       *tableHintInfo
 	preferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
@@ -320,16 +330,11 @@ type DataSource struct {
 
 	TableAsName *model.CIStr
 
-	LimitCount *int64
-
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used only in partition pruning.
 	allConds []expression.Expression
-
-	// relevantIndices means the indices match the push down conditions
-	relevantIndices []bool
 
 	statisticTable *statistics.Table
 
@@ -387,7 +392,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	if len(ds.pushedDownConds) == 0 {
 		return false, nil
 	}
-	path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
+	path.accessConds, path.tableFilters = ranger.DetachCondsForColumn(ds.ctx, ds.pushedDownConds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
 	// can be used to access data.
 	corColInAccessConds := false
@@ -425,7 +430,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	}
 	path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
@@ -441,7 +446,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 			break
 		}
 	}
-	return noIntervalRange, errors.Trace(err)
+	return noIntervalRange, err
 }
 
 // deriveIndexPathStats will fulfill the information that the accessPath need.
@@ -452,6 +457,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+	eqOrInCount := 0
 	if len(path.idxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
 		if err != nil {
@@ -461,6 +467,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.accessConds = res.AccessConds
 		path.tableFilters = res.RemainedConds
 		path.eqCondCount = res.EqCondCount
+		eqOrInCount = res.EqOrInCount
 		path.countAfterAccess, err = ds.stats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
 			return false, err
@@ -468,24 +475,26 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	} else {
 		path.tableFilters = ds.pushedDownConds
 	}
-	corColInAccessConds := false
-	if path.eqCondCount == len(path.accessConds) {
-		access, remained := path.splitCorColAccessCondFromFilters()
-		path.accessConds = append(path.accessConds, access...)
+	if eqOrInCount == len(path.accessConds) {
+		accesses, remained := path.splitCorColAccessCondFromFilters(eqOrInCount)
+		path.accessConds = append(path.accessConds, accesses...)
 		path.tableFilters = remained
-		if len(access) > 0 {
-			corColInAccessConds = true
+		if len(accesses) > 0 && ds.statisticTable.Pseudo {
+			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+		} else {
+			selectivity := path.countAfterAccess / float64(ds.statisticTable.Count)
+			for i := range accesses {
+				col := path.idxCols[eqOrInCount+i]
+				ndv := ds.getColumnNDV(col.ID)
+				ndv *= selectivity
+				if ndv < 1 {
+					ndv = 1.0
+				}
+				path.countAfterAccess = path.countAfterAccess / ndv
+			}
 		}
 	}
 	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
-	if corColInAccessConds {
-		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
-		if ok && !ds.stats.HistColl.Pseudo {
-			path.countAfterAccess = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
-		} else {
-			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
-		}
-	}
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.countAfterAccess < ds.stats.RowCount {
@@ -494,7 +503,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	if path.indexFilters != nil {
 		selectivity, _, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
-			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+			logutil.Logger(context.Background()).Warn("calculate selectivity faild, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)
@@ -522,24 +531,24 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	return noIntervalRanges && !haveNullVal, nil
 }
 
-func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []expression.Expression) {
-	access = make([]expression.Expression, len(path.idxCols)-path.eqCondCount)
+func (path *accessPath) splitCorColAccessCondFromFilters(eqOrInCount int) (access, remained []expression.Expression) {
+	access = make([]expression.Expression, len(path.idxCols)-eqOrInCount)
 	used := make([]bool, len(path.tableFilters))
-	for i := path.eqCondCount; i < len(path.idxCols); i++ {
+	for i := eqOrInCount; i < len(path.idxCols); i++ {
 		matched := false
 		for j, filter := range path.tableFilters {
 			if used[j] || !isColEqCorColOrConstant(filter, path.idxCols[i]) {
 				continue
 			}
 			matched = true
-			access[i-path.eqCondCount] = filter
+			access[i-eqOrInCount] = filter
 			if path.idxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
 			}
 			break
 		}
 		if !matched {
-			access = access[:i-path.eqCondCount]
+			access = access[:i-eqOrInCount]
 			break
 		}
 	}
@@ -663,12 +672,12 @@ type FrameBound struct {
 	Type      ast.BoundType
 	UnBounded bool
 	Num       uint64
-	// CalcFunc is used for range framed windows.
+	// CalcFuncs is used for range framed windows.
 	// We will build the date_add or date_sub functions for frames like `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`,
 	// and plus or minus for frames like `1 preceding`.
-	CalcFunc expression.Expression
-	// CmpFunc is used to decide whether one row is included in the current frame.
-	CmpFunc expression.CompareFunc
+	CalcFuncs []expression.Expression
+	// CmpFuncs is used to decide whether one row is included in the current frame.
+	CmpFuncs []expression.CompareFunc
 }
 
 // LogicalWindow represents a logical window function plan.
@@ -684,4 +693,33 @@ type LogicalWindow struct {
 // GetWindowResultColumn returns the column storing the result of the window function.
 func (p *LogicalWindow) GetWindowResultColumn() *expression.Column {
 	return p.schema.Columns[p.schema.Len()-1]
+}
+
+// extractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
+// e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
+// only [t2.a] is returned.
+func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := p.extractCorrelatedCols()
+	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
+	for _, corCol := range corCols {
+		idx := schema.ColumnIndex(&corCol.Column)
+		if idx != -1 {
+			if resultCorCols[idx] == nil {
+				resultCorCols[idx] = &expression.CorrelatedColumn{
+					Column: *schema.Columns[idx],
+					Data:   new(types.Datum),
+				}
+			}
+			corCol.Data = resultCorCols[idx].Data
+		}
+	}
+	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2].
+	length := 0
+	for _, col := range resultCorCols {
+		if col != nil {
+			resultCorCols[length] = col
+			length++
+		}
+	}
+	return resultCorCols[:length]
 }

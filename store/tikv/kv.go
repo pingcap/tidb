@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
@@ -34,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	log "github.com/sirupsen/logrus"
-	"google.golang.org/grpc"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type storeCache struct {
@@ -51,13 +50,10 @@ type Driver struct {
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   addrs,
-		DialTimeout: 5 * time.Second,
-		DialOptions: []grpc.DialOption{
-			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
-		},
-		TLS: tlsConfig,
+		Endpoints:        addrs,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		TLS:              tlsConfig,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -119,6 +115,13 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 	mc.cache[uuid] = s
 	return s, nil
+}
+
+// EtcdBackend is used for judging a storage is a real TiKV.
+type EtcdBackend interface {
+	EtcdAddrs() []string
+	TLSConfig() *tls.Config
+	StartGCWorker() error
 }
 
 // update oracle's lastTS every 2000ms.
@@ -242,7 +245,7 @@ func (s *tikvStore) runSafePointChecker() {
 				d = gcSafePointUpdateInterval
 			} else {
 				metrics.TiKVLoadSafepointCounter.WithLabelValues("fail").Inc()
-				log.Errorf("fail to load safepoint from pd: %v", err)
+				logutil.Logger(context.Background()).Error("fail to load safepoint from pd", zap.Error(err))
 				d = gcSafePointQuickRepeatInterval
 			}
 		case <-s.Closed():
@@ -334,6 +337,18 @@ func (s *tikvStore) GetOracle() oracle.Oracle {
 	return s.oracle
 }
 
+func (s *tikvStore) Name() string {
+	return "TiKV"
+}
+
+func (s *tikvStore) Describe() string {
+	return "TiKV is a distributed transactional key-value database"
+}
+
+func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, kv.ErrNotImplemented
+}
+
 func (s *tikvStore) SupportDeleteRange() (supported bool) {
 	return !s.mock
 }
@@ -384,7 +399,7 @@ func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	}
 	if strings.ToLower(u.Scheme) != "tikv" {
 		err = errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
-		log.Error(err)
+		logutil.Logger(context.Background()).Error("parsePath error", zap.Error(err))
 		return
 	}
 	switch strings.ToLower(u.Query().Get("disableGC")) {

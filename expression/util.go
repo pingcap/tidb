@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -39,6 +42,19 @@ func Filter(result []Expression, input []Expression, filter func(Expression) boo
 		}
 	}
 	return result
+}
+
+// FilterOutInPlace do the filtering out in place.
+// The remained are the ones who doesn't match the filter, storing in the original slice.
+// The filteredOut are the ones match the filter, storing in a new slice.
+func FilterOutInPlace(input []Expression, filter func(Expression) bool) (remained, filteredOut []Expression) {
+	for i := len(input) - 1; i >= 0; i-- {
+		if filter(input[i]) {
+			filteredOut = append(filteredOut, input[i])
+			input = append(input[:i], input[i+1:]...)
+		}
+	}
+	return input, filteredOut
 }
 
 // ExtractColumns extracts all columns from an expression.
@@ -569,11 +585,15 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expr
 
 // DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
 // We should not *PARSE* a string as JSON under some scenarios. ParseToJSONFlag
-// is 0 for JSON column yet, so we can skip it. Moreover, Column.RetType refers
-// to the infoschema, if we modify it, data race may happen if another goroutine
-// read from the infoschema at the same time.
+// is 0 for JSON column yet(as well as JSON correlated column), so we can skip
+// it. Moreover, Column.RetType refers to the infoschema, if we modify it, data
+// race may happen if another goroutine read from the infoschema at the same
+// time.
 func DisableParseJSONFlag4Expr(expr Expression) {
 	if _, isColumn := expr.(*Column); isColumn {
+		return
+	}
+	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
 		return
 	}
 	expr.GetType().Flag &= ^mysql.ParseToJSONFlag
@@ -669,4 +689,35 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 		}
 	}
 	return res
+}
+
+// GetUint64FromConstant gets a uint64 from constant expression.
+func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
+	con, ok := expr.(*Constant)
+	if !ok {
+		logutil.Logger(context.Background()).Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
+		return 0, false, false
+	}
+	dt := con.Value
+	if con.DeferredExpr != nil {
+		var err error
+		dt, err = con.DeferredExpr.Eval(chunk.Row{})
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("eval deferred expr failed", zap.Error(err))
+			return 0, false, false
+		}
+	}
+	switch dt.Kind() {
+	case types.KindNull:
+		return 0, true, true
+	case types.KindInt64:
+		val := dt.GetInt64()
+		if val < 0 {
+			return 0, false, false
+		}
+		return uint64(val), false, true
+	case types.KindUint64:
+		return dt.GetUint64(), false, true
+	}
+	return 0, false, false
 }

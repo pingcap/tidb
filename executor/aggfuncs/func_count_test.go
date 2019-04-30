@@ -17,50 +17,25 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 func (s *testSuite) TestMergePartialResult4Count(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 5)
-	for i := int64(0); i < 5; i++ {
-		srcChk.AppendInt64(0, i)
+	tester := buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 5, 3, 8)
+	s.testMergePartialResult(c, tester)
+}
+
+func (s *testSuite) TestCount(c *C) {
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeFloat, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDouble, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeNewDecimal, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeString, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDate, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDuration, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, 5, 0, 5),
 	}
-	iter := chunk.NewIterator4Chunk(srcChk)
-	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLong), Index: 0}}
-	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncCount, args, false)
-	partialDesc, finalDesc := desc.Split([]int{0})
-
-	// build count func for partial phase.
-	partialCountFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
-	partialPr1 := partialCountFunc.AllocPartialResult()
-
-	// build final func for final phase.
-	finalCountFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
-	finalPr := finalCountFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
-
-	// update partial result.
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		partialCountFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr1)
+	for _, test := range tests {
+		s.testAggFunc(c, test)
 	}
-	partialCountFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
-	c.Assert(resultChk.GetRow(0).GetInt64(0), Equals, int64(5))
-
-	// suppose there are two partial workers.
-	partialPr2 := partialPr1
-
-	// merge two partial results.
-	err := finalCountFunc.MergePartialResult(s.ctx, partialPr1, finalPr)
-	c.Assert(err, IsNil)
-	err = finalCountFunc.MergePartialResult(s.ctx, partialPr2, finalPr)
-	c.Assert(err, IsNil)
-
-	resultChk.Reset()
-	err = finalCountFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
-	c.Assert(err, IsNil)
-	c.Assert(resultChk.GetRow(0).GetInt64(0), Equals, int64(10))
 }

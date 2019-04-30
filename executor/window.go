@@ -315,7 +315,7 @@ type rangeFrameWindowProcessor struct {
 	curRowIdx       uint64
 	lastStartOffset uint64
 	lastEndOffset   uint64
-	col             *expression.Column
+	orderByCols     []*expression.Column
 	// expectedCmpResult is used to decide if one value is included in the frame.
 	expectedCmpResult int64
 }
@@ -326,9 +326,16 @@ func (p *rangeFrameWindowProcessor) getStartOffset(ctx sessionctx.Context, rows 
 	}
 	numRows := uint64(len(rows))
 	for ; p.lastStartOffset < numRows; p.lastStartOffset++ {
-		res, _, err := p.start.CmpFunc(ctx, p.col, p.start.CalcFunc, rows[p.lastStartOffset], rows[p.curRowIdx])
-		if err != nil {
-			return 0, err
+		var res int64
+		var err error
+		for i := range p.orderByCols {
+			res, _, err = p.start.CmpFuncs[i](ctx, p.orderByCols[i], p.start.CalcFuncs[i], rows[p.lastStartOffset], rows[p.curRowIdx])
+			if err != nil {
+				return 0, err
+			}
+			if res != 0 {
+				break
+			}
 		}
 		// For asc, break when the current value is greater or equal to the calculated result;
 		// For desc, break when the current value is less or equal to the calculated result.
@@ -345,9 +352,16 @@ func (p *rangeFrameWindowProcessor) getEndOffset(ctx sessionctx.Context, rows []
 		return numRows, nil
 	}
 	for ; p.lastEndOffset < numRows; p.lastEndOffset++ {
-		res, _, err := p.end.CmpFunc(ctx, p.end.CalcFunc, p.col, rows[p.curRowIdx], rows[p.lastEndOffset])
-		if err != nil {
-			return 0, err
+		var res int64
+		var err error
+		for i := range p.orderByCols {
+			res, _, err = p.end.CmpFuncs[i](ctx, p.end.CalcFuncs[i], p.orderByCols[i], rows[p.curRowIdx], rows[p.lastEndOffset])
+			if err != nil {
+				return 0, err
+			}
+			if res != 0 {
+				break
+			}
 		}
 		// For asc, break when the calculated result is greater than the current value.
 		// For desc, break when the calculated result is less than the current value.

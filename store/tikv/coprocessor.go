@@ -23,19 +23,24 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
+
+var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -93,6 +98,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		concurrency: req.Concurrency,
 		finishCh:    make(chan struct{}),
 		vars:        vars,
+		memTracker:  req.MemTracker,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -271,9 +277,12 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		reverseTasks(tasks)
 	}
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
+		logutil.Logger(context.Background()).Warn("buildCopTasks takes too much time",
+			zap.Duration("elapsed", elapsed),
+			zap.Int("range len", rangesLen),
+			zap.Int("task len", len(tasks)))
 	}
-	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
+	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
 	return tasks, nil
 }
 
@@ -368,6 +377,8 @@ type copIterator struct {
 	wg       sync.WaitGroup
 
 	vars *kv.Variables
+
+	memTracker *memory.Tracker
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -379,6 +390,8 @@ type copIteratorWorker struct {
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *kv.Variables
+
+	memTracker *memory.Tracker
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -395,7 +408,13 @@ type copResponse struct {
 	execdetails.ExecDetails
 	startKey kv.Key
 	err      error
+	respSize int64
 }
+
+const (
+	sizeofExecDetails   = int(unsafe.Sizeof(execdetails.ExecDetails{}))
+	sizeofCommitDetails = int(unsafe.Sizeof(execdetails.CommitDetails{}))
+)
 
 // GetData implements the kv.ResultSubset GetData interface.
 func (rs *copResponse) GetData() []byte {
@@ -409,6 +428,25 @@ func (rs *copResponse) GetStartKey() kv.Key {
 
 func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
 	return &rs.ExecDetails
+}
+
+// MemSize returns how many bytes of memory this response use
+func (rs *copResponse) MemSize() int64 {
+	if rs.respSize != 0 {
+		return rs.respSize
+	}
+
+	// ignore rs.err
+	rs.respSize += int64(cap(rs.startKey))
+	rs.respSize += int64(sizeofExecDetails)
+	if rs.CommitDetail != nil {
+		rs.respSize += int64(sizeofCommitDetails)
+	}
+	if rs.pbResp != nil {
+		// Using a approximate size since it's hard to get a accurate value.
+		rs.respSize += int64(rs.pbResp.Size())
+	}
+	return rs.respSize
 }
 
 const minLogCopTaskTime = 300 * time.Millisecond
@@ -451,6 +489,8 @@ func (it *copIterator) open(ctx context.Context) {
 			respChan: it.respChan,
 			finishCh: it.finishCh,
 			vars:     it.vars,
+
+			memTracker: it.memTracker,
 		}
 		go worker.run(ctx)
 	}
@@ -484,6 +524,9 @@ func (sender *copIteratorTaskSender) run() {
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
 	select {
 	case resp, ok = <-respCh:
+		if it.memTracker != nil && resp != nil {
+			it.memTracker.Consume(-int64(resp.MemSize()))
+		}
 	case <-it.finishCh:
 		exit = true
 	case <-ctx.Done():
@@ -506,6 +549,9 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 }
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse) (exit bool) {
+	if worker.memTracker != nil {
+		worker.memTracker.Consume(int64(resp.MemSize()))
+	}
 	select {
 	case respCh <- resp:
 	case <-worker.finishCh:
@@ -567,8 +613,9 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	defer func() {
 		r := recover()
 		if r != nil {
-			buf := util.GetStack()
-			log.Errorf("copIteratorWork meet panic: %v, stack trace:\n%s", r, buf)
+			logutil.Logger(context.Background()).Error("copIteratorWork meet panic",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
 			resp := &copResponse{err: errors.Errorf("%v", r)}
 			worker.sendToRespCh(resp, task.respChan)
 		}
@@ -592,11 +639,11 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
-
-	// gofail: var handleTaskOnceError bool
-	// if handleTaskOnceError {
-	// 	return nil, errors.New("mock handleTaskOnce error")
-	// }
+	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
+		}
+	})
 
 	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
 	req := &tikvrpc.Request{
@@ -642,7 +689,7 @@ const (
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
-	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txn_start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
+	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txnStartTS:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
 	if bo.totalSleep > minLogBackoffTime {
 		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.types), " ", ",", -1)
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
@@ -673,7 +720,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			}
 		}
 	}
-	log.Info(logStr)
+	logutil.Logger(context.Background()).Info(logStr)
 }
 
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
@@ -709,7 +756,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
-			log.Info("stream recv timeout:", err)
+			logutil.Logger(context.Background()).Info("stream recv timeout", zap.Error(err))
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
 		lastRange = resp.Range
@@ -729,7 +776,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		log.Debugf("coprocessor encounters lock: %v", lockErr)
+		logutil.Logger(context.Background()).Debug("coprocessor encounters",
+			zap.Stringer("lock", lockErr))
 		ok, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
@@ -743,7 +791,11 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
-		log.Warnf("txn_start_ts:%d region_id:%d store_addr:%s, coprocessor err: %v", worker.req.StartTs, task.region.id, task.storeAddr, err)
+		logutil.Logger(context.Background()).Warn("other error",
+			zap.Uint64("txnStartTS", worker.req.StartTs),
+			zap.Uint64("regionID", task.region.id),
+			zap.String("storeAddr", task.storeAddr),
+			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	// When the request is using streaming API, the `Range` is not nil.

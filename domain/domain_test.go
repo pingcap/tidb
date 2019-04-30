@@ -20,6 +20,7 @@ import (
 	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -85,7 +86,7 @@ func (*testSuite) TestT(c *C) {
 
 	succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
-	dom.MockReloadFailed.SetValue(true)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
 	err = dom.Reload()
 	c.Assert(err, NotNil)
 	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
@@ -97,7 +98,7 @@ func (*testSuite) TestT(c *C) {
 	ts = ver.Ver
 	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultUnknown)
-	dom.MockReloadFailed.SetValue(false)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
 	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)

@@ -13,10 +13,6 @@
 
 package kv
 
-import (
-	"github.com/pingcap/errors"
-)
-
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
@@ -35,6 +31,16 @@ type UnionStore interface {
 	// GetMemBuffer return the MemBuffer binding to this UnionStore.
 	GetMemBuffer() MemBuffer
 }
+
+// AssertionType is the type of a assertion.
+type AssertionType int
+
+// The AssertionType constants.
+const (
+	None AssertionType = iota
+	Exist
+	NotExist
+)
 
 // Option is used for customizing kv store's behaviors during a transaction.
 type Option int
@@ -188,7 +194,7 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 		v, err = us.BufferStore.r.Get(k)
 	}
 	if err != nil {
-		return v, errors.Trace(err)
+		return v, err
 	}
 	if len(v) == 0 {
 		return nil, ErrNotExist

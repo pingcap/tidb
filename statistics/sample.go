@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sort"
 
@@ -37,12 +36,15 @@ type SampleItem struct {
 	// Ordinal is original position of this item in SampleCollector before sorting. This
 	// is used for computing correlation.
 	Ordinal int
+	// RowID is the row id of the sample in its key.
+	// This property is used to calculate Ordinal in fast analyze.
+	RowID int64
 }
 
 // SortSampleItems sorts a slice of SampleItem.
 func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	sorter := sampleItemSorter{items: items, sc: sc}
-	sort.Sort(&sorter)
+	sort.Stable(&sorter)
 	return sorter.err
 }
 
@@ -174,6 +176,14 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 	return nil
 }
 
+// CalcTotalSize is to calculate total size based on samples.
+func (c *SampleCollector) CalcTotalSize() {
+	c.TotalSize = 0
+	for _, item := range c.Samples {
+		c.TotalSize += int64(len(item.Value.GetBytes()))
+	}
+}
+
 // SampleBuilder is used to build samples for columns.
 // Also, if primary key is handle, it will directly build histogram for it.
 type SampleBuilder struct {
@@ -218,7 +228,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			return collectors, s.PkBuilder, nil
 		}
 		if len(s.RecordSet.Fields()) == 0 {
-			panic(fmt.Sprintf("%T", s.RecordSet))
+			return nil, nil, errors.Errorf("collect column stats failed: record set has 0 field")
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, s.RecordSet.Fields())

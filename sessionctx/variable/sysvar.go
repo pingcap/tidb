@@ -85,6 +85,7 @@ var (
 	ErrTruncatedWrongValue         = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 	ErrMaxPreparedStmtCountReached = terror.ClassVariable.New(CodeMaxPreparedStmtCountReached, mysql.MySQLErrName[mysql.ErrMaxPreparedStmtCountReached])
 	ErrUnsupportedValueForVar      = terror.ClassVariable.New(CodeUnknownStatusVar, "variable '%s' does not yet support value: %s")
+	ErrUnsupportedIsolationLevel   = terror.ClassVariable.New(CodeUnknownStatusVar, "The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
 )
 
 func init() {
@@ -375,7 +376,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "query_cache_size", "1048576"},
 	{ScopeGlobal, "innodb_stats_transient_sample_pages", "8"},
 	{ScopeGlobal, "innodb_stats_on_metadata", "OFF"},
-	{ScopeNone, "server_uuid", "d530594e-1c86-11e5-878b-6b36ce6799ca"},
+	{ScopeNone, "server_uuid", "00000000-0000-0000-0000-000000000000"},
 	{ScopeNone, "open_files_limit", "5000"},
 	{ScopeGlobal | ScopeSession, "ndb_force_send", ""},
 	{ScopeNone, "skip_show_database", "OFF"},
@@ -433,7 +434,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_bin_trust_function_creators", "OFF"},
 	{ScopeNone, "innodb_write_io_threads", "4"},
 	{ScopeGlobal, "mysql_native_password_proxy_users", ""},
-	{ScopeGlobal, "read_only", "OFF"},
+	{ScopeGlobal, serverReadOnly, "0"},
 	{ScopeNone, "large_page_size", "0"},
 	{ScopeNone, "table_open_cache_instances", "1"},
 	{ScopeGlobal, "innodb_stats_persistent", "ON"},
@@ -637,6 +638,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBChecksumTableConcurrency, strconv.Itoa(DefChecksumTableConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBDistSQLScanConcurrency, strconv.Itoa(DefDistSQLScanConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBOptInSubqToJoinAndAgg, BoolToIntStr(DefOptInSubqToJoinAndAgg)},
+	{ScopeGlobal | ScopeSession, TiDBOptCorrelationThreshold, strconv.FormatFloat(DefOptCorrelationThreshold, 'f', -1, 64)},
+	{ScopeGlobal | ScopeSession, TiDBOptCorrelationExpFactor, strconv.Itoa(DefOptCorrelationExpFactor)},
 	{ScopeGlobal | ScopeSession, TiDBIndexJoinBatchSize, strconv.Itoa(DefIndexJoinBatchSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupConcurrency, strconv.Itoa(DefIndexLookupConcurrency)},
@@ -672,17 +675,24 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBConstraintCheckInPlace, BoolToIntStr(DefTiDBConstraintCheckInPlace)},
 	{ScopeSession, TiDBOptimizerSelectivityLevel, strconv.Itoa(DefTiDBOptimizerSelectivityLevel)},
 	{ScopeGlobal | ScopeSession, TiDBEnableWindowFunction, BoolToIntStr(DefEnableWindowFunction)},
+	{ScopeGlobal | ScopeSession, TiDBEnableFastAnalyze, BoolToIntStr(DefTiDBUseFastAnalyze)},
+	{ScopeGlobal | ScopeSession, TiDBSkipIsolationLevelCheck, BoolToIntStr(DefTiDBSkipIsolationLevelCheck)},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
+	{ScopeSession, TiDBDDLSlowOprThreshold, strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBConfig, ""},
 	{ScopeGlobal, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
+	{ScopeGlobal, TiDBDDLErrorCountLimit, strconv.Itoa(DefTiDBDDLErrorCountLimit)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
-	{ScopeSession, TiDBCheckMb4ValueInUtf8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8)},
+	{ScopeGlobal | ScopeSession, TiDBOptJoinReorderThreshold, strconv.Itoa(DefTiDBOptJoinReorderThreshold)},
+	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
+	{ScopeSession, TiDBSlowQueryFile, ""},
+	{ScopeSession, TiDBWaitTableSplitFinish, BoolToIntStr(DefTiDBWaitTableSplitFinish)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

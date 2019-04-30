@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 // LoadDataExec represents a load data executor.
@@ -36,9 +38,11 @@ type LoadDataExec struct {
 	loadDataInfo *LoadDataInfo
 }
 
+var insertValuesLabel fmt.Stringer = stringutil.StringerStr("InsertValues")
+
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, insertValuesLabel), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
 		InsertValues: insertVal,
@@ -241,21 +245,21 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		}
 		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, false, err
 		}
 		rows = append(rows, e.colsToRow(cols))
 		e.rowCount++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
-			log.Infof("This insert rows has reached the batch %d, current total rows %d",
-				e.maxRowsInBatch, e.rowCount)
+			logutil.Logger(context.Background()).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
+				zap.Uint64("totalRows", e.rowCount))
 			break
 		}
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(rows)))
 	err := e.batchCheckAndInsert(rows, e.addRecordLD)
 	if err != nil {
-		return nil, reachLimit, errors.Trace(err)
+		return nil, reachLimit, err
 	}
 	return curData, reachLimit, nil
 }
@@ -288,8 +292,7 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 	}
 	row, err := e.getRow(e.row)
 	if err != nil {
-		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+		e.handleWarning(err)
 		return nil
 	}
 	return row
@@ -301,8 +304,7 @@ func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
 	}
 	h, err := e.addRecord(row)
 	if err != nil {
-		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+		e.handleWarning(err)
 	}
 	return h, nil
 }

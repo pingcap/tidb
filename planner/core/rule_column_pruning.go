@@ -15,6 +15,7 @@ package core
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -31,10 +32,11 @@ func (s *columnPruner) optimize(lp LogicalPlan) (LogicalPlan, error) {
 }
 
 func getUsedList(usedCols []*expression.Column, schema *expression.Schema) ([]bool, error) {
-	// gofail: var enableGetUsedListErr bool
-	// if enableGetUsedListErr {
-	// 	return nil, errors.New("getUsedList failed, triggered by gofail enableGetUsedListErr")
-	// }
+	failpoint.Inject("enableGetUsedListErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("getUsedList failed, triggered by gofail enableGetUsedListErr"))
+		}
+	})
 
 	used := make([]bool, schema.Len())
 	for _, col := range usedCols {
@@ -139,6 +141,9 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 	for i := len(ls.ByItems) - 1; i >= 0; i-- {
 		cols := expression.ExtractColumns(ls.ByItems[i].Expr)
 		if len(cols) == 0 {
+			if !ls.ByItems[i].Expr.ConstItem() {
+				continue
+			}
 			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
 		} else {
 			parentUsedCols = append(parentUsedCols, cols...)
@@ -306,7 +311,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 		return err
 	}
 
-	la.extractCorColumnsBySchema()
+	la.corCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
 	for _, col := range la.corCols {
 		leftCols = append(leftCols, &col.Column)
 	}

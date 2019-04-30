@@ -3,13 +3,10 @@ version: 2
 jobs:
   build:
     docker:
-      - image: golang:1.11.3
+      - image: golang:1.12
     working_directory: /go/src/github.com/pingcap/tidb
     steps:
       - checkout
       - run:
           name: "Build & Test"
           command: make dev
-      - run:
-          name: "Check go mod replace is removed"
-          command: ./tools/check/check_parser_replace.sh

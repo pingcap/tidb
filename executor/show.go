@@ -30,6 +30,12 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb-tools/pkg/etcd"
+	"github.com/pingcap/tidb-tools/pkg/utils"
+	"github.com/pingcap/tidb-tools/tidb-binlog/node"
+	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
@@ -44,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+var etcdDialTimeout = 5 * time.Second
+
 // ShowExec represents a show executor.
 type ShowExec struct {
 	baseExecutor
@@ -54,8 +62,9 @@ type ShowExec struct {
 	Column      *ast.ColumnName // Used for `desc table column`.
 	Flag        int             // Some flag parsed from sql, such as FULL.
 	Full        bool
-	User        *auth.UserIdentity // Used for show grants.
-	IfNotExists bool               // Used for `show create database if not exists`
+	User        *auth.UserIdentity   // Used for show grants.
+	Roles       []*auth.RoleIdentity // Used for show grants.
+	IfNotExists bool                 // Used for `show create database if not exists`
 
 	// GlobalScope is used by show variables
 	GlobalScope bool
@@ -115,6 +124,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowCreateDatabase()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
+	case ast.ShowDrainerStatus:
+		return e.fetchShowPumpOrDrainerStatus(node.DrainerNode)
 	case ast.ShowEngines:
 		return e.fetchShowEngines()
 	case ast.ShowGrants:
@@ -123,10 +134,14 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowIndex()
 	case ast.ShowProcedureStatus:
 		return e.fetchShowProcedureStatus()
+	case ast.ShowPumpStatus:
+		return e.fetchShowPumpOrDrainerStatus(node.PumpNode)
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
 	case ast.ShowTables:
 		return e.fetchShowTables()
+	case ast.ShowOpenTables:
+		return e.fetchShowOpenTables()
 	case ast.ShowTableStatus:
 		return e.fetchShowTableStatus()
 	case ast.ShowTriggers:
@@ -158,6 +173,34 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowMasterStatus()
 	case ast.ShowPrivileges:
 		return e.fetchShowPrivileges()
+	case ast.ShowBindings:
+		return e.fetchShowBind()
+	case ast.ShowAnalyzeStatus:
+		e.fetchShowAnalyzeStatus()
+		return nil
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowBind() error {
+	var bindRecords []*bindinfo.BindMeta
+	if !e.GlobalScope {
+		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		bindRecords = handle.GetAllBindRecord()
+	} else {
+		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
+	}
+	for _, bindData := range bindRecords {
+		e.appendRow([]interface{}{
+			bindData.OriginalSQL,
+			bindData.BindSQL,
+			bindData.Db,
+			bindData.Status,
+			bindData.CreateTime,
+			bindData.UpdateTime,
+			bindData.Charset,
+			bindData.Collation,
+		})
 	}
 	return nil
 }
@@ -211,40 +254,30 @@ func (e *ShowExec) fetchShowProcessList() error {
 		return nil
 	}
 
-	loginUser := e.ctx.GetSessionVars().User
+	loginUser, activeRoles := e.ctx.GetSessionVars().User, e.ctx.GetSessionVars().ActiveRoles
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
-		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+		if pm.RequestVerification(activeRoles, "", "", "", mysql.ProcessPriv) {
 			hasProcessPriv = true
 		}
 	}
 
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
-		var info string
-		if e.Full {
-			info = pi.Info
-		} else {
-			info = fmt.Sprintf("%.100v", pi.Info)
-		}
-
 		// If you have the PROCESS privilege, you can see all threads.
 		// Otherwise, you can see only your own threads.
 		if !hasProcessPriv && pi.User != loginUser.Username {
 			continue
 		}
-
-		e.appendRow([]interface{}{
-			pi.ID,
-			pi.User,
-			pi.Host,
-			pi.DB,
-			pi.Command,
-			uint64(time.Since(pi.Time) / time.Second),
-			fmt.Sprintf("%d", pi.State),
-			info,
-		})
+		row := pi.ToRow(e.Full)
+		e.appendRow(row)
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowOpenTables() error {
+	// TiDB has no concept like mysql's "table cache" and "open table"
+	// For simplicity, we just return an empty result with the same structure as MySQL's SHOW OPEN TABLES
 	return nil
 }
 
@@ -257,12 +290,13 @@ func (e *ShowExec) fetchShowTables() error {
 		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 	// sort for tables
-	var tableNames []string
+	tableNames := make([]string, 0, len(e.is.SchemaTables(e.DBName)))
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	var tableTypes = make(map[string]string)
 	for _, v := range e.is.SchemaTables(e.DBName) {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
-		if checker != nil && !checker.RequestVerification(e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
@@ -306,8 +340,9 @@ func (e *ShowExec) fetchShowTableStatus() error {
 		return errors.Trace(err)
 	}
 
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	for _, row := range rows {
-		if checker != nil && !checker.RequestVerification(e.DBName.O, row.GetString(0), "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, row.GetString(0), "", mysql.AllPrivMask) {
 			continue
 		}
 		e.result.AppendRow(row)
@@ -330,7 +365,8 @@ func (e *ShowExec) fetchShowColumns() error {
 		return errors.Trace(err)
 	}
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -412,7 +448,8 @@ func (e *ShowExec) fetchShowIndex() error {
 	}
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -477,7 +514,7 @@ func (e *ShowExec) fetchShowIndex() error {
 // fetchShowCharset gets all charset information and fill them into e.rows.
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
-	descs := charset.GetAllCharsets()
+	descs := charset.GetSupportedCharsets()
 	for _, desc := range descs {
 		e.appendRow([]interface{}{
 			desc.Name,
@@ -564,7 +601,7 @@ func (e *ShowExec) fetchShowStatus() error {
 }
 
 func getDefaultCollate(charsetName string) string {
-	for _, c := range charset.GetAllCharsets() {
+	for _, c := range charset.GetSupportedCharsets() {
 		if strings.EqualFold(c.Name, charsetName) {
 			return c.DefaultCollation
 		}
@@ -758,7 +795,11 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if tb.Meta().ShardRowIDBits > 0 {
-		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits)
+		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tb.Meta().ShardRowIDBits)
+		if tb.Meta().PreSplitRegions > 0 {
+			fmt.Fprintf(&buf, "PRE_SPLIT_REGIONS=%d ", tb.Meta().PreSplitRegions)
+		}
+		buf.WriteString("*/")
 	}
 
 	if len(tb.Meta().Comment) > 0 {
@@ -867,7 +908,7 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 }
 
 func (e *ShowExec) fetchShowCollation() error {
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 	for _, v := range collations {
 		isDefault := ""
 		if v.IsDefault {
@@ -914,7 +955,15 @@ func (e *ShowExec) fetchShowGrants() error {
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
-	gs, err := checker.ShowGrants(e.ctx, e.User)
+	for _, r := range e.Roles {
+		if r.Hostname == "" {
+			r.Hostname = "%"
+		}
+		if !checker.FindEdge(e.ctx, r, e.User) {
+			return ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
+		}
+	}
+	gs, err := checker.ShowGrants(e.ctx, e.User, e.Roles)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -994,6 +1043,43 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		}
 	}
 	return nil
+}
+
+// fetchShowPumpOrDrainerStatus gets status of all pumps or drainers and fill them into e.rows.
+func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
+	registry, err := createRegistry(config.GetGlobalConfig().Path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = registry.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, n := range nodes {
+		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
+	}
+
+	return nil
+}
+
+// createRegistry returns an ectd registry
+func createRegistry(urls string) (*node.EtcdRegistry, error) {
+	ectdEndpoints, err := utils.ParseHostPortAddr(urls)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cli, err := etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, node.DefaultRootPath, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return node.NewEtcdRegistry(cli, etcdDialTimeout), nil
 }
 
 func (e *ShowExec) getTable() (table.Table, error) {

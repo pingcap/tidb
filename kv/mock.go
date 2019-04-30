@@ -16,7 +16,6 @@ package kv
 import (
 	"context"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -114,6 +113,8 @@ func (t *mockTxn) SetVars(vars *Variables) {
 
 }
 
+func (t *mockTxn) SetAssertion(key Key, assertion AssertionType) {}
+
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
 	return &mockTxn{
@@ -170,6 +171,18 @@ func (s *mockStorage) SupportDeleteRange() (supported bool) {
 	return false
 }
 
+func (s *mockStorage) Name() string {
+	return "KVMockStorage"
+}
+
+func (s *mockStorage) Describe() string {
+	return "KVMockStorage is a mock Store implementation, only for unittests in KV package"
+}
+
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, nil
+}
+
 // MockTxn is used for test cases that need more interfaces than Transaction.
 type MockTxn interface {
 	Transaction
@@ -201,7 +214,7 @@ func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 			continue
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		m[string(k)] = v
 	}
