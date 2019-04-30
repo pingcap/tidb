@@ -143,7 +143,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		}
 		return nil, true, nil
 	}
+	s.onSendSuccess(ctx)
 	return
+}
+
+func (s *RegionRequestSender) onSendSuccess(ctx *RPCContext) {
+	store := s.regionCache.getStoreByStoreID(ctx.Peer.StoreId)
+	store.Mark(true)
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
@@ -254,7 +260,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	logutil.Logger(context.Background()).Debug("tikv reports region error",
 		zap.Stringer("regionErr", regionErr),
 		zap.Stringer("ctx", ctx))
-	s.regionCache.DropRegion(ctx.Region)
+	s.regionCache.InvalidateCachedRegion(ctx.Region)
 	return false, nil
 }
 

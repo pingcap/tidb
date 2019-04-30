@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/google/btree"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"testing"
 	"time"
@@ -57,11 +58,53 @@ func (s *testRegionCacheSuite) storeAddr(id uint64) string {
 }
 
 func (s *testRegionCacheSuite) checkCache(c *C, len int) {
-	c.Assert(s.cache.mu.regions, HasLen, len)
-	c.Assert(s.cache.mu.sorted.Len(), Equals, len)
+	ts := time.Now().Unix()
+	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, len)
+	c.Assert(workableRegionsInBtree(s.cache, s.cache.mu.sorted, ts), Equals, len)
 	for _, r := range s.cache.mu.regions {
-		c.Assert(r.region, DeepEquals, s.cache.searchCachedRegion(r.region.StartKey(), false))
+		if r.checkRegionCacheTTL(ts) {
+			if store, _ := s.cache.ensureRegionWorkPeer(r.region, ts); store != nil {
+				c.Assert(r.region, DeepEquals, s.cache.searchCachedRegion(r.region.StartKey(), false))
+			}
+		}
 	}
+}
+
+func workableRegions(cache *RegionCache, regions map[RegionVerID]*CachedRegion, ts int64) (len int) {
+	for _, region := range regions {
+		if !region.checkRegionCacheTTL(ts) {
+			continue
+		}
+		store, _ := cache.ensureRegionWorkPeer(region.region, ts)
+		if store != nil {
+			len++
+		}
+	}
+	return
+}
+
+func workableRegionsInBtree(cache *RegionCache, t *btree.BTree, ts int64) (len int) {
+	t.Descend(func(item btree.Item) bool {
+		r := item.(*btreeItem).cachedRegion
+		if !r.checkRegionCacheTTL(ts) {
+			return true
+		}
+		store, _ := cache.ensureRegionWorkPeer(r.region, ts)
+		if store != nil {
+			len++
+		}
+		return true
+	})
+	return
+}
+
+func reachableStore(stores map[uint64]*Store, ts int64) (cnt int) {
+	for _, store := range stores {
+		if store.Reachable(ts) {
+			cnt++
+		}
+	}
+	return
 }
 
 func (s *testRegionCacheSuite) getRegion(c *C, key []byte) *Region {
@@ -209,7 +252,7 @@ func (s *testRegionCacheSuite) TestSplit(c *C) {
 	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
 
 	// tikv-server reports `NotInRegion`
-	s.cache.DropRegion(r.VerID())
+	s.cache.InvalidateCachedRegion(r.VerID())
 	s.checkCache(c, 0)
 
 	r = s.getRegion(c, []byte("x"))
@@ -236,7 +279,7 @@ func (s *testRegionCacheSuite) TestMerge(c *C) {
 	s.cluster.Merge(s.region1, region2)
 
 	// tikv-server reports `NotInRegion`
-	s.cache.DropRegion(loc.Region)
+	s.cache.InvalidateCachedRegion(loc.Region)
 	s.checkCache(c, 0)
 
 	loc, err = s.cache.LocateKey(s.bo, []byte("x"))
@@ -250,7 +293,7 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 	c.Assert(err, IsNil)
 
 	// connect tikv-server failed, cause drop cache
-	s.cache.DropRegion(loc.Region)
+	s.cache.InvalidateCachedRegion(loc.Region)
 
 	r := s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
@@ -260,21 +303,22 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestRequestFail(c *C) {
+	ts := time.Now().Unix()
 	region := s.getRegion(c, []byte("a"))
-	c.Assert(region.backupPeers, HasLen, len(region.meta.Peers)-1)
 	ctx, _ := s.cache.GetRPCContext(s.bo, region.VerID())
 	s.cache.OnSendRequestFail(ctx, errors.New("test error"))
-	c.Assert(region.backupPeers, HasLen, len(region.meta.Peers)-2)
 	region = s.getRegion(c, []byte("a"))
 	c.Assert(s.cache.mu.regions, HasLen, 1)
 	ctx, _ = s.cache.GetRPCContext(s.bo, region.VerID())
 	s.cache.OnSendRequestFail(ctx, errors.New("test error"))
-	c.Assert(len(s.cache.mu.regions), Equals, 0)
+	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 0)
+	time.Sleep(2 * time.Second)
 	s.getRegion(c, []byte("a"))
-	c.Assert(s.cache.mu.regions, HasLen, 1)
+	c.Assert(workableRegions(s.cache, s.cache.mu.regions, time.Now().Unix()), Equals, 1)
 }
 
 func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
+	ts := time.Now().Unix()
 	// key range: ['' - 'm' - 'z']
 	region2 := s.cluster.AllocID()
 	newPeers := s.cluster.AllocIDs(2)
@@ -294,11 +338,12 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 	s.checkCache(c, 2)
 	s.cache.OnSendRequestFail(ctx, errors.New("test error"))
 	// Both region2 and store should be dropped from cache.
-	c.Assert(s.cache.storeMu.stores, HasLen, 0)
+	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 1)
 	ctx2, _ := s.cache.GetRPCContext(s.bo, loc2.Region)
 	s.cache.OnSendRequestFail(ctx2, errors.New("test error"))
 	r := s.cache.searchCachedRegion([]byte("x"), true)
 	c.Assert(r, IsNil)
+	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 0)
 	s.checkCache(c, 0)
 }
 
@@ -325,12 +370,13 @@ func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
+	ts := time.Now().Unix()
 	regionCnt, storeCount := 999, 3
 	cluster := createClusterWithStoresAndRegions(regionCnt, storeCount)
 
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 	loadRegionsToCache(cache, regionCnt)
-	c.Assert(len(cache.mu.regions), Equals, regionCnt)
+	c.Assert(workableRegions(cache, cache.mu.regions, ts), Equals, regionCnt)
 
 	bo := NewBackoffer(context.Background(), 1)
 	loc, err := cache.LocateKey(bo, []byte{})
@@ -341,7 +387,7 @@ func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
 		rpcCtx, err := cache.GetRPCContext(bo, loc.Region)
 		c.Assert(err, IsNil)
 		cache.OnSendRequestFail(rpcCtx, errors.New("test error"))
-		c.Assert(len(cache.mu.regions), Equals, regionCnt+1)
+		c.Assert(workableRegions(cache, cache.mu.regions, ts), Equals, regionCnt+1)
 	}
 
 	// Drop the regions on one store, all region will be drop because they are in three stores.
@@ -349,10 +395,10 @@ func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
 	rpcCtx, err := cache.GetRPCContext(bo, loc.Region)
 	c.Assert(err, IsNil)
 	cache.OnSendRequestFail(rpcCtx, errors.New("test error"))
-	c.Assert(len(cache.mu.regions), Equals, 0)
+	c.Assert(workableRegions(cache, cache.mu.regions, ts), Equals, 0)
 
 	loadRegionsToCache(cache, regionCnt)
-	c.Assert(len(cache.mu.regions), Equals, regionCnt)
+	c.Assert(len(cache.mu.regions), Equals, regionCnt+1)
 }
 
 const regionSplitKeyFormat = "t%08d"
@@ -481,7 +527,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 			rpcCtx := &RPCContext{
 				Region: loc.Region,
 				Meta:   region.meta,
-				Peer:   region.peer,
+				Peer:   region.WorkPeer(),
 			}
 			cache.OnSendRequestFail(rpcCtx, nil)
 		}
