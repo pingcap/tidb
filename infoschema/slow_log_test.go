@@ -16,9 +16,12 @@ package infoschema_test
 import (
 	"bufio"
 	"bytes"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/logutil"
 )
@@ -88,6 +91,24 @@ select * from t;
 	t1Str, err := rows[1][0].ToString()
 	c.Assert(err, IsNil)
 	c.Assert(t1Str, Equals, "2019-04-24 19:41:21.716221")
+
+	// test for bufio.Scanner: token too long.
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+select * from t;
+# Time: 2019-04-24-19:41:21.716221 +0800
+`)
+	sql := strings.Repeat("x", bufio.MaxScanTokenSize)
+	slowLog.WriteString(sql)
+	scanner = bufio.NewScanner(slowLog)
+	rows, err = infoschema.ParseSlowLog(loc, scanner)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "read file buffer overflow, please try to enlarge the variable 'tidb_query_log_max_len'")
+
+	atomic.StoreUint64(&config.QueryLogMaxLenRecord, bufio.MaxScanTokenSize)
+	scanner = bufio.NewScanner(slowLog)
+	rows, err = infoschema.ParseSlowLog(loc, scanner)
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TestSlowLogParseTime(c *C) {

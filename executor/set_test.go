@@ -15,12 +15,15 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -272,8 +275,14 @@ func (s *testSuite2) TestSetVar(c *C) {
 
 	tk.MustExec("set tidb_query_log_max_len = 0")
 	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("0"))
+	c.Assert(atomic.LoadUint64(&config.QueryLogMaxLenRecord), Equals, uint64(logutil.DefaultQueryLogMaxLen))
+	tk.MustExec(fmt.Sprintf("set tidb_query_log_max_len = %v", logutil.DefaultQueryLogMaxLen+1))
+	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows(fmt.Sprintf("%v", logutil.DefaultQueryLogMaxLen+1)))
+	c.Assert(atomic.LoadUint64(&config.QueryLogMaxLenRecord), Equals, uint64(logutil.DefaultQueryLogMaxLen+1))
 	tk.MustExec("set tidb_query_log_max_len = 20")
 	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("20"))
+	// QueryLogMaxLenRecord record the max len.
+	c.Assert(atomic.LoadUint64(&config.QueryLogMaxLenRecord), Equals, uint64(logutil.DefaultQueryLogMaxLen+1))
 	_, err = tk.Exec("set global tidb_query_log_max_len = 20")
 	c.Assert(err, NotNil)
 

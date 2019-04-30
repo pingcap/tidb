@@ -739,6 +739,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
+		if atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen) > atomic.LoadUint64(&config.QueryLogMaxLenRecord) {
+			atomic.StoreUint64(&config.QueryLogMaxLenRecord, atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen))
+		}
 	case TiDBRetryLimit:
 		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
 	case TiDBDisableTxnAutoRetry:

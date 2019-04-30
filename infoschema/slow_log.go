@@ -19,10 +19,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -77,7 +80,6 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 			logutil.Logger(context.Background()).Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
 		}
 	}()
-
 	return ParseSlowLog(tz, bufio.NewScanner(file))
 }
 
@@ -88,6 +90,11 @@ func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, e
 	startFlag := false
 	var st *slowQueryTuple
 	var err error
+	// Adjust buffer size.
+	if atomic.LoadUint64(&config.QueryLogMaxLenRecord) > (bufio.MaxScanTokenSize - 100) {
+		maxBuf := int(atomic.LoadUint64(&config.QueryLogMaxLenRecord) + 100)
+		scanner.Buffer([]byte{}, maxBuf)
+	}
 	for scanner.Scan() {
 		line := scanner.Text()
 		// Check slow log entry start flag.
@@ -128,6 +135,9 @@ func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, e
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if terror.ErrorEqual(err, bufio.ErrTooLong) {
+			err = errors.Errorf("read file buffer overflow, please try to enlarge the variable 'tidb_query_log_max_len'")
+		}
 		return nil, errors.AddStack(err)
 	}
 	return rows, nil

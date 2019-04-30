@@ -48,6 +48,8 @@ var (
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
+	// QueryLogMaxLenRecord use to record the max value of QueryLogMaxLen.
+	QueryLogMaxLenRecord = uint64(logutil.DefaultQueryLogMaxLen)
 )
 
 // Config contains configuration options.
