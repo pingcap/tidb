@@ -25,7 +25,7 @@ import (
 
 func (s *testSuite) TestParseSlowLogFile(c *C) {
 	slowLog := bytes.NewBufferString(
-		`# Time: 2019-01-24-22:32:29.313255 +0800
+		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227
 # Query_time: 0.216905
 # Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
@@ -51,14 +51,14 @@ select * from t;`)
 		}
 		recordString += str
 	}
-	expectRecordString := "2019-01-24 22:32:29.313255,405888132465033227,,0,0.216905,0.021,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,0.05,0.6,0.8,70724,select * from t;"
+	expectRecordString := "2019-04-28 15:24:04.309074,405888132465033227,,0,0.216905,0.021,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,0.05,0.6,0.8,70724,select * from t;"
 	c.Assert(expectRecordString, Equals, recordString)
 
 	// fix sql contain '# ' bug
 	slowLog = bytes.NewBufferString(
-		`# Time: 2019-01-24-22:32:29.313255 +0800
+		`# Time: 2019-04-28T15:24:04.309074+08:00
 select a# from t;
-# Time: 2019-01-24-22:32:29.313255 +0800
+# Time: 2019-01-24T22:32:29.313255+08:00
 # Txn_start_ts: 405888132465033227
 # Query_time: 0.216905
 # Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
@@ -70,16 +70,34 @@ select * from t;
 	scanner = bufio.NewScanner(slowLog)
 	_, err = infoschema.ParseSlowLog(loc, scanner)
 	c.Assert(err, IsNil)
+
+	// test for time format compatibility.
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+select * from t;
+# Time: 2019-04-24-19:41:21.716221 +0800
+select * from t;
+`)
+	scanner = bufio.NewScanner(slowLog)
+	rows, err = infoschema.ParseSlowLog(loc, scanner)
+	c.Assert(err, IsNil)
+	c.Assert(len(rows) == 2, IsTrue)
+	t0Str, err := rows[0][0].ToString()
+	c.Assert(err, IsNil)
+	c.Assert(t0Str, Equals, "2019-04-28 15:24:04.309074")
+	t1Str, err := rows[1][0].ToString()
+	c.Assert(err, IsNil)
+	c.Assert(t1Str, Equals, "2019-04-24 19:41:21.716221")
 }
 
 func (s *testSuite) TestSlowLogParseTime(c *C) {
-	t1Str := "2019-01-24-22:32:29.313255 +0800"
-	t2Str := "2019-01-24-22:32:29.313255"
+	t1Str := "2019-01-24T22:32:29.313255+08:00"
+	t2Str := "2019-01-24T22:32:29.313255"
 	t1, err := infoschema.ParseTime(t1Str)
 	c.Assert(err, IsNil)
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	t2, err := time.ParseInLocation("2006-01-02-15:04:05.999999999", t2Str, loc)
+	t2, err := time.ParseInLocation("2006-01-02T15:04:05.999999999", t2Str, loc)
 	c.Assert(err, IsNil)
 	c.Assert(t1.Unix(), Equals, t2.Unix())
 	t1Format := t1.In(loc).Format(logutil.SlowLogTimeFormat)
