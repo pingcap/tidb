@@ -427,19 +427,21 @@ type analyzeInfo struct {
 	PartitionName string
 	// PhysicalTableID is the id for a partition or a table.
 	PhysicalTableID int64
-	Table           table.Table
+	Incremental     bool
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
 	PKInfo   *model.ColumnInfo
 	ColsInfo []*model.ColumnInfo
+	TblInfo  *model.TableInfo
 	analyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	IndexInfo *model.IndexInfo
+	TblInfo   *model.TableInfo
 	analyzeInfo
 }
 

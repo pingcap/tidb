@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb-tools/pkg/etcd"
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -182,10 +183,13 @@ func (e *ShowExec) fetchAll() error {
 }
 
 func (e *ShowExec) fetchShowBind() error {
+	var bindRecords []*bindinfo.BindMeta
 	if !e.GlobalScope {
-		return errors.New("show non-global bind sql is not supported")
+		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		bindRecords = handle.GetAllBindRecord()
+	} else {
+		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
-	bindRecords := domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	for _, bindData := range bindRecords {
 		e.appendRow([]interface{}{
 			bindData.OriginalSQL,
@@ -791,7 +795,11 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if tb.Meta().ShardRowIDBits > 0 {
-		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits)
+		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tb.Meta().ShardRowIDBits)
+		if tb.Meta().PreSplitRegions > 0 {
+			fmt.Fprintf(&buf, "PRE_SPLIT_REGIONS=%d ", tb.Meta().PreSplitRegions)
+		}
+		buf.WriteString("*/")
 	}
 
 	if len(tb.Meta().Comment) > 0 {

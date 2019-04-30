@@ -290,16 +290,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 	var err error
 	defer func() {
 		terror.Log(e.Close())
-		txnTS := uint64(0)
-		// Don't active pending txn here.
-		if txn, err1 := sctx.Txn(false); err1 != nil {
-			logutil.Logger(ctx).Error("get current transaction failed", zap.Error(err))
-		} else {
-			if txn.Valid() {
-				txnTS = txn.StartTS()
-			}
-		}
-		a.LogSlowQuery(txnTS, err == nil)
 		a.logAudit()
 	}()
 
@@ -316,11 +306,11 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		isPointGet, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		useMaxTS, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if err != nil {
 			return nil, err
 		}
-		if isPointGet {
+		if useMaxTS {
 			logutil.Logger(context.Background()).Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else if ctx.GetSessionVars().SnapshotTS != 0 {
@@ -335,7 +325,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		stmtCtx := ctx.GetSessionVars().StmtCtx
 		if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
 			switch {
-			case isPointGet:
+			case useMaxTS:
 				stmtCtx.Priority = kv.PriorityHigh
 			case a.Expensive:
 				stmtCtx.Priority = kv.PriorityLow
@@ -472,7 +462,7 @@ func (a *ExecStmt) getStatsInfo() map[string]uint64 {
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
 //  2. txn is not valid
-//  2. plan is point get by pk or unique key
+//  2. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
@@ -500,14 +490,14 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	case *plannercore.PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
-	case *plannercore.PhysicalIndexLookUpReader:
-		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *plannercore.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
 	case *plannercore.PointGetPlan:
-		return true, nil
+		// If the PointGetPlan needs to read data using unique index (double read), we
+		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
+		// and the data and index would be inconsistent!
+		return v.IndexInfo == nil, nil
 	default:
 		return false, nil
 	}

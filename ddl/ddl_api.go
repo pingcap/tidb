@@ -1202,6 +1202,26 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
+		var preSplitAndScatter func()
+		// do pre-split and scatter.
+		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
+			preSplitAndScatter = func() { preSplitTableRegion(d.store, tbInfo, ctx.GetSessionVars().WaitTableSplitFinish) }
+		} else if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
+			pi := tbInfo.GetPartitionInfo()
+			if pi != nil {
+				preSplitAndScatter = func() { splitPartitionTableRegion(d.store, pi) }
+			} else {
+				preSplitAndScatter = func() { splitTableRegion(d.store, tbInfo.ID) }
+			}
+		}
+		if preSplitAndScatter != nil {
+			if ctx.GetSessionVars().WaitTableSplitFinish {
+				preSplitAndScatter()
+			} else {
+				go preSplitAndScatter()
+			}
+		}
+
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1574,7 +1594,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				tbInfo.ShardRowIDBits = shardRowIDBitsMax
 			}
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
+		case ast.TableOptionPreSplitRegion:
+			tbInfo.PreSplitRegions = op.UintValue
 		}
+	}
+	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
+		tbInfo.PreSplitRegions = tbInfo.ShardRowIDBits
 	}
 
 	return nil
@@ -1794,6 +1819,11 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// If newBase < autoIncID, we need to do a rebase before returning.
+	// Assume there are 2 TiDB servers: TiDB-A with allocator range of 0 ~ 30000; TiDB-B with allocator range of 30001 ~ 60000.
+	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
+	// and TiDB-B finds 100 < 30001 but returns without any handling,
+	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
 	newBase = mathutil.MaxInt64(newBase, autoIncID)
 	job := &model.Job{
 		SchemaID:   schema.ID,

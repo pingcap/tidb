@@ -436,13 +436,13 @@ func getPathByIndexName(paths []*accessPath, idxName model.CIStr, tblInfo *model
 			return path
 		}
 	}
-	if isPrimaryIndexHint(idxName) && tblInfo.PKIsHandle {
+	if isPrimaryIndex(idxName) && tblInfo.PKIsHandle {
 		return tablePath
 	}
 	return nil
 }
 
-func isPrimaryIndexHint(indexName model.CIStr) bool {
+func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
@@ -806,26 +806,24 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 		if err != nil {
 			return nil, err
 		}
-		table, ok := b.is.TableByID(tbl.TableInfo.ID)
-		if !ok {
-			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tbl.TableInfo.Name.O)
-		}
 		for _, idx := range idxInfo {
 			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Table: table}
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 					IndexInfo:   idx,
 					analyzeInfo: info,
+					TblInfo:     tbl.TableInfo,
 				})
 			}
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
 			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Table: table}
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
 					PKInfo:      pkInfo,
 					ColsInfo:    colInfo,
 					analyzeInfo: info,
+					TblInfo:     tbl.TableInfo,
 				})
 			}
 		}
@@ -841,13 +839,21 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
+		if isPrimaryIndex(idxName) && tblInfo.PKIsHandle {
+			pkCol := tblInfo.GetPkColInfo()
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PKInfo: pkCol, analyzeInfo: info})
+			}
+			continue
+		}
 		idx := tblInfo.FindIndexByName(idxName.L)
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
 		for i, id := range physicalIDs {
-			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info})
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -863,9 +869,16 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, erro
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info})
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 			}
+		}
+	}
+	if tblInfo.PKIsHandle {
+		pkCol := tblInfo.GetPkColInfo()
+		for i, id := range physicalIDs {
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PKInfo: pkCol, analyzeInfo: info})
 		}
 	}
 	return p, nil

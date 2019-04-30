@@ -273,6 +273,12 @@ type SessionVars struct {
 	// AllowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
 	AllowInSubqToJoinAndAgg bool
 
+	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
+	CorrelationThreshold float64
+
+	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
+	CorrelationExpFactor int
+
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues chunk.Row
@@ -319,6 +325,9 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
+	// WaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
+	WaitTableSplitFinish bool
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -337,6 +346,10 @@ type SessionVars struct {
 
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
+
+	// TIDBOptJoinOrderAlgoThreshold defines the minimal number of join nodes
+	// to use the greedy join reorder algorithm.
+	TiDBOptJoinReorderThreshold int
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
@@ -368,28 +381,31 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                     make(map[string]string),
-		systems:                   make(map[string]string),
-		PreparedStmts:             make(map[uint32]*ast.Prepared),
-		PreparedStmtNameToID:      make(map[string]uint32),
-		PreparedParams:            make([]types.Datum, 0, 10),
-		TxnCtx:                    &TransactionContext{},
-		KVVars:                    kv.NewVariables(),
-		RetryInfo:                 &RetryInfo{},
-		ActiveRoles:               make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:             true,
-		Status:                    mysql.ServerStatusAutocommit,
-		StmtCtx:                   new(stmtctx.StatementContext),
-		AllowAggPushDown:          false,
-		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
-		RetryLimit:                DefTiDBRetryLimit,
-		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:          kv.PriorityLow,
-		AllowInSubqToJoinAndAgg:   DefOptInSubqToJoinAndAgg,
-		EnableRadixJoin:           false,
-		L2CacheSize:               cpuid.CPU.Cache.L2,
-		CommandValue:              uint32(mysql.ComSleep),
-		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
+		Users:                       make(map[string]string),
+		systems:                     make(map[string]string),
+		PreparedStmts:               make(map[uint32]*ast.Prepared),
+		PreparedStmtNameToID:        make(map[string]uint32),
+		PreparedParams:              make([]types.Datum, 0, 10),
+		TxnCtx:                      &TransactionContext{},
+		KVVars:                      kv.NewVariables(),
+		RetryInfo:                   &RetryInfo{},
+		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:               true,
+		Status:                      mysql.ServerStatusAutocommit,
+		StmtCtx:                     new(stmtctx.StatementContext),
+		AllowAggPushDown:            false,
+		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
+		RetryLimit:                  DefTiDBRetryLimit,
+		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:            kv.PriorityLow,
+		AllowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
+		CorrelationThreshold:        DefOptCorrelationThreshold,
+		CorrelationExpFactor:        DefOptCorrelationExpFactor,
+		EnableRadixJoin:             false,
+		L2CacheSize:                 cpuid.CPU.Cache.L2,
+		CommandValue:                uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -657,6 +673,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqToJoinAndAgg:
 		s.AllowInSubqToJoinAndAgg = TiDBOptOn(val)
+	case TiDBOptCorrelationThreshold:
+		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
+	case TiDBOptCorrelationExpFactor:
+		s.CorrelationExpFactor = tidbOptPositiveInt32(val, DefOptCorrelationExpFactor)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
@@ -739,12 +759,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBOptJoinReorderThreshold:
+		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
 	case TiDBCheckMb4ValueInUTF8:
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
 	case TiDBEnableFastAnalyze:
 		s.EnableFastAnalyze = TiDBOptOn(val)
+	case TiDBWaitTableSplitFinish:
+		s.WaitTableSplitFinish = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -921,7 +945,7 @@ const (
 
 // SlowLogFormat uses for formatting slow log.
 // The slow log output is like below:
-// # Time: 2019-02-12-19:33:56.571953 +0800
+// # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
 // # User: root@127.0.0.1
 // # Conn_ID: 6
