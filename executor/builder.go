@@ -1187,8 +1187,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	}
 }
 
-func (b *executorBuilder) buildApply(apply *plannercore.PhysicalApply) *NestedLoopApplyExec {
-	v := apply.PhysicalJoin
+func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopApplyExec {
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1211,14 +1210,14 @@ func (b *executorBuilder) buildApply(apply *plannercore.PhysicalApply) *NestedLo
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
 	e := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(b.ctx, apply.Schema(), v.ExplainID(), outerExec, innerExec),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec, innerExec),
 		innerExec:    innerExec,
 		outerExec:    outerExec,
 		outerFilter:  outerFilter,
 		innerFilter:  innerFilter,
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
-		outerSchema:  apply.OuterSchema,
+		outerSchema:  v.OuterSchema,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
