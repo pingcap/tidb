@@ -76,6 +76,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Db:          e.ctx.GetSessionVars().CurrentDB,
 		Charset:     e.charset,
 		Collation:   e.collation,
+		Status:      bindinfo.Using,
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)

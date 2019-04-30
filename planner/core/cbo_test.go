@@ -216,9 +216,9 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer func() {
 		dom.Close()
 		store.Close()
-		statistics.RatioOfPseudoEstimate = 0.7
+		statistics.RatioOfPseudoEstimate.Store(0.7)
 	}()
-	statistics.RatioOfPseudoEstimate = 10.0
+	statistics.RatioOfPseudoEstimate.Store(10.0)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
@@ -575,13 +575,13 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	h.DumpStatsDeltaToKV(handle.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	statistics.RatioOfPseudoEstimate = 10.0
+	statistics.RatioOfPseudoEstimate.Store(10.0)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableReader_7 35.91 root data:Selection_6",
 		"└─Selection_6 35.91 cop le(test.t.a, 5), le(test.t.b, 5)",
 		"  └─TableScan_5 80.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
-	statistics.RatioOfPseudoEstimate = 0.7
+	statistics.RatioOfPseudoEstimate.Store(0.7)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"IndexLookUp_11 8.84 root ",
 		"├─IndexScan_8 26.59 cop table:t, index:a, range:[-inf,5], keep order:false, stats:pseudo",
@@ -910,7 +910,7 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─IndexReader_8 0.00 root index:Selection_7",
 		"  └─Selection_7 0.00 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
-		"    └─IndexScan_6 10.00 cop table:t2, index:a, b, c, range: decided by [test.t1.a test.t1.c], keep order:false, stats:pseudo",
+		"    └─IndexScan_6 10.00 cop table:t2, index:a, b, c, range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo",
 	))
 
 	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
@@ -1036,7 +1036,7 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		"  │   └─TopN_30 1.00 cop t1.a:asc, offset:0, count:1",
 		"  │     └─IndexScan_29 6.00 cop table:t1, index:b, range:[-inf,6], keep order:false",
 		"  └─IndexReader_57 1.04 root index:IndexScan_56",
-		"    └─IndexScan_56 1.04 cop table:t2, index:b, range: decided by [t1.a], keep order:false",
+		"    └─IndexScan_56 1.04 cop table:t2, index:b, range: decided by [eq(t2.b, t1.a)], keep order:false",
 	))
 	// Desc TableScan.
 	tk.MustExec("truncate table t")
