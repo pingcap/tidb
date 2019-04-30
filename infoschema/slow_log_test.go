@@ -101,13 +101,13 @@ select * from t;
 	sql := strings.Repeat("x", bufio.MaxScanTokenSize)
 	slowLog.WriteString(sql)
 	scanner = bufio.NewScanner(slowLog)
-	rows, err = infoschema.ParseSlowLog(loc, scanner)
+	_, err = infoschema.ParseSlowLog(loc, scanner)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "read file buffer overflow, please try to enlarge the variable 'tidb_query_log_max_len'")
 
 	atomic.StoreUint64(&config.QueryLogMaxLenRecord, bufio.MaxScanTokenSize)
 	scanner = bufio.NewScanner(slowLog)
-	rows, err = infoschema.ParseSlowLog(loc, scanner)
+	_, err = infoschema.ParseSlowLog(loc, scanner)
 	c.Assert(err, IsNil)
 }
 
