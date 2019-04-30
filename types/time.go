@@ -1942,7 +1942,7 @@ func abbrDayOfMonth(day int) string {
 func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool {
 	ctx := make(map[string]int)
 	var tm MysqlTime
-	if !strToDate(&tm, date, format, ctx) {
+	if !strToDate(&tm, sc, date, format, date, ctx) {
 		t.Time = ZeroTime
 		t.Type = mysql.TypeDatetime
 		t.Fsp = 0
@@ -1990,7 +1990,7 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 
 // strToDate converts date string according to format, returns true on success,
 // the value will be stored in argument t or ctx.
-func strToDate(t *MysqlTime, date string, format string, ctx map[string]int) bool {
+func strToDate(t *MysqlTime, sc *stmtctx.StatementContext, date string, format string, rawDate string, ctx map[string]int) bool {
 	date = skipWhiteSpace(date)
 	format = skipWhiteSpace(format)
 
@@ -2001,6 +2001,9 @@ func strToDate(t *MysqlTime, date string, format string, ctx map[string]int) boo
 
 	if token == "" {
 		// Extra characters at the end of date are ignored.
+		if len(date) > 0 {
+			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", rawDate))
+		}
 		return true
 	}
 
@@ -2009,7 +2012,7 @@ func strToDate(t *MysqlTime, date string, format string, ctx map[string]int) boo
 		return false
 	}
 
-	return strToDate(t, dateRemain, formatRemain, ctx)
+	return strToDate(t, sc, dateRemain, formatRemain, rawDate, ctx)
 }
 
 // getFormatToken takes one format control token from the string.

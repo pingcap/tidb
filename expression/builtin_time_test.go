@@ -1252,25 +1252,28 @@ func (s *testEvaluatorSuite) TestUTCDate(c *C) {
 
 func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 	tests := []struct {
-		Date    string
-		Format  string
-		Success bool
-		Expect  time.Time
+		Date     string
+		Format   string
+		Success  bool
+		Expect   time.Time
+		Warnings uint16
 	}{
-		{"10/28/2011 9:46:29 pm", "%m/%d/%Y %l:%i:%s %p", true, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local)},
-		{"10/28/2011 9:46:29 Pm", "%m/%d/%Y %l:%i:%s %p", true, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local)},
-		{"2011/10/28 9:46:29 am", "%Y/%m/%d %l:%i:%s %p", true, time.Date(2011, 10, 28, 9, 46, 29, 0, time.Local)},
-		{"20161122165022", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
-		{"2016 11 22 16 50 22", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
-		{"16-50-22 2016 11 22", `%H-%i-%s%Y%m%d`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
-		{"16-50 2016 11 22", `%H-%i-%s%Y%m%d`, false, time.Time{}},
-		{"15-01-2001 1:59:58.999", "%d-%m-%Y %I:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 999000000, time.Local)},
-		{"15-01-2001 1:59:58.1", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 100000000, time.Local)},
-		{"15-01-2001 1:59:58.", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 000000000, time.Local)},
-		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
-		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%S.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
-		{"2003-01-02 10:11:12 PM", "%Y-%m-%d %H:%i:%S %p", false, time.Time{}},
-		{"10:20:10AM", "%H:%i:%S%p", false, time.Time{}},
+		{"10/28/2011 9:46:29 pm", "%m/%d/%Y %l:%i:%s %p", true, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local), 0},
+		{"10/28/2011 9:46:29 Pm", "%m/%d/%Y %l:%i:%s %p", true, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local), 0},
+		{"2011/10/28 9:46:29 am", "%Y/%m/%d %l:%i:%s %p", true, time.Date(2011, 10, 28, 9, 46, 29, 0, time.Local), 0},
+		{"20161122165022", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local), 0},
+		{"2016 11 22 16 50 22", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local), 0},
+		{"16-50-22 2016 11 22", `%H-%i-%s%Y%m%d`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local), 0},
+		{"16-50 2016 11 22", `%H-%i-%s%Y%m%d`, false, time.Time{}, 0},
+		{"15-01-2001 1:59:58.999", "%d-%m-%Y %I:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 999000000, time.Local), 0},
+		{"15-01-2001 1:59:58.1", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 100000000, time.Local), 0},
+		{"15-01-2001 1:59:58.", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 000000000, time.Local), 0},
+		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local), 0},
+		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%S.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local), 0},
+		{"15-01-99", "%d-%m-%y", true, time.Date(1999, 1, 15, 0, 0, 0, 0, time.Local), 0},
+		{"15-01-100", "%d-%m-%y", true, time.Date(2010, 1, 15, 0, 0, 0, 0, time.Local), 1},
+		{"2003-01-02 10:11:12 PM", "%Y-%m-%d %H:%i:%S %p", false, time.Time{}, 1},
+		{"10:20:10AM", "%H:%i:%S%p", false, time.Time{}, 1},
 	}
 
 	fc := funcs[ast.StrToDate]
@@ -1284,12 +1287,15 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		if !test.Success {
 			c.Assert(err, IsNil)
 			c.Assert(result.IsNull(), IsTrue)
+			s.ctx.GetSessionVars().StmtCtx.ResetForRetry()
 			continue
 		}
 		c.Assert(result.Kind(), Equals, types.KindMysqlTime)
 		value := result.GetMysqlTime()
 		t1, _ := value.Time.GoTime(time.Local)
 		c.Assert(t1, Equals, test.Expect)
+		c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, test.Warnings)
+		s.ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	}
 }
 
