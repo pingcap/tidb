@@ -57,6 +57,7 @@ require (
 	github.com/prometheus/procfs v0.0.0-20180408092902-8b1c2da0d56d // indirect
 	github.com/sirupsen/logrus v0.0.0-20170323161349-3bcb09397d6d
 	github.com/spaolacci/murmur3 v0.0.0-20150829172844-0d12bf811670
+	github.com/tiancaiamao/debugger v0.0.0-20190428065433-3a10ffa41d22
 	github.com/twinj/uuid v0.0.0-20150629100731-70cac2bcd273
 	github.com/uber/jaeger-client-go v2.8.0+incompatible
 	github.com/uber/jaeger-lib v1.1.0 // indirect

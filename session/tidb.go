@@ -181,10 +181,16 @@ func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, s
 }
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (sqlexec.RecordSet, error) {
-	var err error
-	var rs sqlexec.RecordSet
+func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	se := sctx.(*session)
+	defer func() {
+		// If it is not a select statement, we record its slow log here,
+		// then it could include the transaction commit time.
+		if rs == nil {
+			s.(*executor.ExecStmt).LogSlowQuery(se.GetSessionVars().TxnCtx.StartTS, err != nil)
+		}
+	}()
+
 	err = se.checkTxnAborted(s)
 	if err != nil {
 		return nil, err

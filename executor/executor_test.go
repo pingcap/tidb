@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/debugger"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/net/context"
@@ -1850,7 +1851,8 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
-		"select * from help_topic where name='aaa'":         true,
+		"select * from help_topic where name='aaa'":         false,
+		"select 1 from help_topic where name='aaa'":         true,
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
@@ -1867,6 +1869,36 @@ func (s *testSuite) TestIsPointGet(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, result)
 	}
+}
+
+func (s *testSuite) TestPointGetRepeatableRead(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest1", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest2", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest1")
+	defer gofail.Disable("github.com/pingcap/tidb/executor/pointGetRepeatableReadTest2")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec(`create table point_get (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into point_get values (1, 1, 1)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	go func() {
+		ctx := context.WithValue(context.Background(), "pointGetRepeatableReadTest", true)
+		rs, err := tk1.Se.Execute(ctx, "select c from point_get where b = 1")
+		c.Assert(err, IsNil)
+		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+		result.Check(testkit.Rows("1"))
+	}()
+
+	label := debugger.Bind("point-get-g2")
+	debugger.Continue("point-get-g1")
+	debugger.Breakpoint(label)
+	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
+	debugger.Continue("point-get-g1")
 }
 
 func (s *testSuite) TestRow(c *C) {
