@@ -2504,62 +2504,6 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	}
 }
 
-// Tests #9727, which is caused by overflow
-func (s *testEvaluatorSuite) TestDatetimeLargeDuration(c *C) {
-	fcAdd := funcs[ast.DateAdd]
-	fcSub := funcs[ast.DateSub]
-
-	testsAdd := []struct {
-		fc           functionClass
-		inputDate    interface{}
-		duration     interface{}
-		durationUnit string
-		expect       interface{}
-	}{
-		{fcAdd, "1900-01-01 00:00:00", "100000000:214748364700", "MINUTE_SECOND", "8895-03-27 22:11:40"},
-		{fcAdd, "1900-01-01 00:00:00", int64(1) << 37, "SECOND", "6255-04-08 15:04:32"},
-		{fcAdd, "1900-01-01 00:00:00", int64(1) << 31, "MINUTE", "5983-01-24 02:08:00"},
-		{fcAdd, "1900-01-01 00:00:00", int64(1) << 38, "SECOND", nil},
-		{fcAdd, "1900-01-01 00:00:00", int64(1) << 33, "MINUTE", nil},
-		{fcAdd, "1900-01-01 00:00:00", int64(1) << 30, "HOUR", nil},
-		{fcAdd, "1900-01-01 00:00:00", "1000000000:214748364700", "MINUTE_SECOND", nil},
-		{fcAdd, 19000101000000, "100000000:214748364700", "MINUTE_SECOND", "8895-03-27 22:11:40"},
-		{fcAdd, 19000101000000, int64(1) << 37, "SECOND", "6255-04-08 15:04:32"},
-		{fcAdd, 19000101000000, int64(1) << 31, "MINUTE", "5983-01-24 02:08:00"},
-		{fcAdd, "1900-01-01 00:00:00", 1.123456789e3, "SECOND", "1900-01-01 00:18:43.456789"},
-		{fcAdd, 19000101000000, 1.123456789e3, "SECOND", "1900-01-01 00:18:43.456789"},
-
-		{fcSub, "8895-03-27 22:11:40", "100000000:214748364700", "MINUTE_SECOND", "1900-01-01 00:00:00"},
-		{fcSub, "6255-04-08 15:04:32", int64(1) << 37, "SECOND", "1900-01-01 00:00:00"},
-		{fcSub, "5983-01-24 02:08:00", int64(1) << 31, "MINUTE", "1900-01-01 00:00:00"},
-		{fcSub, "9999-01-01 00:00:00", int64(1) << 39, "SECOND", nil},
-		{fcSub, "9999-01-01 00:00:00", int64(1) << 33, "MINUTE", nil},
-		{fcSub, "9999-01-01 00:00:00", int64(1) << 30, "HOUR", nil},
-		{fcSub, "9999-01-01 00:00:00", "10000000000:214748364700", "MINUTE_SECOND", nil},
-		{fcSub, 88950327221140, "100000000:214748364700", "MINUTE_SECOND", "1900-01-01 00:00:00"},
-		{fcSub, 62550408150432, int64(1) << 37, "SECOND", "1900-01-01 00:00:00"},
-		{fcSub, 59830124020800, int64(1) << 31, "MINUTE", "1900-01-01 00:00:00"},
-		{fcSub, "1900-01-01 00:18:43.456789", 1.123456789e3, "SECOND", "1900-01-01 00:00:00"},
-		{fcSub, types.NewDecFromStringForTest("19000101001843.456789"), 1.123456789e3, "SECOND", "1900-01-01 00:00:00"},
-	}
-
-	for _, test := range testsAdd {
-		args := types.MakeDatums(test.inputDate, test.duration, test.durationUnit)
-		f, err := test.fc.getFunction(s.ctx, s.datumsToConstants(args))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		comment := Commentf("InputDate: %v Duration: %v DurationUnit: %v Expected: %v", test.inputDate, test.duration, test.durationUnit, test.expect)
-		if test.expect != nil {
-			c.Assert(v.IsNull(), IsFalse, comment)
-			c.Assert(v.GetMysqlTime().String(), Equals, test.expect, comment)
-		} else {
-			c.Assert(v.IsNull(), IsTrue, comment)
-		}
-	}
-}
-
 func (s *testEvaluatorSuite) TestTidbParseTso(c *C) {
 	s.ctx.GetSessionVars().TimeZone = time.UTC
 	tests := []struct {
