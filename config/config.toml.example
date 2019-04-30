@@ -294,5 +294,5 @@ default = false
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
-# default TTL for pessimistic lock.
+# default TTL in milliseconds for pessimistic lock.
 ttl = 60000

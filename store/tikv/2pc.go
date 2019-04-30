@@ -600,7 +600,6 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 				if conditionPair == nil {
 					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
 				}
-				// logutil.Logger(context.Background()).Debug("con:%d key: %s already exists", c.connID, key)
 				return errors.Trace(conditionPair.Err())
 			}
 
@@ -609,7 +608,6 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			// log.Debugf("con:%d 2PC prewrite encounters lock: %v", c.connID, lock)
 			locks = append(locks, lock)
 		}
 		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)

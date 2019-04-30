@@ -325,7 +325,7 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, sctx se
 		if !strings.Contains(err.Error(), tidbutil.WriteConflictMarker) {
 			return nil, err
 		}
-		if retryCnt == config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
+		if retryCnt >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 			return nil, errors.New("pessimistic max retry count reached")
 		}
 		retryCnt++
@@ -444,12 +444,15 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, sctx sessionctx.Con
 		if err == nil || !strings.Contains(err.Error(), tidbutil.WriteConflictMarker) {
 			return err
 		}
-		if retryCnt == config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
+		if retryCnt >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 			return errors.New("pessimistic lock retry limit reached")
 		}
 		retryCnt++
 		conflictTS := extractConflictTS(err.Error())
-		log.Info("pessimistic write conflict, retry statement",
+		if conflictTS == 0 {
+			logutil.Logger(ctx).Warn("failed to extract conflictTS from a conflict error")
+		}
+		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txn.StartTS()),
 			zap.Uint64("forUpdateTS", forUpdateTS),
 			zap.Uint64("conflictTS", conflictTS))

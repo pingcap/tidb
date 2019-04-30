@@ -288,10 +288,14 @@ type Plugin struct {
 
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
-	Enable        bool   `toml:"enable" json:"enable"`
-	Default       bool   `toml:"default" json:"default"`
-	MaxRetryCount uint   `toml:"max-retry-count" json:"max-retry-count"`
-	TTL           uint64 `toml:"ttl" json:"ttl"`
+	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
+	Enable bool `toml:"enable" json:"enable"`
+	// Starts a pessimistic transaction by default when Enable is true.
+	Default bool `toml:"default" json:"default"`
+	// The max count of retry for a single statement in a pessimistic transaction.
+	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+	// The pessimistic lock ttl in milliseconds.
+	TTL uint64 `toml:"ttl" json:"ttl"`
 }
 
 var defaultConf = Config{
