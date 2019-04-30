@@ -647,10 +647,24 @@ func (b *builtinJSONContainsSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonContainsFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+		return json.ErrInvalidJSONData.GenWithStackByArgs(1, "json_contains")
+	}
+	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+		return json.ErrInvalidJSONData.GenWithStackByArgs(2, "json_contains")
+	}
+	return nil
+}
+
 func (c *jsonContainsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+
 	argTps := []types.EvalType{types.ETJson, types.ETJson}
 	if len(args) == 3 {
 		argTps = append(argTps, types.ETString)
