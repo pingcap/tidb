@@ -126,13 +126,13 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 		// When `conn.Close()` is called, `client.Recv()` will return an error.
 		resp, err := c.client.Recv()
 		if err != nil {
-			if c.isStopped() {
-				return
-			}
 			logutil.Logger(context.Background()).Error("batchRecvLoop error when receive", zap.Error(err))
 
 			now := time.Now()
 			for { // try to re-create the streaming in the loop.
+				if c.isStopped() {
+					return
+				}
 				// Hold the lock to forbid batchSendLoop using the old client.
 				c.clientLock.Lock()
 				c.failPendingRequests(err) // fail all pending requests.
