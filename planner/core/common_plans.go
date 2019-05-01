@@ -459,6 +459,7 @@ type LoadData struct {
 	baseSchemaProducer
 
 	IsLocal     bool
+	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Table       *ast.TableName
 	Columns     []*ast.ColumnName
