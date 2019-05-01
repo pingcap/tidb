@@ -683,10 +683,13 @@ import (
 	ColumnDef			"table column definition"
 	ColumnDefList			"table column definition list"
 	ColumnName			"column name"
+	ColumnNameOrUserVariable	"column name or user variable"
 	ColumnNameList			"column name list"
+	ColumnNameOrUserVariableList	"column name or user variable list"
 	ColumnList			"column list"
 	ColumnNameListOpt		"column name list opt"
-	ColumnNameListOptWithBrackets 	"column name list opt with brackets"
+	ColumnNameOrUserVarListOpt	"column name or user vairiabe list opt"
+	ColumnNameOrUserVarListOptWithBrackets	"column name or user variable list opt with brackets"
 	ColumnSetValue			"insert statement set value by column name"
 	ColumnSetValueList		"insert statement set value by column name list"
 	CompareOp			"Compare opcode"
@@ -1615,14 +1618,44 @@ ColumnNameListOpt:
 		$$ = $1.([]*ast.ColumnName)
 	}
 
-ColumnNameListOptWithBrackets:
+ColumnNameOrUserVarListOpt:
 	/* EMPTY */
 	{
-		$$ = []*ast.ColumnName{}
+		$$ = []*ast.ColumnNameOrUserVar{}
 	}
-|	'(' ColumnNameListOpt ')'
+|	ColumnNameOrUserVariableList
 	{
-		$$ = $2.([]*ast.ColumnName)
+		$$ = $1.([]*ast.ColumnNameOrUserVar)
+	}
+
+ColumnNameOrUserVariableList:
+	ColumnNameOrUserVariable
+	{
+		$$ = []*ast.ColumnNameOrUserVar{$1.(*ast.ColumnNameOrUserVar)}
+	}
+|	ColumnNameOrUserVariableList ',' ColumnNameOrUserVariable
+	{
+		$$ = append($1.([]*ast.ColumnNameOrUserVar), $3.(*ast.ColumnNameOrUserVar))
+	}
+
+ColumnNameOrUserVariable:
+	ColumnName
+	{
+		$$ = &ast.ColumnNameOrUserVar{ColumnName: $1.(*ast.ColumnName)}
+	}
+|	UserVariable
+	{
+		$$ = &ast.ColumnNameOrUserVar{UserVar: $1.(*ast.VariableExpr)}
+	}
+
+ColumnNameOrUserVarListOptWithBrackets:
+	/* EMPTY */
+	{
+		$$ = []*ast.ColumnNameOrUserVar{}
+	}
+|	'(' ColumnNameOrUserVarListOpt ')'
+	{
+		$$ = $2.([]*ast.ColumnNameOrUserVar)
 	}
 
 CommitStmt:
@@ -8379,12 +8412,12 @@ RevokeRoleStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
-			Columns:    $13.([]*ast.ColumnName),
+			ColumnsAndUserVars:    $13.([]*ast.ColumnNameOrUserVar),
 			IgnoreLines:$12.(uint64),
 		}
 		if $3 != nil {
@@ -8396,6 +8429,17 @@ LoadDataStmt:
 		if $11 != nil {
 			x.LinesInfo = $11.(*ast.LinesClause)
 		}
+		if $14 != nil {
+			x.ColumnAssignments = $14.([]*ast.Assignment)
+		}
+		columns := []*ast.ColumnName{}
+		for _, v := range x.ColumnsAndUserVars {
+			if v.ColumnName != nil {
+				columns = append(columns, v.ColumnName)
+			}
+		}
+		x.Columns = columns
+
 		$$ = x
 	}
 
@@ -8551,23 +8595,28 @@ LoadDataSetSpecOpt:
 	}
 |	"SET" LoadDataSetList
 	{
-		$$ = nil
+		$$ = $2
 	}
 
 LoadDataSetList:
 	LoadDataSetList ',' LoadDataSetItem
 	{
-		$$ = nil
+		l := $1.([]*ast.Assignment)
+		$$ = append(l, $3.(*ast.Assignment))
 	}
 |	LoadDataSetItem
 	{
-		$$ = nil
+		$$ = []*ast.Assignment{$1.(*ast.Assignment)}
 	}
 
 LoadDataSetItem:
 	SimpleIdent "=" ExprOrDefault
 	{
-		$$ = nil
+		$$ = &ast.Assignment{
+			Column:	$1.(*ast.ColumnNameExpr).Name,
+			Expr:	$3,
+		}
+
 	}
 
 
