@@ -172,6 +172,8 @@ github.com/struCoder/pidusage v0.1.2 h1:fFPTThlcWFQyizv3xKs5Lyq1lpG5lZ36arEGNhWz
 github.com/struCoder/pidusage v0.1.2/go.mod h1:pWBlW3YuSwRl6h7R5KbvA4N8oOqe9LjaKW5CwT1SPjI=
 github.com/sundl123/parser v0.0.0-20190501081256-38c91c2f75ff h1:wz8fLdbMhSLiBnClsfn/TcLzaPAS5gCGAk6bRIMnuDY=
 github.com/sundl123/parser v0.0.0-20190501081256-38c91c2f75ff/go.mod h1:3E81LTfPlDct335EevCwNoq1DzWoepdjDQ/n93SajQY=
+github.com/sundl123/parser v0.0.0-20190502064211-008dd423c005 h1:eSYMl03Fndy2SOfePVEFT7DqHxfCk7CA2CGnubDAWnQ=
+github.com/sundl123/parser v0.0.0-20190502064211-008dd423c005/go.mod h1:3E81LTfPlDct335EevCwNoq1DzWoepdjDQ/n93SajQY=
 github.com/syndtr/goleveldb v0.0.0-20180815032940-ae2bd5eed72d/go.mod h1:Z4AUp2Km+PwemOoO/VB5AOx9XSsIItzFjoJlOSiYmn0=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
