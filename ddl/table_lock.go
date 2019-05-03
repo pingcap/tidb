@@ -30,66 +30,126 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	}
 	fmt.Printf("on lock table: arg: %#v\n---------\n\n", arg)
 
-	tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-	if err != nil {
-		return ver, err
-	}
-	if tbInfo.Lock == nil {
-		tbInfo.Lock = &model.TableLockInfo{}
+	// Unlock table first.
+	if arg.IndexOfUnlock < len(arg.UnlockTables) {
+		return unlockTableReq(t, job, arg)
 	}
 
-	err = checkLockTable(tbInfo, 0, arg)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, err
-	}
-
-	switch tbInfo.Lock.State {
-	case model.TableLockStateNone:
-		// none -> pre_lock
-		tbInfo.Lock.State = model.TableLockStatePreLock
-		tbInfo.Lock.TS = t.StartTS
-		job.SchemaState = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
-	case model.TableLockStatePreLock, model.TableLockStatePublic:
-		tbInfo.Lock.State = model.TableLockStatePublic
-		tbInfo.Lock.TS = t.StartTS
-		ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
+	// Check table locked by other, this can be only checked at the first time.
+	if arg.IndexOfLock == 0 {
+		for i, tl := range arg.LockTables {
+			job.SchemaID = tl.SchemaID
+			job.TableID = tl.TableID
+			tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+			if err != nil {
+				return ver, err
+			}
+			err = checkTableLocked(tbInfo, i, arg)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 		}
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	default:
-		return ver, ErrInvalidTableLockState.GenWithStack("invalid table lock state %v", tbInfo.Lock.State)
-
+		job.SchemaState = model.StateDeleteOnly
 	}
+
+	// Lock table.
+	if arg.IndexOfLock < len(arg.LockTables) {
+		job.SchemaID = arg.LockTables[arg.IndexOfLock].SchemaID
+		job.TableID = arg.LockTables[arg.IndexOfLock].TableID
+		tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+		if err != nil {
+			return ver, err
+		}
+		err = checkAndLockTable(tbInfo, arg.IndexOfLock, arg)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+
+		switch tbInfo.Lock.State {
+		case model.TableLockStateNone:
+			// none -> pre_lock
+			tbInfo.Lock.State = model.TableLockStatePreLock
+			tbInfo.Lock.TS = t.StartTS
+			ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
+		case model.TableLockStatePreLock, model.TableLockStatePublic:
+			tbInfo.Lock.State = model.TableLockStatePublic
+			tbInfo.Lock.TS = t.StartTS
+			ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			arg.IndexOfLock++
+			job.Args = []interface{}{arg}
+			if arg.IndexOfLock == len(arg.LockTables) {
+				// Finish this job.
+				// Do not use FinishTableJob function, no need to write binlog?
+				job.State = model.JobStateDone
+				job.SchemaState = model.StatePublic
+			}
+		default:
+			job.State = model.JobStateCancelled
+			return ver, ErrInvalidTableLockState.GenWithStack("invalid table lock state %v", tbInfo.Lock.State)
+
+		}
+	}
+
 	return ver, err
 }
 
-func checkLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
+func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) error {
+	if tbInfo.Lock == nil {
+		return nil
+	}
+	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg)
+	if sessionIndex < 0 {
+		return nil
+		// todo: when clean table  lock , session maybe send unlock table even the table lock  maybe not hold by the session.
+		//return errors.Errorf("%s isn't holding table %s lock", arg.SessionInfo, tbInfo.Name)
+	}
+	oldSessionInfo := tbInfo.Lock.Sessions
+	tbInfo.Lock.Sessions = oldSessionInfo[:sessionIndex]
+	tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, oldSessionInfo[sessionIndex+1:]...)
+	if len(tbInfo.Lock.Sessions) == 0 {
+		tbInfo.Lock = nil
+	}
+	return nil
+}
+
+//
+func indexOfLockHolder(sessions []model.SessionInfo, arg *lockTablesArg) int {
+	for i := range sessions {
+		if sessions[i].ServerID == arg.SessionInfo.ServerID && sessions[i].SessionID == arg.SessionInfo.SessionID {
+			return i
+		}
+	}
+	return -1
+}
+
+func checkAndLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
 	if tbInfo.Lock == nil || len(tbInfo.Lock.Sessions) == 0 {
 		tbInfo.Lock = &model.TableLockInfo{
 			Tp: arg.LockTables[idx].Tp,
 		}
-		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, model.SessionInfo{ServerID: arg.ServerID, SessionID: arg.SessionID})
+		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, arg.SessionInfo)
 		return nil
 	}
 	if tbInfo.Lock.State == model.TableLockStatePreLock {
 		return nil
 	}
 	if tbInfo.Lock.Tp == model.TableLockRead && arg.LockTables[idx].Tp == model.TableLockRead {
-		contain := hasServerAndSessionID(tbInfo.Lock.Sessions, arg.ServerID, arg.SessionID)
+		sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg)
 		// repeat lock.
-		if contain {
+		if sessionIndex >= 0 {
 			return nil
 		}
-		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, model.SessionInfo{ServerID: arg.ServerID, SessionID: arg.SessionID})
+		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, arg.SessionInfo)
 		return nil
 	}
-	contain := hasServerAndSessionID(tbInfo.Lock.Sessions, arg.ServerID, arg.SessionID)
+	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg)
 	// repeat lock.
-	if contain {
+	if sessionIndex >= 0 {
 		if tbInfo.Lock.Tp == arg.LockTables[idx].Tp {
 			return nil
 		}
@@ -98,42 +158,80 @@ func checkLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error 
 			tbInfo.Lock.Tp = arg.LockTables[idx].Tp
 			return nil
 		}
-
-		// todo: release lock.
-		return infoschema.ErrTableLocked.GenWithStackByArgs(tbInfo.Name.L, tbInfo.Lock.Tp, tbInfo.Lock.Sessions[0])
 	}
-
 	return infoschema.ErrTableLocked.GenWithStackByArgs(tbInfo.Name.L, tbInfo.Lock.Tp, tbInfo.Lock.Sessions[0])
 }
 
+func checkTableLocked(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
+	if tbInfo.Lock == nil || len(tbInfo.Lock.Sessions) == 0 {
+		tbInfo.Lock = &model.TableLockInfo{
+			Tp: arg.LockTables[idx].Tp,
+		}
+		return nil
+	}
+	// remove this?
+	if tbInfo.Lock.State == model.TableLockStatePreLock {
+		return nil
+	}
+	if tbInfo.Lock.Tp == model.TableLockRead && arg.LockTables[idx].Tp == model.TableLockRead {
+		return nil
+	}
+	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg)
+	// repeat lock.
+	if sessionIndex >= 0 {
+		if tbInfo.Lock.Tp == arg.LockTables[idx].Tp {
+			return nil
+		}
+		if len(tbInfo.Lock.Sessions) == 1 {
+			// just change lock tp directly.
+			return nil
+		}
+	}
+	return infoschema.ErrTableLocked.GenWithStackByArgs(tbInfo.Name.L, tbInfo.Lock.Tp, tbInfo.Lock.Sessions[0])
+}
+
+func unlockTableReq(t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, err error) {
+	// Unlock table first.
+	if arg.IndexOfUnlock < len(arg.UnlockTables) {
+		job.SchemaID = arg.UnlockTables[arg.IndexOfUnlock].SchemaID
+		job.TableID = arg.UnlockTables[arg.IndexOfUnlock].TableID
+		tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+		if err != nil {
+			return ver, err
+		}
+		err = unlockTable(tbInfo, arg)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		arg.IndexOfUnlock++
+		job.Args = []interface{}{arg}
+		job.SchemaState = model.StateDeleteOnly
+	}
+	return ver, nil
+}
+
 func onUnlockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	lockTablesArg := &lockTablesArg{}
-	if err := job.DecodeArgs(lockTablesArg); err != nil {
+	arg := &lockTablesArg{}
+	if err := job.DecodeArgs(arg); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	fmt.Printf("on unlock table: arg: %#v\n---------\n\n", lockTablesArg)
+	fmt.Printf("on unlock table: arg: %#v\n---------\n\n", arg)
 
-	tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-	if err != nil {
-		return ver, err
-	}
-	// Nothing need to do.
-	if tbInfo.Lock == nil {
-		// should never run to this.
-		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("the lock of table %v was released, this should never hapen", tbInfo.Name.L)
-	}
+	ver, err = unlockTableReq(t, job, arg)
 
-	tbInfo.Lock = nil
-	ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
+	if arg.IndexOfUnlock == len(arg.UnlockTables) {
+		// Do not use FinishTableJob function, no need to write binlog?
+		job.State = model.JobStateDone
+		job.SchemaState = model.StateNone
 	}
-	// Finish this job.
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	return ver, nil
+	return ver, err
 }
 
 func hasServerAndSessionID(sessions []model.SessionInfo, serverID string, sessionID uint64) bool {

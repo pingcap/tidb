@@ -2755,15 +2755,31 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk := s.tk
 
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t1,t2")
+	defer tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
 	tk.MustExec("lock tables t1 read")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockRead)
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
 	tk.MustExec("unlock tables")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+
+	tk.MustExec("lock tables t1 write, t2 read")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockRead)
+	tk.MustExec("lock tables t1 read, t2 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockRead)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockWrite)
+	tk.MustExec("lock tables t2 write")
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockWrite)
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
 }
 
 func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {

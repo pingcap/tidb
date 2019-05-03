@@ -3129,8 +3129,10 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	arg := &lockTablesArg{
 		LockTables:   lockTables,
 		UnlockTables: unlockTables,
-		ServerID:     d.GetID(),
-		SessionID:    ctx.GetSessionVars().ConnectionID,
+		SessionInfo: model.SessionInfo{
+			ServerID:  d.GetID(),
+			SessionID: ctx.GetSessionVars().ConnectionID,
+		},
 	}
 
 	job := &model.Job{
@@ -3140,6 +3142,8 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{arg},
 	}
+	// should check info schema lock.
+	ctx.ReleaseAllTableLocks()
 	ctx.AddTableLock(lockTables)
 	err := d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -3152,8 +3156,10 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	}
 	arg := &lockTablesArg{
 		UnlockTables: unlockTables,
-		ServerID:     d.GetID(),
-		SessionID:    ctx.GetSessionVars().ConnectionID,
+		SessionInfo: model.SessionInfo{
+			ServerID:  d.GetID(),
+			SessionID: ctx.GetSessionVars().ConnectionID,
+		},
 	}
 	job := &model.Job{
 		SchemaID:   unlockTables[0].SchemaID,
@@ -3172,8 +3178,9 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 }
 
 type lockTablesArg struct {
-	LockTables   []model.TableLockTpInfo
-	UnlockTables []model.TableLockTpInfo
-	ServerID     string
-	SessionID    uint64
+	LockTables    []model.TableLockTpInfo
+	IndexOfLock   int
+	UnlockTables  []model.TableLockTpInfo
+	IndexOfUnlock int
+	SessionInfo   model.SessionInfo
 }

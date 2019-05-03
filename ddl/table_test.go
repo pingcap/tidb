@@ -181,8 +181,10 @@ func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchem
 func testLockTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblInfo *model.TableInfo, lockTp model.TableLockType) *model.Job {
 	arg := &lockTablesArg{
 		LockTables: []model.TableLockTpInfo{{SchemaID: newSchemaID, TableID: tblInfo.ID, Tp: lockTp}},
-		ServerID:   d.GetID(),
-		SessionID:  ctx.GetSessionVars().ConnectionID,
+		SessionInfo: model.SessionInfo{
+			ServerID:  d.GetID(),
+			SessionID: ctx.GetSessionVars().ConnectionID,
+		},
 	}
 	job := &model.Job{
 		SchemaID:   newSchemaID,
@@ -199,7 +201,7 @@ func testLockTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblI
 	return job
 }
 
-func checkTableLocked(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp model.TableLockType) {
+func checkTableLockedTest(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp model.TableLockType) {
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
@@ -358,7 +360,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
-	checkTableLocked(c, d, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
+	checkTableLockedTest(c, d, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
 }
 
 func (s *testTableSuite) TestTableResume(c *C) {
