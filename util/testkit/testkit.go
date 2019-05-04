@@ -183,7 +183,12 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
 // It is used to check results of execute statement in binary mode.
 func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
-	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
+	return tk.ResultSetToResultWithCtx(context.Background(), rs, comment)
+}
+
+// ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
+func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
+	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	err = rs.Close()
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
