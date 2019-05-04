@@ -91,6 +91,8 @@ type Context interface {
 	GetAllTableLocks() []model.TableLockTpInfo
 
 	ReleaseAllTableLocks()
+
+	HasLockedTables() bool
 }
 
 type basicCtxType int

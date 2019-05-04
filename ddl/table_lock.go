@@ -44,7 +44,7 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 			if err != nil {
 				return ver, err
 			}
-			err = checkTableLocked(tbInfo, i, arg)
+			err = checkTableLocked(tbInfo, arg.LockTables[i].Tp, arg.SessionInfo)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -84,9 +84,7 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 			job.Args = []interface{}{arg}
 			if arg.IndexOfLock == len(arg.LockTables) {
 				// Finish this job.
-				// Do not use FinishTableJob function, no need to write binlog?
-				job.State = model.JobStateDone
-				job.SchemaState = model.StatePublic
+				job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, nil)
 			}
 		default:
 			job.State = model.JobStateCancelled
@@ -102,7 +100,7 @@ func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) error {
 	if tbInfo.Lock == nil {
 		return nil
 	}
-	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg)
+	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg.SessionInfo)
 	if sessionIndex < 0 {
 		return nil
 		// todo: when clean table  lock , session maybe send unlock table even the table lock  maybe not hold by the session.
@@ -118,9 +116,9 @@ func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) error {
 }
 
 //
-func indexOfLockHolder(sessions []model.SessionInfo, arg *lockTablesArg) int {
+func indexOfLockHolder(sessions []model.SessionInfo, sessionInfo model.SessionInfo) int {
 	for i := range sessions {
-		if sessions[i].ServerID == arg.SessionInfo.ServerID && sessions[i].SessionID == arg.SessionInfo.SessionID {
+		if sessions[i].ServerID == sessionInfo.ServerID && sessions[i].SessionID == sessionInfo.SessionID {
 			return i
 		}
 	}
@@ -139,7 +137,7 @@ func checkAndLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) err
 		return nil
 	}
 	if tbInfo.Lock.Tp == model.TableLockRead && arg.LockTables[idx].Tp == model.TableLockRead {
-		sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg)
+		sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg.SessionInfo)
 		// repeat lock.
 		if sessionIndex >= 0 {
 			return nil
@@ -147,7 +145,7 @@ func checkAndLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) err
 		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, arg.SessionInfo)
 		return nil
 	}
-	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg)
+	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg.SessionInfo)
 	// repeat lock.
 	if sessionIndex >= 0 {
 		if tbInfo.Lock.Tp == arg.LockTables[idx].Tp {
@@ -162,24 +160,21 @@ func checkAndLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) err
 	return infoschema.ErrTableLocked.GenWithStackByArgs(tbInfo.Name.L, tbInfo.Lock.Tp, tbInfo.Lock.Sessions[0])
 }
 
-func checkTableLocked(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
+func checkTableLocked(tbInfo *model.TableInfo, lockTp model.TableLockType, sessionInfo model.SessionInfo) error {
 	if tbInfo.Lock == nil || len(tbInfo.Lock.Sessions) == 0 {
-		tbInfo.Lock = &model.TableLockInfo{
-			Tp: arg.LockTables[idx].Tp,
-		}
 		return nil
 	}
 	// remove this?
 	if tbInfo.Lock.State == model.TableLockStatePreLock {
 		return nil
 	}
-	if tbInfo.Lock.Tp == model.TableLockRead && arg.LockTables[idx].Tp == model.TableLockRead {
+	if tbInfo.Lock.Tp == model.TableLockRead && lockTp == model.TableLockRead {
 		return nil
 	}
-	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg)
+	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, sessionInfo)
 	// repeat lock.
 	if sessionIndex >= 0 {
-		if tbInfo.Lock.Tp == arg.LockTables[idx].Tp {
+		if tbInfo.Lock.Tp == lockTp {
 			return nil
 		}
 		if len(tbInfo.Lock.Sessions) == 1 {
@@ -227,9 +222,7 @@ func onUnlockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	ver, err = unlockTableReq(t, job, arg)
 
 	if arg.IndexOfUnlock == len(arg.UnlockTables) {
-		// Do not use FinishTableJob function, no need to write binlog?
-		job.State = model.JobStateDone
-		job.SchemaState = model.StateNone
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, nil)
 	}
 	return ver, err
 }

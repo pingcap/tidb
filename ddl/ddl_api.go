@@ -3111,6 +3111,10 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 
 	lockTables := make([]model.TableLockTpInfo, 0, len(stmt.TableLocks))
 	is := d.infoHandle.Get()
+	sessionInfo := model.SessionInfo{
+		ServerID:  d.GetID(),
+		SessionID: ctx.GetSessionVars().ConnectionID,
+	}
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
 		schema, ok := is.SchemaByName(tb.Schema)
@@ -3121,6 +3125,10 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		if err != nil {
 			return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(tb.Schema, tb.Name))
 		}
+		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
+		if err != nil {
+			return err
+		}
 		lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: tl.Type})
 	}
 
@@ -3129,10 +3137,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	arg := &lockTablesArg{
 		LockTables:   lockTables,
 		UnlockTables: unlockTables,
-		SessionInfo: model.SessionInfo{
-			ServerID:  d.GetID(),
-			SessionID: ctx.GetSessionVars().ConnectionID,
-		},
+		SessionInfo:  sessionInfo,
 	}
 
 	job := &model.Job{

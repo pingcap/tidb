@@ -1751,13 +1751,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		// Recover table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.LockTablesStmt:
-		for _, tl := range v.TableLocks {
-			if tl.Type == model.TableLockRead {
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tl.Table.Schema.L, tl.Table.Name.L, "", infoschema.ErrTableLocked)
-			} else {
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, tl.Table.Schema.L, tl.Table.Name.L, "", infoschema.ErrTableLocked)
-			}
-		}
+		// do nothing.
 	}
 	p := &DDL{Statement: node}
 	return p, nil

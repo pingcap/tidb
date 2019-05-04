@@ -14,6 +14,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/lock"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -91,6 +92,18 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 				return ErrPrivilegeCheckFail
 			}
 			return v.err
+		}
+	}
+	return nil
+}
+
+// CheckTableLock checks the table lock.
+func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visitInfo) error {
+	checker := lock.NewLockChecker(ctx, is)
+	for i := range vs {
+		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

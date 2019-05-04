@@ -211,8 +211,13 @@ func (s *session) GetAllTableLocks() []model.TableLockTpInfo {
 	for _, tl := range s.lockedTables {
 		lockTpInfo = append(lockTpInfo, tl)
 	}
-	fmt.Printf("dbTB: %v\n--------\n\n", lockTpInfo)
 	return lockTpInfo
+}
+
+// HasLockedTables uses to check whether this session locked any tables.
+// If so, the session can only visit the table which locked by self.
+func (s *session) HasLockedTables() bool {
+	return len(s.lockedTables) > 0
 }
 
 // ReleaseAllTableLocks releases all table locks hold by the session.

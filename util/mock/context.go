@@ -234,6 +234,11 @@ func (s *Context) GetAllTableLocks() []model.TableLockTpInfo {
 func (s *Context) ReleaseAllTableLocks() {
 }
 
+// HasLockedTables implements the sessionctx.Context interface.
+func (s *Context) HasLockedTables() bool {
+	return true
+}
+
 // Close implements the sessionctx.Context interface.
 func (s *Context) Close() {
 }

@@ -197,7 +197,7 @@ func testLockTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblI
 	c.Assert(err, IsNil)
 
 	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v})
 	return job
 }
 
