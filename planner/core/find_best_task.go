@@ -806,6 +806,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if prop.ExpectedCnt < ds.stats.RowCount {
 		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, candidate.isMatchProp && prop.Items[0].Desc)
 		if ok {
+			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
+			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
+			// for one region now, so even if it is `limit 1`, we have to scan at least one region in table scan.
+			// Currently, we can use `tikvrpc.CmdDebugGetRegionProperties` interface as `getSampRegionsRowCount()` does
+			// to get the row count in a region, but that result contains MVCC old version rows, so it is not that accurate.
+			// Considering that when this scenario happens, the execution time is close between IndexScan and TableScan,
+			// we do not add this check temporarily.
 			rowCount = count
 		} else if corr < 1 {
 			correlationFactor := math.Pow(1-corr, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
