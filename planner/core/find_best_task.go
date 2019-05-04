@@ -619,33 +619,35 @@ func splitIndexFilterConditions(conditions []expression.Expression, indexColumns
 }
 
 // getMostCorrColFromExprs checks if column in the condition is correlated enough with handle. If the condition
-// contains multiple columns, choose the most correlated one, and compute an overall correlation factor by multiplying
-// single factors.
+// contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
 func getMostCorrColFromExprs(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	compCorr := 1.0
+	colSet := make(map[int64]interface{})
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		hist, ok := histColl.Columns[col.ID]
-		if !ok {
-			return nil, 0
-		}
-		curCorr := math.Abs(hist.Correlation)
-		compCorr *= curCorr
-		if curCorr < threshold {
+		if _, ok := colSet[col.UniqueID]; ok {
 			continue
 		}
+		colSet[col.UniqueID] = col
+		hist, ok := histColl.Columns[col.ID]
+		if !ok {
+			continue
+		}
+		curCorr := math.Abs(hist.Correlation)
 		if corrCol == nil || corr < curCorr {
 			corrCol = col
 			corr = curCorr
 		}
 	}
-	return corrCol, compCorr
+	if len(colSet) == 1 && corr >= threshold {
+		return corrCol, corr
+	}
+	return nil, corr
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
