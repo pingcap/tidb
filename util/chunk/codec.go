@@ -65,7 +65,7 @@ func (c *Codec) encodeColumn(buffer []byte, col *column) []byte {
 
 	// encode offsets.
 	if !col.isFixed() {
-		numOffsetBytes := (col.length + 1) * 4
+		numOffsetBytes := (col.length + 1) * 8
 		offsetBytes := c.i64SliceToBytes(col.offsets)
 		buffer = append(buffer, offsetBytes[:numOffsetBytes]...)
 	}
@@ -80,7 +80,7 @@ func (c *Codec) i64SliceToBytes(i64s []int64) (b []byte) {
 		return nil
 	}
 	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	hdr.Len = len(i64s) * 4
+	hdr.Len = len(i64s) * 8
 	hdr.Cap = hdr.Len
 	hdr.Data = uintptr(unsafe.Pointer(&i64s[0]))
 	return b
@@ -125,12 +125,12 @@ func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained 
 
 	// decode offsets.
 	numFixedBytes := getFixedLen(c.colTypes[ordinal])
-	numDataBytes := numFixedBytes * col.length
+	numDataBytes := int64(numFixedBytes * col.length)
 	if numFixedBytes == -1 {
-		numOffsetBytes := (col.length + 1) * 4
+		numOffsetBytes := (col.length + 1) * 8
 		col.offsets = append(col.offsets[:0], c.bytesToI64Slice(buffer[:numOffsetBytes])...)
 		buffer = buffer[numOffsetBytes:]
-		numDataBytes = int(col.offsets[col.length])
+		numDataBytes = col.offsets[col.length]
 	} else if cap(col.elemBuf) < numFixedBytes {
 		col.elemBuf = make([]byte, numFixedBytes)
 	}
