@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -271,6 +272,8 @@ func (s *testSuite2) TestSetVar(c *C) {
 
 	tk.MustExec("set tidb_query_log_max_len = 0")
 	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_query_log_max_len = 20")
+	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("20"))
 	_, err = tk.Exec("set global tidb_query_log_max_len = 20")
 	c.Assert(err, NotNil)
 
