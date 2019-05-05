@@ -1091,11 +1091,4 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		"    └─Selection_20 6.00 cop gt(test.t.c, 0)",
 		"      └─TableScan_19 6.00 cop table:t, keep order:false",
 	))
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 or c > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"Limit_11 1.00 root offset:0, count:1",
-		"└─TableReader_24 1.00 root data:Limit_23",
-		"  └─Limit_23 1.00 cop offset:0, count:1",
-		"    └─Selection_22 1.00 cop or(eq(test.t.b, 2), gt(test.t.c, 0))",
-		"      └─TableScan_21 1.25 cop table:t, range:[-inf,+inf], keep order:true",
-	))
 }
