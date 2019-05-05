@@ -305,7 +305,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
 	// See "https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_allowed_packet"
 	case MaxAllowedPacket:
-		return checkUInt64SystemVar(name, value, 1024, 1073741824, vars)
+		return checkUInt64SystemVar(name, value, 1024, MaxOfMaxAllowedPacket, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:

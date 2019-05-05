@@ -81,19 +81,12 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 	return ParseSlowLog(tz, bufio.NewReader(file))
 }
 
-const maxSingleLineLength = 1024 * 1024 * 1024
-
 // ParseSlowLog exports for testing.
 // TODO: optimize for parse huge log-file.
 func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, error) {
 	var rows [][]types.Datum
 	startFlag := false
 	var st *slowQueryTuple
-	// Adjust buffer size.
-	//if atomic.LoadUint64(&config.QueryLogMaxLenRecord) > (bufio.MaxScanTokenSize - 100) {
-	//	maxBuf := int(atomic.LoadUint64(&config.QueryLogMaxLenRecord) + 100)
-	//	scanner.Buffer([]byte{}, maxBuf)
-	//}
 	var tempLine []byte
 	for {
 		lineByte, isPrefix, err := reader.ReadLine()
@@ -112,8 +105,8 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 				return rows, err
 			}
 			lineByte = append(lineByte, tempLine...)
-			if len(lineByte) > maxSingleLineLength {
-				return rows, errors.Errorf("single line length exceeds limit: %v", maxSingleLineLength)
+			if len(lineByte) > int(variable.MaxOfMaxAllowedPacket) {
+				return rows, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
 			}
 		}
 		line := string(hack.String(lineByte))
