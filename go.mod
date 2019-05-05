@@ -14,7 +14,6 @@ require (
 	github.com/coreos/pkg v0.0.0-20160727233714-3ac0863d7acf // indirect
 	github.com/cznic/mathutil v0.0.0-20160613104831-78ad7f262603
 	github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
-	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/dustin/go-humanize v0.0.0-20180421182945-02af3965c54e // indirect
 	github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385 // indirect
@@ -45,7 +44,7 @@ require (
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.1
-	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
+	github.com/pingcap/failpoint v0.0.0-20190430075617-bf45ab20bfc4
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20190226063853-f6c0b7ffff11
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
@@ -59,7 +58,6 @@ require (
 	github.com/prometheus/procfs v0.0.0-20180408092902-8b1c2da0d56d // indirect
 	github.com/sirupsen/logrus v0.0.0-20170323161349-3bcb09397d6d
 	github.com/spaolacci/murmur3 v0.0.0-20150829172844-0d12bf811670
-	github.com/tiancaiamao/debugger v0.0.0-20190428065433-3a10ffa41d22
 	github.com/twinj/uuid v0.0.0-20150629100731-70cac2bcd273
 	github.com/uber/jaeger-client-go v2.8.0+incompatible
 	github.com/uber/jaeger-lib v1.1.0 // indirect

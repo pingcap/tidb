@@ -296,7 +296,7 @@ func (s *testSuite) TestSlowQuery(c *C) {
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	c.Assert(err, IsNil)
 	defer os.Remove(slowLogFileName)
-	_, err = f.Write([]byte(`# Time: 2019-02-12-19:33:56.571953 +0800
+	_, err = f.Write([]byte(`# Time: 2019-02-12T19:33:56.571953+08:00
 # Txn_start_ts: 406315658548871171
 # User: root@127.0.0.1
 # Conn_ID: 6
