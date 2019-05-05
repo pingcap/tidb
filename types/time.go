@@ -1474,7 +1474,7 @@ func checkDateRange(t MysqlTime) error {
 
 func checkMonthDay(year, month, day int, allowInvalidDate bool) error {
 	if month < 0 || month > 12 {
-		return errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(month))
+		return errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(month))
 	}
 
 	maxDay := 31
@@ -1482,13 +1482,13 @@ func checkMonthDay(year, month, day int, allowInvalidDate bool) error {
 		if month > 0 {
 			maxDay = maxDaysInMonth[month-1]
 		}
-		if month == 2 && year%4 != 0 {
+		if month == 2 && (year%4 != 0 || (year%100 == 0 && year%400 != 0)) {
 			maxDay = 28
 		}
 	}
 
 	if day < 0 || day > maxDay {
-		return errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(day))
+		return errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(day))
 	}
 	return nil
 }
