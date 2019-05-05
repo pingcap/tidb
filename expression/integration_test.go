@@ -898,7 +898,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 
 	// for convert
-	result = tk.MustQuery(`select convert("123" using "866"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
+	result = tk.MustQuery(`select convert("123" using "binary"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
 	result.Check(testkit.Rows("123 123 中文 中文 中文 中文"))
 
 	// for insert
@@ -2286,11 +2286,8 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("ad\x01\x00Y"))
 	result = tk.MustQuery("select char(97, null, 100, 256, 89 using ascii)")
 	result.Check(testkit.Rows("ad\x01\x00Y"))
-	charRecordSet, err := tk.Exec("select char(97, null, 100, 256, 89 using tidb)")
-	c.Assert(err, IsNil)
-	c.Assert(charRecordSet, NotNil)
-	_, err = session.GetRows4Test(ctx, tk.Se, charRecordSet)
-	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
+	_, err = tk.Exec("select char(97, null, 100, 256, 89 using tidb)")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'tidb'")
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")

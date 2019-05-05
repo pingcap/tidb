@@ -192,6 +192,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 				// schema is not public, can't be used outside.
 				continue
 			}
+			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			di.Tables = append(di.Tables, tbl)
 		}
 	}
