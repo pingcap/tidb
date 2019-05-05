@@ -2756,18 +2756,19 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
-	defer tk.MustExec("drop table if exists t1,t2")
+	defer tk.MustExec("unlock tables; drop table if exists t1,t2")
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
+
+	// Test lock 1 table.
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
 	tk.MustExec("lock tables t1 read")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockRead)
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-	tk.MustExec("unlock tables")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 
+	// Test lock multi tables.
 	tk.MustExec("lock tables t1 write, t2 read")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
 	checkTableLock(c, tk.Se, "test", "t2", model.TableLockRead)
@@ -2780,9 +2781,63 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
 	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
-	tk.MustExec("unlock tables")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	defer tk2.MustExec("unlock tables")
+
+	// Test read lock.
+	tk.MustExec("lock tables t1 read")
+	tk.MustQuery("select * from t1")
+	tk2.MustExec("select * from t1")
+	_, err := tk.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+	_, err = tk.Exec("update t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+	_, err = tk.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("update t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk2.MustExec("lock tables t1 read")
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+
+	// Test write lock.
+	_, err = tk.Exec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk2.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write")
+	tk.MustQuery("select * from t1")
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a=1")
+
+	_, err = tk2.Exec("select * from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	// Test write local lock.
+	tk.MustExec("lock tables t1 write local")
+	tk.MustQuery("select * from t1")
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a=1")
+
+	tk2.MustQuery("select * from t1")
+	_, err = tk2.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 read")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
 }
 
 func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {
