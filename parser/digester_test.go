@@ -50,6 +50,7 @@ func (s *testSQLDigestSuite) TestNormalize(c *C) {
 		// test syntax error, it will be checked by parser, but it should not make normalize dead loop.
 		{"select * from t ignore index(", "select * from t ignore index"},
 		{"select /*+ ", "select "},
+		{"select * from 🥳", "select * from"},
 	}
 	for _, test := range tests {
 		actual := parser.Normalize(test.input)
