@@ -298,6 +298,28 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 	return nil
 }
 
+// MergeCMSketch4IncrementalAnalyze merges two CM Sketch for incremental analyze.
+// Since there is no value that appears partially in `c` and `rc`, we can just
+// merge them using `max` operations.
+func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch) error {
+	if c.depth != rc.depth || c.width != rc.width {
+		return errors.New("Dimensions of Count-Min Sketch should be the same")
+	}
+	if c.topN != nil || rc.topN != nil {
+		return errors.New("CMSketch with Top-N does not support merge")
+	}
+	for i := range c.table {
+		for j := range c.table[i] {
+			c.table[i][j] = mathutil.MaxUint32(c.table[i][j], rc.table[i][j])
+		}
+	}
+	c.count = 0
+	for i := range c.table[0] {
+		c.count += uint64(c.table[0][i])
+	}
+	return nil
+}
+
 // CMSketchToProto converts CMSketch to its protobuf representation.
 func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 	protoSketch := &tipb.CMSketch{Rows: make([]*tipb.CMSketchRow, c.depth)}

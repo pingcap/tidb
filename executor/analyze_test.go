@@ -24,9 +24,13 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -303,4 +307,36 @@ func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	tk.MustExec("analyze incremental table t index")
 	// Result should not change.
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 2 1 2 2", "test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2"))
+
+	// Test analyze incremental with feedback.
+	tk.MustExec("insert into t values (3,3)")
+	oriProbability := statistics.FeedbackProbability.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+	}()
+	statistics.FeedbackProbability.Store(1)
+	is := s.dom.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	tk.MustQuery("select * from t use index(idx) where b = 3")
+	tk.MustQuery("select * from t where a > 1")
+	h := s.dom.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(is), IsNil)
+	h.Update(is)
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 3 0 2 2147483647", "test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2"))
+	tblStats := h.GetTableStats(tblInfo)
+	val, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
+	c.Assert(err, IsNil)
+	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(val), Equals, uint64(1))
+	c.Assert(statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag), IsFalse)
+	c.Assert(statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag), IsFalse)
+
+	tk.MustExec("analyze incremental table t index")
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 2 1 2 2", "test t  a 0 2 3 1 3 3",
+		"test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2", "test t  idx 1 2 3 1 3 3"))
+	tblStats = h.GetTableStats(tblInfo)
+	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(val), Equals, uint64(1))
 }
