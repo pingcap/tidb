@@ -1225,7 +1225,7 @@ func (ctx *ctxForPartitionExpr) ReleaseAllTableLocks() {
 
 // HasLockedTables implements the sessionctx.Context interface.
 func (s *ctxForPartitionExpr) HasLockedTables() bool {
-	return true
+	return false
 }
 
 // Close implements the sessionctx.Context interface.

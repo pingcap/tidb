@@ -236,7 +236,7 @@ func (s *Context) ReleaseAllTableLocks() {
 
 // HasLockedTables implements the sessionctx.Context interface.
 func (s *Context) HasLockedTables() bool {
-	return true
+	return false
 }
 
 // Close implements the sessionctx.Context interface.

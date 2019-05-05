@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
@@ -28,7 +27,6 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	fmt.Printf("on lock table: arg: %#v\n---------\n\n", arg)
 
 	// Unlock table first.
 	if arg.IndexOfUnlock < len(arg.UnlockTables) {
@@ -217,7 +215,6 @@ func onUnlockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	fmt.Printf("on unlock table: arg: %#v\n---------\n\n", arg)
 
 	ver, err = unlockTableReq(t, job, arg)
 

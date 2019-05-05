@@ -2780,6 +2780,9 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
 	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
+	tk.MustExec("unlock tables")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
 }
 
 func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {
