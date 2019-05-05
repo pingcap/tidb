@@ -58,10 +58,12 @@ var (
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
 	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
-
+	// ErrTableNotLockedForWrite returns for write tables when only hold the table read lock.
 	ErrTableNotLockedForWrite = terror.ClassOptimizer.New(codeErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
-	ErrTableNotLocked         = terror.ClassOptimizer.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
-	ErrTableLocked            = terror.ClassOptimizer.New(codeTableLocked, "Table '%s' was locked in %s by %v")
+	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
+	ErrTableNotLocked = terror.ClassOptimizer.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
+	// ErrTableLocked returns when the table was locked by other session.
+	ErrTableLocked = terror.ClassOptimizer.New(codeTableLocked, "Table '%s' was locked in %s by %v")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.

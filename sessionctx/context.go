@@ -16,6 +16,7 @@ package sessionctx
 import (
 	"context"
 	"fmt"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -85,13 +86,15 @@ type Context interface {
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.
 	AddTableLock([]model.TableLockTpInfo)
+	// ReleaseTableLock releases table lock in the session lock map.
+	ReleaseTableLock(locks []model.TableLockTpInfo)
 	// CheckTableLocked checks the table lock.
 	CheckTableLocked(tblID int64) (bool, model.TableLockType)
-
+	// GetAllTableLocks gets all table locks table id and db id hold by the session.
 	GetAllTableLocks() []model.TableLockTpInfo
-
+	// ReleaseAllTableLocks releases all table locks hold by the session.
 	ReleaseAllTableLocks()
-
+	// HasLockedTables uses to check whether this session locked any tables.
 	HasLockedTables() bool
 }
 

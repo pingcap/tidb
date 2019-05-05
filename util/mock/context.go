@@ -17,11 +17,11 @@ package mock
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/parser/model"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
@@ -218,6 +218,10 @@ func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []typ
 
 // AddTableLock implements the sessionctx.Context interface.
 func (s *Context) AddTableLock(_ []model.TableLockTpInfo) {
+}
+
+// ReleaseTableLock implements the sessionctx.Context interface.
+func (s *Context) ReleaseTableLock(locks []model.TableLockTpInfo) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.

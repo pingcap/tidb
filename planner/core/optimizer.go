@@ -14,7 +14,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/lock"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/lock"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"

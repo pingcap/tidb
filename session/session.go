@@ -196,6 +196,13 @@ func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	}
 }
 
+// ReleaseTableLock releases table lock in the session lock map.
+func (s *session) ReleaseTableLock(locks []model.TableLockTpInfo) {
+	for _, l := range locks {
+		delete(s.lockedTables, l.TableID)
+	}
+}
+
 // CheckTableLocked checks the table lock.
 func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
 	lt, ok := s.lockedTables[tblID]

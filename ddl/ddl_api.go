@@ -3122,16 +3122,13 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 }
 
 func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
-	//if len(stmt.TableLocks) > 1 {
-	//	return errors.New("Currently only support lock 1 table at the same time")
-	//}
-
 	lockTables := make([]model.TableLockTpInfo, 0, len(stmt.TableLocks))
 	is := d.infoHandle.Get()
 	sessionInfo := model.SessionInfo{
 		ServerID:  d.GetID(),
 		SessionID: ctx.GetSessionVars().ConnectionID,
 	}
+	// Check whether the table was already locked by other.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
 		schema, ok := is.SchemaByName(tb.Schema)
@@ -3150,7 +3147,6 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	}
 
 	unlockTables := ctx.GetAllTableLocks()
-
 	arg := &lockTablesArg{
 		LockTables:   lockTables,
 		UnlockTables: unlockTables,
@@ -3164,10 +3160,14 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{arg},
 	}
-	// should check info schema lock.
-	ctx.ReleaseAllTableLocks()
+	// AddTableLock here to avoid this ddl job was execute successful but the session was been kill before return.
 	ctx.AddTableLock(lockTables)
 	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		// TODO: add mutex to avoid concurrency problem.
+		ctx.ReleaseTableLock(unlockTables)
+		ctx.AddTableLock(lockTables)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

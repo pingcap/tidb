@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.SchemaState = model.StateDeleteOnly
 	}
 
-	// Lock table.
+	// Lock tables.
 	if arg.IndexOfLock < len(arg.LockTables) {
 		job.SchemaID = arg.LockTables[arg.IndexOfLock].SchemaID
 		job.TableID = arg.LockTables[arg.IndexOfLock].TableID
@@ -87,7 +87,6 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		default:
 			job.State = model.JobStateCancelled
 			return ver, ErrInvalidTableLockState.GenWithStack("invalid table lock state %v", tbInfo.Lock.State)
-
 		}
 	}
 
@@ -113,7 +112,7 @@ func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) error {
 	return nil
 }
 
-//
+// indexOfLockHolder gets the index of sessionInfo in the sessions. return -1 if sessions doesn't contain sessionInfo.
 func indexOfLockHolder(sessions []model.SessionInfo, sessionInfo model.SessionInfo) int {
 	for i := range sessions {
 		if sessions[i].ServerID == sessionInfo.ServerID && sessions[i].SessionID == sessionInfo.SessionID {
@@ -162,7 +161,6 @@ func checkTableLocked(tbInfo *model.TableInfo, lockTp model.TableLockType, sessi
 	if tbInfo.Lock == nil || len(tbInfo.Lock.Sessions) == 0 {
 		return nil
 	}
-	// remove this?
 	if tbInfo.Lock.State == model.TableLockStatePreLock {
 		return nil
 	}
@@ -176,7 +174,6 @@ func checkTableLocked(tbInfo *model.TableInfo, lockTp model.TableLockType, sessi
 			return nil
 		}
 		if len(tbInfo.Lock.Sessions) == 1 {
-			// just change lock tp directly.
 			return nil
 		}
 	}
@@ -184,27 +181,27 @@ func checkTableLocked(tbInfo *model.TableInfo, lockTp model.TableLockType, sessi
 }
 
 func unlockTableReq(t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, err error) {
-	// Unlock table first.
-	if arg.IndexOfUnlock < len(arg.UnlockTables) {
-		job.SchemaID = arg.UnlockTables[arg.IndexOfUnlock].SchemaID
-		job.TableID = arg.UnlockTables[arg.IndexOfUnlock].TableID
-		tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-		if err != nil {
-			return ver, err
-		}
-		err = unlockTable(tbInfo, arg)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		arg.IndexOfUnlock++
-		job.Args = []interface{}{arg}
-		job.SchemaState = model.StateDeleteOnly
+	if arg.IndexOfUnlock >= len(arg.UnlockTables) {
+		return ver, nil
 	}
+	job.SchemaID = arg.UnlockTables[arg.IndexOfUnlock].SchemaID
+	job.TableID = arg.UnlockTables[arg.IndexOfUnlock].TableID
+	tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, err
+	}
+	err = unlockTable(tbInfo, arg)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	arg.IndexOfUnlock++
+	job.Args = []interface{}{arg}
+	job.SchemaState = model.StateDeleteOnly
 	return ver, nil
 }
 
@@ -222,13 +219,4 @@ func onUnlockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, nil)
 	}
 	return ver, err
-}
-
-func hasServerAndSessionID(sessions []model.SessionInfo, serverID string, sessionID uint64) bool {
-	for i := range sessions {
-		if sessions[i].ServerID == serverID && sessions[i].SessionID == sessionID {
-			return true
-		}
-	}
-	return false
 }

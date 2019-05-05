@@ -864,6 +864,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
+
 		s.ctx.GetSessionVars().HashJoinConcurrency = 1
 		Preprocess(s.ctx, stmt, s.is)
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)

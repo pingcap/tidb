@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ func (c *LockChecker) CheckTableLock(db, table string, privilege mysql.Privilege
 		return nil
 	}
 	tb, err := c.is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	// TODO: remove this?
+	// TODO: remove this
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil
 	}
