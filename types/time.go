@@ -1616,21 +1616,39 @@ func ExtractDurationNum(d *Duration, unit string) (int64, error) {
 }
 
 func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int64, error) {
-	fv, err := strconv.ParseFloat(format, 64)
+	// As format is a preformatted number, it format should be A[.[B]].
+	decimalPointPos := strings.IndexRune(format, '.')
+	if decimalPointPos == -1 {
+		decimalPointPos = len(format)
+	}
+	iv, err := strconv.ParseInt(format[0:decimalPointPos], 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
 	}
-	iv := int64(math.Round(fv))
 
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
 		dayCount := iv / (3600000000 * 24)
-		fv -= float64(dayCount * 3600000000 * 24)
-		return 0, 0, dayCount, int64(fv * float64(gotime.Microsecond)), nil
+		iv %= 3600000000 * 24
+		return 0, 0, dayCount, iv * int64(gotime.Microsecond), nil
 	case "SECOND":
 		dayCount := iv / (3600 * 24)
-		fv -= float64(dayCount * 3600 * 24)
-		return 0, 0, dayCount, int64(fv * float64(gotime.Second)), nil
+		iv %= 3600 * 24
+		dv := int64(0)
+		lf := len(format) - 1
+		// Has fractional part
+		if decimalPointPos < lf {
+			if lf-decimalPointPos >= 6 {
+				if dv, err = strconv.ParseInt(format[decimalPointPos+1:decimalPointPos+7], 10, 64); err != nil {
+					return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+				}
+			} else {
+				if dv, err = strconv.ParseInt(format[decimalPointPos+1:]+"000000"[:6-(lf-decimalPointPos)], 10, 64); err != nil {
+					return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+				}
+			}
+		}
+		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), nil
 	case "MINUTE":
 		dayCount := iv / (60 * 24)
 		iv %= 60 * 24
