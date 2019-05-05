@@ -1404,7 +1404,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		}
 		oldHist = idx.TruncateHistogram(bktID)
 	}
-	oldHist = idx.Histogram.RemoveUpperBound()
+	oldHist = oldHist.RemoveUpperBound()
 	analyzeTask.taskType = idxIncrementalTask
 	analyzeTask.idxIncrementalExec = &analyzeIndexIncrementalExec{AnalyzeIndexExec: *analyzeTask.idxExec, oldHist: oldHist, oldCMS: idx.CMSketch}
 	analyzeTask.job = &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze incremental index " + task.IndexInfo.Name.O}
