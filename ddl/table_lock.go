@@ -142,18 +142,8 @@ func checkAndLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) err
 		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, arg.SessionInfo)
 		return nil
 	}
-	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg.SessionInfo)
-	// repeat lock.
-	if sessionIndex >= 0 {
-		if tbInfo.Lock.Tp == arg.LockTables[idx].Tp {
-			return nil
-		}
-		if len(tbInfo.Lock.Sessions) == 1 {
-			// just change lock tp directly.
-			tbInfo.Lock.Tp = arg.LockTables[idx].Tp
-			return nil
-		}
-	}
+	// Unlock tables should execute before lock tables, so arg.SessionInfo in tbInfo.Lock.Sessions here is impossible.
+
 	return infoschema.ErrTableLocked.GenWithStackByArgs(tbInfo.Name.L, tbInfo.Lock.Tp, tbInfo.Lock.Sessions[0])
 }
 
