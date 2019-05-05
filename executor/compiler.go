@@ -121,8 +121,8 @@ func needLowerPriority(p plannercore.Plan) bool {
 }
 
 func isPhysicalPlanNeedLowerPriority(p plannercore.PhysicalPlan) bool {
-	lowerPriorityThreshold := int64(config.GetGlobalConfig().Log.LowerPriorityThreshold)
-	if int64(p.StatsCount()) > lowerPriorityThreshold {
+	expensiveThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
+	if int64(p.StatsCount()) > expensiveThreshold {
 		return true
 	}
 

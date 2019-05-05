@@ -868,9 +868,9 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	// Insert some data to make sure plan build IndexLookup for t.
 	tk.MustExec("insert into t values (1), (2)")
 
-	oldThreshold := config.GetGlobalConfig().Log.LowerPriorityThreshold
-	config.GetGlobalConfig().Log.LowerPriorityThreshold = 0
-	defer func() { config.GetGlobalConfig().Log.LowerPriorityThreshold = oldThreshold }()
+	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
+	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
+	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
 
 	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")

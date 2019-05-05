@@ -389,7 +389,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBDistSQLScanConcurrency,
 		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
 		TiDBBackoffLockFast,
-		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:
+		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel, TiDBExpensiveQueryTimeThreshold:
 		v, err := strconv.Atoi(value)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)

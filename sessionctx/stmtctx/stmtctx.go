@@ -488,6 +488,7 @@ type CopTasksDetails struct {
 	MaxWaitTime    time.Duration
 }
 
+// ToZapFields wraps the CopTasksDetails as zap.Fileds.
 func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	if d.NumCopTasks == 0 {
 		return

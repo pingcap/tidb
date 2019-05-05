@@ -196,6 +196,7 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	buffer.WriteString(indent + "}\n")
 }
 
+// BytesToString converts the memory consumption to a readable string.
 func (t *Tracker) BytesToString(numBytes int64) string {
 	GB := float64(numBytes) / float64(1<<30)
 	if GB > 1 {

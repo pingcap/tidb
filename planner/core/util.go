@@ -128,6 +128,7 @@ func buildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 	return expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
 }
 
+// GetStatsInfo gets the statistics info from a physical plan tree.
 func GetStatsInfo(p Plan) map[string]uint64 {
 	var physicalPlan PhysicalPlan
 	switch x := p.(type) {

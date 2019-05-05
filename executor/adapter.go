@@ -450,6 +450,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 }
 
+// LogExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
 func LogExpensiveQuery(ctx context.Context, sctx sessionctx.Context, ticker *time.Ticker, p plannercore.Plan, sql string) {
 	level := log.GetLevel()
 	if level > zapcore.WarnLevel {

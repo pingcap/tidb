@@ -1646,6 +1646,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBDisableTxnAutoRetry,
 	variable.TiDBEnableWindowFunction,
 	variable.TiDBEnableFastAnalyze,
+	variable.TiDBExpensiveQueryTimeThreshold,
 }
 
 var (

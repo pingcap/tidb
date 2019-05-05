@@ -129,6 +129,7 @@ func (d ExecDetails) String() string {
 	return strings.Join(parts, " ")
 }
 
+// ToZapFields wraps the ExecDetails as zap.Fields.
 func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	fields = make([]zap.Field, 0, 16)
 	if d.ProcessTime > 0 {
