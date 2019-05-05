@@ -71,6 +71,9 @@ type Client interface {
 }
 
 type connArray struct {
+	// The target host.
+	target string
+
 	index uint32
 	v     []*grpc.ClientConn
 	// streamTimeout binds with a background goroutine to process coprocessor streaming timeout.
@@ -83,6 +86,9 @@ type connArray struct {
 }
 
 type batchCommandsClient struct {
+	// The target host.
+	target string
+
 	conn                   *grpc.ClientConn
 	client                 tikvpb.Tikv_BatchCommandsClient
 	batched                sync.Map
@@ -132,7 +138,11 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				if c.isStopped() {
 					return
 				}
-				logutil.Logger(context.Background()).Error("batchRecvLoop error when receive", zap.Error(err))
+				logutil.Logger(context.Background()).Error(
+					"batchRecvLoop error when receive",
+					zap.String("target", c.target),
+					zap.Error(err),
+				)
 
 				// Hold the lock to forbid batchSendLoop using the old client.
 				c.clientLock.Lock()
@@ -144,11 +154,18 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				c.clientLock.Unlock()
 
 				if err == nil {
-					logutil.Logger(context.Background()).Info("batchRecvLoop re-create streaming success")
+					logutil.Logger(context.Background()).Info(
+						"batchRecvLoop re-create streaming success",
+						zap.String("target", c.target),
+					)
 					c.client = streamClient
 					break
 				}
-				logutil.Logger(context.Background()).Error("batchRecvLoop re-create streaming fail", zap.Error(err))
+				logutil.Logger(context.Background()).Error(
+					"batchRecvLoop re-create streaming fail",
+					zap.String("target", c.target),
+					zap.Error(err),
+				)
 				// TODO: Use a more smart backoff strategy.
 				time.Sleep(time.Second)
 			}
@@ -199,6 +216,8 @@ func newConnArray(maxSize uint, addr string, security config.Security) (*connArr
 }
 
 func (a *connArray) Init(addr string, security config.Security) error {
+	a.target = addr
+
 	opt := grpc.WithInsecure()
 	if len(security.ClusterSSLCA) != 0 {
 		tlsConfig, err := security.ToTLSConfig()
@@ -257,6 +276,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				return errors.Trace(err)
 			}
 			batchClient := &batchCommandsClient{
+				target:                 a.target,
 				conn:                   conn,
 				client:                 streamClient,
 				batched:                sync.Map{},
@@ -454,7 +474,11 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		err := batchCommandsClient.client.Send(request)
 		batchCommandsClient.clientLock.Unlock()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("batch commands send error", zap.Error(err))
+			logutil.Logger(context.Background()).Error(
+				"batch commands send error",
+				zap.String("target", a.target),
+				zap.Error(err),
+			)
 			batchCommandsClient.failPendingRequests(err)
 		}
 	}
