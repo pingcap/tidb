@@ -19,7 +19,7 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
@@ -2199,9 +2199,9 @@ func (s *testSuite) TestAutoIDInRetry(c *C) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	gofail.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	gofail.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
