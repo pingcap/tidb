@@ -3164,7 +3164,6 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	ctx.AddTableLock(lockTables)
 	err := d.doDDLJob(ctx, job)
 	if err == nil {
-		// TODO: add mutex to avoid concurrency problem.
 		ctx.ReleaseTableLock(unlockTables)
 		ctx.AddTableLock(lockTables)
 	}

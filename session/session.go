@@ -186,26 +186,35 @@ type session struct {
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
 	// lockedTables use to record the table locks hold by the session.
-	lockedTables map[int64]model.TableLockTpInfo
+	lockedTables struct {
+		sync.RWMutex
+		holdLocks map[int64]model.TableLockTpInfo
+	}
 }
 
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
+	s.lockedTables.Lock()
 	for _, l := range locks {
-		s.lockedTables[l.TableID] = l
+		s.lockedTables.holdLocks[l.TableID] = l
 	}
+	s.lockedTables.Unlock()
 }
 
 // ReleaseTableLock releases table lock in the session lock map.
 func (s *session) ReleaseTableLock(locks []model.TableLockTpInfo) {
+	s.lockedTables.Lock()
 	for _, l := range locks {
-		delete(s.lockedTables, l.TableID)
+		delete(s.lockedTables.holdLocks, l.TableID)
 	}
+	s.lockedTables.Unlock()
 }
 
 // CheckTableLocked checks the table lock.
 func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
-	lt, ok := s.lockedTables[tblID]
+	s.lockedTables.RLock()
+	defer s.lockedTables.RUnlock()
+	lt, ok := s.lockedTables.holdLocks[tblID]
 	if !ok {
 		return false, model.TableLockNone
 	}
@@ -214,22 +223,29 @@ func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
 
 // GetAllTableLocks gets all table locks table id and db id hold by the session.
 func (s *session) GetAllTableLocks() []model.TableLockTpInfo {
-	lockTpInfo := make([]model.TableLockTpInfo, 0, len(s.lockedTables))
-	for _, tl := range s.lockedTables {
+	s.lockedTables.RLock()
+	lockTpInfo := make([]model.TableLockTpInfo, 0, len(s.lockedTables.holdLocks))
+	for _, tl := range s.lockedTables.holdLocks {
 		lockTpInfo = append(lockTpInfo, tl)
 	}
+	s.lockedTables.RUnlock()
 	return lockTpInfo
 }
 
 // HasLockedTables uses to check whether this session locked any tables.
 // If so, the session can only visit the table which locked by self.
 func (s *session) HasLockedTables() bool {
-	return len(s.lockedTables) > 0
+	s.lockedTables.RLock()
+	b := len(s.lockedTables.holdLocks) > 0
+	s.lockedTables.RUnlock()
+	return b
 }
 
 // ReleaseAllTableLocks releases all table locks hold by the session.
 func (s *session) ReleaseAllTableLocks() {
-	s.lockedTables = make(map[int64]model.TableLockTpInfo)
+	s.lockedTables.Lock()
+	s.lockedTables.holdLocks = make(map[int64]model.TableLockTpInfo)
+	s.lockedTables.Unlock()
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -1323,7 +1339,7 @@ func (s *session) ClearValue(key fmt.Stringer) {
 // Close function does some clean work when session end.
 // Close should release the table locks which hold by the session.
 func (s *session) Close() {
-	if len(s.lockedTables) > 0 {
+	if s.HasLockedTables() {
 		lockedTables := s.GetAllTableLocks()
 		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
 		if err != nil {
@@ -1579,7 +1595,7 @@ func createSession(store kv.Storage) (*session, error) {
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
-	s.lockedTables = make(map[int64]model.TableLockTpInfo)
+	s.lockedTables.holdLocks = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -1603,7 +1619,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
-	s.lockedTables = make(map[int64]model.TableLockTpInfo)
+	s.lockedTables.holdLocks = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
