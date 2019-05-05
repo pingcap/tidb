@@ -20,7 +20,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/google/btree"
 	"github.com/grpc-ecosystem/go-grpc-middleware/util/backoffutils"
@@ -51,9 +50,22 @@ var (
 
 // Region presents kv region
 type Region struct {
-	meta       *metapb.Region // immutable after fetched from pd
-	_workStore unsafe.Pointer // point to current work store(*Store)
-	lastAccess int64          // last region access time, see checkRegionCacheTTL
+	meta         *metapb.Region // immutable after fetched from pd
+	lastAccess   int64          // last region access time, see checkRegionCacheTTL
+	stores       []*Store       // stores in this region
+	workStoreIdx int32          // point to current work
+}
+
+func (r *Region) initStores(c *RegionCache) {
+	for _, p := range r.meta.Peers {
+		c.storeMu.RLock()
+		store, exists := c.storeMu.stores[p.StoreId]
+		c.storeMu.RUnlock()
+		if !exists {
+			store = c.getStoreByStoreID(p)
+		}
+		r.stores = append(r.stores, store)
+	}
 }
 
 func (r *Region) checkRegionCacheTTL(ts int64) bool {
@@ -418,11 +430,11 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 		region := &Region{
 			meta:       meta,
 			lastAccess: time.Now().Unix(),
+			stores:     make([]*Store, 0, len(meta.Peers)),
 		}
+		region.initStores(c)
 		if leader != nil {
 			c.switchWorkStore(region, leader.StoreId)
-		} else {
-			c.switchFirstStore(region)
 		}
 		return region, nil
 	}
@@ -458,11 +470,11 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 		region := &Region{
 			meta:       meta,
 			lastAccess: time.Now().Unix(),
+			stores:     make([]*Store, 0, len(meta.Peers)),
 		}
+		region.initStores(c)
 		if leader != nil {
 			c.switchWorkStore(region, leader.GetStoreId())
-		} else {
-			c.switchFirstStore(region)
 		}
 		return region, nil
 	}
@@ -477,39 +489,33 @@ func (c *RegionCache) getCachedRegionWithRLock(regionID RegionVerID) (r *Region)
 
 // ensureRegionWorkStore ensures region have workable store and return it.
 func (c *RegionCache) ensureRegionWorkStore(region *Region, ts int64) (workStore *Store) {
+	if len(region.stores) == 0 {
+		return
+	}
 retry:
-	cachedStore := region.WorkStore()
+	cachedStore, cachedIdx := region.WorkStore()
 	if cachedStore != nil && cachedStore.Available(ts) {
 		workStore = cachedStore
 		return
 	}
 
-	var newStore *Store
-	for i := range region.meta.Peers {
-		otherPeer := region.meta.Peers[i]
-		if cachedStore != nil && otherPeer.StoreId == cachedStore.peer.StoreId {
+	newIdx := cachedIdx
+	for i, store := range region.stores {
+		if i == cachedIdx {
 			continue
 		}
-
-		c.storeMu.RLock()
-		peerStore, exists := c.storeMu.stores[otherPeer.StoreId]
-		c.storeMu.RUnlock()
-		if !exists {
-			peerStore = c.getStoreByStoreID(otherPeer)
-		}
-
-		if peerStore.Available(ts) {
-			newStore = peerStore
+		if store.Available(ts) {
+			newIdx = i
 			break
 		}
 	}
-	if newStore == nil {
+	if newIdx == cachedIdx {
 		return
 	}
-	if !atomic.CompareAndSwapPointer(&region._workStore, unsafe.Pointer(cachedStore), unsafe.Pointer(newStore)) {
+	if !atomic.CompareAndSwapInt32(&region.workStoreIdx, int32(cachedIdx), int32(newIdx)) {
 		goto retry
 	}
-	workStore = newStore
+	workStore = region.stores[newIdx]
 	return
 }
 
@@ -593,7 +599,9 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 		region := &Region{
 			meta:       meta,
 			lastAccess: time.Now().Unix(),
+			stores:     make([]*Store, 0, len(meta.Peers)),
 		}
+		region.initStores(c)
 		c.switchWorkStore(region, ctx.Store.peer.GetStoreId())
 		c.insertRegionToCache(region)
 	}
@@ -634,8 +642,10 @@ func (r *Region) GetID() uint64 {
 }
 
 // WorkStore returns current work store.
-func (r *Region) WorkStore() *Store {
-	return (*Store)(atomic.LoadPointer(&r._workStore))
+func (r *Region) WorkStore() (store *Store, idx int) {
+	idx = int(atomic.LoadInt32(&r.workStoreIdx))
+	store = r.stores[idx]
+	return
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
@@ -671,10 +681,11 @@ func (r *Region) EndKey() []byte {
 
 // GetContext constructs kvprotopb.Context from region info.
 func (r *Region) GetContext() *kvrpcpb.Context {
+	store, _ := r.WorkStore()
 	return &kvrpcpb.Context{
 		RegionId:    r.meta.Id,
 		RegionEpoch: r.meta.RegionEpoch,
-		Peer:        r.WorkStore().peer,
+		Peer:        store.peer,
 	}
 }
 
@@ -684,43 +695,19 @@ func (c *RegionCache) switchWorkStore(r *Region, storeID uint64) (foundLeader bo
 	if len(r.meta.Peers) == 0 {
 		return
 	}
-	var leaderPeer *metapb.Peer
-	for i := range r.meta.Peers {
-		p := r.meta.Peers[i]
+	leaderIdx := -1
+	for i, p := range r.meta.Peers {
 		if p.GetStoreId() == storeID {
-			leaderPeer = p
+			leaderIdx = i
 		}
 	}
-	if leaderPeer != nil {
+	if leaderIdx >= 0 {
 		foundLeader = true
 	} else {
-		leaderPeer = r.meta.Peers[0]
+		leaderIdx = 0
 	}
-
-	c.storeMu.RLock()
-	peerStore, exists := c.storeMu.stores[leaderPeer.StoreId]
-	c.storeMu.RUnlock()
-	if !exists {
-		peerStore = c.getStoreByStoreID(leaderPeer)
-	}
-	atomic.StorePointer(&r._workStore, unsafe.Pointer(peerStore))
+	atomic.StoreInt32(&r.workStoreIdx, int32(leaderIdx))
 	return
-}
-
-// switchFirstStore switches current store to first peer
-// it will be used in init region but no leader info
-func (c *RegionCache) switchFirstStore(r *Region) {
-	if len(r.meta.Peers) == 0 {
-		return
-	}
-	leaderPeer := r.meta.Peers[0]
-	c.storeMu.RLock()
-	peerStore, exists := c.storeMu.stores[leaderPeer.StoreId]
-	c.storeMu.RUnlock()
-	if !exists {
-		peerStore = c.getStoreByStoreID(leaderPeer)
-	}
-	atomic.StorePointer(&r._workStore, unsafe.Pointer(peerStore))
 }
 
 // Contains checks whether the key is in the region, for the maximum region endKey is empty.
