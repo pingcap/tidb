@@ -2838,6 +2838,10 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
 	_, err = tk2.Exec("lock tables t1 read")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	// Test none unique table.
+	_, err = tk.Exec("lock tables t1 read, t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrNonuniqTable), IsTrue)
 }
 
 func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {

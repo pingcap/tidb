@@ -62,6 +62,8 @@ var (
 	ErrTableNotLockedForWrite = terror.ClassOptimizer.New(codeErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
 	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
 	ErrTableNotLocked = terror.ClassOptimizer.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
+	// ErrNonuniqTable returns when none unique tables errors.
+	ErrNonuniqTable = terror.ClassOptimizer.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 	// ErrTableLocked returns when the table was locked by other session.
 	ErrTableLocked = terror.ClassOptimizer.New(codeTableLocked, "Table '%s' was locked in %s by %v")
 )
@@ -329,6 +331,7 @@ const (
 
 	codeErrTableNotLockedForWrite = mysql.ErrTableNotLockedForWrite
 	codeErrTableNotLocked         = mysql.ErrTableNotLocked
+	codeErrNonuniqTable           = mysql.ErrNonuniqTable
 )
 
 func init() {
@@ -351,6 +354,7 @@ func init() {
 		codeKeyNotExists:              mysql.ErrKeyDoesNotExist,
 		codeErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
 		codeErrTableNotLocked:         mysql.ErrTableNotLocked,
+		codeErrNonuniqTable:           mysql.ErrNonuniqTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

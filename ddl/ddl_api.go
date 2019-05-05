@@ -3128,6 +3128,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		ServerID:  d.GetID(),
 		SessionID: ctx.GetSessionVars().ConnectionID,
 	}
+	uniqueTableID := make(map[int64]struct{})
 	// Check whether the table was already locked by other.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
@@ -3143,6 +3144,10 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		if err != nil {
 			return err
 		}
+		if _, ok := uniqueTableID[t.Meta().ID]; ok {
+			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
+		}
+		uniqueTableID[t.Meta().ID] = struct{}{}
 		lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: tl.Type})
 	}
 
