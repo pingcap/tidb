@@ -87,27 +87,18 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 	var rows [][]types.Datum
 	startFlag := false
 	var st *slowQueryTuple
-	var tempLine []byte
+	finish := false
 	for {
-		lineByte, isPrefix, err := reader.ReadLine()
-		if err != nil {
-			if err == io.EOF {
-				err = nil
-			}
-			return rows, err
+		if finish {
+			break
 		}
-		for isPrefix {
-			tempLine, isPrefix, err = reader.ReadLine()
-			if err != nil {
-				if err == io.EOF {
-					err = nil
-				}
-				return rows, err
-			}
-			lineByte = append(lineByte, tempLine...)
-			if len(lineByte) > int(variable.MaxOfMaxAllowedPacket) {
-				return rows, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
-			}
+		lineByte, err := getOneLine(reader)
+		if err == io.EOF {
+			finish = true
+			err = nil
+		}
+		if err != nil {
+			return rows, err
 		}
 		line := string(hack.String(lineByte))
 		// Check slow log entry start flag.
@@ -148,6 +139,27 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 		}
 	}
 	return rows, nil
+}
+
+func getOneLine(reader *bufio.Reader) ([]byte, error) {
+	lineByte, isPrefix, err := reader.ReadLine()
+	var tempLine []byte
+	if err != nil {
+		return lineByte, err
+	}
+	for isPrefix {
+		tempLine, isPrefix, err = reader.ReadLine()
+		lineByte = append(lineByte, tempLine...)
+
+		// Use the max value of max_allowed_packet to check the single line length.
+		if len(lineByte) > int(variable.MaxOfMaxAllowedPacket) {
+			return lineByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
+		}
+		if err != nil {
+			return lineByte, err
+		}
+	}
+	return lineByte, err
 }
 
 type slowQueryTuple struct {
