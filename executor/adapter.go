@@ -229,13 +229,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return nil, err
 	}
 
-	defer func() {
-		if e != nil && err != nil {
-			terror.Call(e.Close)
-		}
-	}()
-
 	if err = e.Open(ctx); err != nil {
+		terror.Call(e.Close)
 		return nil, err
 	}
 
