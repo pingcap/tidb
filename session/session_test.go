@@ -2421,12 +2421,12 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk2.MustExec("alter table no_retry add index idx(id)")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
 	tk1.MustExec("update no_retry set id = 10")
-	tk1.MustExec("commit")
-	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("10"))
+	_, err = tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(err, NotNil)
 
 	// set autocommit to begin and commit
 	tk1.MustExec("set autocommit = 0")
-	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("10"))
+	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
 	tk2.MustExec("update no_retry set id = 11")
 	tk1.MustExec("update no_retry set id = 12")
 	_, err = tk1.Se.Execute(context.Background(), "set autocommit = 1")
