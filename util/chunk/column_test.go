@@ -17,50 +17,6 @@ import (
 	"github.com/pingcap/check"
 )
 
-func equalColumn(c1, c2 *column) bool {
-	if c1.length != c2.length ||
-		c1.nullCount != c2.nullCount {
-		return false
-	}
-	if len(c1.nullBitmap) != len(c2.nullBitmap) ||
-		len(c1.offsets) != len(c2.offsets) ||
-		len(c1.data) != len(c2.data) ||
-		len(c1.elemBuf) != len(c2.elemBuf) {
-		return false
-	}
-	for i := range c1.nullBitmap {
-		if c1.nullBitmap[i] != c2.nullBitmap[i] {
-			return false
-		}
-	}
-	for i := range c1.offsets {
-		if c1.offsets[i] != c2.offsets[i] {
-			return false
-		}
-	}
-	for i := range c1.data {
-		if c1.data[i] != c2.data[i] {
-			return false
-		}
-	}
-	for i := range c1.elemBuf {
-		if c1.elemBuf[i] != c2.elemBuf[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func (s *testChunkSuite) TestColumnCopy(c *check.C) {
-	col := newFixedLenColumn(8, 10)
-	for i := 0; i < 10; i++ {
-		col.appendInt64(int64(i))
-	}
-
-	c1 := col.copyConstruct()
-	c.Check(equalColumn(col, c1), check.IsTrue)
-}
-
 func (s *testChunkSuite) TestLargeStringColumnOffset(c *check.C) {
 	numRows := 1
 	col := newVarLenColumn(numRows, nil)
