@@ -277,18 +277,28 @@ func (e *SimpleExec) setRoleAllExcept(s *ast.SetRoleStmt) error {
 	}
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	user, host := e.ctx.GetSessionVars().User.AuthUsername, e.ctx.GetSessionVars().User.AuthHostname
-	roles, afterExcept := checker.GetAllRoles(user, host), make([]*auth.RoleIdentity, 0)
-	for _, r := range roles {
-		flag := true
-		for _, ban := range s.RoleList {
-			if ban.Hostname == r.Hostname && ban.Username == r.Username {
-				flag = false
+	roles := checker.GetAllRoles(user, host)
+
+	filter := func(arr []*auth.RoleIdentity, f func(*auth.RoleIdentity) bool) []*auth.RoleIdentity {
+		i, j := 0, 0
+		for i = 0; i < len(arr); i++ {
+			if f(arr[i]) {
+				arr[j] = arr[i]
+				j++
 			}
 		}
-		if flag {
-			afterExcept = append(afterExcept, r)
-		}
+		return arr[:j]
 	}
+	banned := func(r *auth.RoleIdentity) bool {
+		for _, ban := range s.RoleList {
+			if ban.Hostname == r.Hostname && ban.Username == r.Username {
+				return false
+			}
+		}
+		return true
+	}
+
+	afterExcept := filter(roles, banned)
 	ok, roleName := checker.ActiveRoles(e.ctx, afterExcept)
 	if !ok {
 		u := e.ctx.GetSessionVars().User

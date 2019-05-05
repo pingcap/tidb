@@ -941,13 +941,14 @@ func (p *MySQLPrivilege) getDefaultRoles(user, host string) []*auth.RoleIdentity
 }
 
 func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
-	ret := make([]*auth.RoleIdentity, 0)
 	key := user + "@" + host
 	edgeTable, ok := p.RoleGraph[key]
-	if ok {
-		for _, r := range edgeTable.roleList {
-			ret = append(ret, r)
-		}
+	ret := make([]*auth.RoleIdentity, 0, len(edgeTable.roleList))
+	if !ok {
+		return nil
+	}
+	for _, r := range edgeTable.roleList {
+		ret = append(ret, r)
 	}
 	return ret
 }
