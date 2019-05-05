@@ -379,8 +379,8 @@ func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.Ev
 	return
 }
 
-// getCmpTp4MinMax gets compare type for GREATEST and LEAST.
-func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
+// GetCmpTp4MinMax gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
+func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	datetimeFound, isAllStr := false, true
 	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
 	if !isStr {
@@ -421,7 +421,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
+	tp, cmpAsDatetime := GetCmpTp4MinMax(args), false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
 		tp = types.ETString
@@ -615,7 +615,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
+	tp, cmpAsDatetime := GetCmpTp4MinMax(args), false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
 		tp = types.ETString
@@ -954,18 +954,9 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
-// AggCmpType aggregates extends getBaseCmpType to get type when comparing three or more fields.
-func AggCmpType(fields ...*types.FieldType) types.EvalType {
-	ret := fields[0].EvalType()
-	for i := 1; i < len(fields); i++ {
-		ret = getBaseCmpType(ret, fields[i].EvalType(), nil, fields[i])
-	}
-	return ret
-}
-
 // getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
 func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
-	if lft != nil && rft != nil && (lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified) {
+	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
 		if lft.Tp == rft.Tp {
 			return types.ETString
 		}
@@ -977,10 +968,10 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	}
 	if lhs.IsStringKind() && rhs.IsStringKind() {
 		return types.ETString
-	} else if (lhs == types.ETInt || (lft != nil && lft.Hybrid())) && (rhs == types.ETInt || (rft != nil && rft.Hybrid())) {
+	} else if (lhs == types.ETInt || lft.Hybrid()) && (rhs == types.ETInt || rft.Hybrid()) {
 		return types.ETInt
-	} else if ((lhs == types.ETInt || (lft != nil && lft.Hybrid())) || lhs == types.ETDecimal) &&
-		((rhs == types.ETInt || (rft != nil && rft.Hybrid())) || rhs == types.ETDecimal) {
+	} else if ((lhs == types.ETInt || lft.Hybrid()) || lhs == types.ETDecimal) &&
+		((rhs == types.ETInt || rft.Hybrid()) || rhs == types.ETDecimal) {
 		return types.ETDecimal
 	}
 	return types.ETReal

@@ -1262,19 +1262,10 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 
 	expr, lexp, rexp := er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
 
-	if expression.AggCmpType(expr.GetType(), lexp.GetType(), rexp.GetType()) == types.ETString {
-		containsDateTime := false
-		for _, v := range []expression.Expression{expr, lexp, rexp} {
-			if v.GetType().EvalType() == types.ETDatetime {
-				containsDateTime = true
-				break
-			}
-		}
-		if containsDateTime {
-			expr = expression.WrapWithCastAsTime(er.ctx, expr, types.NewFieldType(mysql.TypeDatetime))
-			lexp = expression.WrapWithCastAsTime(er.ctx, lexp, types.NewFieldType(mysql.TypeDatetime))
-			rexp = expression.WrapWithCastAsTime(er.ctx, rexp, types.NewFieldType(mysql.TypeDatetime))
-		}
+	if expression.GetCmpTp4MinMax([]expression.Expression{expr, lexp, rexp}) == types.ETDatetime {
+		expr = expression.WrapWithCastAsTime(er.ctx, expr, types.NewFieldType(mysql.TypeDatetime))
+		lexp = expression.WrapWithCastAsTime(er.ctx, lexp, types.NewFieldType(mysql.TypeDatetime))
+		rexp = expression.WrapWithCastAsTime(er.ctx, rexp, types.NewFieldType(mysql.TypeDatetime))
 	}
 
 	var op string
