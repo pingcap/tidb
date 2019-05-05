@@ -39,10 +39,10 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20190327032727-3d8cb3a30d5d
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
-	github.com/pingcap/parser v0.0.0-20190424024541-e2cdb851bce2
+	github.com/pingcap/parser v0.0.0-20190429120706-c378059f7f42
 	github.com/pingcap/pd v0.0.0-20190424024702-bd1e2496a669
 	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
-	github.com/pingcap/tipb v0.0.0-20190107072121-abbec73437b7
+	github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330
 	github.com/prometheus/client_golang v0.9.0
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
@@ -60,6 +60,7 @@ require (
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
 	github.com/uber/jaeger-lib v1.5.0 // indirect
 	github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d // indirect
+	go.uber.org/atomic v1.3.2
 	go.uber.org/zap v1.9.1
 	golang.org/x/net v0.0.0-20190108225652-1e06a53dbb7e
 	golang.org/x/sys v0.0.0-20190109145017-48ac38b7c8cb // indirect
@@ -73,4 +74,4 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/parser => github.com/crazycs520/parser v0.0.0-20190504080252-5fa8335e1490
+replace github.com/pingcap/parser => github.com/crazycs520/parser v0.0.0-20190505031351-f947bc2681ae

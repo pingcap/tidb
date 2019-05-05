@@ -18,8 +18,6 @@ import (
 )
 
 // calculateEstimateNDV calculates the estimate ndv of a sampled data from a multisize with size total.
-// count[i] stores the count of the i-th element.
-// onlyOnceItems is the number of elements that occurred only once.
 func calculateEstimateNDV(h *topNHelper, rowCount uint64) (ndv uint64, scaleRatio uint64) {
 	sampleSize, sampleNDV, onlyOnceItems := h.sampleSize, uint64(len(h.sorted)), h.onlyOnceItems
 	scaleRatio = rowCount / sampleSize

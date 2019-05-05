@@ -57,13 +57,14 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 }
 
 func (e *SQLBindExec) dropSQLBind() error {
-	if !e.isGlobal {
-		return errors.New("drop non-global sql bind is not supported")
-	}
-
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
 		Db:          e.ctx.GetSessionVars().CurrentDB,
+	}
+	if !e.isGlobal {
+		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		handle.DropBindRecord(record)
+		return nil
 	}
 	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(record)
 }
@@ -75,6 +76,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Db:          e.ctx.GetSessionVars().CurrentDB,
 		Charset:     e.charset,
 		Collation:   e.collation,
+		Status:      bindinfo.Using,
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
