@@ -1768,7 +1768,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		// Recover table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.LockTablesStmt:
-		// do nothing.
+		// Nothing need to do.
 	}
 	p := &DDL{Statement: node}
 	return p, nil

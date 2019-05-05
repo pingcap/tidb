@@ -2907,11 +2907,9 @@ func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(terror.ErrorEqual(err2, infoschema.ErrTableLocked), IsTrue)
 	})
-
 }
 
 func (s *testDBSuite2) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
-
 	callback := &ddl.TestDDLCallback{}
 	times := 0
 	callback.OnJobRunBeforeExported = func(job *model.Job) {

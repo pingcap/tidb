@@ -359,7 +359,6 @@ func (s *testTableSuite) TestTable(c *C) {
 	job = testLockTable(c, ctx, d, dbInfo1.ID, tblInfo, model.TableLockWrite)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
-
 	checkTableLockedTest(c, d, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
 }
 
