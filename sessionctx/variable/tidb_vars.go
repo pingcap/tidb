@@ -259,65 +259,71 @@ const (
 
 	// TiDBEnableFastAnalyze indicates to use fast analyze.
 	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
+
+	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
+
+	TiDBExpensiveQueryMemThreshold = "tidb_expensive_query_mem_threshold"
 )
 
 // Default TiDB system variable values.
 const (
-	DefHostname                      = "localhost"
-	DefIndexLookupConcurrency        = 4
-	DefIndexLookupJoinConcurrency    = 4
-	DefIndexSerialScanConcurrency    = 1
-	DefIndexJoinBatchSize            = 25000
-	DefIndexLookupSize               = 20000
-	DefDistSQLScanConcurrency        = 15
-	DefBuildStatsConcurrency         = 4
-	DefAutoAnalyzeRatio              = 0.5
-	DefAutoAnalyzeStartTime          = "00:00 +0000"
-	DefAutoAnalyzeEndTime            = "23:59 +0000"
-	DefChecksumTableConcurrency      = 4
-	DefSkipUTF8Check                 = false
-	DefOptAggPushDown                = false
-	DefOptWriteRowID                 = false
-	DefOptCorrelationThreshold       = 0.9
-	DefOptCorrelationExpFactor       = 0
-	DefOptInSubqToJoinAndAgg         = true
-	DefBatchInsert                   = false
-	DefBatchDelete                   = false
-	DefBatchCommit                   = false
-	DefCurretTS                      = 0
-	DefInitChunkSize                 = 32
-	DefMaxChunkSize                  = 1024
-	DefDMLBatchSize                  = 20000
-	DefMaxPreparedStmtCount          = -1
-	DefWaitTimeout                   = 28800
-	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
-	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.
-	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
-	DefTiDBMemQuotaTopn              = 32 << 30 // 32GB.
-	DefTiDBMemQuotaIndexLookupReader = 32 << 30 // 32GB.
-	DefTiDBMemQuotaIndexLookupJoin   = 32 << 30 // 32GB.
-	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
-	DefTiDBMemQuotaDistSQL           = 32 << 30 // 32GB.
-	DefTiDBGeneralLog                = 0
-	DefTiDBRetryLimit                = 10
-	DefTiDBDisableTxnAutoRetry       = false
-	DefTiDBConstraintCheckInPlace    = false
-	DefTiDBHashJoinConcurrency       = 5
-	DefTiDBProjectionConcurrency     = 4
-	DefTiDBOptimizerSelectivityLevel = 0
-	DefTiDBDDLReorgWorkerCount       = 16
-	DefTiDBDDLReorgBatchSize         = 1024
-	DefTiDBDDLErrorCountLimit        = 512
-	DefTiDBHashAggPartialConcurrency = 4
-	DefTiDBHashAggFinalConcurrency   = 4
-	DefTiDBForcePriority             = mysql.NoPriority
-	DefTiDBUseRadixJoin              = false
-	DefEnableWindowFunction          = false
-	DefTiDBOptJoinReorderThreshold   = 0
-	DefTiDBDDLSlowOprThreshold       = 300
-	DefTiDBUseFastAnalyze            = false
-	DefTiDBSkipIsolationLevelCheck   = false
-	DefTiDBWaitTableSplitFinish      = false
+	DefHostname                        = "localhost"
+	DefIndexLookupConcurrency          = 4
+	DefIndexLookupJoinConcurrency      = 4
+	DefIndexSerialScanConcurrency      = 1
+	DefIndexJoinBatchSize              = 25000
+	DefIndexLookupSize                 = 20000
+	DefDistSQLScanConcurrency          = 15
+	DefBuildStatsConcurrency           = 4
+	DefAutoAnalyzeRatio                = 0.5
+	DefAutoAnalyzeStartTime            = "00:00 +0000"
+	DefAutoAnalyzeEndTime              = "23:59 +0000"
+	DefChecksumTableConcurrency        = 4
+	DefSkipUTF8Check                   = false
+	DefOptAggPushDown                  = false
+	DefOptWriteRowID                   = false
+	DefOptCorrelationThreshold         = 0.9
+	DefOptCorrelationExpFactor         = 0
+	DefOptInSubqToJoinAndAgg           = true
+	DefBatchInsert                     = false
+	DefBatchDelete                     = false
+	DefBatchCommit                     = false
+	DefCurretTS                        = 0
+	DefInitChunkSize                   = 32
+	DefMaxChunkSize                    = 1024
+	DefDMLBatchSize                    = 20000
+	DefMaxPreparedStmtCount            = -1
+	DefWaitTimeout                     = 28800
+	DefTiDBMemQuotaHashJoin            = 32 << 30 // 32GB.
+	DefTiDBMemQuotaMergeJoin           = 32 << 30 // 32GB.
+	DefTiDBMemQuotaSort                = 32 << 30 // 32GB.
+	DefTiDBMemQuotaTopn                = 32 << 30 // 32GB.
+	DefTiDBMemQuotaIndexLookupReader   = 32 << 30 // 32GB.
+	DefTiDBMemQuotaIndexLookupJoin     = 32 << 30 // 32GB.
+	DefTiDBMemQuotaNestedLoopApply     = 32 << 30 // 32GB.
+	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
+	DefTiDBGeneralLog                  = 0
+	DefTiDBRetryLimit                  = 10
+	DefTiDBDisableTxnAutoRetry         = false
+	DefTiDBConstraintCheckInPlace      = false
+	DefTiDBHashJoinConcurrency         = 5
+	DefTiDBProjectionConcurrency       = 4
+	DefTiDBOptimizerSelectivityLevel   = 0
+	DefTiDBDDLReorgWorkerCount         = 16
+	DefTiDBDDLReorgBatchSize           = 1024
+	DefTiDBDDLErrorCountLimit          = 512
+	DefTiDBHashAggPartialConcurrency   = 4
+	DefTiDBHashAggFinalConcurrency     = 4
+	DefTiDBForcePriority               = mysql.NoPriority
+	DefTiDBUseRadixJoin                = false
+	DefEnableWindowFunction            = false
+	DefTiDBOptJoinReorderThreshold     = 0
+	DefTiDBDDLSlowOprThreshold         = 300
+	DefTiDBUseFastAnalyze              = false
+	DefTiDBSkipIsolationLevelCheck     = false
+	DefTiDBWaitTableSplitFinish        = false
+	DefTiDBExpensiveQueryTimeThreshold = 30       // 30s
+	DefTiDBExpensiveQueryMemThreshold  = 32 << 30 // 32GB.
 )
 
 // Process global variables.

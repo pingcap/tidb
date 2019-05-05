@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -140,8 +141,8 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan plannercore.Plan
-	// Expensive represents whether this query is an expensive one.
-	Expensive bool
+	// LowerPriority represents whether to lower the execution priority of a query.
+	LowerPriority bool
 	// Cacheable represents whether the physical plan can be cached.
 	Cacheable bool
 	// Text represents the origin query text.
@@ -151,8 +152,9 @@ type ExecStmt struct {
 
 	Ctx sessionctx.Context
 	// StartTime stands for the starting time when executing the statement.
-	StartTime      time.Time
-	isPreparedStmt bool
+	StartTime            time.Time
+	isPreparedStmt       bool
+	ExpensiveQueryTicker *time.Ticker
 }
 
 // OriginText returns original statement as a string.
@@ -199,9 +201,11 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
-func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
+func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	a.StartTime = time.Now()
+	a.ExpensiveQueryTicker = time.NewTicker(time.Second * time.Duration(a.Ctx.GetSessionVars().ExpensiveQueryTimeThreshold))
 	sctx := a.Ctx
+	go LogExpensiveQuery(ctx, sctx, a.ExpensiveQueryTicker, a.Plan, a.Text)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
@@ -224,8 +228,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		return nil, err
 	}
 
+	defer func() {
+		a.ExpensiveQueryTicker.Stop()
+		if e != nil {
+			terror.Call(e.Close)
+		}
+	}()
+
 	if err = e.Open(ctx); err != nil {
-		terror.Call(e.Close)
 		return nil, err
 	}
 
@@ -257,8 +267,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	}
 
 	var txnStartTS uint64
-	txn, err1 := sctx.Txn(false)
-	if err1 != nil {
+	txn, err := sctx.Txn(false)
+	if err != nil {
 		return nil, err
 	}
 	if txn.Valid() {
@@ -327,7 +337,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			switch {
 			case useMaxTS:
 				stmtCtx.Priority = kv.PriorityHigh
-			case a.Expensive:
+			case a.LowerPriority:
 				stmtCtx.Priority = kv.PriorityLow
 			}
 		}
@@ -350,6 +360,9 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		}
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
+		if executorExec.lowerPriority {
+			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+		}
 		e = executorExec.stmtExec
 	}
 	return e, nil
@@ -404,7 +417,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
-	statsInfos := a.getStatsInfo()
+	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
@@ -437,26 +450,70 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 }
 
-func (a *ExecStmt) getStatsInfo() map[string]uint64 {
-	var physicalPlan plannercore.PhysicalPlan
-	switch p := a.Plan.(type) {
-	case *plannercore.Insert:
-		physicalPlan = p.SelectPlan
-	case *plannercore.Update:
-		physicalPlan = p.SelectPlan
-	case *plannercore.Delete:
-		physicalPlan = p.SelectPlan
-	case plannercore.PhysicalPlan:
-		physicalPlan = p
+func LogExpensiveQuery(ctx context.Context, sctx sessionctx.Context, ticker *time.Ticker, p plannercore.Plan, sql string) {
+	level := log.GetLevel()
+	if level > zapcore.WarnLevel {
+		return
 	}
-
-	if physicalPlan == nil {
-		return nil
+	if ticker != nil {
+		defer ticker.Stop()
+		<-ticker.C
 	}
+	logFields := make([]zap.Field, 0, 20)
+	sessVars := sctx.GetSessionVars()
+	execDetail := sessVars.StmtCtx.GetExecDetails()
+	logFields = append(logFields, execDetail.ToZapFields()...)
+	if copTaskInfo := sessVars.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
+		logFields = append(logFields, copTaskInfo.ToZapFields()...)
+	}
+	if statsInfos := plannercore.GetStatsInfo(p); len(statsInfos) > 0 {
+		var buf strings.Builder
+		firstComma := false
+		vStr := ""
+		for k, v := range statsInfos {
+			if v == 0 {
+				vStr = "pseudo"
+			} else {
+				vStr = strconv.FormatUint(v, 10)
+			}
+			if firstComma {
+				buf.WriteString("," + k + ":" + vStr)
+			} else {
+				buf.WriteString(k + ":" + vStr)
+				firstComma = true
+			}
+		}
+		logFields = append(logFields, zap.String("stats", buf.String()))
+	}
+	if sessVars.ConnectionID != 0 {
+		logFields = append(logFields, zap.Uint64("conn_id", sessVars.ConnectionID))
+	}
+	if sessVars.User != nil {
+		logFields = append(logFields, zap.String("user", sessVars.User.String()))
+	}
+	if len(sessVars.CurrentDB) > 0 {
+		logFields = append(logFields, zap.String("database", sessVars.CurrentDB))
+	}
+	var tableIDs, indexIDs string
+	if len(sessVars.StmtCtx.TableIDs) > 0 {
+		tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
+		logFields = append(logFields, zap.String("table_ids", tableIDs))
+	}
+	if len(sessVars.StmtCtx.IndexIDs) > 0 {
+		indexIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.IndexIDs), " ", ",", -1)
+		logFields = append(logFields, zap.String("index_ids", indexIDs))
+	}
+	txnTs := sessVars.TxnCtx.StartTS
+	logFields = append(logFields, zap.Uint64("txn_start_ts", txnTs))
+	logFields = append(logFields, zap.Int64("mem_max", sessVars.StmtCtx.MemTracker.MaxConsumed()))
 
-	statsInfos := make(map[string]uint64)
-	statsInfos = plannercore.CollectPlanStatsVersion(physicalPlan, statsInfos)
-	return statsInfos
+	const logSQLLen = 1024 * 8
+	if len(sql) > logSQLLen {
+		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
+	}
+	logFields = append(logFields, zap.String("sql", sql))
+
+	logutil.Logger(ctx).Warn("expensive_query", logFields...)
 }
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:

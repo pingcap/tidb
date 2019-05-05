@@ -175,6 +175,7 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
+	ExpensiveQueryQuota
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
@@ -434,6 +435,10 @@ func NewSessionVars() *SessionVars {
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
 		DMLBatchSize:       DefDMLBatchSize,
+	}
+	vars.ExpensiveQueryQuota = ExpensiveQueryQuota{
+		ExpensiveQueryTimeThreshold: DefTiDBExpensiveQueryTimeThreshold,
+		ExpensiveQueryMemThreshold: DefTiDBExpensiveQueryMemThreshold,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
@@ -769,6 +774,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableFastAnalyze = TiDBOptOn(val)
 	case TiDBWaitTableSplitFinish:
 		s.WaitTableSplitFinish = TiDBOptOn(val)
+	case TiDBExpensiveQueryTimeThreshold:
+		s.ExpensiveQueryTimeThreshold = tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)
+	case TiDBExpensiveQueryMemThreshold:
+		s.ExpensiveQueryMemThreshold = tidbOptInt64(val, DefTiDBExpensiveQueryMemThreshold)
 	}
 	s.systems[name] = val
 	return nil
@@ -888,6 +897,11 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+}
+
+type ExpensiveQueryQuota struct {
+	ExpensiveQueryTimeThreshold int
+	ExpensiveQueryMemThreshold  int64
 }
 
 const (
