@@ -111,6 +111,9 @@ func (d *sqlDigester) normalize(sql string) {
 	d.lexer.reset(sql)
 	for {
 		tok, pos, lit := d.lexer.scan()
+		if tok == invalid {
+			break
+		}
 		if tok == unicode.ReplacementChar && d.lexer.r.eof() {
 			break
 		}
