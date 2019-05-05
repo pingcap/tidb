@@ -147,7 +147,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 			}
 		}
 	}
-	//return rows, nil
+	return rows, nil
 }
 
 type slowQueryTuple struct {
