@@ -4271,3 +4271,17 @@ func (s *testIntegrationSuite) TestIssue9727(c *C) {
 		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
 	}
 }
+
+func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a bigint primary key, b timestamp)`)
+	tk.MustExec(`insert into t values (1, "2019-04-29 11:56:12")`)
+	tk.MustQuery(`explain select * from t where b = (select max(b) from t)`).Check(testkit.Rows(
+		"TableReader_43 10.00 root data:Selection_42",
+		"└─Selection_42 10.00 cop eq(test.t.b, 2019-04-29 11:56:12)",
+		"  └─TableScan_41 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`select * from t where b = (select max(b) from t)`).Check(testkit.Rows(`1 2019-04-29 11:56:12`))
+}
