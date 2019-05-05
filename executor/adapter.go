@@ -130,6 +130,7 @@ func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
+	a.stmt.ExpensiveQueryTicker.Stop()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.logAudit()
 	return err
@@ -229,8 +230,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	defer func() {
-		a.ExpensiveQueryTicker.Stop()
-		if e != nil {
+		if e != nil && err != nil {
 			terror.Call(e.Close)
 		}
 	}()
@@ -505,7 +505,8 @@ func LogExpensiveQuery(ctx context.Context, sctx sessionctx.Context, ticker *tim
 	}
 	txnTs := sessVars.TxnCtx.StartTS
 	logFields = append(logFields, zap.Uint64("txn_start_ts", txnTs))
-	logFields = append(logFields, zap.Int64("mem_max", sessVars.StmtCtx.MemTracker.MaxConsumed()))
+	memTracker := sessVars.StmtCtx.MemTracker
+	logFields = append(logFields, zap.String("mem_max", memTracker.BytesToString(memTracker.MaxConsumed())))
 
 	const logSQLLen = 1024 * 8
 	if len(sql) > logSQLLen {

@@ -101,7 +101,7 @@ type Log struct {
 
 	SlowQueryFile          string `toml:"slow-query-file" json:"slow-query-file"`
 	SlowThreshold          uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	LowerPriorityThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	LowerPriorityThreshold uint   `toml:"lower-priority-threshold" json:"lower-priority-threshold"`
 	QueryLogMaxLen         uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
 }
 
@@ -332,7 +332,7 @@ var defaultConf = Config{
 		MaxMemory:           0,
 		TCPKeepAlive:        true,
 		CrossJoin:           true,
-		StatsLease:          "3s",
+		StatsLease:          "0s",
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
 		FeedbackProbability: 0.05,

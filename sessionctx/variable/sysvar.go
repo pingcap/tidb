@@ -694,7 +694,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBSlowQueryFile, ""},
 	{ScopeSession, TiDBWaitTableSplitFinish, BoolToIntStr(DefTiDBWaitTableSplitFinish)},
 	{ScopeGlobal | ScopeNone, TiDBExpensiveQueryTimeThreshold, strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold)},
-	{ScopeGlobal | ScopeNone, TiDBExpensiveQueryMemThreshold, strconv.Itoa(DefTiDBExpensiveQueryMemThreshold)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

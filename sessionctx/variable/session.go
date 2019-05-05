@@ -175,7 +175,6 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
-	ExpensiveQueryQuota
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
@@ -357,6 +356,8 @@ type SessionVars struct {
 
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
+
+	ExpensiveQueryTimeThreshold int
 }
 
 // ConnectionInfo present connection used by audit.
@@ -407,6 +408,7 @@ func NewSessionVars() *SessionVars {
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
+		ExpensiveQueryTimeThreshold: DefTiDBExpensiveQueryTimeThreshold,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -435,10 +437,6 @@ func NewSessionVars() *SessionVars {
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
 		DMLBatchSize:       DefDMLBatchSize,
-	}
-	vars.ExpensiveQueryQuota = ExpensiveQueryQuota{
-		ExpensiveQueryTimeThreshold: DefTiDBExpensiveQueryTimeThreshold,
-		ExpensiveQueryMemThreshold: DefTiDBExpensiveQueryMemThreshold,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
@@ -776,8 +774,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.WaitTableSplitFinish = TiDBOptOn(val)
 	case TiDBExpensiveQueryTimeThreshold:
 		s.ExpensiveQueryTimeThreshold = tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)
-	case TiDBExpensiveQueryMemThreshold:
-		s.ExpensiveQueryMemThreshold = tidbOptInt64(val, DefTiDBExpensiveQueryMemThreshold)
 	}
 	s.systems[name] = val
 	return nil
@@ -897,11 +893,6 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
-}
-
-type ExpensiveQueryQuota struct {
-	ExpensiveQueryTimeThreshold int
-	ExpensiveQueryMemThreshold  int64
 }
 
 const (

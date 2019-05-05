@@ -261,8 +261,6 @@ const (
 	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
 
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
-
-	TiDBExpensiveQueryMemThreshold = "tidb_expensive_query_mem_threshold"
 )
 
 // Default TiDB system variable values.
@@ -322,8 +320,7 @@ const (
 	DefTiDBUseFastAnalyze              = false
 	DefTiDBSkipIsolationLevelCheck     = false
 	DefTiDBWaitTableSplitFinish        = false
-	DefTiDBExpensiveQueryTimeThreshold = 30       // 30s
-	DefTiDBExpensiveQueryMemThreshold  = 32 << 30 // 32GB.
+	DefTiDBExpensiveQueryTimeThreshold = 60 // 30s
 )
 
 // Process global variables.
