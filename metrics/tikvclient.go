@@ -134,7 +134,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "rawkv_kv_size_bytes",
 			Help:      "Size of key/value to put, in bytes.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1Byte ~ 2MB
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 23), // 1Byte ~ 8MB
 		}, []string{LblType})
 
 	TiKVTxnRegionsNumHistogram = prometheus.NewHistogramVec(
