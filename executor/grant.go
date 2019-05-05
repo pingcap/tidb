@@ -71,7 +71,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 			return err
 		}
 		if !exists && e.ctx.GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
-			return ErrPasswordNoMatch
+			return ErrCantCreateUserWithGrant
 		} else if !exists {
 			pwd, ok := user.EncodedPassword()
 			if !ok {
