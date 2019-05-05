@@ -1339,6 +1339,8 @@ func (s *session) ClearValue(key fmt.Stringer) {
 // Close function does some clean work when session end.
 // Close should release the table locks which hold by the session.
 func (s *session) Close() {
+	// TODO: do clean table locks when session exited without execute Close.
+	// TODO: do clean table locks when tidb-server was `kill -9`.
 	if s.HasLockedTables() {
 		lockedTables := s.GetAllTableLocks()
 		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
