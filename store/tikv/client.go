@@ -126,13 +126,14 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 		// When `conn.Close()` is called, `client.Recv()` will return an error.
 		resp, err := c.client.Recv()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("batchRecvLoop error when receive", zap.Error(err))
 
 			now := time.Now()
 			for { // try to re-create the streaming in the loop.
 				if c.isStopped() {
 					return
 				}
+				logutil.Logger(context.Background()).Error("batchRecvLoop error when receive", zap.Error(err))
+
 				// Hold the lock to forbid batchSendLoop using the old client.
 				c.clientLock.Lock()
 				c.failPendingRequests(err) // fail all pending requests.
@@ -423,7 +424,10 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			}
 		}
 		length := len(requests)
-		if uint(length) < bestBatchWaitSize && bestBatchWaitSize > 1 {
+		if uint(length) == 0 {
+			// The batch command channel is closed.
+			return
+		} else if uint(length) < bestBatchWaitSize && bestBatchWaitSize > 1 {
 			// Waits too long to collect requests, reduce the target batch size.
 			bestBatchWaitSize -= 1
 		} else if uint(length) > bestBatchWaitSize+4 && bestBatchWaitSize < cfg.MaxBatchSize {
