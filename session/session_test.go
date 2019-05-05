@@ -2527,6 +2527,29 @@ func (s *testSessionSuite) TestUpdatePrivilege(c *C) {
 		[]byte(""), []byte("")), IsTrue)
 	tk1.MustExec("use weperk")
 	tk1.MustExec("update tb_wehub_server a set a.active_count=a.active_count+1,a.used_count=a.used_count+1 where id=1")
+
+	tk.MustExec("create database service")
+	tk.MustExec("create database report")
+	tk.MustExec(`CREATE TABLE service.t1 (
+  id int(11) DEFAULT NULL,
+  a bigint(20) NOT NULL,
+  b text DEFAULT NULL,
+  PRIMARY KEY (a)
+)`)
+	tk.MustExec(`CREATE TABLE report.t2 (
+  a bigint(20) DEFAULT NULL,
+  c bigint(20) NOT NULL
+)`)
+	tk.MustExec("grant all privileges on service.* to weperk")
+	tk.MustExec("grant all privileges on report.* to weperk")
+	tk1.Se.GetSessionVars().CurrentDB = ""
+	tk1.MustExec(`update service.t1 s,
+report.t2 t
+set s.a = t.a
+WHERE
+s.a = t.a
+and t.c >=  1 and t.c <= 10000
+and s.b !='xx';`)
 }
 
 func (s *testSessionSuite) TestTxnGoString(c *C) {

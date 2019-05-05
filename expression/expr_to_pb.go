@@ -106,7 +106,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 		logutil.Logger(context.Background()).Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
 		return nil
 	}
-	tp, val, ok := pc.encodeDatum(d)
+	tp, val, ok := pc.encodeDatum(ft, d)
 	if !ok {
 		return nil
 	}
@@ -117,7 +117,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	return &tipb.Expr{Tp: tp, Val: val, FieldType: ToPBFieldType(ft)}
 }
 
-func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) {
+func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.ExprType, []byte, bool) {
 	var (
 		tp  tipb.ExprType
 		val []byte
@@ -157,13 +157,11 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			t := d.GetMysqlTime()
-			v, err := t.ToPackedUint()
+			val, err := codec.EncodeMySQLTime(pc.sc, d, ft.Tp, nil)
 			if err != nil {
 				logutil.Logger(context.Background()).Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
 			}
-			val = codec.EncodeUint(nil, v)
 			return tp, val, true
 		}
 		return tp, nil, false
