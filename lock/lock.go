@@ -33,8 +33,12 @@ func (c *LockChecker) CheckTableLock(db, table string, privilege mysql.Privilege
 	if db == "" || table == "" {
 		return nil
 	}
+	// Below database are not support table lock.
+	if db == "INFORMATION_SCHEMA" || db == "PERFORMANCE_SCHEMA" || db == "mysql" {
+		return nil
+	}
 	switch privilege {
-	case mysql.CreatePriv:
+	case mysql.CreatePriv, mysql.ShowDBPriv, mysql.AllPrivMask:
 		return nil
 	}
 	tb, err := c.is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
