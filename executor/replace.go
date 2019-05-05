@@ -142,6 +142,9 @@ func (e *ReplaceExec) removeIndexRow(r toBeCheckedRow) (bool, bool, error) {
 			if err != nil {
 				return false, found, err
 			}
+			if !rowUnchanged {
+				delete(e.dupKVs, string(uk.newKV.key))
+			}
 			return rowUnchanged, found, nil
 		}
 	}

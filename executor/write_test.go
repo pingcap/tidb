@@ -898,6 +898,22 @@ func (s *testSuite2) TestReplace(c *C) {
 	tk.MustExec(`replace into t1 select * from (select 1, 2) as tmp;`)
 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(2))
 	tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")
+
+	// Test Replace with generated column
+	// FIXME: this is not compatible with MySQL now, we don't support replace into
+	// duplicated value on generated column with unique key now.
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("create table t1(id int, id_gen int as(`id` + 42), b int, unique key id_gen(`id_gen`));")
+	tk.MustExec(`insert into t1 (id, b) values(1,1),(2,2),(3,3),(4,4),(5,5);`)
+	_, err = tk.Exec(`replace into t1 (id, b) values(1,1);`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '43' for key 'id_gen'")
+	_, err = tk.Exec(`replace into t1 (id, b) values(1,1),(2,2);`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '43' for key 'id_gen'")
+	tk.MustExec(`replace into t1 (id, b) values(6,16),(7,17),(8,18);`)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(3))
+	tk.CheckLastMessage("Records: 3  Duplicates: 0  Warnings: 0")
 }
 
 func (s *testSuite2) TestPartitionedTableReplace(c *C) {
