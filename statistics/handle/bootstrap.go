@@ -103,7 +103,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables Stat
 			if idxInfo == nil {
 				continue
 			}
-			cms, err := statistics.DecodeCMSketch(row.GetBytes(6))
+			cms, err := statistics.LoadCMSketchWithTopN(h.restrictedExec, row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetBytes(6))
 			if err != nil {
 				cms = nil
 				terror.Log(errors.Trace(err))

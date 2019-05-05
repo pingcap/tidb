@@ -34,27 +34,26 @@ func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 	return sessionHandle
 }
 
-// appendBindMeta addes the bindMeta to the cache, all the stale bindMetas are
+// appendBindMeta addes the BindMeta to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *SessionHandle) appendBindMeta(hash string, meta *bindMeta) {
+func (h *SessionHandle) appendBindMeta(hash string, meta *BindMeta) {
 	// Make sure there is only one goroutine writes the cache.
 	h.ch.removeStaleBindMetas(hash, meta)
 	h.ch[hash] = append(h.ch[hash], meta)
 }
 
-func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *bindMeta, err error) {
+func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
 	hash = parser.DigestHash(record.OriginalSQL)
 	stmtNodes, _, err := h.parser.Parse(record.BindSQL, record.Charset, record.Collation)
 	if err != nil {
 		return "", nil, err
 	}
-	meta = &bindMeta{BindRecord: record, ast: stmtNodes[0]}
+	meta = &BindMeta{BindRecord: record, Ast: stmtNodes[0]}
 	return hash, meta, nil
 }
 
-// AddBindRecord new a BindRecord with bindMeta, add it to the cache.
+// AddBindRecord new a BindRecord with BindMeta, add it to the cache.
 func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
-	record.Status = using
 	record.CreateTime = types.Time{
 		Time: types.FromGoTime(time.Now()),
 		Type: mysql.TypeDatetime,
@@ -62,7 +61,7 @@ func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
 	}
 	record.UpdateTime = record.CreateTime
 
-	// update the bindMeta to the cache.
+	// update the BindMeta to the cache.
 	hash, meta, err := h.newBindMeta(record)
 	if err == nil {
 		h.appendBindMeta(hash, meta)
@@ -70,8 +69,17 @@ func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
 	return err
 }
 
-// GetBindRecord return the bindMeta of the (normdOrigSQL,db) if bindMeta exist.
-func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *bindMeta {
+// DropBindRecord drops a BindRecord in the cache.
+func (h *SessionHandle) DropBindRecord(record *BindRecord) {
+	meta := &BindMeta{BindRecord: record}
+	meta.Status = deleted
+	hash := parser.DigestHash(record.OriginalSQL)
+	h.ch.removeDeletedBindMeta(hash, meta)
+	h.appendBindMeta(hash, meta)
+}
+
+// GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
+func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
 	hash := parser.DigestHash(normdOrigSQL)
 	bindRecords := h.ch[hash]
 	if bindRecords != nil {
@@ -82,6 +90,14 @@ func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *bindMeta {
 		}
 	}
 	return nil
+}
+
+// GetAllBindRecord return all session bind info.
+func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
+	for _, bindRecord := range h.ch {
+		bindRecords = append(bindRecords, bindRecord...)
+	}
+	return bindRecords
 }
 
 // sessionBindInfoKeyType is a dummy type to avoid naming collision in context.

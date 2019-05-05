@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -89,7 +90,7 @@ func (h *Handle) Clear() {
 }
 
 // MaxQueryFeedbackCount is the max number of feedback that cache in memory.
-var MaxQueryFeedbackCount = 1 << 10
+var MaxQueryFeedbackCount = atomic2.NewInt64(1 << 10)
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
@@ -98,7 +99,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
 		Lease:      lease,
-		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount),
+		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount.Load()),
 	}
 	// It is safe to use it concurrently because the exec won't touch the ctx.
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
@@ -325,7 +326,7 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*stati
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	return statistics.DecodeCMSketch(rows[0].GetBytes(0))
+	return statistics.LoadCMSketchWithTopN(h.restrictedExec, tblID, isIndex, histID, rows[0].GetBytes(0))
 }
 
 func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
@@ -524,9 +525,22 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return
 	}
-	data, err := statistics.EncodeCMSketch(cms)
+	data, err := statistics.EncodeCMSketchWithoutTopN(cms)
 	if err != nil {
 		return
+	}
+	// Delete outdated data
+	deleteOutdatedTopNSQL := fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
+	_, err = exec.Execute(ctx, deleteOutdatedTopNSQL)
+	if err != nil {
+		return
+	}
+	for _, meta := range cms.TopN() {
+		insertSQL := fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count)
+		_, err = exec.Execute(ctx, insertSQL)
+		if err != nil {
+			return
+		}
 	}
 	flag := 0
 	if isAnalyzed == 1 {
