@@ -334,7 +334,7 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 
 	// Request should fail on region1.
 	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
-	c.Assert(s.cache.storeMu.stores, HasLen, 1)
+	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 2)
 	s.checkCache(c, 2)
 	s.cache.OnSendRequestFail(ctx, errors.New("test error"))
 	// Both region2 and store should be dropped from cache.
@@ -522,12 +522,13 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	}
 	region := cache.getRegionByIDFromCache(loc.Region.id)
 	b.ResetTimer()
+	store, _ := region.WorkStore()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			rpcCtx := &RPCContext{
 				Region: loc.Region,
 				Meta:   region.meta,
-				Store:  region.WorkStore(),
+				Store:  store,
 			}
 			cache.OnSendRequestFail(rpcCtx, nil)
 		}

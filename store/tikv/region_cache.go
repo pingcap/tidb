@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/google/btree"
 	"github.com/grpc-ecosystem/go-grpc-middleware/util/backoffutils"
@@ -730,9 +731,9 @@ type resolveFunc func(ctx context.Context, id uint64) (*metapb.Store, error)
 
 // Store contains a kv process's address.
 type Store struct {
-	addr atomic.Value // loaded store address(*string)
-	peer *metapb.Peer // store's peer
-	flag storeFlag    // store flag
+	addr  atomic.Value // loaded store address(*string)
+	peer  *metapb.Peer // store's peer
+	state uint64       // unsafe store storeState
 
 	resolve struct {
 		sync.Mutex
@@ -740,17 +741,12 @@ type Store struct {
 	}
 }
 
-// storeFlag contains store's access info.
-// it will contain info like this:
-// | <- need reload(1bit) -> | <- attempt(4bit) -> | <- lastFailedTime(59bit) -> |
-type storeFlag uint64
-
-const (
-	lastFailTimeMask = (1 << 59) - 1
-	attemptMask      = ((1 << 4) - 1) << 59
-	accessCleanMask  = ^((uint64(1) << 63) - 1)
-	needResolveMask  = 1 << 63
-)
+// storeState contains store's access info.
+type storeState struct {
+	lastFailedTime uint32
+	failedAttempt  uint16
+	resolved       bool
+}
 
 // resolveAddr resolves the address of store.
 // following up resolve request will reuse previous result until
@@ -815,48 +811,48 @@ const maxExponentAttempt = 10
 
 // Available returns whether store be available for current.
 func (s *Store) Available(ts int64) bool {
-	flag := atomic.LoadUint64((*uint64)(&s.flag))
-	lastFailTime := int64(flag & lastFailTimeMask)
-	failAttempt := uint(flag&attemptMask) >> 59
-	if failAttempt == 0 || lastFailTime == 0 {
+	var state storeState
+	*(*uint64)(unsafe.Pointer(&state)) = atomic.LoadUint64(&s.state)
+	if state.failedAttempt == 0 || state.lastFailedTime == 0 {
 		// return quickly if it's continue success.
 		return true
 	}
 	// check blackout time window to determine store's reachable.
-	if failAttempt > maxExponentAttempt {
-		failAttempt = maxExponentAttempt
+	if state.failedAttempt > maxExponentAttempt {
+		state.failedAttempt = maxExponentAttempt
 	}
-	blackoutDeadline := lastFailTime + int64(backoffutils.ExponentBase2(failAttempt))
+	blackoutDeadline := int64(state.lastFailedTime) + int64(backoffutils.ExponentBase2(uint(state.failedAttempt)))
 	return blackoutDeadline < ts
 }
 
 // needResolve checks whether store need resolve.
 func (s *Store) needResolve() bool {
-	flag := storeFlag(atomic.LoadUint64((*uint64)(&s.flag)))
-	return flag&needResolveMask == 0
+	var state storeState
+	*(*uint64)(unsafe.Pointer(&state)) = atomic.LoadUint64(&s.state)
+	return state.resolved == false
 }
 
 // markAccess marks the processing result.
 func (s *Store) markAccess(success bool) {
 retry:
-	oldFlag := storeFlag(atomic.LoadUint64((*uint64)(&s.flag)))
-	lastFailTime := int64(oldFlag & lastFailTimeMask)
-	failAttempt := uint(oldFlag&attemptMask) >> 59
-	if (failAttempt == 0 && success) || (!success && failAttempt >= maxExponentAttempt) {
+	oldValue := atomic.LoadUint64(&s.state)
+	var state storeState
+	*(*uint64)(unsafe.Pointer(&state)) = oldValue
+	if (state.failedAttempt == 0 && success) || (!success && state.failedAttempt >= maxExponentAttempt) {
 		// return quickly if continue success, and no more mark when attempt meet max bound.
 		return
 	}
 	if !success {
-		if lastFailTime == 0 {
-			lastFailTime = time.Now().Unix()
+		if state.lastFailedTime == 0 {
+			state.lastFailedTime = uint32(time.Now().Unix())
 		}
-		failAttempt = failAttempt + 1
+		state.failedAttempt = state.failedAttempt + 1
 	} else {
-		lastFailTime = 0
-		failAttempt = 0
+		state.lastFailedTime = 0
+		state.failedAttempt = 0
 	}
-	newFlag := uint64(oldFlag)&accessCleanMask | uint64(failAttempt<<59) | uint64(lastFailTime)
-	if !atomic.CompareAndSwapUint64((*uint64)(&s.flag), uint64(oldFlag), uint64(newFlag)) {
+	newValue := *(*uint64)(unsafe.Pointer(&state))
+	if !atomic.CompareAndSwapUint64(&s.state, oldValue, newValue) {
 		goto retry
 	}
 }
@@ -866,14 +862,16 @@ retry:
 //  `resolved = false` will let next request resolve store address
 func (s *Store) markResolved(resolved bool) {
 retry:
-	oldFlag := storeFlag(atomic.LoadUint64((*uint64)(&s.flag)))
-	newFlag := uint64(oldFlag)
+	oldValue := atomic.LoadUint64(&s.state)
+	var state storeState
+	*(*uint64)(unsafe.Pointer(&state)) = oldValue
 	if resolved {
-		newFlag = newFlag | needResolveMask
+		state.resolved = true
 	} else {
-		newFlag = newFlag & (^uint64(needResolveMask))
+		state.resolved = false
 	}
-	if !atomic.CompareAndSwapUint64((*uint64)(&s.flag), uint64(oldFlag), uint64(newFlag)) {
+	newValue := *(*uint64)(unsafe.Pointer(&state))
+	if !atomic.CompareAndSwapUint64(&s.state, oldValue, newValue) {
 		goto retry
 	}
 }
