@@ -20,16 +20,19 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-type LockChecker struct {
+// Checker uses to check tables lock.
+type Checker struct {
 	ctx sessionctx.Context
 	is  infoschema.InfoSchema
 }
 
-func NewLockChecker(ctx sessionctx.Context, is infoschema.InfoSchema) *LockChecker {
-	return &LockChecker{ctx: ctx, is: is}
+// NewChecker return new lock Checker.
+func NewChecker(ctx sessionctx.Context, is infoschema.InfoSchema) *Checker {
+	return &Checker{ctx: ctx, is: is}
 }
 
-func (c *LockChecker) CheckTableLock(db, table string, privilege mysql.PrivilegeType) error {
+// CheckTableLock uses to check table lock.
+func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType) error {
 	if db == "" || table == "" {
 		return nil
 	}

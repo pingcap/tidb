@@ -1210,7 +1210,7 @@ func (ctx *ctxForPartitionExpr) AddTableLock(_ []model.TableLockTpInfo) {
 }
 
 // ReleaseTableLock implements the sessionctx.Context interface.
-func (s *ctxForPartitionExpr) ReleaseTableLock(locks []model.TableLockTpInfo) {
+func (ctx *ctxForPartitionExpr) ReleaseTableLock(locks []model.TableLockTpInfo) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.
@@ -1228,7 +1228,7 @@ func (ctx *ctxForPartitionExpr) ReleaseAllTableLocks() {
 }
 
 // HasLockedTables implements the sessionctx.Context interface.
-func (s *ctxForPartitionExpr) HasLockedTables() bool {
+func (ctx *ctxForPartitionExpr) HasLockedTables() bool {
 	return false
 }
 

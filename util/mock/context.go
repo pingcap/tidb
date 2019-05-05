@@ -217,34 +217,34 @@ func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []typ
 }
 
 // AddTableLock implements the sessionctx.Context interface.
-func (s *Context) AddTableLock(_ []model.TableLockTpInfo) {
+func (c *Context) AddTableLock(_ []model.TableLockTpInfo) {
 }
 
 // ReleaseTableLock implements the sessionctx.Context interface.
-func (s *Context) ReleaseTableLock(locks []model.TableLockTpInfo) {
+func (c *Context) ReleaseTableLock(locks []model.TableLockTpInfo) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.
-func (s *Context) CheckTableLocked(_ int64) (bool, model.TableLockType) {
+func (c *Context) CheckTableLocked(_ int64) (bool, model.TableLockType) {
 	return false, model.TableLockNone
 }
 
 // GetAllTableLocks implements the sessionctx.Context interface.
-func (s *Context) GetAllTableLocks() []model.TableLockTpInfo {
+func (c *Context) GetAllTableLocks() []model.TableLockTpInfo {
 	return nil
 }
 
 // ReleaseAllTableLocks implements the sessionctx.Context interface.
-func (s *Context) ReleaseAllTableLocks() {
+func (c *Context) ReleaseAllTableLocks() {
 }
 
 // HasLockedTables implements the sessionctx.Context interface.
-func (s *Context) HasLockedTables() bool {
+func (c *Context) HasLockedTables() bool {
 	return false
 }
 
 // Close implements the sessionctx.Context interface.
-func (s *Context) Close() {
+func (c *Context) Close() {
 }
 
 // NewContext creates a new mocked sessionctx.Context.
