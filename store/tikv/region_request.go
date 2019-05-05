@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -61,26 +62,26 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-
-	// gofail: var tikvStoreSendReqResult string
-	// switch tikvStoreSendReqResult {
-	// case "timeout":
-	// 	 return nil, errors.New("timeout")
-	// case "GCNotLeader":
-	// 	 if req.Type == tikvrpc.CmdGC {
-	//		 return &tikvrpc.Response{
-	//			 Type:   tikvrpc.CmdGC,
-	//			 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-	//		 }, nil
-	//	 }
-	// case "GCServerIsBusy":
-	//	 if req.Type == tikvrpc.CmdGC {
-	//		 return &tikvrpc.Response{
-	//			 Type: tikvrpc.CmdGC,
-	//			 GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
-	//		 }, nil
-	//	 }
-	// }
+	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
+		switch val.(string) {
+		case "timeout":
+			failpoint.Return(nil, errors.New("timeout"))
+		case "GCNotLeader":
+			if req.Type == tikvrpc.CmdGC {
+				failpoint.Return(&tikvrpc.Response{
+					Type: tikvrpc.CmdGC,
+					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+				}, nil)
+			}
+		case "GCServerIsBusy":
+			if req.Type == tikvrpc.CmdGC {
+				failpoint.Return(&tikvrpc.Response{
+					Type: tikvrpc.CmdGC,
+					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
+				}, nil)
+			}
+		}
+	})
 
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)

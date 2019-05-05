@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/tiancaiamao/debugger"
 	"golang.org/x/net/context"
 )
 
@@ -72,13 +72,6 @@ func (e *PointGetExecutor) Close() error {
 	return nil
 }
 
-func dummyUseDebuggerPackageToMakeGoLintHappy() {
-	// debugger is import and used in gofail only
-	// We need to **use** it, otherwise 'make check' would complain:
-	// imported and not used: "github.com/tiancaiamao/debugger"
-	debugger.Bind("xx")
-}
-
 // Next implements the Executor interface.
 func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -97,12 +90,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return errors.Trace(err1)
 		}
 
-		// gofail: var pointGetRepeatableReadTest1 bool
-		// if pointGetRepeatableReadTest1 && ctx.Value("pointGetRepeatableReadTest") != nil {
-		// 	label := debugger.Bind("point-get-g1")
-		// 	debugger.Breakpoint(label)
-		// }
-
 		handleVal, err1 := e.get(idxKey)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return errors.Trace(err1)
@@ -115,12 +102,19 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return errors.Trace(err1)
 		}
 
-		// gofail: var pointGetRepeatableReadTest2 bool
-		// if pointGetRepeatableReadTest2 && ctx.Value("pointGetRepeatableReadTest") != nil {
-		// 	label := debugger.Bind("point-get-g1")
-		// 	debugger.Continue("point-get-g2")
-		// 	debugger.Breakpoint(label)
-		// }
+		// The injection is used to simulate following scenario:
+		// 1. Session A create a point get query but pause before second time `GET` kv from backend
+		// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
+		// 3. Then point get retrieve data from backend after step 2 finished
+		// 4. Check the result
+		failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step1", func() {
+			if ch, ok := ctx.Value("pointGetRepeatableReadTest").(chan struct{}); ok {
+				// Make `UPDATE` continue
+				close(ch)
+			}
+			// Wait `UPDATE` finished
+			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
+		})
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
