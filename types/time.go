@@ -1482,7 +1482,7 @@ func checkMonthDay(year, month, day int, allowInvalidDate bool) error {
 		if month > 0 {
 			maxDay = maxDaysInMonth[month-1]
 		}
-		if month == 2 && (year%4 != 0 || (year%100 == 0 && year%400 != 0)) {
+		if month == 2 && !isLeapYear(uint16(year)) {
 			maxDay = 28
 		}
 	}
