@@ -141,8 +141,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	stmt.Accept(&extractor)
 
 	// DDL Statements can not accept parameters
-	_, ok := stmt.(ast.DDLNode)
-	if ok && len(extractor.markers) > 0 {
+	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
 		return ErrPrepareDDL
 	}
 
