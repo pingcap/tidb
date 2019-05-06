@@ -31,6 +31,7 @@ var (
 	_ DMLNode = &SelectStmt{}
 	_ DMLNode = &ShowStmt{}
 	_ DMLNode = &LoadDataStmt{}
+	_ DMLNode = &SplitIndexRegionStmt{}
 
 	_ Node = &Assignment{}
 	_ Node = &ByItem{}
@@ -2393,6 +2394,64 @@ func (n *FrameBound) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Unit = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
+type SplitIndexRegionStmt struct {
+	dmlNode
+
+	Table      *TableName
+	IndexName  string
+	ValueLists [][]ExprNode
+}
+
+func (n *SplitIndexRegionStmt) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("SPLIT TABLE ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore SplitIndexRegionStmt.Table")
+	}
+	ctx.WriteKeyWord(" INDEX ")
+	ctx.WriteName(n.IndexName)
+	ctx.WriteKeyWord(" BY ")
+	for i, row := range n.ValueLists {
+		if i != 0 {
+			ctx.WritePlain(",")
+		}
+		ctx.WritePlain("(")
+		for j, v := range row {
+			if j != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore SplitIndexRegionStmt.ValueLists[%d][%d]", i, j)
+			}
+		}
+		ctx.WritePlain(")")
+	}
+	return nil
+}
+
+func (n *SplitIndexRegionStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*SplitIndexRegionStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
+	for i, list := range n.ValueLists {
+		for j, val := range list {
+			node, ok := val.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.ValueLists[i][j] = node.(ExprNode)
+		}
 	}
 	return v.Leave(n)
 }
