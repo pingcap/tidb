@@ -284,8 +284,8 @@ func (h *BindHandle) Size() int {
 }
 
 // GetBindRecord return the bindMeta of the (normdOrigSQL,db) if bindMeta exist.
-func (h *BindHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
-	return h.bindInfo.Load().(cache).getBindRecord(normdOrigSQL, db)
+func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindMeta {
+	return h.bindInfo.Load().(cache).getBindRecord(hash, normdOrigSQL, db)
 }
 
 // GetAllBindRecord return all bind record in cache.
@@ -387,8 +387,7 @@ func copyInvalidBindRecordMap(oldMap map[string]*invalidBindRecordMap) map[strin
 	return newMap
 }
 
-func (c cache) getBindRecord(normdOrigSQL, db string) *BindMeta {
-	hash := parser.DigestHash(normdOrigSQL)
+func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindMeta {
 	bindRecords := c[hash]
 	if bindRecords != nil {
 		for _, bindRecord := range bindRecords {
