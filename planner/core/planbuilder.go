@@ -1609,7 +1609,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitIndexRegionStmt) (Pla
 		for j, valueItem := range valuesItem {
 			x, ok := valueItem.(*driver.ValueExpr)
 			if !ok {
-				return nil, errors.Trace(errors.New("expect constant values"))
+				return nil, errors.New("expect constant values")
 			}
 			value, err := x.Datum.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[indexInfo.Columns[j].Offset].FieldType)
 			if err != nil {

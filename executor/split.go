@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"math"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -50,7 +51,7 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 	regionIDs := make([]uint64, 0, len(e.valueLists))
 	index := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), e.indexInfo)
 	for _, values := range e.valueLists {
-		idxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, values, 1, nil)
+		idxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, values, math.MinInt64, nil)
 		if err != nil {
 			return err
 		}
