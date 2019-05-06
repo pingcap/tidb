@@ -1204,8 +1204,8 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 	return nil
 }
 
-// RunDistributedGCJob notifies TiKVs to do GC. This function may not finish immediately because it may take some time
-// to do resolveLocks.
+// RunDistributedGCJob notifies TiKVs to do GC. It is exported for kv api, do not use it with GCWorker at the same time.
+// This function may not finish immediately because it may take some time to do resolveLocks.
 func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string) error {
 	gcWorker := &GCWorker{
 		store:    s,
