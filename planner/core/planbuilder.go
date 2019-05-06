@@ -1613,9 +1613,6 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitIndexRegionStmt) (Pla
 	if indexInfo == nil {
 		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
-	schema := expression.TableInfo2SchemaWithDBName(b.ctx, node.Table.Schema, tblInfo)
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
-	mockTablePlan.SetSchema(schema)
 
 	indexValues := make([][]types.Datum, 0, len(node.ValueLists))
 	for i, valuesItem := range node.ValueLists {
@@ -1628,7 +1625,8 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitIndexRegionStmt) (Pla
 			if !ok {
 				return nil, errors.New("expect constant values")
 			}
-			value, err := x.Datum.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[indexInfo.Columns[j].Offset].FieldType)
+			colOffset := indexInfo.Columns[j].Offset
+			value, err := x.Datum.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[colOffset].FieldType)
 			if err != nil {
 				return nil, err
 			}
