@@ -643,3 +643,20 @@ id	count	task	operator info
 Point_Get_1	1.00	root	table:t, index:i j
 rollback;
 drop table if exists t;
+create table t(a int);
+begin;
+insert into t values (1);
+explain select * from t left outer join t t1 on t.a = t1.a where t.a not between 1 and 2;
+id	count	task	operator info
+Projection_8	8320.83	root	test.t.a, test.t1.a
+└─HashLeftJoin_9	8320.83	root	left outer join, inner:UnionScan_14, equal:[eq(test.t.a, test.t1.a)]
+  ├─UnionScan_10	6656.67	root	not(and(ge(test.t.a, 1), le(test.t.a, 2)))
+  │ └─TableReader_13	6656.67	root	data:Selection_12
+  │   └─Selection_12	6656.67	cop	or(lt(test.t.a, 1), gt(test.t.a, 2))
+  │     └─TableScan_11	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─UnionScan_14	6656.67	root	not(and(ge(test.t1.a, 1), le(test.t1.a, 2))), not(isnull(test.t1.a))
+    └─TableReader_17	6656.67	root	data:Selection_16
+      └─Selection_16	6656.67	cop	not(isnull(test.t1.a)), or(lt(test.t1.a, 1), gt(test.t1.a, 2))
+        └─TableScan_15	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+rollback;
+drop table if exists t;
