@@ -208,7 +208,13 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableDual_9 8000.00 root rows:0",
 	))
-	tk.MustQuery("explain select * from t1 left join t2 on t1.a =1 and t1.a = 2;").Check(testkit.Rows(
+	tk.MustQuery("explain select * from t1 right join t2 on false;").Check(testkit.Rows(
+		"HashRightJoin_6 80000000.00 root right outer join, inner:TableDual_7",
+		"├─TableDual_7 8000.00 root rows:0",
+		"└─TableReader_9 10000.00 root data:TableScan_8",
+		"  └─TableScan_8 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("explain select * from t1 left join t2 on t1.a = 1 and t1.a = 2;").Check(testkit.Rows(
 		"HashLeftJoin_6 80000000.00 root left outer join, inner:TableDual_9",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
 		"│ └─TableScan_7 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",

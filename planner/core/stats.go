@@ -77,21 +77,32 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo) (*proper
 	return profile, nil
 }
 
+// getColumnNDV computes estimated NDV of specified column using the original
+// histogram of `DataSource` which is retrieved from storage(not the derived one).
+func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
+	hist, ok := ds.statisticTable.Columns[colID]
+	if ok && hist.Count > 0 {
+		factor := float64(ds.statisticTable.Count) / float64(hist.Count)
+		ndv = float64(hist.NDV) * factor
+	} else {
+		ndv = float64(ds.statisticTable.Count) * distinctFactor
+	}
+	return ndv
+}
+
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.StatsInfo, *statistics.HistColl) {
 	profile := &property.StatsInfo{
-		RowCount:       float64(ds.statisticTable.Count),
-		Cardinality:    make([]float64, len(ds.Columns)),
-		HistColl:       ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
-		UsePseudoStats: ds.statisticTable.Pseudo,
+		RowCount:     float64(ds.statisticTable.Count),
+		Cardinality:  make([]float64, len(ds.Columns)),
+		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
+		StatsVersion: ds.statisticTable.Version,
 	}
+	if ds.statisticTable.Pseudo {
+		profile.StatsVersion = statistics.PseudoVersion
+	}
+
 	for i, col := range ds.Columns {
-		hist, ok := ds.statisticTable.Columns[col.ID]
-		if ok && hist.Count > 0 {
-			factor := float64(ds.statisticTable.Count) / float64(hist.Count)
-			profile.Cardinality[i] = float64(hist.NDV) * factor
-		} else {
-			profile.Cardinality[i] = profile.RowCount * distinctFactor
-		}
+		profile.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}
 	ds.stats = profile
 	selectivity, nodes, err := profile.HistColl.Selectivity(ds.ctx, conds)

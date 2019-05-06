@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -46,9 +47,9 @@ type StatsNode struct {
 
 // The type of the StatsNode.
 const (
-	indexType = iota
-	pkType
-	colType
+	IndexType = iota
+	PkType
+	ColType
 )
 
 const unknownColumnID = math.MinInt64
@@ -192,9 +193,9 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			nodes = append(nodes, &StatsNode{Tp: colType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
-			if colInfo.isHandle {
-				nodes[len(nodes)-1].Tp = pkType
+			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
+			if colInfo.IsHandle {
+				nodes[len(nodes)-1].Tp = PkType
 				var cnt float64
 				cnt, err = coll.GetRowCountByIntColumnRanges(sc, id, ranges)
 				if err != nil {
@@ -227,7 +228,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			}
 			selectivity := cnt / float64(coll.Count)
 			nodes = append(nodes, &StatsNode{
-				Tp:          indexType,
+				Tp:          IndexType,
 				ID:          id,
 				mask:        maskCovered,
 				Ranges:      ranges,
@@ -266,7 +267,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	switch rangeType {
 	case ranger.ColumnRangeType:
 		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].UniqueID)
-		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType)
+		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType, types.UnspecifiedLength)
 	case ranger.IndexRangeType:
 		var res *ranger.DetachRangeResult
 		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
@@ -298,7 +299,7 @@ func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
-		bestID, bestCount, bestTp, bestNumCols, bestMask := -1, 0, colType, 0, int64(0)
+		bestID, bestCount, bestTp, bestNumCols, bestMask := -1, 0, ColType, 0, int64(0)
 		for i, set := range nodes {
 			if marked[i] {
 				continue
@@ -313,7 +314,7 @@ func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 			// (1): The stats type, always prefer the primary key or index.
 			// (2): The number of expression that it covers, the more the better.
 			// (3): The number of columns that it contains, the less the better.
-			if (bestTp == colType && set.Tp != colType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
+			if (bestTp == ColType && set.Tp != ColType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
 				bestID, bestCount, bestTp, bestNumCols, bestMask = i, bits, set.Tp, set.numCols, curMask
 			}
 		}
@@ -321,7 +322,7 @@ func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 			break
 		}
 
-		// update the mask, remove the bit that nodes[bestID].mask has.
+		// Update the mask, remove the bit that nodes[bestID].mask has.
 		mask &^= bestMask
 
 		newBlocks = append(newBlocks, nodes[bestID])

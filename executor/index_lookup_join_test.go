@@ -53,9 +53,9 @@ func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
 		"│ └─TableReader_15 9990.00 root data:Selection_14",
 		"│   └─Selection_14 9990.00 cop not(isnull(test.t1.a))",
 		"│     └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─UnionScan_10 10.00 root ",
-		"  └─TableReader_9 10.00 root data:TableScan_8",
-		"    └─TableScan_8 10.00 cop table:t2, range: decided by [test.t1.a], keep order:false, stats:pseudo",
+		"└─UnionScan_10 1.00 root ",
+		"  └─TableReader_9 1.00 root data:TableScan_8",
+		"    └─TableScan_8 1.00 cop table:t2, range: decided by [test.t1.a], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ * from t1 join t2 on t1.a = t2.id").Check(testkit.Rows(
 		"2 2 2 2 2",
@@ -70,8 +70,8 @@ func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
 		"└─UnionScan_12 0.00 root not(isnull(test.t2.a))",
 		"  └─IndexLookUp_11 0.00 root ",
 		"    ├─Selection_10 0.00 cop not(isnull(test.t2.a))",
-		"    │ └─IndexScan_8 10.00 cop table:t2, index:a, range: decided by [test.t1.a], keep order:false, stats:pseudo",
-		"    └─TableScan_9 0.00 cop table:t2, keep order:false",
+		"    │ └─IndexScan_8 10.00 cop table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+		"    └─TableScan_9 0.00 cop table:t2, keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
 		"2 2 2 2 2",
@@ -88,7 +88,7 @@ func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
 		"  └─UnionScan_11 0.00 root not(isnull(test.t2.a))",
 		"    └─IndexReader_10 0.00 root index:Selection_9",
 		"      └─Selection_9 0.00 cop not(isnull(test.t2.a))",
-		"        └─IndexScan_8 10.00 cop table:t2, index:a, range: decided by [test.t1.a], keep order:false, stats:pseudo",
+		"        └─IndexScan_8 10.00 cop table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ t1.a, t2.a from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
 		"2 2",
@@ -117,7 +117,7 @@ func (s *testSuite1) TestBatchIndexJoinUnionScan(c *C) {
 		"  └─UnionScan_26 0.00 root not(isnull(test.t2.a))",
 		"    └─IndexReader_25 0.00 root index:Selection_24",
 		"      └─Selection_24 0.00 cop not(isnull(test.t2.a))",
-		"        └─IndexScan_23 10.00 cop table:t2, index:a, range: decided by [test.t1.a], keep order:false, stats:pseudo",
+		"        └─IndexScan_23 10.00 cop table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ count(*) from t1 join t2 on t1.a = t2.id").Check(testkit.Rows(
 		"4",
@@ -142,4 +142,13 @@ func (s *testSuite1) TestInapplicableIndexJoinHint(c *C) {
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ TIDB_INLJ(t1) */ is inapplicable`))
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t1 right join t2 on t1.a=t2.a;`).Check(testkit.Rows())
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ TIDB_INLJ(t2) */ is inapplicable`))
+}
+
+func (s *testSuite) TestIndexJoinOverflow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1(a int)`)
+	tk.MustExec(`insert into t1 values (-1)`)
+	tk.MustExec(`create table t2(a int unsigned, index idx(a));`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a;`).Check(testkit.Rows())
 }

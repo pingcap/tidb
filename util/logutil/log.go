@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
@@ -208,7 +209,9 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 
 const (
 	// SlowLogTimeFormat is the time format for slow log.
-	SlowLogTimeFormat = "2006-01-02-15:04:05.999999999 -0700"
+	SlowLogTimeFormat = time.RFC3339Nano
+	// OldSlowLogTimeFormat is the first version of the the time format for slow log, This is use for compatibility.
+	OldSlowLogTimeFormat = "2006-01-02-15:04:05.999999999 -0700"
 )
 
 type slowLogFormatter struct{}
@@ -381,4 +384,15 @@ func WithConnID(ctx context.Context, connID uint32) context.Context {
 		logger = zaplog.L()
 	}
 	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
+}
+
+// WithKeyValue attaches key/value to context.
+func WithKeyValue(ctx context.Context, key, value string) context.Context {
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = zaplog.L()
+	}
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.String(key, value)))
 }

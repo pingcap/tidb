@@ -14,6 +14,7 @@
 package types
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	parser_types "github.com/pingcap/parser/types"
@@ -61,6 +62,18 @@ var (
 	ErrDuplicatedValueInType = terror.ClassTypes.New(codeDuplicatedValueInType, mysql.MySQLErrName[mysql.ErrDuplicatedValueInType])
 	// ErrDatetimeFunctionOverflow is returned when the calculation in datetime function cause overflow.
 	ErrDatetimeFunctionOverflow = terror.ClassTypes.New(codeDatetimeFunctionOverflow, mysql.MySQLErrName[mysql.ErrDatetimeFunctionOverflow])
+	// ErrInvalidTimeFormat is returned when the time format is not correct.
+	ErrInvalidTimeFormat = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
+	// ErrInvalidWeekModeFormat is returned when the week mode is wrong.
+	ErrInvalidWeekModeFormat = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid week mode format: '%v'")
+	// ErrInvalidYearFormat is returned when the input is not a valid year format.
+	ErrInvalidYearFormat = errors.New("invalid year format")
+	// ErrInvalidYear is returned when the input value is not a valid year.
+	ErrInvalidYear = errors.New("invalid year")
+	// ErrIncorrectDatetimeValue is returned when the input is not valid date time value.
+	ErrIncorrectDatetimeValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
+	// ErrTruncatedWrongValue is returned then
+	ErrTruncatedWrongValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 )
 
 const (

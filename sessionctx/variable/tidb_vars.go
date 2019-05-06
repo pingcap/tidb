@@ -129,8 +129,12 @@ const (
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
-	// TiDBCheckMb4ValueInUtf8 is used to control whether to enable the check wrong utf8 value.
-	TiDBCheckMb4ValueInUtf8 = "tidb_check_mb4_value_in_utf8"
+	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
+	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
+
+	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
+	// isolation level.
+	TiDBSkipIsolationLevelCheck = "tidb_skip_isolation_level_check"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -147,6 +151,12 @@ const (
 
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
+
+	// tidb_opt_correlation_threshold is a guard to enable row count estimation using column order correlation.
+	TiDBOptCorrelationThreshold = "tidb_opt_correlation_threshold"
+
+	// tidb_opt_correlation_exp_factor is an exponential factor to control heuristic approach when tidb_opt_correlation_threshold is not satisfied.
+	TiDBOptCorrelationExpFactor = "tidb_opt_correlation_exp_factor"
 
 	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
@@ -222,6 +232,9 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// TiDBWaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
+	TiDBWaitTableSplitFinish = "tidb_wait_table_split_finish"
+
 	// tidb_force_priority defines the operations priority of all statements.
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
 	TiDBForcePriority = "tidb_force_priority"
@@ -237,8 +250,15 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// TIDBOptJoinReorderThreshold defines the threshold less than which
+	// we'll choose a rather time consuming algorithm to calculate the join order.
+	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
+
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	TiDBSlowQueryFile = "tidb_slow_query_file"
+
+	// TiDBEnableFastAnalyze indicates to use fast analyze.
+	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
 )
 
 // Default TiDB system variable values.
@@ -258,6 +278,8 @@ const (
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
 	DefOptWriteRowID                 = false
+	DefOptCorrelationThreshold       = 0.9
+	DefOptCorrelationExpFactor       = 0
 	DefOptInSubqToJoinAndAgg         = true
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
@@ -275,6 +297,7 @@ const (
 	DefTiDBMemQuotaIndexLookupReader = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupJoin   = 32 << 30 // 32GB.
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
+	DefTiDBMemQuotaDistSQL           = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
 	DefTiDBDisableTxnAutoRetry       = false
@@ -290,7 +313,11 @@ const (
 	DefTiDBForcePriority             = mysql.NoPriority
 	DefTiDBUseRadixJoin              = false
 	DefEnableWindowFunction          = false
+	DefTiDBOptJoinReorderThreshold   = 0
 	DefTiDBDDLSlowOprThreshold       = 300
+	DefTiDBUseFastAnalyze            = false
+	DefTiDBSkipIsolationLevelCheck   = false
+	DefTiDBWaitTableSplitFinish      = false
 )
 
 // Process global variables.
