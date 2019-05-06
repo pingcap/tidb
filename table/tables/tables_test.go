@@ -372,6 +372,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
 	tb, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
+	c.Assert(err, IsNil)
 	_, err = tb.AllocAutoID(tk.Se)
 	c.Assert(err, IsNil)
 
