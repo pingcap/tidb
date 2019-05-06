@@ -157,7 +157,6 @@ func (b *PlanBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 			col.OrigTblName = col.TblName
 			if x.AsName.L != "" {
 				col.TblName = x.AsName
-				col.DBName = model.NewCIStr("")
 			}
 		}
 		// Duplicate column name in one table is not allowed.
@@ -390,7 +389,7 @@ func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 		joinPlan.JoinType = RightOuterJoin
 		resetNotNullFlag(joinPlan.schema, 0, leftPlan.Schema().Len())
 	default:
-		b.optFlag = b.optFlag | flagJoinReOrderGreedy
+		b.optFlag = b.optFlag | flagJoinReOrder
 		joinPlan.JoinType = InnerJoin
 	}
 

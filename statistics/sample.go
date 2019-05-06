@@ -36,6 +36,9 @@ type SampleItem struct {
 	// Ordinal is original position of this item in SampleCollector before sorting. This
 	// is used for computing correlation.
 	Ordinal int
+	// RowID is the row id of the sample in its key.
+	// This property is used to calculate Ordinal in fast analyze.
+	RowID int64
 }
 
 // SortSampleItems sorts a slice of SampleItem.
@@ -171,6 +174,14 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 		}
 	}
 	return nil
+}
+
+// CalcTotalSize is to calculate total size based on samples.
+func (c *SampleCollector) CalcTotalSize() {
+	c.TotalSize = 0
+	for _, item := range c.Samples {
+		c.TotalSize += int64(len(item.Value.GetBytes()))
+	}
 }
 
 // SampleBuilder is used to build samples for columns.

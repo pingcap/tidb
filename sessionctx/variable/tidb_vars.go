@@ -250,6 +250,10 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// TIDBOptJoinReorderThreshold defines the threshold less than which
+	// we'll choose a rather time consuming algorithm to calculate the join order.
+	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
+
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	TiDBSlowQueryFile = "tidb_slow_query_file"
 
@@ -309,6 +313,7 @@ const (
 	DefTiDBForcePriority             = mysql.NoPriority
 	DefTiDBUseRadixJoin              = false
 	DefEnableWindowFunction          = false
+	DefTiDBOptJoinReorderThreshold   = 0
 	DefTiDBDDLSlowOprThreshold       = 300
 	DefTiDBUseFastAnalyze            = false
 	DefTiDBSkipIsolationLevelCheck   = false
