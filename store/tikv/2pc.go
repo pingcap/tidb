@@ -116,7 +116,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	}, nil
 }
 
-func (c *twoPhaseCommitter) initKeysAndMutations(txn *tikvTxn, connID uint64) error {
+func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	var (
 		keys    [][]byte
 		size    int
@@ -125,7 +125,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations(txn *tikvTxn, connID uint64) er
 		lockCnt int
 	)
 	mutations := make(map[string]*mutationEx)
-	if txn.IsPessimistic() && len(c.primaryKey) > 0 {
+	txn := c.txn
+	isPessimistic := txn.IsPessimistic()
+	if isPessimistic && len(c.primaryKey) > 0 {
 		keys = append(keys, c.primaryKey)
 		mutations[string(c.primaryKey)] = &mutationEx{
 			Mutation: pb.Mutation{
@@ -158,7 +160,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations(txn *tikvTxn, connID uint64) er
 			}
 			delCnt++
 		}
-		if !bytes.Equal(k, c.primaryKey) {
+		if isPessimistic && !bytes.Equal(k, c.primaryKey) {
 			keys = append(keys, k)
 		}
 		entrySize := len(k) + len(v)
@@ -171,7 +173,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations(txn *tikvTxn, connID uint64) er
 	if err != nil {
 		return errors.Trace(err)
 	}
-	isPessimistic := c.txn.IsPessimistic()
 	for _, lockKey := range txn.lockKeys {
 		muEx, ok := mutations[string(lockKey)]
 		if !ok {
@@ -223,7 +224,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations(txn *tikvTxn, connID uint64) er
 	if len(keys) > logEntryCount || size > logSize {
 		tableID := tablecodec.DecodeTableID(keys[0])
 		logutil.Logger(context.Background()).Info("[BIG_TXN]",
-			zap.Uint64("con", connID),
+			zap.Uint64("con", c.connID),
 			zap.Int64("table ID", tableID),
 			zap.Int("size", size),
 			zap.Int("keys", len(keys)),
@@ -240,7 +241,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations(txn *tikvTxn, connID uint64) er
 	if txn.StartTS() == math.MaxUint64 {
 		err = errors.Errorf("try to commit with invalid txnStartTS: %d", txn.StartTS())
 		logutil.Logger(context.Background()).Error("commit failed",
-			zap.Uint64("conn", connID),
+			zap.Uint64("conn", c.connID),
 			zap.Error(err))
 		return errors.Trace(err)
 	}

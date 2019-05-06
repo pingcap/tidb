@@ -269,7 +269,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	if err := committer.initKeysAndMutations(txn, connID); err != nil {
+	if err := committer.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
 	if len(committer.keys) == 0 {
@@ -341,7 +341,7 @@ func (txn *tikvTxn) Rollback() error {
 
 func (txn *tikvTxn) rollbackPessimisticLock() error {
 	c := txn.committer
-	if err := c.initKeysAndMutations(txn, 0); err != nil {
+	if err := c.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
 	if len(c.keys) == 0 {

@@ -156,6 +156,7 @@ type ExecStmt struct {
 	StartTime         time.Time
 	isPreparedStmt    bool
 	isSelectForUpdate bool
+	retryCount        uint
 }
 
 // OriginText returns original statement as a string.
@@ -222,7 +223,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		}()
 	}
 
-	e, err := a.buildExecutor(sctx)
+	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
 	}
@@ -253,26 +254,26 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 
 	// Special handle for "select for update statement" in pessimistic transaction.
 	if isPessimistic && a.isSelectForUpdate {
-		return a.handlePessimisticSelectForUpdate(ctx, sctx, e)
+		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
 		if isPessimistic {
-			return nil, a.handlePessimisticDML(ctx, sctx, e)
+			return nil, a.handlePessimisticDML(ctx, e)
 		}
-		return a.handleNoDelayExecutor(ctx, sctx, e)
+		return a.handleNoDelayExecutor(ctx, e)
 	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
-		return a.handleNoDelayExecutor(ctx, sctx, e)
+		return a.handleNoDelayExecutor(ctx, e)
 	}
 
 	var txnStartTS uint64
 	txn, err := sctx.Txn(false)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if txn.Valid() {
 		txnStartTS = txn.StartTS()
@@ -313,43 +314,20 @@ func (c *chunkRowRecordSet) Close() error {
 	return nil
 }
 
-func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	retryCnt := uint(0)
+func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
 	for {
-		rs, err := a.runPessimisticSelectForUpdate(ctx, sctx, e)
-		if err == nil {
-			return rs, nil
-		}
-		// Retry this "select for update" statement using a new startTS.
-		if !strings.Contains(err.Error(), tidbutil.WriteConflictMarker) {
+		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
+		e, err = a.handlePessimisticLockError(ctx, err)
+		if err != nil {
 			return nil, err
 		}
-		if retryCnt >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
-			return nil, errors.New("pessimistic max retry count reached")
-		}
-		retryCnt++
-		conflictTS := extractConflictTS(err.Error())
-		if conflictTS > txnCtx.GetForUpdateTS() {
-			txnCtx.SetForUpdateTS(conflictTS)
-		} else {
-			ts, err1 := sctx.GetStore().GetOracle().GetTimestamp(ctx)
-			if err1 != nil {
-				return nil, err1
-			}
-			txnCtx.SetForUpdateTS(ts)
-		}
-		e, err = a.buildExecutor(sctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if err = e.Open(ctx); err != nil {
-			return nil, errors.Trace(err)
+		if e == nil {
+			return rs, nil
 		}
 	}
 }
 
-func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
+func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
 	rs := &recordSet{
 		executor: e,
 		stmt:     a,
@@ -375,12 +353,13 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, sctx sessi
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, a.Ctx.GetSessionVars().MaxChunkSize)
 	}
 	return nil, err
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
+	sctx := a.Ctx
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -419,20 +398,19 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 	return nil, err
 }
 
-func (a *ExecStmt) handlePessimisticDML(ctx context.Context, sctx sessionctx.Context, e Executor) error {
+func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
+	sctx := a.Ctx
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
-	retryCnt := uint(0)
 	for {
-		_, err = a.handleNoDelayExecutor(ctx, sctx, e)
+		_, err = a.handleNoDelayExecutor(ctx, e)
 		if err != nil {
 			return err
 		}
-		p := txn.(pessimisticTxn)
-		keys, err1 := p.KeysNeedToLock()
+		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
 			return err1
 		}
@@ -441,43 +419,61 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, sctx sessionctx.Con
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
 		err = txn.LockKeys(ctx, forUpdateTS, keys...)
-		if err == nil || !strings.Contains(err.Error(), tidbutil.WriteConflictMarker) {
-			return err
-		}
-		if retryCnt >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
-			return errors.New("pessimistic lock retry limit reached")
-		}
-		retryCnt++
-		conflictTS := extractConflictTS(err.Error())
-		if conflictTS == 0 {
-			logutil.Logger(ctx).Warn("failed to extract conflictTS from a conflict error")
-		}
-		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
-			zap.Uint64("txn", txn.StartTS()),
-			zap.Uint64("forUpdateTS", forUpdateTS),
-			zap.Uint64("conflictTS", conflictTS))
-		if conflictTS > forUpdateTS {
-			txnCtx.SetForUpdateTS(conflictTS)
-		} else {
-			ts, err1 := sctx.GetStore().GetOracle().GetTimestamp(ctx)
-			if err1 != nil {
-				return err1
-			}
-			txnCtx.SetForUpdateTS(ts)
-		}
-		e, err = a.buildExecutor(sctx)
+		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
 			return err
 		}
-
-		// Rollback the statement change before retry it.
-		sctx.StmtRollback()
-		sctx.GetSessionVars().StmtCtx.ResetForRetry()
-
-		if err = e.Open(ctx); err != nil {
-			return err
+		if e == nil {
+			return nil
 		}
 	}
+}
+
+// handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
+func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (Executor, error) {
+	if err == nil {
+		return nil, nil
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, tidbutil.WriteConflictMarker) {
+		return nil, err
+	}
+	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
+		return nil, errors.New("pessimistic lock retry limit reached")
+	}
+	a.retryCount++
+	conflictTS := extractConflictTS(errStr)
+	if conflictTS == 0 {
+		logutil.Logger(ctx).Warn("failed to extract conflictTS from a conflict error")
+	}
+	sctx := a.Ctx
+	txnCtx := sctx.GetSessionVars().TxnCtx
+	forUpdateTS := txnCtx.GetForUpdateTS()
+	logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
+		zap.Uint64("txn", txnCtx.StartTS),
+		zap.Uint64("forUpdateTS", forUpdateTS),
+		zap.Uint64("conflictTS", conflictTS))
+	if conflictTS > txnCtx.GetForUpdateTS() {
+		txnCtx.SetForUpdateTS(conflictTS)
+	} else {
+		ts, err1 := sctx.GetStore().GetOracle().GetTimestamp(ctx)
+		if err1 != nil {
+			return nil, err1
+		}
+		txnCtx.SetForUpdateTS(ts)
+	}
+	e, err := a.buildExecutor()
+	if err != nil {
+		return nil, err
+	}
+	// Rollback the statement change before retry it.
+	sctx.StmtRollback()
+	sctx.GetSessionVars().StmtCtx.ResetForRetry()
+
+	if err = e.Open(ctx); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 func extractConflictTS(errStr string) uint64 {
@@ -505,7 +501,8 @@ type pessimisticTxn interface {
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
-func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
+func (a *ExecStmt) buildExecutor() (Executor, error) {
+	ctx := a.Ctx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".

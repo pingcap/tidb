@@ -156,6 +156,8 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 		return nil, err
 	}
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
+		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
+		// different for pessimistic transaction.
 		val, err = txn.GetMemBuffer().Get(key)
 		if err == nil {
 			return val, err
@@ -163,8 +165,8 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 		if !kv.IsErrNotFound(err) {
 			return nil, err
 		}
+		// fallthrough to snapshot get.
 	}
-	// In pessimistic txn, this snapshot may be using the 'for update ts' instead of start ts.
 	return e.snapshot.Get(key)
 }
 
