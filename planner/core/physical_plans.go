@@ -90,7 +90,6 @@ type PhysicalIndexScan struct {
 
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
-	filterCondition []expression.Expression
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
@@ -115,7 +114,7 @@ type PhysicalIndexScan struct {
 	// It is used for query feedback.
 	Hist *statistics.Histogram
 
-	rangeDecidedBy []*expression.Column
+	rangeInfo string
 
 	// The index scan may be on a partition.
 	isPartition     bool
@@ -235,6 +234,12 @@ type PhysicalIndexJoin struct {
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
+	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
+	// e.g. select * from t where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
+	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b=10
+	//      need to be evaluated after we fetch the data of t1.
+	// This struct stores them and evaluate them to ranges.
+	CompareFilters *ColWithCmpFuncManager
 }
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.
