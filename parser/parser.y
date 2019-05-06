@@ -526,6 +526,7 @@ import (
 	tidbHJ		"TIDB_HJ"
 	tidbSMJ		"TIDB_SMJ"
 	tidbINLJ	"TIDB_INLJ"
+	split		"SPLIT"
 
 	builtinAddDate
 	builtinBitAnd
@@ -649,6 +650,7 @@ import (
 	RevokeStmt			"Revoke statement"
 	RevokeRoleStmt      "Revoke role statement"
 	RollbackStmt			"ROLLBACK statement"
+	SplitIndexRegionStmt		"Split index region statement"
 	SetStmt				"Set variable statement"
 	ChangeStmt				"Change statement"
 	SetRoleStmt				"Set active role statement"
@@ -1462,6 +1464,24 @@ RecoverTableStmt:
             JobNum: $4.(int64),
         }
     }
+
+/*******************************************************************
+ *
+ *  Split index region statement
+ *
+ *  Example:
+ *      SPLIT TABLE table_name INDEX index_name BY (val1...),(val2...)...
+ *
+ *******************************************************************/
+SplitIndexRegionStmt:
+	"SPLIT" "TABLE" TableName "INDEX" IndexName "BY" ValuesList
+	{
+		$$ = &ast.SplitIndexRegionStmt{
+			Table: $3.(*ast.TableName),
+			IndexName: $5.(string),
+			ValueLists: $7.([][]ast.ExprNode),
+		}
+	}
 
 /*******************************************************************************************/
 
@@ -3238,7 +3258,7 @@ UnReservedKeyword:
 
 TiDBKeyword:
  "ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ"
-| "TIDB_SMJ" | "TIDB_INLJ"
+| "TIDB_SMJ" | "TIDB_INLJ" | "SPLIT"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
@@ -6845,6 +6865,7 @@ Statement:
 |	SetStmt
 |	SetRoleStmt
 |	SetDefaultRoleStmt
+|	SplitIndexRegionStmt
 |	ShowStmt
 |	SubSelect
 	{

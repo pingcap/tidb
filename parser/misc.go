@@ -465,6 +465,7 @@ var tokenMap = map[string]int{
 	"SMALLINT":                 smallIntType,
 	"SNAPSHOT":                 snapshot,
 	"SOME":                     some,
+	"SPLIT":                    split,
 	"SQL":                      sql,
 	"SQL_CACHE":                sqlCache,
 	"SQL_CALC_FOUND_ROWS":      sqlCalcFoundRows,
