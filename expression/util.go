@@ -289,7 +289,7 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
-func pushDownNot(ctx sessionctx.Context, exprs []Expression, not bool) []Expression {
+func doPushDownNot(ctx sessionctx.Context, exprs []Expression, not bool) []Expression {
 	newExprs := make([]Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		newExprs = append(newExprs, PushDownNot(ctx, expr, not))
@@ -307,21 +307,21 @@ func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
 			}
-			newArgs := pushDownNot(f.GetCtx(), f.GetArgs(), false)
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
 			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		case ast.LogicAnd:
 			if not {
-				newArgs := pushDownNot(f.GetCtx(), f.GetArgs(), true)
+				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
 				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), newArgs...)
 			}
-			newArgs := pushDownNot(f.GetCtx(), f.GetArgs(), false)
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
 			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		case ast.LogicOr:
 			if not {
-				newArgs := pushDownNot(f.GetCtx(), f.GetArgs(), true)
+				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
 				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), newArgs...)
 			}
-			newArgs := pushDownNot(f.GetCtx(), f.GetArgs(), false)
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
 			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		}
 	}
