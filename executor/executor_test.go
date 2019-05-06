@@ -3636,6 +3636,57 @@ func (s *testSuite3) TearDownTest(c *C) {
 	}
 }
 
+type testSuite4 struct {
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	store     kv.Storage
+	domain    *domain.Domain
+	*parser.Parser
+	ctx *mock.Context
+}
+
+func (s *testSuite4) SetUpSuite(c *C) {
+	s.Parser = parser.New()
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
+	if useMockTikv {
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
+	}
+	d, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
+	s.domain = d
+}
+
+func (s *testSuite4) TearDownSuite(c *C) {
+	s.domain.Close()
+	s.store.Close()
+}
+
+func (s *testSuite4) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
+}
+
 func (s *testSuite) TestStrToDateBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select str_to_date('18/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2018-10-22"))
