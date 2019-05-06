@@ -75,6 +75,8 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("wait scatter region failed",
 				zap.Uint64("regionID", regionID),
+				zap.String("table", e.table.Meta().Name.L),
+				zap.String("index", e.indexInfo.Name.L),
 				zap.Error(err))
 		}
 	}
