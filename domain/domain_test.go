@@ -14,6 +14,7 @@
 package domain
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -80,10 +81,21 @@ func (*testSuite) TestT(c *C) {
 	// for setting lease
 	lease := 100 * time.Millisecond
 
-	// for GetSnapshotInfoSchema
-	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
+	// for updating the self schema version
+	goCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	cancel()
 	c.Assert(err, IsNil)
+	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
 	c.Assert(snapIs, NotNil)
+	c.Assert(err, IsNil)
+	// Make sure that the self schema version doesn't be changed.
+	goCtx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
+	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	cancel()
+	c.Assert(err, IsNil)
+
+	// for GetSnapshotInfoSchema
 	snapTS = oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
 	snapIs, err = dom.GetSnapshotInfoSchema(snapTS)
 	c.Assert(err, IsNil)
