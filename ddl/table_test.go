@@ -174,7 +174,9 @@ func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchem
 	c.Assert(err, IsNil)
 
 	v := getSchemaVer(c, ctx)
+	tblInfo.State = model.StatePublic
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	tblInfo.State = model.StateNone
 	return job
 }
 

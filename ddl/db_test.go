@@ -2866,6 +2866,14 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	// Test for lock the same table multiple times.
 	tk2.MustExec("lock tables t1 write")
 	tk2.MustExec("lock tables t1 write, t2 read")
+
+	// Test for lock unsupported schema tables.
+	_, err = tk2.Exec("lock tables performance_schema.global_status write")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+	_, err = tk2.Exec("lock tables information_schema.tables write")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+	_, err = tk2.Exec("lock tables mysql.db write")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.

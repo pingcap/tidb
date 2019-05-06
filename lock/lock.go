@@ -37,7 +37,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 	// Below database are not support table lock.
-	if db == "INFORMATION_SCHEMA" || db == "PERFORMANCE_SCHEMA" || db == "mysql" {
+	if db == "information_schema" || db == "performance_schema" || db == "mysql" {
 		return nil
 	}
 	switch privilege {

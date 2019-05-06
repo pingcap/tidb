@@ -3121,6 +3121,7 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 	return part, nil
 }
 
+// LockTables uses to execute lock tables statement.
 func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
 	lockTables := make([]model.TableLockTpInfo, 0, len(stmt.TableLocks))
 	is := d.infoHandle.Get()
@@ -3132,6 +3133,9 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	// Check whether the table was already locked by other.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
+		if tb.Schema.L == "information_schema" || tb.Schema.L == "performance_schema" || tb.Schema.L == "mysql" {
+			return table.ErrUnsupportedOp
+		}
 		schema, ok := is.SchemaByName(tb.Schema)
 		if !ok {
 			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tb.Schema)
@@ -3157,7 +3161,6 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		UnlockTables: unlockTables,
 		SessionInfo:  sessionInfo,
 	}
-
 	job := &model.Job{
 		SchemaID:   lockTables[0].SchemaID,
 		TableID:    lockTables[0].TableID,
@@ -3176,6 +3179,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	return errors.Trace(err)
 }
 
+// UnlockTables uses to execute unlock tables statement.
 func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLockTpInfo) error {
 	if len(unlockTables) == 0 {
 		return nil
