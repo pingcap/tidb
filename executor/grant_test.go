@@ -189,7 +189,7 @@ func (s *testSuite3) TestNoAutoCreateUser(c *C) {
 	tk.MustExec(`SET sql_mode='NO_AUTO_CREATE_USER'`)
 	_, err := tk.Exec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
 	c.Check(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
 }
 
 func (s *testSuite3) TestCreateUserWhenGrant(c *C) {

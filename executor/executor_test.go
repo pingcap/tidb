@@ -29,6 +29,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
@@ -1767,8 +1768,15 @@ func (s *testSuite) TestSQLMode(c *C) {
 
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	_, err = tk.Exec("insert t values (null)")
+	c.Check(err, NotNil)
+	tk.MustExec("insert ignore t values (null)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
+	tk.MustExec("insert t select null")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert t values (1000)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("0", "127"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0", "0", "0", "127"))
 
 	tk.MustExec("insert tdouble values (10.23)")
 	tk.MustQuery("select * from tdouble").Check(testkit.Rows("9.99"))
@@ -1846,7 +1854,8 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
-		"select * from help_topic where name='aaa'":         true,
+		"select * from help_topic where name='aaa'":         false,
+		"select 1 from help_topic where name='aaa'":         true,
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
@@ -1863,6 +1872,42 @@ func (s *testSuite) TestIsPointGet(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, result)
 	}
+}
+
+func (s *testSuite) TestPointGetRepeatableRead(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec(`create table point_get (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into point_get values (1, 1, 1)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	var (
+		step1 = "github.com/pingcap/tidb/executor/pointGetRepeatableReadTest-step1"
+		step2 = "github.com/pingcap/tidb/executor/pointGetRepeatableReadTest-step2"
+	)
+
+	c.Assert(failpoint.Enable(step1, "return"), IsNil)
+	c.Assert(failpoint.Enable(step2, "pause"), IsNil)
+
+	updateWaitCh := make(chan struct{})
+	go func() {
+		ctx := context.WithValue(context.Background(), "pointGetRepeatableReadTest", updateWaitCh)
+		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
+			return fpname == step1 || fpname == step2
+		})
+		rs, err := tk1.Se.Execute(ctx, "select c from point_get where b = 1")
+		c.Assert(err, IsNil)
+		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+		result.Check(testkit.Rows("1"))
+	}()
+
+	<-updateWaitCh // Wait `POINT GET` first time `get`
+	c.Assert(failpoint.Disable(step1), IsNil)
+	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
+	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
 func (s *testSuite) TestRow(c *C) {

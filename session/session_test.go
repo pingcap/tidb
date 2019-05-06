@@ -22,7 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -1716,7 +1716,7 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	tk2.MustExec("begin")
 
 	// Make sure loading information schema is failed and server is invalid.
-	gofail.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
 	err := domain.GetDomain(tk.Se).Reload()
 	c.Assert(err, NotNil)
 
@@ -1737,7 +1737,7 @@ func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 
-	gofail.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed")
+	failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed")
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")
@@ -2421,12 +2421,12 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk2.MustExec("alter table no_retry add index idx(id)")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
 	tk1.MustExec("update no_retry set id = 10")
-	tk1.MustExec("commit")
-	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("10"))
+	_, err = tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(err, NotNil)
 
 	// set autocommit to begin and commit
 	tk1.MustExec("set autocommit = 0")
-	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("10"))
+	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
 	tk2.MustExec("update no_retry set id = 11")
 	tk1.MustExec("update no_retry set id = 12")
 	_, err = tk1.Se.Execute(context.Background(), "set autocommit = 1")
@@ -2543,6 +2543,30 @@ func (s *testSessionSuite) TestUpdatePrivilege(c *C) {
 		[]byte("")), IsTrue)
 	_, err2 := tk1.Exec("update ap.record t inner join tp.record tt on t.id=tt.id  set t.name=tt.name")
 	c.Assert(err2, IsNil)
+
+	tk.MustExec("create database service")
+	tk.MustExec("create database report")
+	tk.MustExec(`CREATE TABLE service.t1 (
+  id int(11) DEFAULT NULL,
+  a bigint(20) NOT NULL,
+  b text DEFAULT NULL,
+  PRIMARY KEY (a)
+)`)
+	tk.MustExec(`CREATE TABLE report.t2 (
+  a bigint(20) DEFAULT NULL,
+  c bigint(20) NOT NULL
+)`)
+	tk.MustExec("grant all privileges on service.* to weperk")
+	tk.MustExec("grant all privileges on report.* to weperk")
+	tk1.Se.GetSessionVars().CurrentDB = ""
+	tk1.MustExec(`update service.t1 s,
+report.t2 t
+set s.a = t.a
+WHERE
+s.a = t.a
+and t.c >=  1 and t.c <= 10000
+and s.b !='xx';`)
+
 }
 
 func (s *testSessionSuite) TestTxnGoString(c *C) {
