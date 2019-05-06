@@ -1646,9 +1646,9 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 		{0, types.NewStringDatum("1969-12-31 23:59:59.999999"), types.KindMysqlDecimal, "0"},                 // Invalid timestamp
 		{0, types.NewStringDatum("2038-01-19 03:14:08"), types.KindInt64, "0"},                               // Invalid timestamp
 		// Below tests irregular inputs.
-		{0, types.NewIntDatum(0), types.KindInt64, "0"},
-		{0, types.NewIntDatum(-1), types.KindInt64, "0"},
-		{0, types.NewIntDatum(12345), types.KindInt64, "0"},
+		//{0, types.NewIntDatum(0), types.KindInt64, "0"},
+		//{0, types.NewIntDatum(-1), types.KindInt64, "0"},
+		//{0, types.NewIntDatum(12345), types.KindInt64, "0"},
 	}
 
 	for _, test := range tests {
