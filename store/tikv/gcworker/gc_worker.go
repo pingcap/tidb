@@ -1182,7 +1182,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 	return errors.Trace(err)
 }
 
-// RunGCJob sends GC command to KV. it is exported for kv api, do not use it with GCWorker at the same time.
+// RunGCJob sends GC command to KV. It is exported for kv api, do not use it with GCWorker at the same time.
 func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
 		store: s,
@@ -1198,6 +1198,27 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
 	}
 	err = gcWorker.doGCInternal(ctx, safePoint, concurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// RunDistributedGCJob notifies TiKVs to do GC. This function may not finish immediately because it may take some time
+// to do resolveLocks.
+func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string) error {
+	gcWorker := &GCWorker{
+		store:    s,
+		uuid:     identifier,
+		pdClient: pd,
+	}
+
+	err := gcWorker.resolveLocks(ctx, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = gcWorker.uploadSafePointToPD(ctx, safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
