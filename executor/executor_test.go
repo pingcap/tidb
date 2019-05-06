@@ -3693,6 +3693,18 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
 }
 
+func (s *testSuite) TestSplitIndexRegion(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
+	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
+	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
+	c.Assert(err, NotNil)
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
+}
+
 type testOOMSuite struct {
 	store kv.Storage
 	do    *domain.Domain
