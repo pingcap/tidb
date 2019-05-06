@@ -26,7 +26,7 @@ type batchClientTester struct {
 
 // BatchClientTestConfig is used to config batchClientTester
 type BatchClientTestConfig struct {
-	Interval   time.Duration
+	Concurrent uint64
 	Timeout    time.Duration
 	MinDelay   uint64
 	MaxDelay   uint64
@@ -39,21 +39,24 @@ func (cfg *BatchClientTestConfig) genDelay() uint64 {
 }
 
 // BatchTest start sending test messages to TiKV servers
-func BatchTest(security config.Security, addrs []string, config BatchClientTestConfig) {
+func BatchTest(security config.Security, addrs []string, config BatchClientTestConfig) bool {
 	c := &batchClientTester{
 		rpcClient: newRPCClient(security),
 		cfg:       config,
 		failed:    false,
 		ended:     false,
 	}
-	c.wait.Add(len(addrs))
+	c.wait.Add(len(addrs) * int(c.cfg.Concurrent))
 	for _, addr := range addrs {
-		go c.runTest(addr)
+		for i := uint64(0); i < c.cfg.Concurrent; i++ {
+			go c.runTest(addr, i, c.cfg.Concurrent)
+		}
 	}
 	<-time.After(c.cfg.TestLength)
 	c.end()
 	c.wait.Wait()
 	//TODO: close the client
+	return c.isFailed()
 }
 
 type sendRequestResult struct {
@@ -113,7 +116,6 @@ func (c *batchClientTester) unblockedSend(
 
 // test sends test messages to the server and process and check respond
 func (c *batchClientTester) test(addr string, id uint64) {
-	defer func() { c.wait.Done() }()
 	logger().Infof("Invoke test RPC %d at %v", id, addr)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdBatchTest,
@@ -122,7 +124,7 @@ func (c *batchClientTester) test(addr string, id uint64) {
 			DelayTime: c.cfg.genDelay(),
 		},
 	}
-	done := c.unblockedSend(context.Background(), addr, req, c.cfg.Timeout)
+	done := c.unblockedSend(context.Background(), addr, req, ReadTimeoutMedium)
 	select {
 	case result := <-done:
 		err := result.error
@@ -145,7 +147,7 @@ func (c *batchClientTester) test(addr string, id uint64) {
 			return
 		}
 		//TODO: check timing
-	case <-time.After(100*time.Millisecond + c.cfg.Timeout):
+	case <-time.After(c.cfg.Timeout):
 		// do not finish in time
 		// better timing?
 		logger().Errorf("Test RPC %d at %v do not response or error on time", id, addr)
@@ -154,17 +156,14 @@ func (c *batchClientTester) test(addr string, id uint64) {
 }
 
 // runTest run test for one TiKV server
-func (c *batchClientTester) runTest(addr string) {
+func (c *batchClientTester) runTest(addr string, idStart uint64, idInterval uint64) {
 	defer func() { c.wait.Done() }()
-	ticker := time.NewTicker(c.cfg.Interval)
-	defer func() { ticker.Stop() }()
-	var id uint64
-	for range ticker.C {
+	id := idStart
+	for {
 		if c.isEnded() {
 			return
 		}
-		c.wait.Add(1)
-		go c.test(addr, id)
-		id++
+		c.test(addr, id)
+		id += idInterval
 	}
 }

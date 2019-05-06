@@ -53,7 +53,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test 
+dev: checklist check test
 
 build:
 	$(GOBUILD)
@@ -191,6 +191,9 @@ benchdb:
 
 importer:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
+
+superbatch-tester:
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/superbatch-tester ./cmd/superbatch-tester
 
 checklist:
 	cat checklist.md
