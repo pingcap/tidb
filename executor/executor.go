@@ -617,9 +617,9 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		req.AppendString(9, slow.TableIDs)
 		req.AppendString(10, slow.IndexIDs)
 		if slow.Internal {
-			req.AppendInt64(11, 0)
-		} else {
 			req.AppendInt64(11, 1)
+		} else {
+			req.AppendInt64(11, 0)
 		}
 		req.AppendString(12, slow.Digest)
 		e.cursor++
