@@ -98,6 +98,7 @@ type RegionCache struct {
 		sync.RWMutex
 		stores map[uint64]*Store
 	}
+	closeCh chan struct{}
 }
 
 // NewRegionCache creates a RegionCache.
@@ -108,7 +109,57 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.mu.regions = make(map[RegionVerID]*Region)
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
+	c.closeCh = make(chan struct{})
+	go c.asyncCheckAndResolveLoop()
 	return c
+}
+
+// Close releases region cache's resource.
+func (c *RegionCache) Close() {
+	close(c.closeCh)
+}
+
+const checkStoreInterval = 1 * time.Second
+
+// asyncCheckAndResolveLoop with
+func (c *RegionCache) asyncCheckAndResolveLoop() {
+	tick := time.NewTicker(checkStoreInterval)
+	defer tick.Stop()
+	var needCheckStores []*Store
+	for {
+		select {
+		case <-tick.C:
+			c.checkAndResolve(&needCheckStores)
+		case <-c.closeCh:
+			return
+		}
+	}
+}
+
+// checkAndResolve checks and resolve addr of failed stores.
+// this method isn't thread-safe and only be used by one goroutine.
+func (c *RegionCache) checkAndResolve(needCheckStores *[]*Store) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(context.Background()).Error("panic in the checkAndResolve goroutine",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
+		}
+	}()
+
+	*needCheckStores = (*needCheckStores)[0:]
+	c.storeMu.RLock()
+	for i := range c.storeMu.stores {
+		if c.storeMu.stores[i].needCheck() {
+			*needCheckStores = append(*needCheckStores, c.storeMu.stores[i])
+		}
+	}
+	c.storeMu.RUnlock()
+
+	for _, store := range *needCheckStores {
+		store.reResolve()
+	}
 }
 
 // RPCContext contains data that is needed to send RPC to a region.
@@ -151,7 +202,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 		return nil, nil
 	}
 
-	addr, err := store.resolveAddr(bo, ts)
+	addr, err := store.getAddr(bo)
 	if err != nil {
 		return nil, err
 	}
@@ -736,8 +787,8 @@ type Store struct {
 	state uint64       // unsafe store storeState
 
 	resolve struct {
-		sync.Mutex
-		fn resolveFunc // func to get store address from PD
+		sync.Mutex             // protect pd from concurrent init requests
+		fn         resolveFunc // func to get store address from PD
 	}
 }
 
@@ -745,14 +796,23 @@ type Store struct {
 type storeState struct {
 	lastFailedTime uint32
 	failedAttempt  uint16
-	resolved       bool
+	resolveState   resolveState
 }
 
-// resolveAddr resolves the address of store.
+type resolveState uint8
+
+const (
+	unresolved resolveState = iota
+	resolved
+	needCheck
+)
+
+// getAddr resolves the address of store.
 // following up resolve request will reuse previous result until
 // store become unreachable and after reResolveUnreachableStoreIntervalSec
-func (s *Store) resolveAddr(bo *Backoffer, ts int64) (addr string, err error) {
-	if !s.needResolve() {
+func (s *Store) getAddr(bo *Backoffer) (addr string, err error) {
+	// always use current addr event if it maybe staled.
+	if !s.needInitResolve() {
 		v := s.addr.Load()
 		if v == nil {
 			addr = ""
@@ -761,8 +821,15 @@ func (s *Store) resolveAddr(bo *Backoffer, ts int64) (addr string, err error) {
 		addr = v.(string)
 		return
 	}
+	// only resolve store addr from init status at first time.
+	addr, err = s.initResolve(bo)
+	return
+}
+
+// initResolve resolves addr for store that never resolved.
+func (s *Store) initResolve(bo *Backoffer) (addr string, err error) {
 	s.resolve.Lock()
-	if !s.needResolve() {
+	if !s.needInitResolve() {
 		s.resolve.Unlock()
 		v := s.addr.Load()
 		if v == nil {
@@ -773,7 +840,6 @@ func (s *Store) resolveAddr(bo *Backoffer, ts int64) (addr string, err error) {
 		return
 	}
 	var store *metapb.Store
-	// re-resolve if unreachable and long time from last load.
 	for {
 		store, err = s.resolve.fn(bo.ctx, s.peer.StoreId)
 		if err != nil {
@@ -800,10 +866,37 @@ func (s *Store) resolveAddr(bo *Backoffer, ts int64) (addr string, err error) {
 		}
 		addr = store.GetAddress()
 		s.addr.Store(addr)
-		s.markResolved(true)
+		s.markResolved()
 		s.resolve.Unlock()
 		return
 	}
+}
+
+// reResolve try to resolve addr for store that need check.
+func (s *Store) reResolve() {
+	var addr string
+	store, err := s.resolve.fn(context.Background(), s.peer.StoreId)
+	if err != nil {
+		tikvRegionCacheCounterWithGetStoreError.Inc()
+	} else {
+		tikvRegionCacheCounterWithGetStoreOK.Inc()
+	}
+	if err != nil {
+		// TODO: more refine PD error status handle.
+		if errors.Cause(err) == context.Canceled {
+			return
+		}
+		logutil.Logger(context.Background()).Error("loadStore from PD failed", zap.Uint64("id", s.peer.StoreId), zap.Error(err))
+		// we cannot do backoff in reResolve loop but try check other store and wait tick.
+		return
+	}
+	if store == nil {
+		return
+	}
+	addr = store.GetAddress()
+	s.addr.Store(addr)
+	s.markResolved()
+	return
 }
 
 // maxExponentAttempt before this blackout time is exponent increment.
@@ -825,11 +918,18 @@ func (s *Store) Available(ts int64) bool {
 	return blackoutDeadline < ts
 }
 
-// needResolve checks whether store need resolve.
-func (s *Store) needResolve() bool {
+// needInitResolve checks whether store need to do init block resolve.
+func (s *Store) needInitResolve() bool {
 	var state storeState
 	*(*uint64)(unsafe.Pointer(&state)) = atomic.LoadUint64(&s.state)
-	return state.resolved == false
+	return state.resolveState == unresolved
+}
+
+// needCheck checks whether store need to do async resolve check.
+func (s *Store) needCheck() bool {
+	var state storeState
+	*(*uint64)(unsafe.Pointer(&state)) = atomic.LoadUint64(&s.state)
+	return state.resolveState == needCheck
 }
 
 // markAccess marks the processing result.
@@ -847,6 +947,9 @@ retry:
 			state.lastFailedTime = uint32(time.Now().Unix())
 		}
 		state.failedAttempt = state.failedAttempt + 1
+		if state.resolveState == resolved {
+			state.resolveState = needCheck
+		}
 	} else {
 		state.lastFailedTime = 0
 		state.failedAttempt = 0
@@ -857,19 +960,32 @@ retry:
 	}
 }
 
-// markResolved marks the resolved status.
-//  `resolved = true` will let following requests use resolved addr
-//  `resolved = false` will let next request resolve store address
-func (s *Store) markResolved(resolved bool) {
+// markResolved marks store has be resolved.
+func (s *Store) markResolved() {
 retry:
 	oldValue := atomic.LoadUint64(&s.state)
 	var state storeState
 	*(*uint64)(unsafe.Pointer(&state)) = oldValue
-	if resolved {
-		state.resolved = true
-	} else {
-		state.resolved = false
+	if state.resolveState == resolved {
+		return
 	}
+	state.resolveState = resolved
+	newValue := *(*uint64)(unsafe.Pointer(&state))
+	if !atomic.CompareAndSwapUint64(&s.state, oldValue, newValue) {
+		goto retry
+	}
+}
+
+// markNeedCheck marks resolved store to be async resolve to check store addr change.
+func (s *Store) markNeedCheck() {
+retry:
+	oldValue := atomic.LoadUint64(&s.state)
+	var state storeState
+	*(*uint64)(unsafe.Pointer(&state)) = oldValue
+	if state.resolveState != resolved {
+		return
+	}
+	state.resolveState = needCheck
 	newValue := *(*uint64)(unsafe.Pointer(&state))
 	if !atomic.CompareAndSwapUint64(&s.state, oldValue, newValue) {
 		goto retry

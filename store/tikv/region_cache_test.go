@@ -351,6 +351,7 @@ func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 	// Create a separated region cache to do this test.
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	cache := NewRegionCache(pdCli)
+	defer cache.Close()
 
 	region := createSampleRegion([]byte("k1"), []byte("k2"))
 	region.meta.Id = 1
@@ -375,6 +376,7 @@ func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
 	cluster := createClusterWithStoresAndRegions(regionCnt, storeCount)
 
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
+	defer cache.Close()
 	loadRegionsToCache(cache, regionCnt)
 	c.Assert(workableRegions(cache, cache.mu.regions, ts), Equals, regionCnt)
 
@@ -514,6 +516,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	regionCnt, storeCount := 998, 3
 	cluster := createClusterWithStoresAndRegions(regionCnt, storeCount)
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
+	defer cache.Close()
 	loadRegionsToCache(cache, regionCnt)
 	bo := NewBackoffer(context.Background(), 1)
 	loc, err := cache.LocateKey(bo, []byte{})

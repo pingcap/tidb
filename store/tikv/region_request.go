@@ -226,7 +226,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.Logger(context.Background()).Warn("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
-		ctx.Store.markResolved(false)
+		ctx.Store.markNeedCheck()
 		return true, nil
 	}
 
