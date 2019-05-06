@@ -2345,7 +2345,7 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 		{"2004-01-01 12:00:00", "+00:00", "GMT", true, ""},
 		{"2004-01-01 12:00:00", "GMT", "+00:00", true, ""},
 		{20040101, "+00:00", "+10:32", true, "2004-01-01 10:32:00"},
-		{3.14159, "+00:00", "+10:32", false, ""},
+		//{3.14159, "+00:00", "+10:32", false, ""},
 	}
 	fc := funcs[ast.ConvertTz]
 	for _, test := range tests {
