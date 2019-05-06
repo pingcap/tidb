@@ -405,7 +405,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			// For autocommit single statement transactions, the history count is always 1.
 			// For explicit transactions, the statement count is more than 1.
 			history := GetHistory(s)
-			if history.Count() > 1 && strings.Contains(err.Error(), util.WriteConflictMarker) {
+			if history.Count() > 1 {
 				commitRetryLimit = 0
 			}
 		}
@@ -1466,7 +1466,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = dom.LoadBindInfoLoop(se2, se2.parser)
+	err = dom.LoadBindInfoLoop(se2)
 	if err != nil {
 		return nil, err
 	}

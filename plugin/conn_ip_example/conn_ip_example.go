@@ -41,9 +41,9 @@ func OnShutdown(ctx context.Context, manifest *plugin.Manifest) error {
 }
 
 // OnGeneralEvent implements TiDB Audit plugin's OnGeneralEvent SPI.
-func OnGeneralEvent(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd byte, stmt string) error {
+func OnGeneralEvent(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
 	fmt.Println("conn_ip_example notifiy called")
 	fmt.Println("variable test: ", variable.GetSysVar("conn_ip_example_test_variable").Value)
 	fmt.Printf("new connection by %s\n", ctx.Value("ip"))
-	return nil
+	return
 }
