@@ -1616,7 +1616,7 @@ func ExtractDurationNum(d *Duration, unit string) (int64, error) {
 }
 
 func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int64, error) {
-	// As format is a preformatted number, it format should be A[.[B]].
+	// Format is a preformatted number, it format should be A[.[B]].
 	decimalPointPos := strings.IndexRune(format, '.')
 	if decimalPointPos == -1 {
 		decimalPointPos = len(format)
@@ -1625,48 +1625,52 @@ func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int6
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
 	}
+	riv := iv // Rounded integer value
 
+	dv := int64(0)
+	lf := len(format) - 1
+	// Has fraction part
+	if decimalPointPos < lf {
+		if lf-decimalPointPos >= 6 {
+			if dv, err = strconv.ParseInt(format[decimalPointPos+1:decimalPointPos+7], 10, 64); err != nil {
+				return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+			}
+		} else {
+			if dv, err = strconv.ParseInt(format[decimalPointPos+1:]+"000000"[:6-(lf-decimalPointPos)], 10, 64); err != nil {
+				return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
+			}
+		}
+		if dv >= 500000 { // Round up
+			riv++
+		}
+	}
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		dayCount := iv / (3600000000 * 24)
-		iv %= 3600000000 * 24
-		return 0, 0, dayCount, iv * int64(gotime.Microsecond), nil
+		dayCount := riv / (3600000000 * 24)
+		riv %= 3600000000 * 24
+		return 0, 0, dayCount, riv * int64(gotime.Microsecond), nil
 	case "SECOND":
 		dayCount := iv / (3600 * 24)
 		iv %= 3600 * 24
-		dv := int64(0)
-		lf := len(format) - 1
-		// Has fractional part
-		if decimalPointPos < lf {
-			if lf-decimalPointPos >= 6 {
-				if dv, err = strconv.ParseInt(format[decimalPointPos+1:decimalPointPos+7], 10, 64); err != nil {
-					return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
-				}
-			} else {
-				if dv, err = strconv.ParseInt(format[decimalPointPos+1:]+"000000"[:6-(lf-decimalPointPos)], 10, 64); err != nil {
-					return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
-				}
-			}
-		}
 		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), nil
 	case "MINUTE":
-		dayCount := iv / (60 * 24)
-		iv %= 60 * 24
-		return 0, 0, dayCount, iv * int64(gotime.Minute), nil
+		dayCount := riv / (60 * 24)
+		riv %= 60 * 24
+		return 0, 0, dayCount, riv * int64(gotime.Minute), nil
 	case "HOUR":
-		dayCount := iv / 24
-		iv %= 24
-		return 0, 0, dayCount, iv * int64(gotime.Hour), nil
+		dayCount := riv / 24
+		riv %= 24
+		return 0, 0, dayCount, riv * int64(gotime.Hour), nil
 	case "DAY":
-		return 0, 0, iv, 0, nil
+		return 0, 0, riv, 0, nil
 	case "WEEK":
-		return 0, 0, 7 * iv, 0, nil
+		return 0, 0, 7 * riv, 0, nil
 	case "MONTH":
-		return 0, iv, 0, 0, nil
+		return 0, riv, 0, 0, nil
 	case "QUARTER":
-		return 0, 3 * iv, 0, 0, nil
+		return 0, 3 * riv, 0, 0, nil
 	case "YEAR":
-		return iv, 0, 0, 0, nil
+		return riv, 0, 0, 0, nil
 	}
 
 	return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
