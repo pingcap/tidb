@@ -122,7 +122,8 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(err, IsNil)
 	c.Check(bindHandle.Size(), Equals, 1)
 
-	bindData := bindHandle.GetBindRecord("select * from t", "test")
+	sql, hash := parser.NormalizeDigest("select * from t")
+	bindData := bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t")
 	c.Check(bindData.BindSQL, Equals, "select * from t use index(index_t)")
@@ -151,7 +152,9 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	_, err = tk.Exec("create global binding for select * from t where i>99 using select * from t use index(index_t) where i>99")
 	c.Assert(err, IsNil)
 
-	bindData := s.domain.BindHandle().GetBindRecord("select * from t where i > ?", "test")
+	sql, hash := parser.NormalizeDigest("select * from t where i > ?")
+
+	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
 	c.Check(bindData.BindSQL, Equals, "select * from t use index(index_t) where i>99")
@@ -183,7 +186,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(err, IsNil)
 	c.Check(bindHandle.Size(), Equals, 1)
 
-	bindData = bindHandle.GetBindRecord("select * from t where i > ?", "test")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
 	c.Check(bindData.BindSQL, Equals, "select * from t use index(index_t) where i>99")
@@ -196,7 +199,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 
 	_, err = tk.Exec("DROP global binding for select * from t where i>100")
 	c.Check(err, IsNil)
-	bindData = s.domain.BindHandle().GetBindRecord("select * from t where i > ?", "test")
+	bindData = s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Check(bindData, IsNil)
 
 	bindHandle = bindinfo.NewBindHandle(tk.Se)
@@ -204,7 +207,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Check(err, IsNil)
 	c.Check(bindHandle.Size(), Equals, 0)
 
-	bindData = bindHandle.GetBindRecord("select * from t where i > ?", "test")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, IsNil)
 
 	rs, err = tk.Exec("show global bindings")
@@ -400,7 +403,8 @@ func (s *testSuite) TestErrorBind(c *C) {
 	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 
-	bindData := s.domain.BindHandle().GetBindRecord("select * from t where i > ?", "test")
+	sql, hash := parser.NormalizeDigest("select * from t where i > ?")
+	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
 	c.Check(bindData.BindSQL, Equals, "select * from t use index(index_t) where i>100")
