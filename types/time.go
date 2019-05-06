@@ -1632,6 +1632,7 @@ func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int6
 	// Has fraction part
 	if decimalPointPos < lf {
 		if lf-decimalPointPos >= 6 {
+			// MySQL rounds down to 1e-6.
 			if dv, err = strconv.ParseInt(format[decimalPointPos+1:decimalPointPos+7], 10, 64); err != nil {
 				return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
 			}
@@ -1640,22 +1641,23 @@ func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int6
 				return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
 			}
 		}
-		if dv >= 500000 { // Round up
+		if dv >= 500000 { // Round up, and we should keep 6 digits for microsecond, so dv should in [000000, 999999].
 			riv++
 		}
 	}
+	const dayLength = int64(24 * gotime.Hour)
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		dayCount := riv / (3600000000 * 24)
-		riv %= 3600000000 * 24
+		dayCount := riv / (dayLength / int64(gotime.Microsecond))
+		riv %= dayLength / int64(gotime.Microsecond)
 		return 0, 0, dayCount, riv * int64(gotime.Microsecond), nil
 	case "SECOND":
-		dayCount := iv / (3600 * 24)
-		iv %= 3600 * 24
+		dayCount := iv / (dayLength / int64(gotime.Second))
+		iv %= dayLength / int64(gotime.Second)
 		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), nil
 	case "MINUTE":
-		dayCount := riv / (60 * 24)
-		riv %= 60 * 24
+		dayCount := riv / (dayLength / int64(gotime.Minute))
+		riv %= dayLength / int64(gotime.Minute)
 		return 0, 0, dayCount, riv * int64(gotime.Minute), nil
 	case "HOUR":
 		dayCount := riv / 24

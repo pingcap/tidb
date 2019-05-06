@@ -2692,8 +2692,6 @@ func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, a
 		}
 	}
 
-	fmt.Printf("baseDateArithmitical.getIntervalFromDecimal interval %v\n", interval)
-
 	return interval, false, nil
 }
 
