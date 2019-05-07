@@ -395,7 +395,7 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 		},
 		{
 			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 and t2.c > 1);",
-			best:     "Join{DataScan(t1)->DataScan(t2)}(test.t1.b,test.t2.b)->Sel([not(and(le(test.t1.c, 1), le(test.t2.c, 1)))])->Projection",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(test.t1.b,test.t2.b)->Sel([not(and(gt(test.t1.c, 1), gt(test.t2.c, 1)))])->Projection",
 			joinType: "left outer join",
 		},
 		{
