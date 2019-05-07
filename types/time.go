@@ -694,6 +694,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	// But only space and T can be the delimiter between the date and time part.
 	var (
 		year, month, day, hour, minute, second int
+		returnType                             = mysql.TypeDatetime
 		fracStr                                string
 		hhmmss                                 bool
 		err                                    error
@@ -708,26 +709,33 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		case 14: // No delimiter.
 			// YYYYMMDDHHMMSS
 			_, err = fmt.Sscanf(seps[0], "%4d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
+			returnType = mysql.TypeDatetime
 			hhmmss = true
 		case 12: // YYMMDDHHMMSS
 			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
+			returnType = mysql.TypeDatetime
 			year = adjustYear(year)
 			hhmmss = true
 		case 11: // YYMMDDHHMMS
 			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d%2d%2d%1d", &year, &month, &day, &hour, &minute, &second)
+			returnType = mysql.TypeDatetime
 			year = adjustYear(year)
 			hhmmss = true
 		case 10: // YYMMDDHHMM
 			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute)
+			returnType = mysql.TypeDatetime
 			year = adjustYear(year)
 		case 9: // YYMMDDHHM
 			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d%2d%1d", &year, &month, &day, &hour, &minute)
+			returnType = mysql.TypeDatetime
 			year = adjustYear(year)
 		case 8: // YYYYMMDD
 			_, err = fmt.Sscanf(seps[0], "%4d%2d%2d", &year, &month, &day)
+			returnType = mysql.TypeDate
 		case 6, 5:
 			// YYMMDD && YYMMD
 			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d", &year, &month, &day)
+			returnType = mysql.TypeDate
 			year = adjustYear(year)
 		default:
 			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(str))
@@ -745,10 +753,13 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 				case 0:
 				case 1, 2:
 					_, err = fmt.Sscanf(fracStr, "%2d ", &hour)
+					returnType = mysql.TypeDatetime
 				case 3, 4:
 					_, err = fmt.Sscanf(fracStr, "%2d%2d ", &hour, &minute)
+					returnType = mysql.TypeDatetime
 				default:
 					_, err = fmt.Sscanf(fracStr, "%2d%2d%2d ", &hour, &minute, &second)
+					returnType = mysql.TypeDatetime
 				}
 				truncatedOrIncorrect = err != nil
 			}
@@ -759,6 +770,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 			} else {
 				_, err = fmt.Sscanf(fracStr, "%2d ", &second)
 			}
+			returnType = mysql.TypeDatetime
 			truncatedOrIncorrect = err != nil
 		}
 		if truncatedOrIncorrect && sc != nil {
@@ -773,20 +785,25 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 
 		// YYYY-MM.DD, DD is treat as fracStr
 		err = scanTimeArgs(append(seps, fracStr), &year, &month, &day)
+		returnType = mysql.TypeDate
 		fracStr = ""
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
+		returnType = mysql.TypeDate
 	case 4:
 		// YYYY-MM-DD HH
 		err = scanTimeArgs(seps, &year, &month, &day, &hour)
+		returnType = mysql.TypeDatetime
 	case 5:
 		// YYYY-MM-DD HH-MM
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute)
+		returnType = mysql.TypeDatetime
 	case 6:
 		// We don't have fractional seconds part.
 		// YYYY-MM-DD HH-MM-SS
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
+		returnType = mysql.TypeDatetime
 		hhmmss = true
 	default:
 		return ZeroDatetime, errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(str))
@@ -828,7 +845,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 
 	nt := Time{
 		Time: tmp,
-		Type: mysql.TypeDatetime,
+		Type: returnType,
 		Fsp:  fsp}
 
 	return nt, nil
@@ -1361,7 +1378,9 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFlo
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
 
-	t.Type = tp
+	if tp != mysql.TypeUnspecified {
+		t.Type = tp
+	}
 	if err = t.check(sc); err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
@@ -1382,6 +1401,11 @@ func ParseTimestamp(sc *stmtctx.StatementContext, str string) (Time, error) {
 func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 	// date has no fractional seconds precision
 	return ParseTime(sc, str, mysql.TypeDate, MinFsp)
+}
+
+// ParseDateOrDatetime is a helper function wrapping ParseTime to get untyped datetime.
+func ParseDateOrDatetime(sc *stmtctx.StatementContext, str string) (Time, error) {
+	return ParseTime(sc, str, mysql.TypeUnspecified, UnspecifiedFsp)
 }
 
 // ParseTimeFromNum parses a formatted int64,

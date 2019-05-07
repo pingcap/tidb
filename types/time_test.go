@@ -374,6 +374,56 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 		c.Assert(err, NotNil)
 	}
 }
+
+func (s *testTimeSuite) TestParseDateOrDatetime(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		Input  string
+		Expect string
+		Type   byte
+	}{
+		{"2012-12-31 11:30:45", "2012-12-31 11:30:45", mysql.TypeDatetime},
+		{"0000-00-00", "0000-00-00", mysql.TypeDate},
+		{"0001-01-01", "0001-01-01", mysql.TypeDate},
+		{"00-12-31 11:30:45", "2000-12-31 11:30:45", mysql.TypeDatetime},
+		{"12-12-31 11:30:45", "2012-12-31 11:30:45", mysql.TypeDatetime},
+		{"2012-12-31", "2012-12-31", mysql.TypeDate},
+		{"20121231", "2012-12-31", mysql.TypeDate},
+		{"121231", "2012-12-31", mysql.TypeDate},
+		{"2012^12^31 11+30+45", "2012-12-31 11:30:45", mysql.TypeDatetime},
+		{"2012^12^31T11+30+45", "2012-12-31 11:30:45", mysql.TypeDatetime},
+		{"2012-2-1 11:30:45", "2012-02-01 11:30:45", mysql.TypeDatetime},
+		{"12-2-1 11:30:45", "2012-02-01 11:30:45", mysql.TypeDatetime},
+		{"20121231113045", "2012-12-31 11:30:45", mysql.TypeDatetime},
+		{"121231113045", "2012-12-31 11:30:45", mysql.TypeDatetime},
+		{"2012-02-29", "2012-02-29", mysql.TypeDate},
+		{"00-00-00", "0000-00-00", mysql.TypeDate},
+		{"00-00-00 00:00:00.123", "2000-00-00 00:00:00", mysql.TypeDatetime},
+		{"11111111111", "2011-11-11 11:11:01", mysql.TypeDatetime},
+		{"1701020301.", "2017-01-02 03:01:00", mysql.TypeDatetime},
+		{"1701020304.1", "2017-01-02 03:04:01", mysql.TypeDatetime},
+		{"1701020302.11", "2017-01-02 03:02:11", mysql.TypeDatetime},
+		{"170102036", "2017-01-02 03:06:00", mysql.TypeDatetime},
+		{"170102039.", "2017-01-02 03:09:00", mysql.TypeDatetime},
+		{"170102037.11", "2017-01-02 03:07:11", mysql.TypeDatetime},
+		{"2018-01-01 18", "2018-01-01 18:00:00", mysql.TypeDatetime},
+		{"18-01-01 18", "2018-01-01 18:00:00", mysql.TypeDatetime},
+		{"2018.01.01", "2018-01-01", mysql.TypeDate},
+		{"2018.01.01 00:00:00", "2018-01-01 00:00:00", mysql.TypeDatetime},
+		{"2018/01/01-00:00:00", "2018-01-01 00:00:00", mysql.TypeDatetime},
+	}
+
+	for _, test := range table {
+		t, err := types.ParseDateOrDatetime(sc, test.Input)
+		c.Assert(err, IsNil)
+		c.Assert(t.String(), Equals, test.Expect)
+		c.Assert(t.Type, Equals, test.Type)
+	}
+
+}
+
 func (s *testTimeSuite) TestYear(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []struct {
