@@ -258,11 +258,19 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return nil
 	}
 
+	concurrency, err := w.loadGCConcurrencyWithDefault()
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] failed to load gcConcurrency",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		concurrency = gcDefaultConcurrency
+	}
+
 	w.gcIsRunning = true
 	logutil.Logger(ctx).Info("[gc worker] starts the whole job",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint))
-	go w.runGCJob(ctx, safePoint)
+	go w.runGCJob(ctx, safePoint, concurrency)
 	return nil
 }
 
@@ -397,9 +405,9 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	return &safePoint, nil
 }
 
-func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
+func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency int) {
 	metrics.GCWorkerCounter.WithLabelValues("run_job").Inc()
-	err := w.resolveLocks(ctx, safePoint)
+	err := w.resolveLocks(ctx, safePoint, concurrency)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] resolve locks returns an error",
 			zap.String("uuid", w.uuid),
@@ -448,7 +456,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 			return
 		}
 	} else {
-		err = w.doGC(ctx, safePoint)
+		err = w.doGC(ctx, safePoint, concurrency)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] do GC returns an error",
 				zap.String("uuid", w.uuid),
@@ -640,105 +648,108 @@ func (w *GCWorker) checkUseDistributedGC() (bool, error) {
 	return true, nil
 }
 
-func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
+func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("resolve_locks").Inc()
 
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdScanLock,
-		ScanLock: &kvrpcpb.ScanLockRequest{
-			MaxVersion: safePoint,
-			Limit:      gcScanLockLimit,
-		},
-	}
 
 	logutil.Logger(ctx).Info("[gc worker] start resolve locks",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint))
 	startTime := time.Now()
-	regions, totalResolvedLocks := 0, 0
 
-	var key []byte
-	for {
-		select {
-		case <-ctx.Done():
-			return errors.New("[gc worker] gc job canceled")
-		default:
-		}
-
-		bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
-
-		req.ScanLock.StartKey = key
-		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-		locksResp := resp.ScanLock
-		if locksResp == nil {
-			return errors.Trace(tikv.ErrBodyMissing)
-		}
-		if locksResp.GetError() != nil {
-			return errors.Errorf("unexpected scanlock error: %s", locksResp)
-		}
-		locksInfo := locksResp.GetLocks()
-		locks := make([]*tikv.Lock, len(locksInfo))
-		for i := range locksInfo {
-			locks[i] = tikv.NewLock(locksInfo[i])
-		}
-
-		ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if !ok {
-			err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-
-		totalResolvedLocks += len(locks)
-		if len(locks) < gcScanLockLimit {
-			regions++
-			key = loc.EndKey
-			if len(key) == 0 {
-				break
-			}
-		} else {
-			logutil.Logger(ctx).Info("[gc worker] region has more than limit locks",
-				zap.String("uuid", w.uuid),
-				zap.Uint64("region", loc.Region.GetID()),
-				zap.Int("scan lock limit", gcScanLockLimit))
-			metrics.GCRegionTooManyLocksCounter.Inc()
-			key = locks[len(locks)-1].Key
-		}
+	handler := func(ctx context.Context, bo *tikv.Backoffer, r kv.KeyRange, loc *tikv.KeyLocation) ([]byte, error) {
+		return w.resolveLocksForRegion(ctx, bo, r.StartKey, loc, safePoint)
 	}
+
+	runner := tikv.NewRangeTaskRunner("resolve-lock-runner", w.store, concurrency, handler)
+	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	logutil.Logger(ctx).Info("[gc worker] finish resolve locks",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
-		zap.Int("regions", regions),
-		zap.Int("total resolved", totalResolvedLocks),
+		zap.Int32("regions", runner.CompletedRegions()),
 		zap.Duration("cost time", time.Since(startTime)))
 	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
 	return nil
+}
+
+func (w *GCWorker) resolveLocksForRegion(
+	ctx context.Context,
+	bo *tikv.Backoffer,
+	startKey []byte,
+	loc *tikv.KeyLocation,
+	safePoint uint64,
+) ([]byte, error) {
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdScanLock,
+		ScanLock: &kvrpcpb.ScanLockRequest{
+			MaxVersion: safePoint,
+			Limit:      gcScanLockLimit,
+			StartKey:   startKey,
+		},
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, errors.New("[gc worker] gc job canceled")
+	default:
+	}
+
+	resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	regionErr, err := resp.GetRegionError()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if regionErr != nil {
+		err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return startKey, nil
+	}
+	locksResp := resp.ScanLock
+	if locksResp == nil {
+		return nil, errors.Trace(tikv.ErrBodyMissing)
+	}
+	if locksResp.GetError() != nil {
+		return nil, errors.Errorf("unexpected scanlock error: %s", locksResp)
+	}
+	locksInfo := locksResp.GetLocks()
+	locks := make([]*tikv.Lock, len(locksInfo))
+	for i := range locksInfo {
+		locks[i] = tikv.NewLock(locksInfo[i])
+	}
+
+	ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
+	if err1 != nil {
+		return nil, errors.Trace(err1)
+	}
+	if !ok {
+		err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return startKey, nil
+	}
+
+	if len(locks) >= gcScanLockLimit {
+		logutil.Logger(ctx).Info("[gc worker] region has more than limit locks",
+			zap.String("uuid", w.uuid),
+			zap.Uint64("region", loc.Region.GetID()),
+			zap.Int("scan lock limit", gcScanLockLimit))
+		metrics.GCRegionTooManyLocksCounter.Inc()
+		return locks[len(locks)-1].Key, nil
+	}
+	return nil, nil
 }
 
 func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {
@@ -911,19 +922,7 @@ func (w *GCWorker) genNextGCTask(bo *tikv.Backoffer, safePoint uint64, key kv.Ke
 	return task, nil
 }
 
-func (w *GCWorker) doGC(ctx context.Context, safePoint uint64) error {
-	concurrency, err := w.loadGCConcurrencyWithDefault()
-	if err != nil {
-		logutil.Logger(ctx).Error("[gc worker] failed to load gcConcurrency",
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		concurrency = gcDefaultConcurrency
-	}
-
-	return w.doGCInternal(ctx, safePoint, concurrency)
-}
-
-func (w *GCWorker) doGCInternal(ctx context.Context, safePoint uint64, concurrency int) error {
+func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	err := w.saveSafePoint(w.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
@@ -1189,7 +1188,7 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 		uuid:  identifier,
 	}
 
-	err := gcWorker.resolveLocks(ctx, safePoint)
+	err := gcWorker.resolveLocks(ctx, safePoint, concurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1197,7 +1196,7 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 	if concurrency <= 0 {
 		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
 	}
-	err = gcWorker.doGCInternal(ctx, safePoint, concurrency)
+	err = gcWorker.doGC(ctx, safePoint, concurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}

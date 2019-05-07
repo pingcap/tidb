@@ -16,16 +16,13 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"sort"
-	"sync"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"sort"
 )
 
-type testRangeRequestSenderSuite struct {
+type testRangeTaskSuite struct {
 	OneByOneSuite
 	cluster *mocktikv.Cluster
 	store   *tikvStore
@@ -34,7 +31,7 @@ type testRangeRequestSenderSuite struct {
 	expectedRanges [][]kv.KeyRange
 }
 
-var _ = Suite(&testRangeRequestSenderSuite{})
+var _ = Suite(&testRangeTaskSuite{})
 
 func makeRange(startKey string, endKey string) kv.KeyRange {
 	return kv.KeyRange{
@@ -43,7 +40,7 @@ func makeRange(startKey string, endKey string) kv.KeyRange {
 	}
 }
 
-func (s *testRangeRequestSenderSuite) SetUpTest(c *C) {
+func (s *testRangeTaskSuite) SetUpTest(c *C) {
 	// Split the store at "a" to "z"
 	splitKeys := make([][]byte, 0)
 	for k := byte('a'); k <= byte('z'); k++ {
@@ -111,7 +108,7 @@ func (s *testRangeRequestSenderSuite) SetUpTest(c *C) {
 	}
 }
 
-func (s *testRangeRequestSenderSuite) TearDownTest(c *C) {
+func (s *testRangeTaskSuite) TearDownTest(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
@@ -131,7 +128,7 @@ func collect(c chan *kv.KeyRange) []kv.KeyRange {
 	return ranges
 }
 
-func (s *testRangeRequestSenderSuite) checkRanges(c *C, obtained []kv.KeyRange, expected []kv.KeyRange) {
+func (s *testRangeTaskSuite) checkRanges(c *C, obtained []kv.KeyRange, expected []kv.KeyRange) {
 	sort.Slice(obtained, func(i, j int) bool {
 		return bytes.Compare(obtained[i].StartKey, obtained[j].StartKey) < 0
 	})
@@ -139,75 +136,53 @@ func (s *testRangeRequestSenderSuite) checkRanges(c *C, obtained []kv.KeyRange, 
 	c.Assert(obtained, DeepEquals, expected)
 }
 
-func (s *testRangeRequestSenderSuite) testRangeTaskImpl(c *C, concurrency int) {
-	ranges := make(chan *kv.KeyRange, 10)
+func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
+	ranges := make(chan *kv.KeyRange, 100)
 
-	makeRequest := func(startKey []byte, endKey []byte) *tikvrpc.Request {
-		ranges <- &kv.KeyRange{
-			StartKey: startKey,
-			EndKey:   endKey,
-		}
-		return nil
+	task := func(ctx context.Context, bo *Backoffer, r kv.KeyRange, loc *KeyLocation) ([]byte, error) {
+		ranges <- &r
+		return nil, nil
 	}
 
-	sender := NewRangeRequestSender(
-		"test-sender",
+	runner := NewRangeTaskRunner(
+		"test-runner",
 		s.store,
 		concurrency,
-		makeRequest,
-		func(response *tikvrpc.Response, err error) error {
-			return nil
-		})
+		task)
 
 	for i, r := range s.testRanges {
 		expectedRanges := s.expectedRanges[i]
 
-		err := sender.RunOnRange(context.Background(), r.StartKey, r.EndKey)
+		err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
 		c.Assert(err, IsNil)
 		s.checkRanges(c, collect(ranges), expectedRanges)
 	}
 }
 
-func (s *testRangeRequestSenderSuite) TestRangeTask(c *C) {
+func (s *testRangeTaskSuite) TestRangeTask(c *C) {
 	for concurrency := 1; concurrency < 5; concurrency++ {
 		s.testRangeTaskImpl(c, concurrency)
 	}
 }
 
-func (s *testRangeRequestSenderSuite) TestRangeTaskWorker(c *C) {
-	ranges := make(chan *kv.KeyRange, 10)
+func (s *testRangeTaskSuite) TestRangeTaskWorker(c *C) {
+	ranges := make(chan *kv.KeyRange, 100)
 
-	makeRequest := func(startKey []byte, endKey []byte) *tikvrpc.Request {
-		ranges <- &kv.KeyRange{
-			StartKey: startKey,
-			EndKey:   endKey,
-		}
-		return nil
+	task := func(ctx context.Context, bo *Backoffer, r kv.KeyRange, loc *KeyLocation) ([]byte, error) {
+		ranges <- &r
+		return nil, nil
 	}
-
-	sender := NewRangeRequestSender(
-		"test-range-request-worker-sender",
+	runner := NewRangeTaskRunner(
+		"test-range-request-worker-runner",
 		s.store,
 		1,
-		makeRequest,
-		func(response *tikvrpc.Response, err error) error {
-			return nil
-		})
-
-	taskCh := make(chan *kv.KeyRange, 10)
-	wg := sync.WaitGroup{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		close(taskCh)
-		wg.Wait()
-	}()
-
-	go sender.createWorker(taskCh, &wg).run(ctx, cancel)
-	wg.Add(1)
+		task)
+	worker := runner.createWorker(nil, nil)
 
 	for i, r := range s.testRanges {
 		expectedRanges := s.expectedRanges[i]
-		taskCh <- &r
+		err := worker.runForRange(context.Background(), r.StartKey, r.EndKey)
+		c.Assert(err, IsNil)
 		s.checkRanges(c, collect(ranges), expectedRanges)
 	}
 }
