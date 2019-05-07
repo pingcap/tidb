@@ -2421,12 +2421,12 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk2.MustExec("alter table no_retry add index idx(id)")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
 	tk1.MustExec("update no_retry set id = 10")
-	tk1.MustExec("commit")
-	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("10"))
+	_, err = tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(err, NotNil)
 
 	// set autocommit to begin and commit
 	tk1.MustExec("set autocommit = 0")
-	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("10"))
+	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
 	tk2.MustExec("update no_retry set id = 11")
 	tk1.MustExec("update no_retry set id = 12")
 	_, err = tk1.Se.Execute(context.Background(), "set autocommit = 1")
@@ -2550,6 +2550,22 @@ WHERE
 s.a = t.a
 and t.c >=  1 and t.c <= 10000
 and s.b !='xx';`)
+
+	// Fix issue 10028
+	tk.MustExec("create database ap")
+	tk.MustExec("create database tp")
+	tk.MustExec("grant all privileges on ap.* to xxx")
+	tk.MustExec("grant select on tp.* to xxx")
+	tk.MustExec("flush privileges")
+	tk.MustExec("create table tp.record( id int,name varchar(128),age int)")
+	tk.MustExec("insert into tp.record (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18)")
+	tk.MustExec("create table ap.record( id int,name varchar(128),age int)")
+	tk.MustExec("insert into ap.record(id) values(1)")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"},
+		[]byte(""),
+		[]byte("")), IsTrue)
+	_, err2 := tk1.Exec("update ap.record t inner join tp.record tt on t.id=tt.id  set t.name=tt.name")
+	c.Assert(err2, IsNil)
 }
 
 func (s *testSessionSuite) TestTxnGoString(c *C) {
