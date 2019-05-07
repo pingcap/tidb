@@ -123,7 +123,7 @@ func (c *batchClientTester) unblockedClose() <-chan struct{} {
 
 // test sends test messages to the server and process and check respond
 func (c *batchClientTester) test(addr string, id uint64) {
-	logger().Infof("Invoke test RPC %d at %v", id, addr)
+	logger().Debugf("Invoke test RPC %d at %v", id, addr)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdBatchTest,
 		BatchTest: &tikvpb.BatchCommandTestRequest{
@@ -137,7 +137,7 @@ func (c *batchClientTester) test(addr string, id uint64) {
 		err := result.error
 		if err != nil {
 			// detected conection error on time, success
-			logger().Infof("Test RPC %d at %v timeout", id, addr)
+			logger().Warnf("Test RPC %d at %v error: %v", id, addr, err)
 			return
 		}
 		res := result.Response.Test
