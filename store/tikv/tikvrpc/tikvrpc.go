@@ -298,7 +298,7 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 	case *tikvpb.BatchCommandsResponse_Response_Coprocessor:
 		return &Response{Type: CmdCop, Cop: res.Coprocessor}
 	case *tikvpb.BatchCommandsResponse_Response_Test:
-		return &Response{Type: CmdBatchTest, Test:res.Test}
+		return &Response{Type: CmdBatchTest, Test: res.Test}
 	}
 	return nil
 }

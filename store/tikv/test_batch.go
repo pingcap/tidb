@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -17,10 +18,8 @@ import (
 type batchClientTester struct {
 	rpcClient Client
 	cfg       BatchClientTestConfig
-	failed    bool
-	failLock  sync.Mutex
-	ended     bool
-	endLock   sync.Mutex
+	failed    uint32
+	ended     uint32
 	wait      sync.WaitGroup
 }
 
@@ -43,8 +42,8 @@ func BatchTest(security config.Security, addrs []string, config BatchClientTestC
 	c := &batchClientTester{
 		rpcClient: newRPCClient(security),
 		cfg:       config,
-		failed:    false,
-		ended:     false,
+		failed:    0,
+		ended:     0,
 	}
 	c.wait.Add(len(addrs) * int(c.cfg.Concurrent))
 	for _, addr := range addrs {
@@ -71,32 +70,22 @@ func logger() *zap.SugaredLogger {
 
 // fail make the test as failed
 func (c *batchClientTester) fail() {
-	c.failLock.Lock()
-	c.failed = true
-	c.failLock.Unlock()
+	atomic.StoreUint32(&c.failed, 1)
 }
 
 // isFailed get is it failed
 func (c *batchClientTester) isFailed() bool {
-	c.failLock.Lock()
-	failed := c.failed
-	c.failLock.Unlock()
-	return failed
+	return atomic.LoadUint32(&c.failed) != 0
 }
 
 // end make the test end
 func (c *batchClientTester) end() {
-	c.endLock.Lock()
-	c.ended = true
-	c.endLock.Unlock()
+	atomic.StoreUint32(&c.ended, 1)
 }
 
 // isEnded get is it ended
 func (c *batchClientTester) isEnded() bool {
-	c.endLock.Lock()
-	ended := c.ended
-	c.endLock.Unlock()
-	return ended
+	return atomic.LoadUint32(&c.ended) != 0
 }
 
 // unblockedSend invoke SendRequest, but returns a channel instead of blocking the current goroutine

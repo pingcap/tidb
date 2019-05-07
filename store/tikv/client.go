@@ -100,7 +100,7 @@ type batchCommandsClient struct {
 	closed int32
 	// clientLock protects client when re-create the streaming.
 	clientLock sync.Mutex
-	waitGroup              *sync.WaitGroup
+	waitGroup  *sync.WaitGroup
 }
 
 func (c *batchCommandsClient) isStopped() bool {
@@ -212,7 +212,7 @@ func newConnArray(maxSize uint, addr string, security config.Security) (*connArr
 		batchCommandsCh:        make(chan *batchCommandsEntry, cfg.TiKVClient.MaxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, maxSize),
 		tikvTransportLayerLoad: 0,
-		waitGroup:				&sync.WaitGroup{},
+		waitGroup:              &sync.WaitGroup{},
 	}
 	if err := a.Init(addr, security); err != nil {
 		return nil, err
@@ -290,7 +290,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				idAlloc:                0,
 				tikvTransportLayerLoad: &a.tikvTransportLayerLoad,
 				closed:                 0,
-				waitGroup:				a.waitGroup,
+				waitGroup:              a.waitGroup,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 			go batchClient.batchRecvLoop(cfg.TiKVClient)
