@@ -29,6 +29,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
@@ -1853,7 +1854,8 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
-		"select * from help_topic where name='aaa'":         true,
+		"select * from help_topic where name='aaa'":         false,
+		"select 1 from help_topic where name='aaa'":         true,
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
@@ -1870,6 +1872,42 @@ func (s *testSuite) TestIsPointGet(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, result)
 	}
+}
+
+func (s *testSuite) TestPointGetRepeatableRead(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec(`create table point_get (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into point_get values (1, 1, 1)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	var (
+		step1 = "github.com/pingcap/tidb/executor/pointGetRepeatableReadTest-step1"
+		step2 = "github.com/pingcap/tidb/executor/pointGetRepeatableReadTest-step2"
+	)
+
+	c.Assert(failpoint.Enable(step1, "return"), IsNil)
+	c.Assert(failpoint.Enable(step2, "pause"), IsNil)
+
+	updateWaitCh := make(chan struct{})
+	go func() {
+		ctx := context.WithValue(context.Background(), "pointGetRepeatableReadTest", updateWaitCh)
+		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
+			return fpname == step1 || fpname == step2
+		})
+		rs, err := tk1.Se.Execute(ctx, "select c from point_get where b = 1")
+		c.Assert(err, IsNil)
+		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+		result.Check(testkit.Rows("1"))
+	}()
+
+	<-updateWaitCh // Wait `POINT GET` first time `get`
+	c.Assert(failpoint.Disable(step1), IsNil)
+	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
+	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
 func (s *testSuite) TestRow(c *C) {
@@ -3598,6 +3636,57 @@ func (s *testSuite3) TearDownTest(c *C) {
 	}
 }
 
+type testSuite4 struct {
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	store     kv.Storage
+	domain    *domain.Domain
+	*parser.Parser
+	ctx *mock.Context
+}
+
+func (s *testSuite4) SetUpSuite(c *C) {
+	s.Parser = parser.New()
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
+	if useMockTikv {
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
+	}
+	d, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
+	s.domain = d
+}
+
+func (s *testSuite4) TearDownSuite(c *C) {
+	s.domain.Close()
+	s.store.Close()
+}
+
+func (s *testSuite4) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
+}
+
 func (s *testSuite) TestStrToDateBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select str_to_date('18/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2018-10-22"))
@@ -3653,6 +3742,18 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select b from pt where b = 3").Check(testkit.Rows("3"))
 	// Index lookup
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
+}
+
+func (s *testSuite) TestSplitIndexRegion(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
+	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
+	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
+	c.Assert(err, NotNil)
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
 }
 
 type testOOMSuite struct {

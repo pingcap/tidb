@@ -248,6 +248,16 @@ const (
 		DEFAULT_ROLE_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
 		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER)
 	)`
+
+	// CreateStatsTopNTable stores topn data of a cmsketch with top n.
+	CreateStatsTopNTable = `CREATE TABLE if not exists mysql.stats_top_n (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
+		value longblob,
+		count bigint(64) UNSIGNED NOT NULL,
+		index tbl(table_id, is_index, hist_id)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -317,6 +327,7 @@ const (
 	version27 = 27
 	version28 = 28
 	version29 = 29
+	version30 = 30
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -490,6 +501,10 @@ func upgrade(s Session) {
 
 	if ver == version28 {
 		upgradeToVer29(s)
+	}
+
+	if ver < version30 {
+		upgradeToVer30(s)
 	}
 
 	updateBootstrapVer(s)
@@ -780,6 +795,10 @@ func upgradeToVer29(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info add index sql_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
 }
 
+func upgradeToVer30(s Session) {
+	mustExecute(s, CreateStatsTopNTable)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -836,6 +855,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateDefaultRolesTable)
 	// Create bind_info table.
 	mustExecute(s, CreateBindInfoTable)
+	// Create stats_topn_store table.
+	mustExecute(s, CreateStatsTopNTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
