@@ -4789,13 +4789,13 @@ func (b *builtinPeriodAddSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, err
 	}
 
-	if !validPeriod(p) {
-		return 0, false, errIncorrectArgs.GenWithStackByArgs("period_add")
-	}
-
 	n, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, err
+	}
+
+	if !validPeriod(p) {
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("period_add")
 	}
 
 	sumMonth := int64(period2Month(uint64(p))) + n
