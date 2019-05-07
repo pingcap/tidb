@@ -545,7 +545,7 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -615,7 +615,7 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -733,7 +733,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	tests := []struct {
 		sql     string
 		hist    string
@@ -799,7 +799,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	}
 
 	// Test collect feedback by probability.
-	statistics.FeedbackProbability = 0
+	statistics.FeedbackProbability.Store(0)
 	statistics.MaxNumberOfRanges = oriNumber
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
@@ -809,7 +809,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	}
 
 	// Test that after drop stats, the feedback won't cause panic.
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
 	}
@@ -845,7 +845,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 		statistics.FeedbackProbability = oriProbability
 	}()
 	h := s.do.StatsHandle()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	tests := []struct {
 		sql     string
 		hist    string
@@ -969,7 +969,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1022,7 +1022,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1094,7 +1094,7 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 		s.do.StatsHandle().Lease = oriLease
 		log.SetLevel(oriLevel)
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	handle.MinLogScanCount = 0
 	handle.MinLogErrorRate = 0
 	s.do.StatsHandle().Lease = 1
@@ -1264,7 +1264,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), index idx_ab(a,b), index idx_ac(a,c), index idx_b(b))")
@@ -1341,7 +1341,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx_ab(a,b))")
@@ -1410,7 +1410,7 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a tinyint, b tinyint, primary key(a), index idx(a, b))")
@@ -1479,7 +1479,7 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")

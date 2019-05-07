@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -90,7 +91,7 @@ func (h *Handle) Clear() {
 }
 
 // MaxQueryFeedbackCount is the max number of feedback that cache in memory.
-var MaxQueryFeedbackCount = 1 << 10
+var MaxQueryFeedbackCount = atomic2.NewInt64(1 << 10)
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
@@ -99,7 +100,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
 		Lease:      lease,
-		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount),
+		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount.Load()),
 	}
 	// It is safe to use it concurrently because the exec won't touch the ctx.
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {

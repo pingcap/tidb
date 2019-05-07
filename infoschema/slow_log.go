@@ -330,7 +330,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 func ParseTime(s string) (time.Time, error) {
 	t, err := time.Parse(logutil.SlowLogTimeFormat, s)
 	if err != nil {
-		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\", err: %v", s, logutil.SlowLogTimeFormat, err)
+		// This is for compatibility.
+		t, err = time.Parse(logutil.OldSlowLogTimeFormat, s)
+		if err != nil {
+			err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\", err: %v", s, logutil.SlowLogTimeFormat, err)
+		}
 	}
 	return t, err
 }
