@@ -25,7 +25,6 @@ import (
 	"github.com/google/btree"
 	"github.com/grpc-ecosystem/go-grpc-middleware/util/backoffutils"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"
@@ -700,13 +699,6 @@ func (r *Region) WorkStorePeer() (store *Store, peer *metapb.Peer, idx int) {
 	return
 }
 
-// workPeer returns current work peer.
-func (r *Region) workPeer() (peer *metapb.Peer) {
-	idx := int(atomic.LoadInt32(&r.workStoreIdx))
-	peer = r.meta.Peers[idx]
-	return
-}
-
 // RegionVerID is a unique ID that can identify a Region at a specific version.
 type RegionVerID struct {
 	id      uint64
@@ -736,15 +728,6 @@ func (r *Region) StartKey() []byte {
 // EndKey returns EndKey.
 func (r *Region) EndKey() []byte {
 	return r.meta.EndKey
-}
-
-// GetContext constructs kvprotopb.Context from region info.
-func (r *Region) GetContext() *kvrpcpb.Context {
-	return &kvrpcpb.Context{
-		RegionId:    r.meta.Id,
-		RegionEpoch: r.meta.RegionEpoch,
-		Peer:        r.workPeer(),
-	}
 }
 
 // switchWorkStore switches current store to the one on specific store. It returns
