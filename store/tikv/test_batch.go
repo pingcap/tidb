@@ -54,7 +54,15 @@ func BatchTest(security config.Security, addrs []string, config BatchClientTestC
 	<-time.After(c.cfg.TestLength)
 	c.end()
 	c.wait.Wait()
-	//TODO: close the client
+	done := c.unblockedClose()
+	select {
+	case <-done:
+		// closed normally
+	case <-time.After(100 * time.Millisecond):
+		// do not close in time!
+		logger().Error("The rpcClient do not close in time! Maybe there is goroutine leaking")
+		c.fail()
+	}
 	return c.isFailed()
 }
 
@@ -99,6 +107,16 @@ func (c *batchClientTester) unblockedSend(
 	go func() {
 		res, err := c.rpcClient.SendRequest(ctx, addr, req, timeout)
 		done <- sendRequestResult{res, err}
+	}()
+	return done
+}
+
+// unblockedClose close the client, but returns a channel instead of blocking the current goroutine
+func (c *batchClientTester) unblockedClose() <-chan struct{} {
+	done := make(chan struct{}, 1)
+	go func() {
+		c.rpcClient.Close()
+		done <- struct{}{}
 	}()
 	return done
 }
