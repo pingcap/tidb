@@ -83,6 +83,7 @@ type connArray struct {
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
+	waitGroup              *sync.WaitGroup
 }
 
 type batchCommandsClient struct {
@@ -99,6 +100,7 @@ type batchCommandsClient struct {
 	closed int32
 	// clientLock protects client when re-create the streaming.
 	clientLock sync.Mutex
+	waitGroup              *sync.WaitGroup
 }
 
 func (c *batchCommandsClient) isStopped() bool {
@@ -125,7 +127,9 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				zap.Stack("stack"))
 			logutil.Logger(context.Background()).Info("restart batchRecvLoop")
 			go c.batchRecvLoop(cfg)
+			return
 		}
+		c.waitGroup.Done()
 	}()
 
 	for {
@@ -208,6 +212,7 @@ func newConnArray(maxSize uint, addr string, security config.Security) (*connArr
 		batchCommandsCh:        make(chan *batchCommandsEntry, cfg.TiKVClient.MaxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, maxSize),
 		tikvTransportLayerLoad: 0,
+		waitGroup:				&sync.WaitGroup{},
 	}
 	if err := a.Init(addr, security); err != nil {
 		return nil, err
@@ -240,6 +245,9 @@ func (a *connArray) Init(addr string, security config.Security) error {
 	allowBatch := cfg.TiKVClient.MaxBatchSize > 0
 	keepAlive := cfg.TiKVClient.GrpcKeepAliveTime
 	keepAliveTimeout := cfg.TiKVClient.GrpcKeepAliveTimeout
+	if allowBatch {
+		a.waitGroup.Add(1 + len(a.v))
+	}
 	for i := range a.v {
 		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 		conn, err := grpc.DialContext(
@@ -266,7 +274,6 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			return errors.Trace(err)
 		}
 		a.v[i] = conn
-
 		if allowBatch {
 			// Initialize batch streaming clients.
 			tikvClient := tikvpb.NewTikvClient(conn)
@@ -283,6 +290,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				idAlloc:                0,
 				tikvTransportLayerLoad: &a.tikvTransportLayerLoad,
 				closed:                 0,
+				waitGroup:				a.waitGroup,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 			go batchClient.batchRecvLoop(cfg.TiKVClient)
@@ -413,7 +421,9 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 				zap.Stack("stack"))
 			logutil.Logger(context.Background()).Info("restart batchSendLoop")
 			go a.batchSendLoop(cfg)
+			return
 		}
+		a.waitGroup.Done()
 	}()
 
 	entries := make([]*batchCommandsEntry, 0, cfg.MaxBatchSize)
@@ -545,6 +555,9 @@ func (c *rpcClient) closeConns() {
 		// close all connections
 		for _, array := range c.conns {
 			array.Close()
+		}
+		for _, array := range c.conns {
+			array.waitGroup.Done()
 		}
 	}
 	c.Unlock()
