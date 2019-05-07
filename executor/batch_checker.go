@@ -310,13 +310,16 @@ func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle i
 			}
 		}
 		if col.IsGenerated() {
-			val, err := genExprs[gIdx].Eval(chunk.MutRowFromDatums(oldRow).ToRow())
-			if err != nil {
-				return nil, err
-			}
-			oldRow[col.Offset], err = table.CastValue(ctx, val, col.ToInfo())
-			if err != nil {
-				return nil, err
+			// only the virtual column needs fill back.
+			if !col.GeneratedStored {
+				val, err := genExprs[gIdx].Eval(chunk.MutRowFromDatums(oldRow).ToRow())
+				if err != nil {
+					return nil, err
+				}
+				oldRow[col.Offset], err = table.CastValue(ctx, val, col.ToInfo())
+				if err != nil {
+					return nil, err
+				}
 			}
 			gIdx++
 		}

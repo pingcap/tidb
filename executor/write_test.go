@@ -903,7 +903,8 @@ func (s *testSuite4) TestReplace(c *C) {
 func (s *testSuite2) TestGeneratedColumnForInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Test Replace with generated column
+
+	// test cases for default behavior
 	tk.MustExec(`drop table if exists t1;`)
 	tk.MustExec(`create table t1(id int, id_gen int as(id + 42), b int, unique key id_gen(id_gen));`)
 	tk.MustExec(`insert into t1 (id, b) values(1,1),(2,2),(3,3),(4,4),(5,5);`)
@@ -916,6 +917,28 @@ func (s *testSuite2) TestGeneratedColumnForInsert(c *C) {
 	tk.MustExec(`insert into t1 (id, b) values (7,28) on duplicate key update b = -values(b);`)
 	tk.MustQuery("select * from t1;").Check(testkit.Rows(
 		"1 43 1", "2 44 2", "3 45 3", "4 46 4", "5 47 5", "-6 36 16", "7 49 -28", "8 50 18"))
+
+	// test cases for virtual and stored columns in the same table
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i), unique key idx_j(j))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_j(j))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
 }
 
 func (s *testSuite4) TestPartitionedTableReplace(c *C) {
