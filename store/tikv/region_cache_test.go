@@ -63,7 +63,7 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	c.Assert(workableRegionsInBtree(s.cache, s.cache.mu.sorted, ts), Equals, len)
 	for _, r := range s.cache.mu.regions {
 		if r.checkRegionCacheTTL(ts) {
-			if store, _ := s.cache.ensureRegionWorkStore(r, ts); store != nil {
+			if store, _ := s.cache.routeStoreInRegion(r, ts); store != nil {
 				c.Assert(r, DeepEquals, s.cache.searchCachedRegion(r.StartKey(), false))
 			}
 		}
@@ -75,7 +75,7 @@ func workableRegions(cache *RegionCache, regions map[RegionVerID]*Region, ts int
 		if !region.checkRegionCacheTTL(ts) {
 			continue
 		}
-		store, _ := cache.ensureRegionWorkStore(region, ts)
+		store, _ := cache.routeStoreInRegion(region, ts)
 		if store != nil {
 			len++
 		}
@@ -89,7 +89,7 @@ func workableRegionsInBtree(cache *RegionCache, t *btree.BTree, ts int64) (len i
 		if !r.checkRegionCacheTTL(ts) {
 			return true
 		}
-		store, _ := cache.ensureRegionWorkStore(r, ts)
+		store, _ := cache.routeStoreInRegion(r, ts)
 		if store != nil {
 			len++
 		}
@@ -114,6 +114,7 @@ func (s *testRegionCacheSuite) getRegion(c *C, key []byte) *Region {
 	c.Assert(r, NotNil)
 	return r
 }
+
 func (s *testRegionCacheSuite) getRegionWithEndKey(c *C, key []byte) *Region {
 	_, err := s.cache.LocateEndKey(s.bo, key)
 	c.Assert(err, IsNil)
@@ -302,22 +303,45 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 	s.checkCache(c, 1)
 }
 
-func (s *testRegionCacheSuite) TestRequestFail(c *C) {
+func (s *testRegionCacheSuite) TestSendFailBlackout(c *C) {
 	ts := time.Now().Unix()
 	region := s.getRegion(c, []byte("a"))
-	ctx, _ := s.cache.GetRPCContext(s.bo, region.VerID())
-	s.cache.OnSendRequestFail(ctx, errors.New("test error"))
-	region = s.getRegion(c, []byte("a"))
-	c.Assert(s.cache.mu.regions, HasLen, 1)
-	ctx, _ = s.cache.GetRPCContext(s.bo, region.VerID())
-	s.cache.OnSendRequestFail(ctx, errors.New("test error"))
+
+	// init with 1 region 2 stores
+	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 1)
+	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 2)
+
+	// for each stores has 20 chance to retry, and still have chance to access store for 21
+	for i := 0; i < 38; i++ {
+		ctx, _ := s.cache.GetRPCContext(s.bo, region.VerID())
+		if ctx == nil {
+			fmt.Println()
+		}
+		s.cache.OnSendRequestFail(ctx, errors.New("test error"))
+
+	}
+	ts = time.Now().Unix()
+	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 1)
+	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 2)
+
+	// 21 fail attempts will start blackout store in 1 second
+	for i := 0; i < 2; i++ {
+		// first fail request make 1st store' failAttempt + 1
+		ctx, _ := s.cache.GetRPCContext(s.bo, region.VerID())
+		s.cache.OnSendRequestFail(ctx, errors.New("test error"))
+	}
 	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 0)
-	time.Sleep(2 * time.Second)
+	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 0)
+
+	// after 1 second blackout, 2 store can be access again.
+	time.Sleep(1 * time.Second)
+	ts = time.Now().Unix()
 	s.getRegion(c, []byte("a"))
-	c.Assert(workableRegions(s.cache, s.cache.mu.regions, time.Now().Unix()), Equals, 1)
+	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 1)
+	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 2)
 }
 
-func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
+func (s *testRegionCacheSuite) TestSendFailBlackTwoRegion(c *C) {
 	ts := time.Now().Unix()
 	// key range: ['' - 'm' - 'z']
 	region2 := s.cluster.AllocID()
@@ -332,19 +356,31 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(loc2.Region.id, Equals, region2)
 
-	// Request should fail on region1.
-	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
 	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 2)
 	s.checkCache(c, 2)
-	s.cache.OnSendRequestFail(ctx, errors.New("test error"))
-	// Both region2 and store should be dropped from cache.
-	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 1)
-	ctx2, _ := s.cache.GetRPCContext(s.bo, loc2.Region)
-	s.cache.OnSendRequestFail(ctx2, errors.New("test error"))
-	r := s.cache.searchCachedRegion([]byte("x"), true)
-	c.Assert(r, IsNil)
+
+	// send request fail in 2 regions backed by same 2 stores.
+	for i := 0; i < 20; i++ {
+		ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
+		s.cache.OnSendRequestFail(ctx, errors.New("test error"))
+	}
+	for i := 0; i < 20; i++ {
+		ctx, _ := s.cache.GetRPCContext(s.bo, loc2.Region)
+		s.cache.OnSendRequestFail(ctx, errors.New("test error"))
+	}
+
+	// both 2 region are invalidate and both 2 store are available.
 	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 0)
-	s.checkCache(c, 0)
+	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 0)
+
+	// after sleep 1 second, region recover
+	time.Sleep(1 * time.Second)
+	ts = time.Now().Unix()
+	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 2)
+	s.getRegion(c, []byte("a"))
+	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 1)
+	s.getRegion(c, []byte("x"))
+	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 2)
 }
 
 func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
@@ -372,7 +408,7 @@ func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 
 func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
 	ts := time.Now().Unix()
-	regionCnt, storeCount := 999, 3
+	regionCnt, storeCount := 8, 3
 	cluster := createClusterWithStoresAndRegions(regionCnt, storeCount)
 
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
@@ -384,23 +420,15 @@ func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
 	loc, err := cache.LocateKey(bo, []byte{})
 	c.Assert(err, IsNil)
 
-	// First two drop attempts just switch peer.
-	for i := 0; i < storeCount-1; i++ {
-		rpcCtx, err := cache.GetRPCContext(bo, loc.Region)
-		c.Assert(err, IsNil)
-		cache.OnSendRequestFail(rpcCtx, errors.New("test error"))
-		c.Assert(workableRegions(cache, cache.mu.regions, ts), Equals, regionCnt+1)
+	// fail on one region make all stores be unavailable.
+	for j := 0; j < 20; j++ {
+		for i := 0; i < storeCount; i++ {
+			rpcCtx, err := cache.GetRPCContext(bo, loc.Region)
+			c.Assert(err, IsNil)
+			cache.OnSendRequestFail(rpcCtx, errors.New("test error"))
+		}
 	}
-
-	// Drop the regions on one store, all region will be drop because they are in three stores.
-	// and fail 3 times hit at each stores.
-	rpcCtx, err := cache.GetRPCContext(bo, loc.Region)
-	c.Assert(err, IsNil)
-	cache.OnSendRequestFail(rpcCtx, errors.New("test error"))
 	c.Assert(workableRegions(cache, cache.mu.regions, ts), Equals, 0)
-
-	loadRegionsToCache(cache, regionCnt)
-	c.Assert(len(cache.mu.regions), Equals, regionCnt+1)
 }
 
 const regionSplitKeyFormat = "t%08d"

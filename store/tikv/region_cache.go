@@ -197,8 +197,10 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 		return nil, nil
 	}
 
-	store, peer := c.ensureRegionWorkStore(cachedRegion, ts)
+	store, peer := c.routeStoreInRegion(cachedRegion, ts)
 	if store == nil {
+		// Store not found, region must be out of date.
+		cachedRegion.invalidate()
 		return nil, nil
 	}
 
@@ -207,7 +209,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 		return nil, err
 	}
 	if len(addr) == 0 {
-		// Store not found, region must be out of date. TODO: check me?
+		// Store not found, region must be out of date.
 		cachedRegion.invalidate()
 		return nil, nil
 	}
@@ -419,8 +421,7 @@ func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 	})
 	c.mu.RUnlock()
 	if r != nil && (!isEndKey && r.Contains(key) || isEndKey && r.ContainsByEnd(key)) {
-		workStore, _ := c.ensureRegionWorkStore(r, ts)
-		if workStore == nil {
+		if !c.hasAvailableStore(r, ts) {
 			return nil
 		}
 		return r
@@ -540,38 +541,58 @@ func (c *RegionCache) getCachedRegionWithRLock(regionID RegionVerID) (r *Region)
 	return
 }
 
-// ensureRegionWorkStore ensures region have workable store and return it.
-func (c *RegionCache) ensureRegionWorkStore(region *Region, ts int64) (workStore *Store, workPeer *metapb.Peer) {
+// routeStoreInRegion ensures region have workable store and return it.
+func (c *RegionCache) routeStoreInRegion(region *Region, ts int64) (workStore *Store, workPeer *metapb.Peer) {
 	if len(region.stores) == 0 {
 		return
 	}
 retry:
 	cachedStore, cachedPeer, cachedIdx := region.WorkStorePeer()
-	if cachedStore != nil && cachedStore.Available(ts) {
+	if cachedStore != nil && cachedStore.Operational() {
 		workStore = cachedStore
 		workPeer = cachedPeer
 		return
 	}
 
-	newIdx := cachedIdx
-	for i, store := range region.stores {
-		if i == cachedIdx {
-			continue
-		}
+	newIdx := -1
+	storeNum := len(region.stores)
+	i := (cachedIdx + 1) % storeNum
+	start := i
+	for {
+		store := region.stores[i]
 		if store.Available(ts) {
 			newIdx = i
 			break
 		}
+		i = (i + 1) % storeNum
+		if i == start {
+			break
+		}
 	}
-	if newIdx == cachedIdx {
+	if newIdx < 0 {
 		return
 	}
+	//fmt.Println("change " , cachedIdx, "to", newIdx, string(debug.Stack()))
 	if !atomic.CompareAndSwapInt32(&region.workStoreIdx, int32(cachedIdx), int32(newIdx)) {
 		goto retry
 	}
 	workStore = region.stores[newIdx]
 	workPeer = region.meta.Peers[newIdx]
 	return
+}
+
+// hasAvailableStore checks whether region has available store.
+// different to `routeStoreInRegion` just check and never change work store or peer.
+func (c *RegionCache) hasAvailableStore(region *Region, ts int64) bool {
+	if len(region.stores) == 0 {
+		return false
+	}
+	for _, store := range region.stores {
+		if store.Available(ts) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
@@ -611,8 +632,7 @@ func (c *RegionCache) OnSendRequestFail(ctx *RPCContext, err error) {
 	if lastAccess == invalidatedLastAccessTime {
 		return
 	}
-	store, _ = c.ensureRegionWorkStore(r, time.Now().Unix())
-	if store == nil {
+	if !c.hasAvailableStore(r, time.Now().Unix()) {
 		r.invalidate()
 	}
 }
@@ -888,8 +908,23 @@ func (s *Store) reResolve() {
 	return
 }
 
-// maxExponentAttempt before this blackout time is exponent increment.
-const maxExponentAttempt = 10
+const (
+	// maxExponentAttempt before this blackout time is exponent increment.
+	maxExponentAttempt = 10
+	// startBlackoutAfterAttempt after continue fail attempts start blackout store.
+	startBlackoutAfterAttempt = 20
+)
+
+// Operational returns whether store is operational and no need retry other node.
+func (s *Store) Operational() bool {
+	var state storeState
+	*(*uint64)(unsafe.Pointer(&state)) = atomic.LoadUint64(&s.state)
+	if state.failedAttempt == 0 || state.lastFailedTime == 0 {
+		// return quickly if it's continue success.
+		return true
+	}
+	return false
+}
 
 // Available returns whether store be available for current.
 func (s *Store) Available(ts int64) bool {
@@ -899,12 +934,17 @@ func (s *Store) Available(ts int64) bool {
 		// return quickly if it's continue success.
 		return true
 	}
-	// check blackout time window to determine store's reachable.
-	if state.failedAttempt > maxExponentAttempt {
-		state.failedAttempt = maxExponentAttempt
+	// first `startBlackoutAfterAttempt` can retry immediately.
+	if state.failedAttempt < startBlackoutAfterAttempt {
+		return true
 	}
-	blackoutDeadline := int64(state.lastFailedTime) + int64(backoffutils.ExponentBase2(uint(state.failedAttempt)))
-	return blackoutDeadline < ts
+	// continue fail over than `startBlackoutAfterAttempt` start blackout store logic.
+	// check blackout time window to determine store's reachable.
+	if state.failedAttempt > startBlackoutAfterAttempt+maxExponentAttempt {
+		state.failedAttempt = startBlackoutAfterAttempt + maxExponentAttempt
+	}
+	blackoutDeadline := int64(state.lastFailedTime) + 1*int64(backoffutils.ExponentBase2(uint(state.failedAttempt-startBlackoutAfterAttempt+1)))
+	return blackoutDeadline <= ts
 }
 
 // needInitResolve checks whether store need to do init block resolve.
@@ -927,7 +967,7 @@ retry:
 	oldValue := atomic.LoadUint64(&s.state)
 	var state storeState
 	*(*uint64)(unsafe.Pointer(&state)) = oldValue
-	if (state.failedAttempt == 0 && success) || (!success && state.failedAttempt >= maxExponentAttempt) {
+	if (state.failedAttempt == 0 && success) || (!success && state.failedAttempt >= (startBlackoutAfterAttempt+maxExponentAttempt)) {
 		// return quickly if continue success, and no more mark when attempt meet max bound.
 		return
 	}
