@@ -173,6 +173,7 @@ func (s *testTableCodecSuite) TestUnflattenDatums(c *C) {
 	output, err := UnflattenDatums(input, tps, sc.TimeZone)
 	c.Assert(err, IsNil)
 	cmp, err := input[0].CompareDatum(sc, &output[0])
+	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
 }
 
