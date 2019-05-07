@@ -16,7 +16,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Fix the wrong result issue when the time type does not convert the time zone in some cases [#10345](https://github.com/pingcap/tidb/pull/10345)
 * Fix the issue that TiDB character set cases are inconsistent in some cases [#10354](https://github.com/pingcap/tidb/pull/10354)
 * Support controlling the number of rows returned by operator [#9166](https://github.com/pingcap/tidb/issues/9166)
-    - Selection & Projection [#10110](https://github.com/pingcap/tidb/pull/10110)
+    - `Selection` & `Projection` [#10110](https://github.com/pingcap/tidb/pull/10110)
     - `StreamAgg` & `HashAgg` [#10133](https://github.com/pingcap/tidb/pull/10133)
     - `TableReader` & `IndexReader` & `IndexLookup` [#10169](https://github.com/pingcap/tidb/pull/10169)
 * Improve the slow query log:
