@@ -59,13 +59,13 @@ var (
 	// ErrTooManyKeyParts returns for too many key parts.
 	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
 	// ErrTableNotLockedForWrite returns for write tables when only hold the table read lock.
-	ErrTableNotLockedForWrite = terror.ClassOptimizer.New(codeErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
+	ErrTableNotLockedForWrite = terror.ClassSchema.New(codeErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
 	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
-	ErrTableNotLocked = terror.ClassOptimizer.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
+	ErrTableNotLocked = terror.ClassSchema.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
 	// ErrNonuniqTable returns when none unique tables errors.
-	ErrNonuniqTable = terror.ClassOptimizer.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrNonuniqTable])
+	ErrNonuniqTable = terror.ClassSchema.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 	// ErrTableLocked returns when the table was locked by other session.
-	ErrTableLocked = terror.ClassOptimizer.New(codeTableLocked, "Table '%s' was locked in %s by %v")
+	ErrTableLocked = terror.ClassSchema.New(codeTableLocked, "Table '%s' was locked in %s by %v")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.

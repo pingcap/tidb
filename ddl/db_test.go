@@ -2867,6 +2867,31 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk2.MustExec("lock tables t1 write")
 	tk2.MustExec("lock tables t1 write, t2 read")
 
+	// Test lock tables and drop tables
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write, t2 write")
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("lock tables t1 write, t2 read")
+
+	// Test lock tables and drop database.
+	tk.MustExec("unlock tables")
+	tk.MustExec("create database test_lock")
+	tk.MustExec("create table test_lock.t3 (a int)")
+	tk.MustExec("lock tables t1 write, test_lock.t3 write")
+	tk.MustExec("drop database test_lock")
+	tk.MustExec("create table t3 (a int)")
+	tk.MustExec("lock tables t1 write, t3 read")
+
+	// Test lock tables and truncate tables.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write, t2 read")
+	tk.MustExec("truncate table t1")
+	tk.MustExec("insert into t1 set a=1")
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
 	// Test for lock unsupported schema tables.
 	_, err = tk2.Exec("lock tables performance_schema.global_status write")
 	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)

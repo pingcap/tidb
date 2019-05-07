@@ -161,10 +161,20 @@ func unlockTables(t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, 
 	}
 	job.SchemaID = arg.UnlockTables[arg.IndexOfUnlock].SchemaID
 	job.TableID = arg.UnlockTables[arg.IndexOfUnlock].TableID
-	tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tbInfo, err := getTableInfo(t, job.TableID, job.SchemaID)
 	if err != nil {
-		return ver, err
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			err = nil
+			// The table maybe has been dropped. just ignore this err and go on.
+			arg.IndexOfUnlock++
+			job.Args = []interface{}{arg}
+			return ver, nil
+		} else {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
 	}
+
 	err = unlockTable(tbInfo, arg)
 	if err != nil {
 		job.State = model.JobStateCancelled

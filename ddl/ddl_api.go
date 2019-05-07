@@ -97,6 +97,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
+	tbs := is.SchemaTables(schema)
 	job := &model.Job{
 		SchemaID:   old.ID,
 		Type:       model.ActionDropSchema,
@@ -104,6 +105,16 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	}
 
 	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		// clear table locks.
+		tableLocks := make([]model.TableLockTpInfo, 0)
+		for _, tb := range tbs {
+			if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+				tableLocks = append(tableLocks, model.TableLockTpInfo{SchemaID: old.ID, TableID: tb.Meta().ID})
+			}
+		}
+		ctx.ReleaseTableLock(tableLocks)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -2759,6 +2770,12 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+			ctx.ReleaseTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: tb.Meta().ID}})
+		}
+	}
+
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -2802,7 +2819,18 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableID},
 	}
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+		// AddTableLock here to avoid this ddl job was execute successful but the session was been kill before return.
+		ctx.AddTableLock(([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}}))
+	}
 	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+			ctx.ReleaseTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: tb.Meta().ID}})
+		}
+	} else {
+		ctx.ReleaseTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID}})
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
