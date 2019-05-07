@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -151,11 +152,13 @@ func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 		task)
 
 	for i, r := range s.testRanges {
+		fmt.Println(i)
 		expectedRanges := s.expectedRanges[i]
 
 		err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
 		c.Assert(err, IsNil)
 		s.checkRanges(c, collect(ranges), expectedRanges)
+		c.Assert(int(runner.completedRegions), Equals, len(expectedRanges))
 	}
 }
 
@@ -185,4 +188,46 @@ func (s *testRangeTaskSuite) TestRangeTaskWorker(c *C) {
 		c.Assert(err, IsNil)
 		s.checkRanges(c, collect(ranges), expectedRanges)
 	}
+}
+
+func (s *testRangeTaskSuite) TestRangeTaskWorkerTaskSplit(c *C) {
+	ranges := make(chan *kv.KeyRange, 100)
+
+	task := func(ctx context.Context, bo *Backoffer, r kv.KeyRange, loc *KeyLocation) ([]byte, error) {
+		if len(r.StartKey) > 0 && r.StartKey[len(r.StartKey)-1] == byte('1') {
+			ranges <- &r
+			return nil, nil
+		}
+		endKey := append(r.StartKey, byte('1'))
+		ranges <- &kv.KeyRange{
+			StartKey: r.StartKey,
+			EndKey:   endKey,
+		}
+		return endKey, nil
+	}
+	runner := NewRangeTaskRunner(
+		"test-task-split-runner",
+		s.store,
+		1,
+		task)
+	worker := runner.createWorker(nil, nil)
+
+	var expectedRanges []kv.KeyRange
+	for _, r := range s.expectedRanges[0] {
+		splitKey := append(r.StartKey, byte('1'))
+		expectedRanges = append(
+			expectedRanges,
+			kv.KeyRange{
+				StartKey: r.StartKey,
+				EndKey:   splitKey,
+			},
+			kv.KeyRange{
+				StartKey: splitKey,
+				EndKey:   r.EndKey,
+			})
+	}
+
+	err := worker.runForRange(context.Background(), []byte(""), []byte(""))
+	c.Assert(err, IsNil)
+	s.checkRanges(c, collect(ranges), expectedRanges)
 }

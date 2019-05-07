@@ -49,8 +49,8 @@ type RangeTaskRunner struct {
 
 // RangeTaskHandler is the type of functions that processes a task of a region. It should be able to be invoked multiple
 // times.
-// If the range can't be processed immediately, returns `nextKey` to indicate the next task will start from `nextKey`.
-// If `nextKey` is set, it's expected to be inner range `r`.
+// If the range can't be processed immediately, returns `nextKey`, which should be in range `r`, to indicate that the
+// next task will start from `nextKey`.
 type RangeTaskHandler = func(ctx context.Context, bo *Backoffer, r kv.KeyRange, loc *KeyLocation) (nextKey []byte, err error)
 
 // NewRangeTaskRunner creates a RangeTaskRunner.
@@ -86,6 +86,8 @@ func (s *RangeTaskRunner) SetStatLogInterval(interval time.Duration) {
 
 // RunOnRange runs the task on the given range.
 func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKey []byte) error {
+	s.completedRegions = 0
+
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
 		logutil.Logger(ctx).Info("empty range task executed. ignored",
 			zap.String("name", s.name),
@@ -98,8 +100,6 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		zap.String("name", s.name),
 		zap.Binary("startKey", startKey),
 		zap.Binary("endKey", endKey))
-
-	s.completedRegions = 0
 
 	// Periodically log the progress
 	statLogTicker := time.NewTicker(s.statLogInterval)
@@ -118,8 +118,8 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 	defer func() {
 		close(taskCh)
 		statLogTicker.Stop()
-		cancel()
 		wg.Wait()
+		cancel()
 	}()
 
 	startTime := time.Now()
@@ -151,24 +151,24 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.Error(err))
 			return errors.Trace(err)
 		}
-		r := &kv.KeyRange{
+		task := &kv.KeyRange{
 			StartKey: key,
 			EndKey:   loc.EndKey,
 		}
 
-		isLast := len(r.EndKey) == 0 || (len(endKey) > 0 && bytes.Compare(r.EndKey, endKey) >= 0)
-		// Let r.EndKey = min(endKey, loc.EndKey)
+		isLast := len(task.EndKey) == 0 || (len(endKey) > 0 && bytes.Compare(task.EndKey, endKey) >= 0)
+		// Let task.EndKey = min(endKey, loc.EndKey)
 		if isLast {
-			r.EndKey = endKey
+			task.EndKey = endKey
 		}
 
-		taskCh <- r
+		taskCh <- task
 
 		if isLast {
 			break
 		}
 
-		key = r.EndKey
+		key = task.EndKey
 	}
 
 	logutil.Logger(ctx).Info("range task finished",
@@ -189,7 +189,7 @@ func (s *RangeTaskRunner) createWorker(taskCh chan *kv.KeyRange, wg *sync.WaitGr
 		taskCh:     taskCh,
 		wg:         wg,
 
-		totalCompletedRegions: &s.completedRegions,
+		completedRegions: &s.completedRegions,
 	}
 }
 
@@ -207,20 +207,12 @@ type rangeTaskWorker struct {
 	taskCh     chan *kv.KeyRange
 	wg         *sync.WaitGroup
 
-	completedRegions int32
-
-	totalCompletedRegions *int32
+	completedRegions *int32
 }
 
-// run runs the worker. It collects all objects from `w.taskCh` and process them one by one.
+// run starts the worker. It collects all objects from `w.taskCh` and process them one by one.
 func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
-	// Each task might take very short time to finish, so if we update the statistics immediately after sending a
-	// request to a region, the contention of atomic operations might reduce the performance. So it's better to
-	// calculate only the current thread and update it to the RangeTaskRunner.
-	ticker := time.NewTicker(rangeWorkerUpdateStatInterval)
 	defer func() {
-		ticker.Stop()
-		w.updateStat()
 		w.wg.Done()
 	}()
 
@@ -228,8 +220,6 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 		select {
 		case <-ctx.Done():
 			break
-		case <-ticker.C:
-			w.updateStat()
 		default:
 		}
 
@@ -243,11 +233,6 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 			return
 		}
 	}
-}
-
-func (w *rangeTaskWorker) updateStat() {
-	atomic.AddInt32(w.totalCompletedRegions, w.completedRegions)
-	w.completedRegions = 0
 }
 
 // runForRange runs task for the given range. The range might contains multiple regions, because after the range sent
@@ -284,11 +269,13 @@ func (w *rangeTaskWorker) runForRange(ctx context.Context, startKey []byte, endK
 
 		key = r.EndKey
 		if len(nextKey) > 0 {
+			// The region needs further processing
 			key = nextKey
+			isLast = false
 		} else {
 			// If nextKey is set, it means the current region should be processed again. So calculate stats only when
 			// nextKey is not set.
-			w.completedRegions++
+			atomic.AddInt32(w.completedRegions, 1)
 		}
 
 		if isLast {
