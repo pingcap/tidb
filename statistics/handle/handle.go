@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/sirupsen/logrus"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -355,7 +354,6 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, t
 			continue
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer {
-			logrus.Warning("go into this")
 			hg, err := h.histogramFromStorage(table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0, historyStatsExec)
 			if err != nil {
 				return errors.Trace(err)
@@ -406,7 +404,6 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 			!isHandle &&
 			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
 			!loadAll
-		logrus.Warning("notNeedLoad", notNeedLoad)
 		if notNeedLoad {
 			count, err := h.columnCountFromStorage(table.PhysicalID, histID)
 			if err != nil {

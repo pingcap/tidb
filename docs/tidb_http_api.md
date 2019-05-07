@@ -408,3 +408,6 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyyMMddHHmmss}
     ```
+    ```shell
+    curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
+    ```
