@@ -384,17 +384,19 @@ func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
-			x.Stmt = addHintForSelect(normalizeSQL, ctx, x.Stmt)
+			hash := parser.DigestHash(normalizeSQL)
+			x.Stmt = addHintForSelect(hash, normalizeSQL, ctx, x.Stmt)
 		}
 		return x
 	case *ast.SelectStmt:
-		return addHintForSelect(parser.Normalize(x.Text()), ctx, x)
+		normalizeSQL, hash := parser.NormalizeDigest(x.Text())
+		return addHintForSelect(hash, normalizeSQL, ctx, x)
 	default:
 		return stmtNode
 	}
 }
 
-func addHintForSelect(normdOrigSQL string, ctx sessionctx.Context, stmt ast.StmtNode) ast.StmtNode {
+func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt ast.StmtNode) ast.StmtNode {
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord != nil {
@@ -406,9 +408,9 @@ func addHintForSelect(normdOrigSQL string, ctx sessionctx.Context, stmt ast.Stmt
 		}
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
-	bindRecord = globalHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
+	bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord == nil {
-		bindRecord = globalHandle.GetBindRecord(normdOrigSQL, "")
+		bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
 	}
 	if bindRecord != nil {
 		return bindinfo.BindHint(stmt, bindRecord.Ast)
