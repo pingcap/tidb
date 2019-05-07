@@ -4735,7 +4735,7 @@ func (c *periodAddFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 }
 
 func validPeriod(p int64) bool {
-	return !(p < 0 || p % 100 == 0 || p %100 >12)
+	return !(p < 0 || p%100 == 0 || p%100 > 12)
 }
 
 // period2Month converts a period to months, in which period is represented in the format of YYMM or YYYYMM.
