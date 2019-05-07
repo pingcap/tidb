@@ -665,6 +665,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 	}
 
 	runner := tikv.NewRangeTaskRunner("resolve-lock-runner", w.store, concurrency, handler)
+	runner.SetMaxBackoff(tikv.GcResolveLockMaxBackoff)
 	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
 		return errors.Trace(err)
