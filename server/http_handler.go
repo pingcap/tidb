@@ -72,6 +72,7 @@ const (
 	pColumnFlag = "colFlag"
 	pColumnLen  = "colLen"
 	pRowBin     = "rowBin"
+	pSnapshot   = "snapshot"
 )
 
 // For query string
