@@ -4734,6 +4734,10 @@ func (c *periodAddFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
+func validPeriod(p int64) bool {
+	return !(p < 0 || p % 100 == 0 || p %100 >12)
+}
+
 // period2Month converts a period to months, in which period is represented in the format of YYMM or YYYYMM.
 // Note that the period argument is not a date value.
 func period2Month(period uint64) uint64 {
@@ -4785,8 +4789,8 @@ func (b *builtinPeriodAddSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, err
 	}
 
-	if p == 0 {
-		return 0, false, nil
+	if !validPeriod(p) {
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("period_add")
 	}
 
 	n, isNull, err := b.args[1].EvalInt(b.ctx, row)
