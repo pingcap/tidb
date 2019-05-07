@@ -54,7 +54,7 @@ type Region struct {
 	meta         *metapb.Region // immutable after fetched from pd
 	lastAccess   int64          // last region access time, see checkRegionCacheTTL
 	stores       []*Store       // stores in this region
-	workStoreIdx int32          // point to current work
+	workStoreIdx int32          // point to current work peer in meta.Peers and work store in stores(same idx)
 }
 
 func (r *Region) initStores(c *RegionCache) {
@@ -63,7 +63,7 @@ func (r *Region) initStores(c *RegionCache) {
 		store, exists := c.storeMu.stores[p.StoreId]
 		c.storeMu.RUnlock()
 		if !exists {
-			store = c.getStoreByStoreID(p)
+			store = c.getStoreByStoreID(p.StoreId)
 		}
 		r.stores = append(r.stores, store)
 	}
@@ -150,9 +150,9 @@ func (c *RegionCache) checkAndResolve(needCheckStores *[]*Store) {
 
 	*needCheckStores = (*needCheckStores)[0:]
 	c.storeMu.RLock()
-	for i := range c.storeMu.stores {
-		if c.storeMu.stores[i].needCheck() {
-			*needCheckStores = append(*needCheckStores, c.storeMu.stores[i])
+	for _, store := range c.storeMu.stores {
+		if store.needCheck() {
+			*needCheckStores = append(*needCheckStores, store)
 		}
 	}
 	c.storeMu.RUnlock()
@@ -166,6 +166,7 @@ func (c *RegionCache) checkAndResolve(needCheckStores *[]*Store) {
 type RPCContext struct {
 	Region RegionVerID
 	Meta   *metapb.Region
+	Peer   *metapb.Peer
 	Store  *Store
 	Addr   string
 }
@@ -173,14 +174,14 @@ type RPCContext struct {
 // GetStoreID returns StoreID.
 func (c *RPCContext) GetStoreID() uint64 {
 	if c.Store != nil {
-		return c.Store.peer.StoreId
+		return c.Store.storeID
 	}
 	return 0
 }
 
 func (c *RPCContext) String() string {
 	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s",
-		c.Region.GetID(), c.Meta, c.Store.peer, c.Addr)
+		c.Region.GetID(), c.Meta, c.Peer, c.Addr)
 }
 
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
@@ -197,7 +198,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 		return nil, nil
 	}
 
-	store := c.ensureRegionWorkStore(cachedRegion, ts)
+	store, peer := c.ensureRegionWorkStore(cachedRegion, ts)
 	if store == nil {
 		return nil, nil
 	}
@@ -215,6 +216,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	return &RPCContext{
 		Region: id,
 		Meta:   cachedRegion.meta,
+		Peer:   peer,
 		Store:  store,
 		Addr:   addr,
 	}, nil
@@ -418,7 +420,7 @@ func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 	})
 	c.mu.RUnlock()
 	if r != nil && (!isEndKey && r.Contains(key) || isEndKey && r.ContainsByEnd(key)) {
-		workStore := c.ensureRegionWorkStore(r, ts)
+		workStore, _ := c.ensureRegionWorkStore(r, ts)
 		if workStore == nil {
 			return nil
 		}
@@ -540,14 +542,15 @@ func (c *RegionCache) getCachedRegionWithRLock(regionID RegionVerID) (r *Region)
 }
 
 // ensureRegionWorkStore ensures region have workable store and return it.
-func (c *RegionCache) ensureRegionWorkStore(region *Region, ts int64) (workStore *Store) {
+func (c *RegionCache) ensureRegionWorkStore(region *Region, ts int64) (workStore *Store, workPeer *metapb.Peer) {
 	if len(region.stores) == 0 {
 		return
 	}
 retry:
-	cachedStore, cachedIdx := region.WorkStore()
+	cachedStore, cachedPeer, cachedIdx := region.WorkStorePeer()
 	if cachedStore != nil && cachedStore.Available(ts) {
 		workStore = cachedStore
+		workPeer = cachedPeer
 		return
 	}
 
@@ -568,23 +571,19 @@ retry:
 		goto retry
 	}
 	workStore = region.stores[newIdx]
+	workPeer = region.meta.Peers[newIdx]
 	return
 }
 
-func (c *RegionCache) getStoreByStoreID(peer *metapb.Peer) (store *Store) {
-	var (
-		ok      bool
-		storeID = peer.GetStoreId()
-	)
+func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
+	var ok bool
 	c.storeMu.Lock()
 	store, ok = c.storeMu.stores[storeID]
 	if ok {
 		c.storeMu.Unlock()
 		return
 	}
-	store = &Store{
-		peer: peer,
-	}
+	store = &Store{storeID: storeID}
 	store.resolve.fn = c.pdClient.GetStore
 	c.storeMu.stores[storeID] = store
 	c.storeMu.Unlock()
@@ -593,7 +592,7 @@ func (c *RegionCache) getStoreByStoreID(peer *metapb.Peer) (store *Store) {
 
 // OnSendRequestFail is used for clearing cache when a tikv server does not respond.
 func (c *RegionCache) OnSendRequestFail(ctx *RPCContext, err error) {
-	failedStoreID := ctx.Store.peer.StoreId
+	failedStoreID := ctx.Store.storeID
 
 	c.storeMu.RLock()
 	store, exists := c.storeMu.stores[failedStoreID]
@@ -613,7 +612,7 @@ func (c *RegionCache) OnSendRequestFail(ctx *RPCContext, err error) {
 	if lastAccess == invalidatedLastAccessTime {
 		return
 	}
-	store = c.ensureRegionWorkStore(r, time.Now().Unix())
+	store, _ = c.ensureRegionWorkStore(r, time.Now().Unix())
 	if store == nil {
 		r.invalidate()
 	}
@@ -654,7 +653,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 			stores:     make([]*Store, 0, len(meta.Peers)),
 		}
 		region.initStores(c)
-		c.switchWorkStore(region, ctx.Store.peer.GetStoreId())
+		c.switchWorkStore(region, ctx.Store.storeID)
 		c.insertRegionToCache(region)
 	}
 	return nil
@@ -693,10 +692,18 @@ func (r *Region) GetID() uint64 {
 	return r.meta.GetId()
 }
 
-// WorkStore returns current work store.
-func (r *Region) WorkStore() (store *Store, idx int) {
+// WorkStorePeer returns current work store with work peer.
+func (r *Region) WorkStorePeer() (store *Store, peer *metapb.Peer, idx int) {
 	idx = int(atomic.LoadInt32(&r.workStoreIdx))
 	store = r.stores[idx]
+	peer = r.meta.Peers[idx]
+	return
+}
+
+// workPeer returns current work peer.
+func (r *Region) workPeer() (peer *metapb.Peer) {
+	idx := int(atomic.LoadInt32(&r.workStoreIdx))
+	peer = r.meta.Peers[idx]
 	return
 }
 
@@ -733,11 +740,10 @@ func (r *Region) EndKey() []byte {
 
 // GetContext constructs kvprotopb.Context from region info.
 func (r *Region) GetContext() *kvrpcpb.Context {
-	store, _ := r.WorkStore()
 	return &kvrpcpb.Context{
 		RegionId:    r.meta.Id,
 		RegionEpoch: r.meta.RegionEpoch,
-		Peer:        store.peer,
+		Peer:        r.workPeer(),
 	}
 }
 
@@ -782,9 +788,9 @@ type resolveFunc func(ctx context.Context, id uint64) (*metapb.Store, error)
 
 // Store contains a kv process's address.
 type Store struct {
-	addr  atomic.Value // loaded store address(*string)
-	peer  *metapb.Peer // store's peer
-	state uint64       // unsafe store storeState
+	addr    atomic.Value // loaded store address(*string)
+	storeID uint64       // store's id
+	state   uint64       // unsafe store storeState
 
 	resolve struct {
 		sync.Mutex             // protect pd from concurrent init requests
@@ -841,7 +847,7 @@ func (s *Store) initResolve(bo *Backoffer) (addr string, err error) {
 	}
 	var store *metapb.Store
 	for {
-		store, err = s.resolve.fn(bo.ctx, s.peer.StoreId)
+		store, err = s.resolve.fn(bo.ctx, s.storeID)
 		if err != nil {
 			tikvRegionCacheCounterWithGetStoreError.Inc()
 		} else {
@@ -853,7 +859,7 @@ func (s *Store) initResolve(bo *Backoffer) (addr string, err error) {
 				s.resolve.Unlock()
 				return
 			}
-			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", s.peer.StoreId, err)
+			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", s.storeID, err)
 			if err = bo.Backoff(BoPDRPC, err); err != nil {
 				s.resolve.Unlock()
 				return
@@ -875,7 +881,7 @@ func (s *Store) initResolve(bo *Backoffer) (addr string, err error) {
 // reResolve try to resolve addr for store that need check.
 func (s *Store) reResolve() {
 	var addr string
-	store, err := s.resolve.fn(context.Background(), s.peer.StoreId)
+	store, err := s.resolve.fn(context.Background(), s.storeID)
 	if err != nil {
 		tikvRegionCacheCounterWithGetStoreError.Inc()
 	} else {
@@ -886,7 +892,7 @@ func (s *Store) reResolve() {
 		if errors.Cause(err) == context.Canceled {
 			return
 		}
-		logutil.Logger(context.Background()).Error("loadStore from PD failed", zap.Uint64("id", s.peer.StoreId), zap.Error(err))
+		logutil.Logger(context.Background()).Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return
 	}

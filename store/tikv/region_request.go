@@ -132,7 +132,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 }
 
 func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
-	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Store.peer); e != nil {
+	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
@@ -148,7 +148,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 }
 
 func (s *RegionRequestSender) onSendSuccess(ctx *RPCContext) {
-	store := s.regionCache.getStoreByStoreID(ctx.Store.peer)
+	store := s.regionCache.getStoreByStoreID(ctx.Store.storeID)
 	store.markAccess(true)
 }
 

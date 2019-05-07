@@ -18,11 +18,11 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/btree"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
@@ -63,7 +63,7 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	c.Assert(workableRegionsInBtree(s.cache, s.cache.mu.sorted, ts), Equals, len)
 	for _, r := range s.cache.mu.regions {
 		if r.checkRegionCacheTTL(ts) {
-			if store := s.cache.ensureRegionWorkStore(r, ts); store != nil {
+			if store, _ := s.cache.ensureRegionWorkStore(r, ts); store != nil {
 				c.Assert(r, DeepEquals, s.cache.searchCachedRegion(r.StartKey(), false))
 			}
 		}
@@ -75,7 +75,7 @@ func workableRegions(cache *RegionCache, regions map[RegionVerID]*Region, ts int
 		if !region.checkRegionCacheTTL(ts) {
 			continue
 		}
-		store := cache.ensureRegionWorkStore(region, ts)
+		store, _ := cache.ensureRegionWorkStore(region, ts)
 		if store != nil {
 			len++
 		}
@@ -89,7 +89,7 @@ func workableRegionsInBtree(cache *RegionCache, t *btree.BTree, ts int64) (len i
 		if !r.checkRegionCacheTTL(ts) {
 			return true
 		}
-		store := cache.ensureRegionWorkStore(r, ts)
+		store, _ := cache.ensureRegionWorkStore(r, ts)
 		if store != nil {
 			len++
 		}
@@ -525,12 +525,13 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	}
 	region := cache.getRegionByIDFromCache(loc.Region.id)
 	b.ResetTimer()
-	store, _ := region.WorkStore()
+	store, peer, _ := region.WorkStorePeer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			rpcCtx := &RPCContext{
 				Region: loc.Region,
 				Meta:   region.meta,
+				Peer:   peer,
 				Store:  store,
 			}
 			cache.OnSendRequestFail(rpcCtx, nil)
