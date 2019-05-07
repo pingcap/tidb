@@ -2882,7 +2882,8 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk.MustExec("lock tables t1 write, test_lock.t3 write")
 	tk.MustExec("drop database test_lock")
 	tk.MustExec("create table t3 (a int)")
-	tk.MustExec("lock tables t1 write, t3 read")
+	tk.MustExec("lock tables t1 write, t3 write")
+	tk.MustExec("drop table t3")
 
 	// Test lock tables and truncate tables.
 	tk.MustExec("unlock tables")
