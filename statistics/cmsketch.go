@@ -304,7 +304,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 //   (1): For values that only appears in `c, using `max` to merge them affects the `min` query result less than using `sum`;
 //   (2): For values that only appears in `rc`, it is the same as condition (1);
 //   (3): For values that appears both in `c` and `rc`, if they do not appear partially in `c` and `rc`, for example,
-//        if `v` appears 5 times in the table, it can appears 3 times in `c` and 5 times in `rc`, then `max` also gives the correct answer.
+//        if `v` appears 5 times in the table, it can appears 5 times in `c` and 3 times in `rc`, then `max` also gives the correct answer.
 // So in fact, if we can know the number of appearances of each value in the first place, it is better to use `max` to construct the CM sketch rather than `sum`.
 func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch) error {
 	if c.depth != rc.depth || c.width != rc.width {
