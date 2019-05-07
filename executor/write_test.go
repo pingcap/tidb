@@ -900,7 +900,7 @@ func (s *testSuite4) TestReplace(c *C) {
 	tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")
 }
 
-func (s *testSuite2) TestVirtualColumn(c *C) {
+func (s *testSuite2) TestGeneratedColumnForInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test Replace with generated column
