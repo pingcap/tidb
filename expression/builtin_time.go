@@ -4734,6 +4734,11 @@ func (c *periodAddFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
+func validPeriod(p int64) bool {
+	mod := p % 100
+	return !(p < 0 || mod > 12 || mod == 0)
+}
+
 // period2Month converts a period to months, in which period is represented in the format of YYMM or YYYYMM.
 // Note that the period argument is not a date value.
 func period2Month(period uint64) uint64 {
@@ -4833,6 +4838,14 @@ func (b *builtinPeriodDiffSig) evalInt(row chunk.Row) (int64, bool, error) {
 	p2, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
+	}
+
+	if !validPeriod(p1) {
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("period_diff")
+	}
+
+	if !validPeriod(p2) {
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("period_diff")
 	}
 
 	return int64(period2Month(uint64(p1)) - period2Month(uint64(p2))), false, nil
