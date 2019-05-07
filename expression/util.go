@@ -289,6 +289,14 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
+func doPushDownNot(ctx sessionctx.Context, exprs []Expression, not bool) []Expression {
+	newExprs := make([]Expression, 0, len(exprs))
+	for _, expr := range exprs {
+		newExprs = append(newExprs, PushDownNot(ctx, expr, not))
+	}
+	return newExprs
+}
+
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
@@ -299,34 +307,22 @@ func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
 			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
-			}
-			return f
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		case ast.LogicAnd:
 			if not {
-				args := f.GetArgs()
-				for i, a := range args {
-					args[i] = PushDownNot(f.GetCtx(), a, true)
-				}
-				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
+				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
+				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), newArgs...)
 			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
-			}
-			return f
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		case ast.LogicOr:
 			if not {
-				args := f.GetArgs()
-				for i, a := range args {
-					args[i] = PushDownNot(f.GetCtx(), a, true)
-				}
-				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
+				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
+				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), newArgs...)
 			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
-			}
-			return f
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		}
 	}
 	if not {

@@ -204,6 +204,11 @@ func IsAnalyzed(flag int64) bool {
 	return (flag & AnalyzeFlag) > 0
 }
 
+// ResetAnalyzeFlag resets the AnalyzeFlag.
+func ResetAnalyzeFlag(flag int64) int64 {
+	return flag &^ AnalyzeFlag
+}
+
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
 func ValueToString(value *types.Datum, idxCols int) (string, error) {
@@ -589,7 +594,6 @@ func (hg *Histogram) TruncateHistogram(numBkt int) *Histogram {
 	hist := hg.Copy()
 	hist.Buckets = hist.Buckets[:numBkt]
 	hist.Bounds.TruncateTo(numBkt * 2)
-	hist.NDV = int64(float64(hg.NDV) * (hist.TotalRowCount() / hg.TotalRowCount()))
 	return hist
 }
 

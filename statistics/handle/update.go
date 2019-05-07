@@ -436,7 +436,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newIdx.CMSketch = statistics.UpdateCMSketch(idx.CMSketch, eqFB)
 			newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB})
 			newIdx.Histogram.PreCalculateScalar()
-			newIdx.Flag = 0
+			newIdx.Flag = statistics.ResetAnalyzeFlag(newIdx.Flag)
 			newTblStats.Indices[fb.Hist.ID] = &newIdx
 		} else {
 			col, ok := tblStats.Columns[fb.Hist.ID]
@@ -449,7 +449,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newFB := &statistics.QueryFeedback{Feedback: ranFB}
 			newFB = newFB.DecodeIntValues()
 			newCol.Histogram = *statistics.UpdateHistogram(&col.Histogram, newFB)
-			newCol.Flag = 0
+			newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 			newTblStats.Columns[fb.Hist.ID] = &newCol
 		}
 		h.UpdateTableStats([]*statistics.Table{newTblStats}, nil)

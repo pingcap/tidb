@@ -405,7 +405,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			// For autocommit single statement transactions, the history count is always 1.
 			// For explicit transactions, the statement count is more than 1.
 			history := GetHistory(s)
-			if history.Count() > 1 && strings.Contains(err.Error(), util.WriteConflictMarker) {
+			if history.Count() > 1 {
 				commitRetryLimit = 0
 			}
 		}
@@ -1046,7 +1046,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 }
 
 func (s *session) handleInvalidBindRecord(ctx context.Context, stmtNode ast.StmtNode) {
-	var normdOrigSQL string
+	var normdOrigSQL, hash string
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
@@ -1054,11 +1054,12 @@ func (s *session) handleInvalidBindRecord(ctx context.Context, stmtNode ast.Stmt
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normdOrigSQL = normalizeExplainSQL[idx:]
+			hash = parser.DigestHash(normdOrigSQL)
 		default:
 			return
 		}
 	case *ast.SelectStmt:
-		normdOrigSQL = parser.Normalize(x.Text())
+		normdOrigSQL, hash = parser.NormalizeDigest(x.Text())
 	default:
 		return
 	}
@@ -1070,9 +1071,9 @@ func (s *session) handleInvalidBindRecord(ctx context.Context, stmtNode ast.Stmt
 	}
 
 	globalHandle := domain.GetDomain(s).BindHandle()
-	bindMeta = globalHandle.GetBindRecord(normdOrigSQL, s.GetSessionVars().CurrentDB)
+	bindMeta = globalHandle.GetBindRecord(hash, normdOrigSQL, s.GetSessionVars().CurrentDB)
 	if bindMeta == nil {
-		bindMeta = globalHandle.GetBindRecord(normdOrigSQL, "")
+		bindMeta = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
 	}
 	if bindMeta != nil {
 		record := &bindinfo.BindRecord{
@@ -1466,7 +1467,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = dom.LoadBindInfoLoop(se2, se2.parser)
+	err = dom.LoadBindInfoLoop(se2)
 	if err != nil {
 		return nil, err
 	}
