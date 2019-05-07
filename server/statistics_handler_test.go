@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/sirupsen/logrus"
 )
 
 type testDumpStatsSuite struct {
@@ -130,6 +131,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 		c.Assert(os.Remove(path1), IsNil)
 	}()
 
+	logrus.Warning("after snapshot")
 	resp1, err = http.Get("http://127.0.0.1:10090/stats/dump/tidb/test/" + snapshot)
 	c.Assert(err, IsNil)
 

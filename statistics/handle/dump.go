@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/sirupsen/logrus"
 )
 
 // JSONTable is used for dumping statistics.
@@ -85,12 +86,14 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, hist
 
 func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
 	tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, true, historyStatsExec)
+	if err != nil || tbl == nil {
+		return nil, err
+	}
+	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, historyStatsExec)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	if tbl == nil {
-		return nil, nil
-	}
+	logrus.Warning("tbl.ModifyCount", tbl.ModifyCount, "tbl.Indices", len(tbl.Indices))
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,

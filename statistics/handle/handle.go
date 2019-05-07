@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/sirupsen/logrus"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -354,6 +355,7 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, t
 			continue
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer {
+			logrus.Warning("go into this")
 			hg, err := h.histogramFromStorage(table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0, historyStatsExec)
 			if err != nil {
 				return errors.Trace(err)
@@ -404,6 +406,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 			!isHandle &&
 			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
 			!loadAll
+		logrus.Warning("notNeedLoad", notNeedLoad)
 		if notNeedLoad {
 			count, err := h.columnCountFromStorage(table.PhysicalID, histID)
 			if err != nil {
@@ -463,7 +466,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	table, ok := h.StatsCache.Load().(StatsCache)[physicalID]
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
-	if !ok {
+	if !ok || historyStatsExec != nil {
 		histColl := statistics.HistColl{
 			PhysicalID:     physicalID,
 			HavePhysicalID: true,
@@ -672,4 +675,21 @@ func (h *Handle) columnCountFromStorage(tableID, colID int64) (int64, error) {
 		return 0, nil
 	}
 	return rows[0].GetMyDecimal(0).ToInt()
+}
+
+func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (version uint64, modifyCount, count int64, err error) {
+	selSQL := fmt.Sprintf("SELECT version, modify_count, count from mysql.stats_meta where table_id = %d order by version", tableID)
+	var rows []chunk.Row
+	if historyStatsExec == nil {
+		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
+	} else {
+		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(nil, selSQL)
+	}
+	if err != nil || len(rows) == 0 {
+		return
+	}
+	version = rows[0].GetUint64(0)
+	modifyCount = rows[0].GetInt64(1)
+	count = rows[0].GetInt64(2)
+	return
 }

@@ -14,10 +14,10 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
-	"context"
 	"github.com/gorilla/mux"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -26,9 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
 )
 
 // StatsHandler is the handler for dumping statistics.
@@ -39,17 +37,21 @@ type StatsHandler struct {
 func (s *Server) newStatsHandler() *StatsHandler {
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
-		logutil.Logger(context.Background()).Error("Illegal driver")
+		panic("Illegal driver")
 	}
 
 	do, err := session.GetDomain(store.store)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("Failed to get domain", zap.Error(err))
+		panic("Failed to get domain")
 	}
 	return &StatsHandler{do}
 }
 
 func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeError(w, errors.New("only http GET method is supported"))
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 
 	params := mux.Vars(req)
@@ -88,6 +90,10 @@ func (s *Server) newStatsHistoryHandler() *StatsHistoryHandler {
 }
 
 func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeError(w, errors.New("only http GET method is supported"))
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 
 	params := mux.Vars(req)
