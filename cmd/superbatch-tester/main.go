@@ -14,9 +14,9 @@ var testConfig tikv.BatchClientTestConfig
 func init() {
 	flag.Uint64Var(&testConfig.Concurrent, "concurrent", 128, "The number of test RPC loops per tikv instance")
 	flag.DurationVar(&testConfig.Timeout, "timeout", 10*time.Second, "The fail timeout")
-	flag.DurationVar(&testConfig.TestLength, "testLength", 20*time.Minute, "The full length of the test")
-	flag.Uint64Var(&testConfig.MinDelay, "minDelay", 1000, "The minimum delay in the test RPCs")
-	flag.Uint64Var(&testConfig.MaxDelay, "maxDelay", 10000, "The maximum delay in the test RPCs")
+	flag.DurationVar(&testConfig.TestLength, "time", 20*time.Minute, "The full running time of the test")
+	flag.Uint64Var(&testConfig.MinDelay, "minDelay", 10, "The minimum delay in the test RPCs, in milliseconds")
+	flag.Uint64Var(&testConfig.MaxDelay, "maxDelay", 1000, "The maximum delay in the test RPCs, in milliseconds")
 }
 
 func main() {
