@@ -1645,19 +1645,19 @@ func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int6
 			riv++
 		}
 	}
-	const dayLength = int64(24 * gotime.Hour)
+	const gotimeDay = 24 * gotime.Hour
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		dayCount := riv / (dayLength / int64(gotime.Microsecond))
-		riv %= dayLength / int64(gotime.Microsecond)
+		dayCount := riv / int64(gotimeDay/gotime.Microsecond)
+		riv %= int64(gotimeDay / gotime.Microsecond)
 		return 0, 0, dayCount, riv * int64(gotime.Microsecond), nil
 	case "SECOND":
-		dayCount := iv / (dayLength / int64(gotime.Second))
-		iv %= dayLength / int64(gotime.Second)
+		dayCount := iv / (gotimeDay / int64(gotime.Second))
+		iv %= int64(gotimeDay / gotime.Second)
 		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), nil
 	case "MINUTE":
-		dayCount := riv / (dayLength / int64(gotime.Minute))
-		riv %= dayLength / int64(gotime.Minute)
+		dayCount := riv / (gotimeDay / int64(gotime.Minute))
+		riv %= int64(gotimeDay / gotime.Minute)
 		return 0, 0, dayCount, riv * int64(gotime.Minute), nil
 	case "HOUR":
 		dayCount := riv / 24
