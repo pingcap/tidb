@@ -29,8 +29,6 @@ import (
 const (
 	rangeTaskDefaultStatLogInterval = time.Minute * 10
 	rangeTaskDefaultMaxBackoff      = 20000
-
-	rangeWorkerUpdateStatInterval = time.Millisecond * 500
 )
 
 // RangeTaskRunner splits a range into many ranges to process concurrently, and convenient to send requests to all
