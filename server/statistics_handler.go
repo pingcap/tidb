@@ -14,7 +14,6 @@
 package server
 
 import (
-	"errors"
 	"net/http"
 	"time"
 
@@ -48,10 +47,6 @@ func (s *Server) newStatsHandler() *StatsHandler {
 }
 
 func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeError(w, errors.New("only http GET method is supported"))
-		return
-	}
 	w.Header().Set("Content-Type", "application/json")
 
 	params := mux.Vars(req)
@@ -90,10 +85,6 @@ func (s *Server) newStatsHistoryHandler() *StatsHistoryHandler {
 }
 
 func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeError(w, errors.New("only http GET method is supported"))
-		return
-	}
 	w.Header().Set("Content-Type", "application/json")
 
 	params := mux.Vars(req)
