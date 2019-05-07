@@ -319,7 +319,7 @@ func toStringWithCount(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "MaxOneRow"
 	case *PhysicalLimit:
 		str = "Limit" + fmt.Sprintf("%v\n", x.StatsCount())
-	case  *PhysicalSort:
+	case *PhysicalSort:
 		str = "Sort" + fmt.Sprintf("%.2f", x.StatsCount())
 	case *PhysicalUnionAll:
 		last := len(idxs) - 1

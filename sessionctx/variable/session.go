@@ -802,8 +802,10 @@ const (
 	SlowLogCopWaitMax = "Cop_wait_max"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	// SlowLogPlan is the plan of slow query.
 	SlowLogPlan = "Plan"
-	SlowLogJoinVars = "Join_Var"
+	// SlowLogJoinVars is the join session vars.
+	SlowLogJoinVars = "Join_Vars"
 )
 
 // SlowLogFormat uses for formatting slow log.
@@ -884,10 +886,10 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 		buf.WriteString(SlowLogPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")
 	}
 	if len(planString) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogPlan+ SlowLogSpaceMarkStr + planString + "\n")
+		buf.WriteString(SlowLogPrefixStr + SlowLogPlan + SlowLogSpaceMarkStr + planString + "\n")
 	}
 	if len(joinVars) > 0 {
-		buf.WriteString(SlowLogPrefixStr + SlowLogJoinVars+ SlowLogSpaceMarkStr + joinVars + "\n")
+		buf.WriteString(SlowLogPrefixStr + SlowLogJoinVars + SlowLogSpaceMarkStr + joinVars + "\n")
 	}
 	if len(sql) == 0 {
 		sql = ";"

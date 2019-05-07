@@ -50,7 +50,8 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/metrics", prometheus.Handler())
 
 	// HTTP path for dump statistics.
-	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler())
+	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
+	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/settings", settingsHandler{})
 	router.Handle("/binlog/recover", binlogRecover{})

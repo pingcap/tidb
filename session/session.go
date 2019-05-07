@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1580,4 +1581,70 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.String("current_db", vars.CurrentDB),
 			zap.String("sql", query+vars.GetExecuteArgumentsInfo()))
 	}
+}
+
+// ExecRestrictedSQLWithSnapshot implements RestrictedSQLExecutor interface.
+// This is used for executing some restricted sql statements with snapshot.
+// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
+// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
+func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+	ctx := context.TODO()
+
+	// Use special session to execute the sql.
+	tmp, err := s.sysSessionPool().Get()
+	if err != nil {
+		return nil, nil, err
+	}
+	se := tmp.(*session)
+	defer s.sysSessionPool().Put(tmp)
+	metrics.SessionRestrictedSQLCounter.Inc()
+	var snapshot uint64
+	txn, err := s.Txn(false)
+	if err != nil {
+		return nil, nil, err
+	}
+	if txn.Valid() {
+		snapshot = s.txn.StartTS()
+	}
+	if s.sessionVars.SnapshotTS != 0 {
+		snapshot = s.sessionVars.SnapshotTS
+	}
+	// Set snapshot.
+	if snapshot != 0 {
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10)); err != nil {
+			return nil, nil, err
+		}
+		defer func() {
+			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+				logutil.Logger(context.Background()).Error("set tidbSnapshot error", zap.Error(err))
+			}
+		}()
+	}
+	startTime := time.Now()
+	recordSets, err := se.Execute(ctx, sql)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	var (
+		rows   []chunk.Row
+		fields []*ast.ResultField
+	)
+	// Execute all recordset, take out the first one as result.
+	for i, rs := range recordSets {
+		tmp, err := drainRecordSet(ctx, se, rs)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if err = rs.Close(); err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
+		if i == 0 {
+			rows = tmp
+			fields = rs.Fields()
+		}
+	}
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+	return rows, fields, nil
 }

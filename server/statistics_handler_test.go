@@ -19,6 +19,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
@@ -105,6 +106,37 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	c.Assert(err, IsNil)
 	fp.Write(js)
 	ds.checkData(c, path)
+
+	// sleep for 1 seconds to ensure the existence of tidb.test
+	time.Sleep(time.Second)
+	timeBeforeDropStats := time.Now()
+	snapshot := timeBeforeDropStats.Format("20060102150405")
+	ds.prepare4DumpHistoryStats(c)
+
+	// test dump history stats
+	resp1, err := http.Get("http://127.0.0.1:10090/stats/dump/tidb/test")
+	c.Assert(err, IsNil)
+	defer resp1.Body.Close()
+	js, err = ioutil.ReadAll(resp1.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(js), Equals, "null")
+
+	path1 := "/tmp/stats_history.json"
+	fp1, err := os.Create(path1)
+	c.Assert(err, IsNil)
+	c.Assert(fp1, NotNil)
+	defer func() {
+		c.Assert(fp1.Close(), IsNil)
+		//c.Assert(os.Remove(path1), IsNil)
+	}()
+
+	resp1, err = http.Get("http://127.0.0.1:10090/stats/dump/tidb/test/" + snapshot)
+	c.Assert(err, IsNil)
+
+	js, err = ioutil.ReadAll(resp1.Body)
+	c.Assert(err, IsNil)
+	fp1.Write(js)
+	ds.checkData(c, path1)
 }
 
 func (ds *testDumpStatsSuite) prepareData(c *C) {
@@ -128,6 +160,25 @@ func (ds *testDumpStatsSuite) prepareData(c *C) {
 	c.Assert(h.Update(is), IsNil)
 }
 
+func (ds *testDumpStatsSuite) prepare4DumpHistoryStats(c *C) {
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+
+	dbt := &DBTest{c, db}
+
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	dbt.mustExec(updateSafePoint)
+
+	dbt.mustExec("drop table tidb.test")
+	dbt.mustExec("create table tidb.test (a int, b varchar(20))")
+}
+
 func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
@@ -135,16 +186,11 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	}))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	dbt := &DBTest{c, db}
-	defer func() {
-		dbt.mustExec("drop database tidb")
-		dbt.mustExec("truncate table mysql.stats_meta")
-		dbt.mustExec("truncate table mysql.stats_histograms")
-		dbt.mustExec("truncate table mysql.stats_buckets")
-		db.Close()
-	}()
+	defer db.Close()
 
 	dbt.mustExec("use tidb")
 	dbt.mustExec("drop stats test")
+	fmt.Printf("%v\n", fmt.Sprintf("load stats '%s'", path))
 	_, err = dbt.db.Exec(fmt.Sprintf("load stats '%s'", path))
 	c.Assert(err, IsNil)
 
@@ -159,4 +205,16 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	dbt.Check(tableName, Equals, "test")
 	dbt.Check(modifyCount, Equals, int64(3))
 	dbt.Check(count, Equals, int64(4))
+}
+
+func (ds *testDumpStatsSuite) clearData(c *C, path string) {
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+
+	dbt := &DBTest{c, db}
+	dbt.mustExec("drop database tidb")
+	dbt.mustExec("truncate table mysql.stats_meta")
+	dbt.mustExec("truncate table mysql.stats_histograms")
+	dbt.mustExec("truncate table mysql.stats_buckets")
 }

@@ -401,7 +401,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := a.getStatsInfo()
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
-	joinVars := fmt.Sprintf("idxBatch %d hjCon %d", sessVars.IndexJoinBatchSize,sessVars.HashJoinConcurrency)
+	joinVars := fmt.Sprintf("idxBatch %d hjCon %d", sessVars.IndexJoinBatchSize, sessVars.HashJoinConcurrency)
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql, planString, joinVars))

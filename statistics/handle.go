@@ -153,7 +153,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false)
+		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false, nil)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			logutil.Logger(context.Background()).Debug("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
@@ -257,11 +257,11 @@ func (h *Handle) LoadNeededHistograms() error {
 			histogramNeededColumns.delete(col)
 			continue
 		}
-		hg, err := h.histogramFromStorage(col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize)
+		hg, err := h.histogramFromStorage(col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cms, err := h.cmSketchFromStorage(col.tableID, 0, col.columnID)
+		cms, err := h.cmSketchFromStorage(col.tableID, 0, col.columnID, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

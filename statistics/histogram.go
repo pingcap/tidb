@@ -16,6 +16,7 @@ package statistics
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/parser/ast"
 	"math"
 	"strings"
 	"time"
@@ -295,11 +296,16 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	return
 }
 
-func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
+func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (_ *Histogram, err error) {
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
-	rows, fields, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var (
+		rows   []chunk.Row
+		fields []*ast.ResultField
+	)
+	if historyStatsExec != nil {
+		rows, fields, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(nil, selSQL)
+	} else {
+		rows, fields, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	}
 	bucketSize := len(rows)
 	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
@@ -329,6 +335,23 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 	}
 	hg.PreCalculateScalar()
 	return hg, nil
+}
+
+func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (version uint64, modifyCount, count int64, err error) {
+	selSQL := fmt.Sprintf("SELECT version, modify_count, count from mysql.stats_meta where table_id = %d order by version", tableID)
+	var rows []chunk.Row
+	if historyStatsExec == nil {
+		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
+	} else {
+		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(nil, selSQL)
+	}
+	if err != nil || len(rows) == 0 {
+		return
+	}
+	version = rows[0].GetUint64(0)
+	modifyCount = rows[0].GetInt64(1)
+	count = rows[0].GetInt64(2)
+	return
 }
 
 func (h *Handle) columnCountFromStorage(tableID, colID int64) (int64, error) {
