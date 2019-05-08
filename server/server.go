@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/expensivequery"
 )
 
 var (
@@ -307,6 +308,7 @@ func (s *Server) Run() error {
 	if s.cfg.Status.ReportStatus {
 		s.startStatusHTTP()
 	}
+	go expensivequery.GlobalExpensiveQueryHandler.Run(context.Background())
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {

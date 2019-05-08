@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"github.com/pingcap/tidb/util/expensivequery"
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -130,7 +130,7 @@ func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.ExpensiveQueryTicker.Stop()
+	expensivequery.GlobalExpensiveQueryHandler.Unregister(a.stmt.Ctx.GetSessionVars().ConnectionID)
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.logAudit()
 	return err
@@ -155,7 +155,6 @@ type ExecStmt struct {
 	// StartTime stands for the starting time when executing the statement.
 	StartTime            time.Time
 	isPreparedStmt       bool
-	ExpensiveQueryTicker *time.Ticker
 }
 
 // OriginText returns original statement as a string.
@@ -204,9 +203,8 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	a.StartTime = time.Now()
-	a.ExpensiveQueryTicker = time.NewTicker(time.Second * time.Duration(a.Ctx.GetSessionVars().ExpensiveQueryTimeThreshold))
 	sctx := a.Ctx
-	go LogExpensiveQuery(ctx, sctx, a.ExpensiveQueryTicker, a.Plan, a.Text)
+	expensivequery.GlobalExpensiveQueryHandler.Register(sctx, a.Text, a.StartTime, a.Plan)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
@@ -277,9 +275,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 }
 
 func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
-	a.ExpensiveQueryTicker = time.NewTicker(time.Second * time.Duration(a.Ctx.GetSessionVars().ExpensiveQueryTimeThreshold))
-	defer a.ExpensiveQueryTicker.Stop()
-	go LogExpensiveQuery(ctx, a.Ctx, a.ExpensiveQueryTicker, a.Plan, a.Text)
+	defer expensivequery.GlobalExpensiveQueryHandler.Unregister(sctx.GetSessionVars().ConnectionID)
+	expensivequery.GlobalExpensiveQueryHandler.Register(sctx, a.Text, time.Now(), a.Plan)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -446,74 +443,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			Internal: sessVars.InRestrictedSQL,
 		})
 	}
-}
-
-// LogExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
-func LogExpensiveQuery(ctx context.Context, sctx sessionctx.Context, ticker *time.Ticker, p plannercore.Plan, sql string) {
-	level := log.GetLevel()
-	if level > zapcore.WarnLevel {
-		return
-	}
-	if ticker != nil {
-		defer ticker.Stop()
-		<-ticker.C
-	}
-	logFields := make([]zap.Field, 0, 20)
-	sessVars := sctx.GetSessionVars()
-	execDetail := sessVars.StmtCtx.GetExecDetails()
-	logFields = append(logFields, execDetail.ToZapFields()...)
-	if copTaskInfo := sessVars.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
-		logFields = append(logFields, copTaskInfo.ToZapFields()...)
-	}
-	if statsInfos := plannercore.GetStatsInfo(p); len(statsInfos) > 0 {
-		var buf strings.Builder
-		firstComma := false
-		vStr := ""
-		for k, v := range statsInfos {
-			if v == 0 {
-				vStr = "pseudo"
-			} else {
-				vStr = strconv.FormatUint(v, 10)
-			}
-			if firstComma {
-				buf.WriteString("," + k + ":" + vStr)
-			} else {
-				buf.WriteString(k + ":" + vStr)
-				firstComma = true
-			}
-		}
-		logFields = append(logFields, zap.String("stats", buf.String()))
-	}
-	if sessVars.ConnectionID != 0 {
-		logFields = append(logFields, zap.Uint64("conn_id", sessVars.ConnectionID))
-	}
-	if sessVars.User != nil {
-		logFields = append(logFields, zap.String("user", sessVars.User.String()))
-	}
-	if len(sessVars.CurrentDB) > 0 {
-		logFields = append(logFields, zap.String("database", sessVars.CurrentDB))
-	}
-	var tableIDs, indexIDs string
-	if len(sessVars.StmtCtx.TableIDs) > 0 {
-		tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
-		logFields = append(logFields, zap.String("table_ids", tableIDs))
-	}
-	if len(sessVars.StmtCtx.IndexIDs) > 0 {
-		indexIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.IndexIDs), " ", ",", -1)
-		logFields = append(logFields, zap.String("index_ids", indexIDs))
-	}
-	txnTs := sessVars.TxnCtx.StartTS
-	logFields = append(logFields, zap.Uint64("txn_start_ts", txnTs))
-	memTracker := sessVars.StmtCtx.MemTracker
-	logFields = append(logFields, zap.String("mem_max", memTracker.BytesToString(memTracker.MaxConsumed())))
-
-	const logSQLLen = 1024 * 8
-	if len(sql) > logSQLLen {
-		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
-	}
-	logFields = append(logFields, zap.String("sql", sql))
-
-	logutil.Logger(ctx).Warn("expensive_query", logFields...)
 }
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
