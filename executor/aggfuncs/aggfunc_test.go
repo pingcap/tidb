@@ -62,7 +62,7 @@ func (s *testSuite) TearDownTest(c *C) {
 	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 }
 
-type aggMergeTest struct {
+type aggTest struct {
 	dataType *types.FieldType
 	numRows  int
 	dataGen  func(i int) types.Datum
@@ -70,7 +70,7 @@ type aggMergeTest struct {
 	results  []types.Datum
 }
 
-func (s *testSuite) testMergePartialResult(c *C, p aggMergeTest) {
+func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
 	for i := 0; i < p.numRows; i++ {
 		dt := p.dataGen(i)
@@ -132,36 +132,106 @@ func (s *testSuite) testMergePartialResult(c *C, p aggMergeTest) {
 	c.Assert(result, Equals, 0)
 }
 
-func buildAggMergeTester(funcName string, tp byte, numRows int, results ...interface{}) aggMergeTest {
-	return buildAggMergeTesterWithFieldType(funcName, types.NewFieldType(tp), numRows, results...)
+func buildAggTester(funcName string, tp byte, numRows int, results ...interface{}) aggTest {
+	return buildAggTesterWithFieldType(funcName, types.NewFieldType(tp), numRows, results...)
 }
 
-func buildAggMergeTesterWithFieldType(funcName string, ft *types.FieldType, numRows int, results ...interface{}) aggMergeTest {
-	pt := aggMergeTest{
+func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows int, results ...interface{}) aggTest {
+	pt := aggTest{
 		dataType: ft,
 		numRows:  numRows,
 		funcName: funcName,
+		dataGen:  getDataGenFunc(ft),
 	}
 	for _, result := range results {
 		pt.results = append(pt.results, types.NewDatum(result))
 	}
+	return pt
+}
+
+func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 	switch ft.Tp {
 	case mysql.TypeLonglong:
-		pt.dataGen = func(i int) types.Datum { return types.NewIntDatum(int64(i)) }
+		return func(i int) types.Datum { return types.NewIntDatum(int64(i)) }
 	case mysql.TypeFloat:
-		pt.dataGen = func(i int) types.Datum { return types.NewFloat32Datum(float32(i)) }
+		return func(i int) types.Datum { return types.NewFloat32Datum(float32(i)) }
 	case mysql.TypeNewDecimal:
-		pt.dataGen = func(i int) types.Datum { return types.NewDecimalDatum(types.NewDecFromInt(int64(i))) }
+		return func(i int) types.Datum { return types.NewDecimalDatum(types.NewDecFromInt(int64(i))) }
 	case mysql.TypeDouble:
-		pt.dataGen = func(i int) types.Datum { return types.NewFloat64Datum(float64(i)) }
+		return func(i int) types.Datum { return types.NewFloat64Datum(float64(i)) }
 	case mysql.TypeString:
-		pt.dataGen = func(i int) types.Datum { return types.NewStringDatum(fmt.Sprintf("%d", i)) }
+		return func(i int) types.Datum { return types.NewStringDatum(fmt.Sprintf("%d", i)) }
 	case mysql.TypeDate:
-		pt.dataGen = func(i int) types.Datum { return types.NewTimeDatum(types.TimeFromDays(int64(i))) }
+		return func(i int) types.Datum { return types.NewTimeDatum(types.TimeFromDays(int64(i + 365))) }
 	case mysql.TypeDuration:
-		pt.dataGen = func(i int) types.Datum { return types.NewDurationDatum(types.Duration{Duration: time.Duration(i)}) }
+		return func(i int) types.Datum { return types.NewDurationDatum(types.Duration{Duration: time.Duration(i)}) }
 	case mysql.TypeJSON:
-		pt.dataGen = func(i int) types.Datum { return types.NewDatum(json.CreateBinary(int64(i))) }
+		return func(i int) types.Datum { return types.NewDatum(json.CreateBinary(int64(i))) }
 	}
-	return pt
+	return nil
+}
+
+func (s *testSuite) testAggFunc(c *C, p aggTest) {
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+	for i := 0; i < p.numRows; i++ {
+		dt := p.dataGen(i)
+		srcChk.AppendDatum(0, &dt)
+	}
+	srcChk.AppendDatum(0, &types.Datum{})
+
+	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
+	if p.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+	desc := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
+	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
+	finalPr := finalFunc.AllocPartialResult()
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+
+	iter := chunk.NewIterator4Chunk(srcChk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+	}
+	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
+	c.Assert(err, IsNil)
+	c.Assert(result, Equals, 0)
+
+	// test the empty input
+	resultChk.Reset()
+	finalFunc.ResetPartialResult(finalPr)
+	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
+	c.Assert(err, IsNil)
+	c.Assert(result, Equals, 0)
+
+	// test the agg func with distinct
+	desc = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
+	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
+	finalPr = finalFunc.AllocPartialResult()
+
+	resultChk.Reset()
+	iter = chunk.NewIterator4Chunk(srcChk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+	}
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+	}
+	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
+	c.Assert(err, IsNil)
+	c.Assert(result, Equals, 0)
+
+	// test the empty input
+	resultChk.Reset()
+	finalFunc.ResetPartialResult(finalPr)
+	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
+	c.Assert(err, IsNil)
+	c.Assert(result, Equals, 0)
 }

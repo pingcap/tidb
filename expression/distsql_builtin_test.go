@@ -17,6 +17,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -108,6 +109,17 @@ func (s *testEvalSuite) TestEval(c *C) {
 			),
 			types.NewIntDatum(3),
 		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_JsonSearchSig,
+				toPBFieldType(newJSONFieldType()),
+				jsonDatumExpr(c, `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`),
+				datumExpr(c, types.NewBytesDatum([]byte(`all`))),
+				datumExpr(c, types.NewBytesDatum([]byte(`10`))),
+				datumExpr(c, types.NewBytesDatum([]byte(`\`))),
+				datumExpr(c, types.NewBytesDatum([]byte(`$**.k`))),
+			),
+			newJSONDatum(c, `"$[1][0].k"`),
+		},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
@@ -178,12 +190,15 @@ func datumExpr(c *C, d types.Datum) *tipb.Expr {
 	return expr
 }
 
-func jsonDatumExpr(c *C, s string) *tipb.Expr {
-	var d types.Datum
+func newJSONDatum(c *C, s string) (d types.Datum) {
 	j, err := json.ParseBinaryFromString(s)
 	c.Assert(err, IsNil)
 	d.SetMysqlJSON(j)
-	return datumExpr(c, d)
+	return d
+}
+
+func jsonDatumExpr(c *C, s string) *tipb.Expr {
+	return datumExpr(c, newJSONDatum(c, s))
 }
 
 func columnExpr(columnID int64) *tipb.Expr {
@@ -211,6 +226,16 @@ func newIntFieldType() *types.FieldType {
 		Flen:    mysql.MaxIntWidth,
 		Decimal: 0,
 		Flag:    mysql.BinaryFlag,
+	}
+}
+
+func newJSONFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeJSON,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
 	}
 }
 

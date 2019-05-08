@@ -75,6 +75,47 @@ const (
 	connStatusWaitShutdown // Notified by server to close.
 )
 
+var (
+	queryTotalCounterComSleepOK           = metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK")
+	queryTotalCounterComSleepError        = metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error")
+	queryTotalCounterComQuitOK            = metrics.QueryTotalCounter.WithLabelValues("Quit", "OK")
+	queryTotalCounterComQuitError         = metrics.QueryTotalCounter.WithLabelValues("Quit", "Error")
+	queryTotalCounterComInitDBOK          = metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK")
+	queryTotalCounterComInitDBError       = metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error")
+	queryTotalCounterComQueryOK           = metrics.QueryTotalCounter.WithLabelValues("Query", "OK")
+	queryTotalCounterComQueryError        = metrics.QueryTotalCounter.WithLabelValues("Query", "Error")
+	queryTotalCounterComPingOK            = metrics.QueryTotalCounter.WithLabelValues("Ping", "OK")
+	queryTotalCounterComPingError         = metrics.QueryTotalCounter.WithLabelValues("Ping", "Error")
+	queryTotalCounterComFieldListOK       = metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK")
+	queryTotalCounterComFieldListError    = metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error")
+	queryTotalCounterComPrepareOK         = metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK")
+	queryTotalCounterComPrepareError      = metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error")
+	queryTotalCounterComExecuteOK         = metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK")
+	queryTotalCounterComExecuteError      = metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error")
+	queryTotalCounterComFetchOK           = metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK")
+	queryTotalCounterComFetchError        = metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error")
+	queryTotalCounterComCloseOK           = metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK")
+	queryTotalCounterComCloseError        = metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error")
+	queryTotalCounterComSendLongDataOK    = metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK")
+	queryTotalCounterComSendLongDataError = metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error")
+	queryTotalCounterComResetOK           = metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK")
+	queryTotalCounterComResetError        = metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error")
+	queryTotalCounterComSetOptionOK       = metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK")
+	queryTotalCounterComSetOptionError    = metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error")
+
+	queryDurationHistogramUse      = metrics.QueryDurationHistogram.WithLabelValues("Use")
+	queryDurationHistogramShow     = metrics.QueryDurationHistogram.WithLabelValues("Show")
+	queryDurationHistogramBegin    = metrics.QueryDurationHistogram.WithLabelValues("Begin")
+	queryDurationHistogramCommit   = metrics.QueryDurationHistogram.WithLabelValues("Commit")
+	queryDurationHistogramRollback = metrics.QueryDurationHistogram.WithLabelValues("Rollback")
+	queryDurationHistogramInsert   = metrics.QueryDurationHistogram.WithLabelValues("Insert")
+	queryDurationHistogramReplace  = metrics.QueryDurationHistogram.WithLabelValues("Replace")
+	queryDurationHistogramDelete   = metrics.QueryDurationHistogram.WithLabelValues("Delete")
+	queryDurationHistogramUpdate   = metrics.QueryDurationHistogram.WithLabelValues("Update")
+	queryDurationHistogramSelect   = metrics.QueryDurationHistogram.WithLabelValues("Select")
+	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
+)
+
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
 	return &clientConn{
@@ -128,14 +169,14 @@ func (cc *clientConn) String() string {
 // After handshake, client can send sql query to server.
 func (cc *clientConn) handshake(ctx context.Context) error {
 	if err := cc.writeInitialHandshake(); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if err := cc.readOptionalSSLRequestAndHandshakeResponse(ctx); err != nil {
 		err1 := cc.writeError(err)
 		if err1 != nil {
 			logutil.Logger(ctx).Debug("writeError failed", zap.Error(err1))
 		}
-		return errors.Trace(err)
+		return err
 	}
 	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
@@ -148,10 +189,10 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	err := cc.writePacket(data)
 	cc.pkt.sequence = 0
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 func (cc *clientConn) Close() error {
@@ -165,7 +206,7 @@ func (cc *clientConn) Close() error {
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
 	err := cc.bufReadConn.Close()
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -217,9 +258,9 @@ func (cc *clientConn) writeInitialHandshake() error {
 	data = append(data, 0)
 	err := cc.writePacket(data)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 func (cc *clientConn) readPacket() ([]byte, error) {
@@ -408,12 +449,12 @@ func parseAttrs(data []byte) (map[string]string, error) {
 	for pos < len(data) {
 		key, _, off, err := parseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return attrs, errors.Trace(err)
+			return attrs, err
 		}
 		pos += off
 		value, _, off, err := parseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return attrs, errors.Trace(err)
+			return attrs, err
 		}
 		pos += off
 
@@ -426,7 +467,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	// Read a packet. It may be a SSLRequest or HandshakeResponse.
 	data, err := cc.readPacket()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	isOldVersion := false
@@ -448,18 +489,18 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	}
 
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.tlsConfig != nil {
 		// The packet is a SSLRequest, let's switch to TLS.
 		if err = cc.upgradeToTLS(cc.server.tlsConfig); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		// Read the following HandshakeResponse packet.
 		data, err = cc.readPacket()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isOldVersion {
 			pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
@@ -467,7 +508,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 			pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
 		}
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
@@ -478,7 +519,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		err = parseHandshakeResponseBody(ctx, &resp, data, pos)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	cc.capability = resp.Capability & cc.server.capability
@@ -488,7 +529,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.attrs = resp.Attrs
 
 	err = cc.openSessionAndDoAuth(resp.Auth)
-	return errors.Trace(err)
+	return err
 }
 
 func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
@@ -500,7 +541,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	var err error
 	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	hasPassword := "YES"
 	if len(authData) == 0 {
@@ -511,12 +552,12 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 		return err
 	}
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
-		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, hasPassword))
+		return errAccessDenied.GenWithStackByArgs(cc.user, host, hasPassword)
 	}
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	cc.ctx.SetSessionManager(cc.server)
@@ -564,7 +605,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
 			err := cc.Close()
-			terror.Log(errors.Trace(err))
+			terror.Log(err)
 		}
 	}()
 	// Usually, client connection status changes between [dispatching] <=> [reading].
@@ -628,7 +669,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("err", errStrForLog(err)),
 			)
 			err1 := cc.writeError(err)
-			terror.Log(errors.Trace(err1))
+			terror.Log(err1)
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
@@ -668,53 +709,130 @@ func errStrForLog(err error) string {
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
-	var label string
 	switch cmd {
 	case mysql.ComSleep:
-		label = "Sleep"
+		if err != nil {
+			queryTotalCounterComSleepError.Inc()
+		} else {
+			queryTotalCounterComSleepOK.Inc()
+		}
 	case mysql.ComQuit:
-		label = "Quit"
+		if err != nil {
+			queryTotalCounterComQuitError.Inc()
+		} else {
+			queryTotalCounterComQuitOK.Inc()
+		}
 	case mysql.ComQuery:
 		if cc.ctx.Value(sessionctx.LastExecuteDDL) != nil {
 			// Don't take DDL execute time into account.
 			// It's already recorded by other metrics in ddl package.
 			return
 		}
-		label = "Query"
+		if err != nil {
+			queryTotalCounterComQueryError.Inc()
+		} else {
+			queryTotalCounterComQueryOK.Inc()
+		}
 	case mysql.ComPing:
-		label = "Ping"
+		if err != nil {
+			queryTotalCounterComPingError.Inc()
+		} else {
+			queryTotalCounterComPingOK.Inc()
+		}
 	case mysql.ComInitDB:
-		label = "InitDB"
+		if err != nil {
+			queryTotalCounterComInitDBError.Inc()
+		} else {
+			queryTotalCounterComInitDBOK.Inc()
+		}
 	case mysql.ComFieldList:
-		label = "FieldList"
+		if err != nil {
+			queryTotalCounterComFieldListError.Inc()
+		} else {
+			queryTotalCounterComFieldListOK.Inc()
+		}
 	case mysql.ComStmtPrepare:
-		label = "StmtPrepare"
+		if err != nil {
+			queryTotalCounterComPrepareError.Inc()
+		} else {
+			queryTotalCounterComPrepareOK.Inc()
+		}
 	case mysql.ComStmtExecute:
-		label = "StmtExecute"
+		if err != nil {
+			queryTotalCounterComExecuteError.Inc()
+		} else {
+			queryTotalCounterComExecuteOK.Inc()
+		}
 	case mysql.ComStmtFetch:
-		label = "StmtFetch"
+		if err != nil {
+			queryTotalCounterComFetchError.Inc()
+		} else {
+			queryTotalCounterComFetchOK.Inc()
+		}
 	case mysql.ComStmtClose:
-		label = "StmtClose"
+		if err != nil {
+			queryTotalCounterComCloseError.Inc()
+		} else {
+			queryTotalCounterComCloseOK.Inc()
+		}
 	case mysql.ComStmtSendLongData:
-		label = "StmtSendLongData"
+		if err != nil {
+			queryTotalCounterComSendLongDataError.Inc()
+		} else {
+			queryTotalCounterComSendLongDataOK.Inc()
+		}
 	case mysql.ComStmtReset:
-		label = "StmtReset"
+		if err != nil {
+			queryTotalCounterComResetError.Inc()
+		} else {
+			queryTotalCounterComResetOK.Inc()
+		}
 	case mysql.ComSetOption:
-		label = "SetOption"
+		if err != nil {
+			queryTotalCounterComSetOptionError.Inc()
+		} else {
+			queryTotalCounterComSetOptionOK.Inc()
+		}
 	default:
-		label = strconv.Itoa(int(cmd))
-	}
-	if err != nil {
-		metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
-	} else {
-		metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
+		label := strconv.Itoa(int(cmd))
+		if err != nil {
+			metrics.QueryTotalCounter.WithLabelValues(label, "ERROR").Inc()
+		} else {
+			metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
+		}
 	}
 	stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
 	sqlType := metrics.LblGeneral
 	if stmtType != "" {
 		sqlType = stmtType
 	}
-	metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
+
+	switch sqlType {
+	case "Use":
+		queryDurationHistogramUse.Observe(time.Since(startTime).Seconds())
+	case "Show":
+		queryDurationHistogramShow.Observe(time.Since(startTime).Seconds())
+	case "Begin":
+		queryDurationHistogramBegin.Observe(time.Since(startTime).Seconds())
+	case "Commit":
+		queryDurationHistogramCommit.Observe(time.Since(startTime).Seconds())
+	case "Rollback":
+		queryDurationHistogramRollback.Observe(time.Since(startTime).Seconds())
+	case "Insert":
+		queryDurationHistogramInsert.Observe(time.Since(startTime).Seconds())
+	case "Replace":
+		queryDurationHistogramReplace.Observe(time.Since(startTime).Seconds())
+	case "Delete":
+		queryDurationHistogramDelete.Observe(time.Since(startTime).Seconds())
+	case "Update":
+		queryDurationHistogramUpdate.Observe(time.Since(startTime).Seconds())
+	case "Select":
+		queryDurationHistogramSelect.Observe(time.Since(startTime).Seconds())
+	case metrics.LblGeneral:
+		queryDurationHistogramGeneral.Observe(time.Since(startTime).Seconds())
+	default:
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
+	}
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -775,7 +893,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.writeOK()
 	case mysql.ComInitDB:
 		if err := cc.useDB(ctx1, dataStr); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		return cc.writeOK()
 	case mysql.ComFieldList:
@@ -806,7 +924,7 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// so we add `` around db.
 	_, err = cc.ctx.Execute(ctx, "use `"+db+"`")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	cc.dbname = db
 	return
@@ -839,10 +957,10 @@ func (cc *clientConn) writeOK() error {
 
 	err := cc.writePacket(data)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 func (cc *clientConn) writeError(e error) error {
@@ -871,9 +989,9 @@ func (cc *clientConn) writeError(e error) error {
 
 	err := cc.writePacket(data)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 // writeEOF writes an EOF packet.
@@ -893,7 +1011,7 @@ func (cc *clientConn) writeEOF(serverStatus uint16) error {
 	}
 
 	err := cc.writePacket(data)
-	return errors.Trace(err)
+	return err
 }
 
 func (cc *clientConn) writeReq(filePath string) error {
@@ -903,10 +1021,10 @@ func (cc *clientConn) writeReq(filePath string) error {
 
 	err := cc.writePacket(data)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 var defaultLoadDataBatchCnt uint64 = 20000
@@ -917,17 +1035,17 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 	for {
 		prevData, reachLimit, err = loadDataInfo.InsertData(prevData, curData)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if !reachLimit {
 			break
 		}
 		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		curData = prevData
 		prevData = nil
@@ -948,7 +1066,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 
 	err := cc.writeReq(loadDataInfo.Path)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	var shouldBreak bool
@@ -957,7 +1075,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for {
 		curData, err = cc.readPacket()
@@ -998,9 +1116,9 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 				if err1 := txn.Rollback(); err1 != nil {
 					logutil.Logger(ctx).Error("load data rollback failed", zap.Error(err1))
 				}
-				return errors.Trace(err)
+				return err
 			}
-			return errors.Trace(cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
+			return cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx))
 		}
 	}
 	// Should never reach here.
@@ -1019,13 +1137,13 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 	}
 	err := cc.writeReq(loadStatsInfo.Path)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	var prevData, curData []byte
 	for {
 		curData, err = cc.readPacket()
 		if err != nil && terror.ErrorNotEqual(err, io.EOF) {
-			return errors.Trace(err)
+			return err
 		}
 		if len(curData) == 0 {
 			break
@@ -1035,7 +1153,7 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 	if len(prevData) == 0 {
 		return nil
 	}
-	return errors.Trace(loadStatsInfo.Update(prevData))
+	return loadStatsInfo.Update(prevData)
 }
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
@@ -1046,7 +1164,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	rs, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
-		return errors.Trace(err)
+		return err
 	}
 	cc.mu.Lock()
 	cc.mu.resultSets = rs
@@ -1068,7 +1186,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		if loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
 			if err = cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 
@@ -1076,13 +1194,13 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		if loadStats != nil {
 			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
 			if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 
 		err = cc.writeOK()
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // handleFieldList returns the field list for a table.
@@ -1091,7 +1209,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	parts := strings.Split(sql, "\x00")
 	columns, err := cc.ctx.FieldList(parts[0])
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	data := cc.alloc.AllocWithLen(4, 1024)
 	for _, column := range columns {
@@ -1104,13 +1222,13 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 		data = data[0:4]
 		data = column.Dump(data)
 		if err := cc.writePacket(data); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	if err := cc.writeEOF(0); err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 // writeResultset writes data into a resultset and uses rs.Next to get row data back.
@@ -1145,28 +1263,25 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		err = cc.writeChunks(ctx, rs, binary, serverStatus)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for _, v := range columns {
 		data = data[0:4]
 		data = v.Dump(data)
 		if err := cc.writePacket(data); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
-	if err := cc.writeEOF(serverStatus); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return cc.writeEOF(serverStatus)
 }
 
 // writeChunks writes data from a Chunk, which filled data by a ResultSet, into a connection.
@@ -1180,7 +1295,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
@@ -1188,7 +1303,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			columns := rs.Columns()
 			err = cc.writeColumnInfo(columns, serverStatus)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			gotColumnInfo = true
 		}
@@ -1204,14 +1319,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
 			}
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			if err = cc.writePacket(data); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
-	return errors.Trace(cc.writeEOF(serverStatus))
+	return cc.writeEOF(serverStatus)
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
@@ -1227,7 +1342,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		rowCount := req.NumRows()
 		if rowCount == 0 {
@@ -1245,7 +1360,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	if len(fetchedRows) == 0 {
 		serverStatus |= mysql.ServerStatusLastRowSend
 		terror.Call(rs.Close)
-		return errors.Trace(cc.writeEOF(serverStatus))
+		return cc.writeEOF(serverStatus)
 	}
 
 	// construct the rows sent to the client according to fetchSize.
@@ -1265,19 +1380,19 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		data = data[0:4]
 		data, err = dumpBinaryRow(data, rs.Columns(), row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if err = cc.writePacket(data); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
-	return errors.Trace(cc.writeEOF(serverStatus))
+	return cc.writeEOF(serverStatus)
 }
 
 func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {
 	for _, rs := range rss {
 		if err := cc.writeResultset(ctx, rs, binary, mysql.ServerMoreResultsExists, 0); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return cc.writeOK()
@@ -1297,7 +1412,7 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 	// Important: read from buffered reader instead of the original net.Conn because it may contain data we need.
 	tlsConn := tls.Server(cc.bufReadConn, tlsConfig)
 	if err := tlsConn.Handshake(); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	cc.setConn(tlsConn)
 	cc.tlsConn = tlsConn
@@ -1326,7 +1441,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 
 	err = cc.openSessionAndDoAuth(pass)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
@@ -1335,7 +1450,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			connInfo := cc.connectInfo()
 			err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: connInfo.Host}, plugin.ChangeUser, connInfo)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		return nil

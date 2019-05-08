@@ -1474,7 +1474,7 @@ func checkDateRange(t MysqlTime) error {
 
 func checkMonthDay(year, month, day int, allowInvalidDate bool) error {
 	if month < 0 || month > 12 {
-		return errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(month))
+		return errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(month))
 	}
 
 	maxDay := 31
@@ -1482,13 +1482,13 @@ func checkMonthDay(year, month, day int, allowInvalidDate bool) error {
 		if month > 0 {
 			maxDay = maxDaysInMonth[month-1]
 		}
-		if month == 2 && year%4 != 0 {
+		if month == 2 && !isLeapYear(uint16(year)) {
 			maxDay = 28
 		}
 	}
 
 	if day < 0 || day > maxDay {
-		return errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(day))
+		return errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(day))
 	}
 	return nil
 }
@@ -1545,6 +1545,7 @@ func checkDatetimeType(t MysqlTime, allowZeroInDate, allowInvalidDate bool) erro
 
 // ExtractDatetimeNum extracts time value number from datetime unit and format.
 func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
+	// TODO: Consider time_zone variable.
 	switch strings.ToUpper(unit) {
 	case "DAY":
 		return int64(t.Time.Day()), nil
@@ -1552,12 +1553,7 @@ func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
 		week := t.Time.Week(0)
 		return int64(week), nil
 	case "MONTH":
-		// TODO: Consider time_zone variable.
-		t1, err := t.Time.GoTime(gotime.Local)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		return int64(t1.Month()), nil
+		return int64(t.Time.Month()), nil
 	case "QUARTER":
 		m := int64(t.Time.Month())
 		// 1 - 3 -> 1
