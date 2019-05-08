@@ -210,7 +210,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 // If parentCert and parentCertKey is specified, the new certificate will be signed by the parentCert.
 // Otherwise, the new certificate will be self-signed and is a CA.
 func generateCert(sn int, commonName string, parentCert *x509.Certificate, parentCertKey *rsa.PrivateKey, outKeyFile string, outCertFile string) (*x509.Certificate, *rsa.PrivateKey, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 512)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 528)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -295,11 +295,6 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 }
 
 func (ts *TidbTestSuite) TestTLS(c *C) {
-	preEnv := os.Getenv("GODEBUG")
-	os.Setenv("GODEBUG", "tls13=0")
-	defer func() {
-		os.Setenv("GODEBUG", preEnv)
-	}()
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)

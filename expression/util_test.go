@@ -68,8 +68,10 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	neFunc := newFunction(ast.NE, col, One)
 	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
+	notFuncCopy := notFunc.Clone()
 	ret := PushDownNot(ctx, notFunc, false)
 	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
+	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {
@@ -81,6 +83,20 @@ func (s *testUtilSuite) TestFilter(c *check.C) {
 	result := make([]Expression, 0, 5)
 	result = Filter(result, conditions, isLogicOrFunction)
 	c.Assert(result, check.HasLen, 1)
+}
+
+func (s *testUtilSuite) TestFilterOutInPlace(c *check.C) {
+	conditions := []Expression{
+		newFunction(ast.EQ, newColumn(0), newColumn(1)),
+		newFunction(ast.EQ, newColumn(1), newColumn(2)),
+		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+	}
+	remained, filtered := FilterOutInPlace(conditions, isLogicOrFunction)
+	c.Assert(len(remained), check.Equals, 2)
+	c.Assert(remained[0].(*ScalarFunction).FuncName.L, check.Equals, "eq")
+	c.Assert(remained[1].(*ScalarFunction).FuncName.L, check.Equals, "eq")
+	c.Assert(len(filtered), check.Equals, 1)
+	c.Assert(filtered[0].(*ScalarFunction).FuncName.L, check.Equals, "or")
 }
 
 func isLogicOrFunction(e Expression) bool {
