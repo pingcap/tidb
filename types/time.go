@@ -1652,11 +1652,11 @@ func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int6
 		riv %= int64(gotimeDay / gotime.Microsecond)
 		return 0, 0, dayCount, riv * int64(gotime.Microsecond), nil
 	case "SECOND":
-		dayCount := iv / (gotimeDay / int64(gotime.Second))
+		dayCount := iv / int64(gotimeDay/gotime.Second)
 		iv %= int64(gotimeDay / gotime.Second)
 		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), nil
 	case "MINUTE":
-		dayCount := riv / (gotimeDay / int64(gotime.Minute))
+		dayCount := riv / int64(gotimeDay/gotime.Minute)
 		riv %= int64(gotimeDay / gotime.Minute)
 		return 0, 0, dayCount, riv * int64(gotime.Minute), nil
 	case "HOUR":
