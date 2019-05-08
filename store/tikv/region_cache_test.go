@@ -378,8 +378,8 @@ func (s *testRegionCacheSuite) TestSendFailBlackTwoRegion(c *C) {
 	ts = time.Now().Unix()
 	c.Assert(reachableStore(s.cache.storeMu.stores, ts), Equals, 2)
 	s.getRegion(c, []byte("a"))
-	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 1)
 	s.getRegion(c, []byte("x"))
+	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 2)
 	c.Assert(workableRegions(s.cache, s.cache.mu.regions, ts), Equals, 2)
 }
 

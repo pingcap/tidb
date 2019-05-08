@@ -48,12 +48,19 @@ var (
 	tikvRegionCacheCounterWithGetStoreError         = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "err")
 )
 
+const (
+	updated  int32 = iota // region is updated and no need to reload.
+	needSync              //  need sync new region info.
+)
+
 // Region presents kv region
 type Region struct {
 	meta         *metapb.Region // immutable after fetched from pd
-	lastAccess   int64          // last region access time, see checkRegionCacheTTL
 	stores       []*Store       // stores in this region
 	workStoreIdx int32          // point to current work peer in meta.Peers and work store in stores(same idx)
+	syncStoreIdx int32          // point to init peer index and need reload if meet syncStoreIdx again
+	syncFlag     int32          // mark region need be sync in next turn
+	lastAccess   int64          // last region access time, see checkRegionCacheTTL
 }
 
 func (r *Region) initStores(c *RegionCache) {
@@ -80,8 +87,30 @@ retry:
 	return true
 }
 
+// invalidate invalidates a region, next time it will got null result.
 func (r *Region) invalidate() {
 	atomic.StoreInt64(&r.lastAccess, invalidatedLastAccessTime)
+}
+
+// scheduleReload schedules reload region request in next LocateKey.
+func (r *Region) scheduleReload() {
+retry:
+	oldValue := atomic.LoadInt32(&r.syncFlag)
+	if oldValue != updated {
+		return
+	}
+	if !atomic.CompareAndSwapInt32(&r.syncFlag, oldValue, needSync) {
+		goto retry
+	}
+}
+
+// needReload checks whether region need reload.
+func (r *Region) needReload() bool {
+	oldValue := atomic.LoadInt32(&r.syncFlag)
+	if oldValue == updated {
+		return false
+	}
+	return atomic.CompareAndSwapInt32(&r.syncFlag, oldValue, updated)
 }
 
 // RegionCache caches Regions loaded from PD.
@@ -239,24 +268,17 @@ func (l *KeyLocation) Contains(key []byte) bool {
 // LocateKey searches for the region and range that the key is located.
 func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
 	r := c.searchCachedRegion(key, false)
-	if r != nil {
-		loc := &KeyLocation{
-			Region:   r.VerID(),
-			StartKey: r.StartKey(),
-			EndKey:   r.EndKey(),
+	if r == nil || r.needReload() {
+		var err error
+		r, err = c.loadRegion(bo, key, false)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		return loc, nil
+
+		c.mu.Lock()
+		c.insertRegionToCache(r)
+		c.mu.Unlock()
 	}
-
-	r, err := c.loadRegion(bo, key, false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	c.mu.Lock()
-	c.insertRegionToCache(r)
-	c.mu.Unlock()
-
 	return &KeyLocation{
 		Region:   r.VerID(),
 		StartKey: r.StartKey(),
@@ -548,12 +570,14 @@ func (c *RegionCache) routeStoreInRegion(region *Region, ts int64) (workStore *S
 	}
 retry:
 	cachedStore, cachedPeer, cachedIdx := region.WorkStorePeer()
-	if cachedStore != nil && cachedStore.Operational() {
+	// almost time requests be directly routed to stable leader.
+	if cachedStore != nil && cachedStore.stableLeader() {
 		workStore = cachedStore
 		workPeer = cachedPeer
 		return
 	}
 
+	// try round-robin find & switch to other peers when old leader meet error.
 	newIdx := -1
 	storeNum := len(region.stores)
 	i := (cachedIdx + 1) % storeNum
@@ -572,9 +596,11 @@ retry:
 	if newIdx < 0 {
 		return
 	}
-	//fmt.Println("change " , cachedIdx, "to", newIdx, string(debug.Stack()))
 	if !atomic.CompareAndSwapInt32(&region.workStoreIdx, int32(cachedIdx), int32(newIdx)) {
 		goto retry
+	}
+	if int32(newIdx) == atomic.LoadInt32(&region.syncStoreIdx) {
+		region.scheduleReload()
 	}
 	workStore = region.stores[newIdx]
 	workPeer = region.meta.Peers[newIdx]
@@ -631,9 +657,6 @@ func (c *RegionCache) OnSendRequestFail(ctx *RPCContext, err error) {
 	lastAccess := atomic.LoadInt64(&r.lastAccess)
 	if lastAccess == invalidatedLastAccessTime {
 		return
-	}
-	if !c.hasAvailableStore(r, time.Now().Unix()) {
-		r.invalidate()
 	}
 }
 
@@ -768,6 +791,7 @@ func (c *RegionCache) switchWorkStore(r *Region, storeID uint64) (foundLeader bo
 		leaderIdx = 0
 	}
 	atomic.StoreInt32(&r.workStoreIdx, int32(leaderIdx))
+	atomic.StoreInt32(&r.syncStoreIdx, int32(leaderIdx))
 	return
 }
 
@@ -915,8 +939,8 @@ const (
 	startBlackoutAfterAttempt = 20
 )
 
-// Operational returns whether store is operational and no need retry other node.
-func (s *Store) Operational() bool {
+// stableLeader returns whether store is stable leader and no need retry other node.
+func (s *Store) stableLeader() bool {
 	var state storeState
 	*(*uint64)(unsafe.Pointer(&state)) = atomic.LoadUint64(&s.state)
 	if state.failedAttempt == 0 || state.lastFailedTime == 0 {
