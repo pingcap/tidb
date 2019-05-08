@@ -133,7 +133,6 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 			}
 		}
 	}
-	return rows, nil
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
