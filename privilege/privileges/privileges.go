@@ -224,3 +224,9 @@ func (p *UserPrivileges) GetDefaultRoles(user, host string) []*auth.RoleIdentity
 	ret := mysqlPrivilege.getDefaultRoles(user, host)
 	return ret
 }
+
+// GetAllRoles return all roles of user.
+func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
+	mysqlPrivilege := p.Handle.Get()
+	return mysqlPrivilege.getAllRoles(user, host)
+}
