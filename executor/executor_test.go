@@ -2514,6 +2514,7 @@ func (s *testSuite1) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.dom.SetStatsUpdating(true)
 }
 
 func (s *testSuite1) TearDownSuite(c *C) {

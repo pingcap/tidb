@@ -342,7 +342,8 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, t
 	nullCount := row.GetInt64(5)
 	idx := table.Indices[histID]
 	errorRate := statistics.ErrorRate{}
-	if statistics.IsAnalyzed(row.GetInt64(8)) {
+	flag := row.GetInt64(8)
+	if statistics.IsAnalyzed(flag) {
 		h.mu.Lock()
 		h.mu.rateMap.clear(table.PhysicalID, histID, true)
 		h.mu.Unlock()
@@ -362,7 +363,7 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, t
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7)}
+			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag, LastAnalyzePos: row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))}
 		}
 		break
 	}
@@ -383,7 +384,8 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 	correlation := row.GetFloat64(9)
 	col := table.Columns[histID]
 	errorRate := statistics.ErrorRate{}
-	if statistics.IsAnalyzed(row.GetInt64(8)) {
+	flag := row.GetInt64(8)
+	if statistics.IsAnalyzed(flag) {
 		h.mu.Lock()
 		h.mu.rateMap.clear(table.PhysicalID, histID, false)
 		h.mu.Unlock()
@@ -410,12 +412,14 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 				return errors.Trace(err)
 			}
 			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				Info:       colInfo,
-				Count:      count + nullCount,
-				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				PhysicalID:     table.PhysicalID,
+				Histogram:      *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				Info:           colInfo,
+				Count:          count + nullCount,
+				ErrorRate:      errorRate,
+				IsHandle:       tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				Flag:           flag,
+				LastAnalyzePos: row.GetDatum(10, types.NewFieldType(mysql.TypeBlob)),
 			}
 			col.Histogram.Correlation = correlation
 			break
@@ -430,13 +434,15 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 				return errors.Trace(err)
 			}
 			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *hg,
-				Info:       colInfo,
-				CMSketch:   cms,
-				Count:      int64(hg.TotalRowCount()),
-				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				PhysicalID:     table.PhysicalID,
+				Histogram:      *hg,
+				Info:           colInfo,
+				CMSketch:       cms,
+				Count:          int64(hg.TotalRowCount()),
+				ErrorRate:      errorRate,
+				IsHandle:       tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				Flag:           flag,
+				LastAnalyzePos: row.GetDatum(10, types.NewFieldType(mysql.TypeBlob)),
 			}
 			break
 		}
@@ -478,7 +484,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 		table = table.Copy()
 	}
 	table.Pseudo = false
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation from mysql.stats_histograms where table_id = %d", physicalID)
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %d", physicalID)
 	var rows []chunk.Row
 	if historyStatsExec != nil {
 		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(nil, selSQL)
@@ -569,6 +575,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		return
 	}
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
+	var lastAnalyzePos []byte
 	for i := range hg.Buckets {
 		count := hg.Buckets[i].Count
 		if i > 0 {
@@ -579,6 +586,9 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		if err != nil {
 			return
 		}
+		if i == len(hg.Buckets)-1 {
+			lastAnalyzePos = upperBound.GetBytes()
+		}
 		var lowerBound types.Datum
 		lowerBound, err = hg.GetLower(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
@@ -586,6 +596,13 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes())
 		_, err = exec.Execute(ctx, insertSQL)
+		if err != nil {
+			return
+		}
+	}
+	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
+		sql = fmt.Sprintf("update mysql.stats_histograms set last_analyze_pos = X'%X' where table_id = %d and is_index = %d and hist_id = %d", lastAnalyzePos, tableID, isIndex, hg.ID)
+		_, err = exec.Execute(ctx, sql)
 		if err != nil {
 			return
 		}
