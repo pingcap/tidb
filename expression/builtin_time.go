@@ -4734,6 +4734,7 @@ func (c *periodAddFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
+// validPeriod checks if this period is valid, it comes from MySQL 8.0+.
 func validPeriod(p int64) bool {
 	return !(p < 0 || p%100 == 0 || p%100 > 12)
 }
@@ -4794,6 +4795,7 @@ func (b *builtinPeriodAddSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, err
 	}
 
+	// in MySQL, if p is invalid but n is NULL, the result is NULL, so we have to check if n is NULL first.
 	if !validPeriod(p) {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("period_add")
 	}
