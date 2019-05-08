@@ -617,9 +617,9 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		req.AppendString(9, slow.TableIDs)
 		req.AppendString(10, slow.IndexIDs)
 		if slow.Internal {
-			req.AppendInt64(11, 0)
-		} else {
 			req.AppendInt64(11, 1)
+		} else {
+			req.AppendInt64(11, 0)
 		}
 		req.AppendString(12, slow.Digest)
 		e.cursor++
@@ -1379,6 +1379,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
+	case *ast.SplitIndexRegionStmt:
+		sc.IgnoreTruncate = false
+		sc.IgnoreZeroInDate = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
@@ -1401,18 +1405,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
-	err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
+	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
+	err = vars.SetSystemVar("warning_count", warnCount)
 	if err != nil {
 		return err
 	}
-	err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
+	err = vars.SetSystemVar("error_count", errCount)
 	if err != nil {
 		return err
 	}
-	if s != nil {
-		// execute missed stmtID uses empty sql
-		sc.OriginalSQL = s.Text()
-	}
+	// execute missed stmtID uses empty sql
+	sc.OriginalSQL = s.Text()
 	vars.StmtCtx = sc
 	return
 }

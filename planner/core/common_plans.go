@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -420,20 +421,29 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 }
 
+// analyzeInfo is used to store the database name, table name and partition name of analyze task.
+type analyzeInfo struct {
+	DBName        string
+	TableName     string
+	PartitionName string
+	// PhysicalTableID is the id for a partition or a table.
+	PhysicalTableID int64
+	Incremental     bool
+}
+
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	PhysicalTableID int64
-	PKInfo          *model.ColumnInfo
-	ColsInfo        []*model.ColumnInfo
-	Table           table.Table
+	PKInfo   *model.ColumnInfo
+	ColsInfo []*model.ColumnInfo
+	TblInfo  *model.TableInfo
+	analyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
-	// PhysicalTableID is the id for a partition or a table.
-	PhysicalTableID int64
-	IndexInfo       *model.IndexInfo
-	Table           table.Table
+	IndexInfo *model.IndexInfo
+	TblInfo   *model.TableInfo
+	analyzeInfo
 }
 
 // Analyze represents an analyze plan
@@ -465,6 +475,15 @@ type LoadStats struct {
 	baseSchemaProducer
 
 	Path string
+}
+
+// SplitIndexRegion represents a split index regions plan.
+type SplitIndexRegion struct {
+	baseSchemaProducer
+
+	Table      table.Table
+	IndexInfo  *model.IndexInfo
+	ValueLists [][]types.Datum
 }
 
 // DDL represents a DDL statement plan.

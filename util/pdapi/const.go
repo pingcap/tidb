@@ -13,8 +13,10 @@
 
 package pdapi
 
-// HotRead / HotWrite is the pd apis to get the corresponding hot region information.
+// The following constants are the APIs of PD server.
 const (
 	HotRead  = "/pd/api/v1/hotspot/regions/read"
-	HotWrite = "/pd/api/v1/hotspot/regions/read"
+	HotWrite = "/pd/api/v1/hotspot/regions/write"
+	Regions  = "/pd/api/v1/regions"
+	Stores   = "/pd/api/v1/stores"
 )

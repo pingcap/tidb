@@ -73,6 +73,7 @@ const (
 	pColumnFlag = "colFlag"
 	pColumnLen  = "colLen"
 	pRowBin     = "rowBin"
+	pSnapshot   = "snapshot"
 )
 
 // For query string
@@ -598,6 +599,19 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
+	}
+}
+
+// configReloadHandler is the handler for reloading config online.
+type configReloadHandler struct {
+}
+
+// ServeHTTP handles request of reloading config for this server.
+func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if err := config.ReloadGlobalConfig(); err != nil {
+		writeError(w, err)
+	} else {
+		writeData(w, "success!")
 	}
 }
 

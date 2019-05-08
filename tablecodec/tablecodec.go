@@ -14,7 +14,6 @@
 package tablecodec
 
 import (
-	"bytes"
 	"encoding/binary"
 	"math"
 	"time"
@@ -601,25 +600,6 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	startKey = EncodeIndexSeekKey(tableID, indexID, nil)
 	endKey = EncodeIndexSeekKey(tableID, indexID, []byte{255})
 	return
-}
-
-type keyRangeSorter struct {
-	ranges []kv.KeyRange
-}
-
-func (r *keyRangeSorter) Len() int {
-	return len(r.ranges)
-}
-
-func (r *keyRangeSorter) Less(i, j int) bool {
-	a := r.ranges[i]
-	b := r.ranges[j]
-	cmp := bytes.Compare(a.StartKey, b.StartKey)
-	return cmp < 0
-}
-
-func (r *keyRangeSorter) Swap(i, j int) {
-	r.ranges[i], r.ranges[j] = r.ranges[j], r.ranges[i]
 }
 
 const (
