@@ -196,7 +196,7 @@ const (
 	Version1        = 1
 )
 
-// AnalyzeFlag is one for column flag. We can use IsAnalyzed to check whether this column is analyzed or not.
+// AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
 const AnalyzeFlag = 1
 
 // IsAnalyzed checks whether this flag contains AnalyzeFlag.
@@ -204,7 +204,7 @@ func IsAnalyzed(flag int64) bool {
 	return (flag & AnalyzeFlag) > 0
 }
 
-// ResetAnalyzeFlag resets the AnalyzeFlag.
+// ResetAnalyzeFlag resets the AnalyzeFlag because it has been modified by feedback.
 func ResetAnalyzeFlag(flag int64) int64 {
 	return flag &^ AnalyzeFlag
 }
