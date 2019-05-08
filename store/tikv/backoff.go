@@ -181,7 +181,7 @@ func (t backoffType) TError() error {
 	case BoTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
 	case BoPDRPC:
-		return ErrPDServerTimeout.GenWithStackByArgs(txnRetryableMark)
+		return ErrPDServerTimeout
 	case BoRegionMiss, BoUpdateLeader:
 		return ErrRegionUnavailable
 	case boServerBusy:
@@ -241,6 +241,11 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 	if vars != nil {
 		b.vars = vars
+	}
+	// maxSleep is the max sleep time in millisecond.
+	// When it is multiplied by BackOffWeight, it should not be greater than MaxInt32.
+	if math.MaxInt32/b.vars.BackOffWeight >= b.maxSleep {
+		b.maxSleep *= b.vars.BackOffWeight
 	}
 	return b
 }

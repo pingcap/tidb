@@ -13,7 +13,9 @@
 
 package chunk
 
-import "github.com/pingcap/check"
+import (
+	"github.com/pingcap/check"
+)
 
 func equalColumn(c1, c2 *column) bool {
 	if c1.length != c2.length ||
@@ -57,4 +59,11 @@ func (s *testChunkSuite) TestColumnCopy(c *check.C) {
 
 	c1 := col.copyConstruct()
 	c.Check(equalColumn(col, c1), check.IsTrue)
+}
+
+func (s *testChunkSuite) TestLargeStringColumnOffset(c *check.C) {
+	numRows := 1
+	col := newVarLenColumn(numRows, nil)
+	col.offsets[0] = 6 << 30
+	c.Check(col.offsets[0], check.Equals, int64(6<<30)) // test no overflow.
 }

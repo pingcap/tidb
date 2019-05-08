@@ -1141,7 +1141,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 				err = checkPartitionByRangeColumn(ctx, tbInfo, pi, s)
 			}
 		case model.PartitionTypeHash:
-			err = checkPartitionByHash(pi)
+			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1365,41 +1365,41 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 	return viewInfo, tableColumns
 }
 
-func checkPartitionByHash(pi *model.PartitionInfo) error {
+func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, tbInfo *model.TableInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	if err := checkNoHashPartitions(pi.Num); err != nil {
-		return errors.Trace(err)
+	if err := checkNoHashPartitions(ctx, pi.Num); err != nil {
+		return err
 	}
-	return nil
+	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+		return err
+	}
+	return checkPartitionFuncType(ctx, s, cols, tbInfo)
 }
 
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
 	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
-	if err := checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return checkPartitionFuncType(ctx, s, cols, tbInfo)
 }
 
 func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt) error {
