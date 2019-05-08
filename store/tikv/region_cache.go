@@ -268,16 +268,30 @@ func (l *KeyLocation) Contains(key []byte) bool {
 // LocateKey searches for the region and range that the key is located.
 func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
 	r := c.searchCachedRegion(key, false)
-	if r == nil || r.needReload() {
-		var err error
-		r, err = c.loadRegion(bo, key, false)
+	if r == nil {
+		// load region when it is not exists or expired.
+		lr, err := c.loadRegion(bo, key, false)
 		if err != nil {
-			return nil, errors.Trace(err)
+			// no region data, return error if failure.
+			return nil, err
 		}
-
+		r = lr
 		c.mu.Lock()
 		c.insertRegionToCache(r)
 		c.mu.Unlock()
+	} else if r.needReload() {
+		// load region when it be marked as need reload.
+		lr, err := c.loadRegion(bo, key, false)
+		if err != nil {
+			// ignore error and use old region info.
+			logutil.Logger(bo.ctx).Error("load region failure",
+				zap.ByteString("key", key), zap.Error(err))
+		} else {
+			r = lr
+			c.mu.Lock()
+			c.insertRegionToCache(r)
+			c.mu.Unlock()
+		}
 	}
 	return &KeyLocation{
 		Region:   r.VerID(),
@@ -286,28 +300,46 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 	}, nil
 }
 
+func (c *RegionCache) loadAndInsertRegion(bo *Backoffer, key []byte) (*Region, error) {
+	r, err := c.loadRegion(bo, key, false)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.insertRegionToCache(r)
+	c.mu.Unlock()
+	return r, nil
+}
+
 // LocateEndKey searches for the region and range that the key is located.
 // Unlike LocateKey, start key of a region is exclusive and end key is inclusive.
 func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
 	r := c.searchCachedRegion(key, true)
-	if r != nil {
-		loc := &KeyLocation{
-			Region:   r.VerID(),
-			StartKey: r.StartKey(),
-			EndKey:   r.EndKey(),
+	if r == nil {
+		// load region when it is not exists or expired.
+		lr, err := c.loadRegion(bo, key, true)
+		if err != nil {
+			// no region data, return error if failure.
+			return nil, err
 		}
-		return loc, nil
+		r = lr
+		c.mu.Lock()
+		c.insertRegionToCache(r)
+		c.mu.Unlock()
+	} else if r.needReload() {
+		// load region when it be marked as need reload.
+		lr, err := c.loadRegion(bo, key, true)
+		if err != nil {
+			// ignore error and use old region info.
+			logutil.Logger(bo.ctx).Error("load region failure",
+				zap.ByteString("key", key), zap.Error(err))
+		} else {
+			r = lr
+			c.mu.Lock()
+			c.insertRegionToCache(r)
+			c.mu.Unlock()
+		}
 	}
-
-	r, err := c.loadRegion(bo, key, true)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	c.mu.Lock()
-	c.insertRegionToCache(r)
-	c.mu.Unlock()
-
 	return &KeyLocation{
 		Region:   r.VerID(),
 		StartKey: r.StartKey(),
