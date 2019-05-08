@@ -140,7 +140,7 @@ var gcVariableComments = map[string]string{
 	gcRunIntervalKey: "GC run interval, at least 10m, in Go format.",
 	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
-	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 2",
+	gcConcurrencyKey: "[DEPRECATED] How many go routines used to do GC parallel, [1, 128], default 2",
 	gcEnableKey:      "Current GC enable status",
 	gcModeKey:        "Mode of GC, \"central\" or \"distributed\"",
 }
@@ -258,12 +258,19 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return nil
 	}
 
-	concurrency, err := w.loadGCConcurrencyWithDefault()
+	stores, err := w.getUpStores(ctx)
+	concurrency := len(stores)
 	if err != nil {
-		logutil.Logger(ctx).Error("[gc worker] failed to load gcConcurrency",
+		logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency",
 			zap.String("uuid", w.uuid),
 			zap.Error(err))
 		concurrency = gcDefaultConcurrency
+	}
+
+	if concurrency == 0 {
+		logutil.Logger(ctx).Error("[gc worker] no store is up",
+			zap.String("uuid", w.uuid))
+		return errors.New("[gc worker] no store is up")
 	}
 
 	w.gcIsRunning = true
@@ -552,7 +559,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error
 
 func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte) error {
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
-	stores, err := w.pdClient.GetAllStores(ctx)
+	stores, err := w.getUpStores(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] delete ranges: got an error while trying to get store list from PD",
 			zap.String("uuid", w.uuid),
@@ -571,10 +578,6 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 	var wg sync.WaitGroup
 
 	for _, store := range stores {
-		if store.State != metapb.StoreState_Up {
-			continue
-		}
-
 		address := store.Address
 		storeID := store.Id
 		wg.Add(1)
@@ -594,6 +597,21 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 	wg.Wait()
 
 	return errors.Trace(err)
+}
+
+func (w *GCWorker) getUpStores(ctx context.Context) ([]*metapb.Store, error) {
+	stores, err := w.pdClient.GetAllStores(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	upStores := make([]*metapb.Store, 0, len(stores))
+	for _, store := range stores {
+		if store.State == metapb.StoreState_Up {
+			upStores = append(upStores, store)
+		}
+	}
+	return upStores, nil
 }
 
 func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
