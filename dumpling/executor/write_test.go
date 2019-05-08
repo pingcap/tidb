@@ -2508,6 +2508,7 @@ func (s *testSuite4) TestAutoIDInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int not null auto_increment primary key)")
 
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values ()")
 	tk.MustExec("insert into t values (),()")
