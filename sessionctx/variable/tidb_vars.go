@@ -326,7 +326,7 @@ const (
 	DefTiDBUseFastAnalyze              = false
 	DefTiDBSkipIsolationLevelCheck     = false
 	DefTiDBWaitTableSplitFinish        = false
-	DefTiDBExpensiveQueryTimeThreshold = 10 // 60s
+	DefTiDBExpensiveQueryTimeThreshold = 60 // 60s
 )
 
 // Process global variables.
