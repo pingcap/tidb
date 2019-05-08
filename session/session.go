@@ -356,8 +356,8 @@ func (s *session) doCommit(ctx context.Context) error {
 
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
-		if val.(bool) && mockCommitErrorOnce {
-			mockCommitErrorOnce = false
+		if val.(bool) && kv.IsMockCommitErrorEnable() {
+			kv.MockCommitErrorDisable()
 			failpoint.Return(kv.ErrRetryable)
 		}
 	})
@@ -1559,7 +1559,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 30
+	currentBootstrapVersion = 31
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1632,6 +1632,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
 	variable.TiDBBackoffLockFast,
+	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,
 	variable.TiDBDDLReorgWorkerCount,
 	variable.TiDBDDLReorgBatchSize,

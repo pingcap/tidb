@@ -171,6 +171,7 @@ func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_role", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `SET ROLE r_1, r_2;`)
+	mustExec(c, rootSe, `SET DEFAULT ROLE r_1 TO 'test_role'@'localhost';`)
 
 	mustExec(c, rootSe, `GRANT SELECT ON test.* TO r_1;`)
 	pc := privilege.GetPrivilegeManager(se)
@@ -179,6 +180,16 @@ func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsFalse)
 	mustExec(c, rootSe, `GRANT UPDATE ON test.* TO r_2;`)
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
+
+	mustExec(c, se, `flush privileges`)
+	mustExec(c, se, `SET ROLE NONE;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 0)
+	mustExec(c, se, `SET ROLE DEFAULT;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 1)
+	mustExec(c, se, `SET ROLE ALL;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 3)
+	mustExec(c, se, `SET ROLE ALL EXCEPT r_1, r_2;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 1)
 }
 
 func (s *testPrivilegeSuite) TestShowGrants(c *C) {
