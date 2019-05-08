@@ -1141,7 +1141,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 				err = checkPartitionByRangeColumn(ctx, tbInfo, pi, s)
 			}
 		case model.PartitionTypeHash:
-			err = checkPartitionByHash(ctx, pi, s, tbInfo)
+			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1365,7 +1365,7 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 	return viewInfo, tableColumns
 }
 
-func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *ast.CreateTableStmt, tbInfo *model.TableInfo) error {
+func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, tbInfo *model.TableInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return err
 	}
@@ -1375,7 +1375,7 @@ func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *as
 	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
 		return err
 	}
-	return checkPartitionFuncType(ctx, s, tbInfo.Columns, tbInfo)
+	return checkPartitionFuncType(ctx, s, cols, tbInfo)
 }
 
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
