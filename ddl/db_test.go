@@ -1280,6 +1280,7 @@ func (s *testDBSuite8) TestColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
+	s.tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	s.testAddColumn(c)
 	s.testDropColumn(c)
 	s.tk.MustExec("drop table t2")

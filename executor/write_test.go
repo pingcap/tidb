@@ -900,6 +900,47 @@ func (s *testSuite4) TestReplace(c *C) {
 	tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")
 }
 
+func (s *testSuite2) TestGeneratedColumnForInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// test cases for default behavior
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(id int, id_gen int as(id + 42), b int, unique key id_gen(id_gen));`)
+	tk.MustExec(`insert into t1 (id, b) values(1,1),(2,2),(3,3),(4,4),(5,5);`)
+	tk.MustExec(`replace into t1 (id, b) values(1,1);`)
+	tk.MustExec(`replace into t1 (id, b) values(1,1),(2,2);`)
+	tk.MustExec(`replace into t1 (id, b) values(6,16),(7,17),(8,18);`)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows(
+		"1 43 1", "2 44 2", "3 45 3", "4 46 4", "5 47 5", "6 48 16", "7 49 17", "8 50 18"))
+	tk.MustExec(`insert into t1 (id, b) values (6,18) on duplicate key update id = -id;`)
+	tk.MustExec(`insert into t1 (id, b) values (7,28) on duplicate key update b = -values(b);`)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows(
+		"1 43 1", "2 44 2", "3 45 3", "4 46 4", "5 47 5", "-6 36 16", "7 49 -28", "8 50 18"))
+
+	// test cases for virtual and stored columns in the same table
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i), unique key idx_j(j))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_j(j))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+}
+
 func (s *testSuite4) TestPartitionedTableReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2467,6 +2508,7 @@ func (s *testSuite4) TestAutoIDInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int not null auto_increment primary key)")
 
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values ()")
 	tk.MustExec("insert into t values (),()")
