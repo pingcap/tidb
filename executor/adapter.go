@@ -40,11 +40,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"github.com/pingcap/tidb/util/expensivequery"
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -153,8 +153,8 @@ type ExecStmt struct {
 
 	Ctx sessionctx.Context
 	// StartTime stands for the starting time when executing the statement.
-	StartTime            time.Time
-	isPreparedStmt       bool
+	StartTime      time.Time
+	isPreparedStmt bool
 }
 
 // OriginText returns original statement as a string.
