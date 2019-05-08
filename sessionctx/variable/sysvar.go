@@ -839,7 +839,6 @@ const (
 	LogSlowAdminStatements = "log_slow_admin_statements"
 	// LogQueriesNotUsingIndexes is the name for 'log_queries_not_using_indexes' system variable.
 	LogQueriesNotUsingIndexes = "log_queries_not_using_indexes"
-	log_queries_not_using_indexes
 	// QueryCacheWlockInvalidate is the name for 'query_cache_wlock_invalidate' system variable.
 	QueryCacheWlockInvalidate = "query_cache_wlock_invalidate"
 	// SQLAutoIsNull is the name for 'sql_auto_is_null' system variable.
@@ -928,7 +927,7 @@ const (
 	InnodbAdaptiveFlushing = "innodb_adaptive_flushing"
 	// InnodbTableLocks is the name for 'innodb_table_locks' system variable.
 	InnodbTableLocks = "innodb_table_locks"
-	// Socket is the name for 'innodb_status_output' system variable.
+	// InnodbStatusOutput is the name for 'innodb_status_output' system variable.
 	InnodbStatusOutput = "innodb_status_output"
 )
 
