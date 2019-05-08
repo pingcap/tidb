@@ -171,6 +171,7 @@ const (
 		stats_ver bigint(64) NOT NULL DEFAULT 0,
 		flag bigint(64) NOT NULL DEFAULT 0,
 		correlation double NOT NULL DEFAULT 0,
+		last_analyze_pos blob DEFAULT NULL,
 		unique index tbl(table_id, is_index, hist_id)
 	);`
 
@@ -328,6 +329,7 @@ const (
 	version28 = 28
 	version29 = 29
 	version30 = 30
+	version31 = 31
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -505,6 +507,10 @@ func upgrade(s Session) {
 
 	if ver < version30 {
 		upgradeToVer30(s)
+	}
+
+	if ver < version31 {
+		upgradeToVer31(s)
 	}
 
 	updateBootstrapVer(s)
@@ -797,6 +803,10 @@ func upgradeToVer29(s Session) {
 
 func upgradeToVer30(s Session) {
 	mustExecute(s, CreateStatsTopNTable)
+}
+
+func upgradeToVer31(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `last_analyze_pos` blob default null", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

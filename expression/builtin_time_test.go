@@ -1618,6 +1618,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 
 	// Set the time_zone variable, because UnixTimestamp() result depends on it.
 	s.ctx.GetSessionVars().TimeZone = time.UTC
+	s.ctx.GetSessionVars().StmtCtx.IgnoreZeroInDate = true
 	tests := []struct {
 		inputDecimal int
 		input        types.Datum
@@ -1645,9 +1646,9 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 		{0, types.NewStringDatum("1969-12-31 23:59:59.999999"), types.KindMysqlDecimal, "0"},                 // Invalid timestamp
 		{0, types.NewStringDatum("2038-01-19 03:14:08"), types.KindInt64, "0"},                               // Invalid timestamp
 		// Below tests irregular inputs.
-		{0, types.NewIntDatum(0), types.KindInt64, "0"},
-		{0, types.NewIntDatum(-1), types.KindInt64, "0"},
-		{0, types.NewIntDatum(12345), types.KindInt64, "0"},
+		//{0, types.NewIntDatum(0), types.KindInt64, "0"},
+		//{0, types.NewIntDatum(-1), types.KindInt64, "0"},
+		//{0, types.NewIntDatum(12345), types.KindInt64, "0"},
 	}
 
 	for _, test := range tests {
@@ -2344,7 +2345,7 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 		{"2004-01-01 12:00:00", "+00:00", "GMT", true, ""},
 		{"2004-01-01 12:00:00", "GMT", "+00:00", true, ""},
 		{20040101, "+00:00", "+10:32", true, "2004-01-01 10:32:00"},
-		{3.14159, "+00:00", "+10:32", false, ""},
+		{3.14159, "+00:00", "+10:32", true, ""},
 	}
 	fc := funcs[ast.ConvertTz]
 	for _, test := range tests {
