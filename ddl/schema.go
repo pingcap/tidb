@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
@@ -107,6 +109,35 @@ func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.D
 		}
 	}
 	return nil
+}
+
+func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var toCharset, toCollate string
+	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	if err != nil {
+		if infoschema.ErrDatabaseDropExists.Equal(err) {
+			desc := fmt.Sprintf("(Schema ID %d)", job.ID)
+			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(desc)
+		}
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo.Charset = toCharset
+	dbInfo.Collate = toCollate
+
+	if err = t.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(t, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	return ver, nil
 }
 
 func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
