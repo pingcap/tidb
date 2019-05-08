@@ -224,4 +224,14 @@ var (
 			Name:      "range_task_stats",
 			Help:      "stat of range tasks",
 		}, []string{LblType, LblResult})
+
+	TiKVRangeTaskPushDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "range_task_push_duration",
+			// 1ms ~ 1000s
+			Buckets: prometheus.ExponentialBuckets(0.001, 2, 20),
+			Help:    "duration to push sub tasks to range task workers",
+		}, []string{LblType})
 )

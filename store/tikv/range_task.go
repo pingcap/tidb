@@ -165,7 +165,9 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 			task.EndKey = endKey
 		}
 
+		pushTaskStartTime := time.Now()
 		taskCh <- task
+		metrics.TiKVRangeTaskPushDuration.WithLabelValues(s.name).Observe(time.Since(pushTaskStartTime).Seconds())
 
 		if isLast {
 			break
