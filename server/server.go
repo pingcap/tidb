@@ -309,6 +309,7 @@ func (s *Server) Run() error {
 		s.startStatusHTTP()
 	}
 	go expensivequery.GlobalExpensiveQueryHandler.Run(context.Background())
+	defer expensivequery.GlobalExpensiveQueryHandler.Close()
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {

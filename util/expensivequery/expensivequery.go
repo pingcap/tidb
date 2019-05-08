@@ -1,3 +1,16 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package expensivequery
 
 import (
@@ -31,6 +44,7 @@ type expensiveQueryHandler struct {
 	sync.Map
 	ticker          *time.Ticker
 	memExceedConnCh chan uint64
+	exitCh          chan struct{}
 }
 
 func (eqh *expensiveQueryHandler) Register(sc sessionctx.Context, sql string, startTime time.Time, plan plannercore.Plan) {
@@ -73,7 +87,16 @@ func (eqh *expensiveQueryHandler) Run(ctx context.Context) {
 			}
 			costTime := time.Since(startTime)
 			logExpensiveQuery(ctx, item.sc, costTime, item.plan, item.sql)
+		case <-eqh.exitCh:
+			return
 		}
+	}
+}
+
+// Close terminates the execution.
+func (eqh *expensiveQueryHandler) Close() {
+	if eqh.exitCh != nil {
+		close(eqh.exitCh)
 	}
 }
 
@@ -83,6 +106,7 @@ var GlobalExpensiveQueryHandler = &expensiveQueryHandler{
 	sync.Map{},
 	time.NewTicker(time.Second),
 	make(chan uint64, 1024),
+	make(chan struct{}),
 }
 
 // LogExpensiveQuery logs the queries which exceed the time threshold or memory threshold.

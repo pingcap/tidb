@@ -275,8 +275,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 }
 
 func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
-	defer expensivequery.GlobalExpensiveQueryHandler.Unregister(sctx.GetSessionVars().ConnectionID)
 	expensivequery.GlobalExpensiveQueryHandler.Register(sctx, a.Text, time.Now(), a.Plan)
+	defer expensivequery.GlobalExpensiveQueryHandler.Unregister(sctx.GetSessionVars().ConnectionID)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
