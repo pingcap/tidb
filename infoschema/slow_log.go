@@ -87,17 +87,12 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 	var rows [][]types.Datum
 	startFlag := false
 	var st *slowQueryTuple
-	finish := false
 	for {
-		if finish {
-			break
-		}
 		lineByte, err := getOneLine(reader)
-		if err == io.EOF {
-			finish = true
-			err = nil
-		}
 		if err != nil {
+			if err == io.EOF {
+				return rows, nil
+			}
 			return rows, err
 		}
 		line := string(hack.String(lineByte))
@@ -143,10 +138,10 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
 	lineByte, isPrefix, err := reader.ReadLine()
-	var tempLine []byte
 	if err != nil {
 		return lineByte, err
 	}
+	var tempLine []byte
 	for isPrefix {
 		tempLine, isPrefix, err = reader.ReadLine()
 		lineByte = append(lineByte, tempLine...)
