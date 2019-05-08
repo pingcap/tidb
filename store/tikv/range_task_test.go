@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"sort"
-	"sync/atomic"
 )
 
 type testRangeTaskSuite struct {
@@ -140,10 +139,9 @@ func (s *testRangeTaskSuite) checkRanges(c *C, obtained []kv.KeyRange, expected 
 func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 	ranges := make(chan *kv.KeyRange, 100)
 
-	handler := func(ctx context.Context, r kv.KeyRange, completedRegions *int32) error {
+	handler := func(ctx context.Context, r kv.KeyRange) (int, error) {
 		ranges <- &r
-		atomic.AddInt32(completedRegions, 1)
-		return nil
+		return 1, nil
 	}
 
 	runner := NewRangeTaskRunner(

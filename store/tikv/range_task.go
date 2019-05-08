@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/metrics"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,7 @@ import (
 
 const (
 	rangeTaskDefaultStatLogInterval = time.Minute * 10
+	rangeTaskMetricsUpdateInterval  = time.Second * 10
 )
 
 // RangeTaskRunner splits a range into many ranges to process concurrently, and convenient to send requests to all
@@ -44,8 +46,8 @@ type RangeTaskRunner struct {
 }
 
 // RangeTaskHandler is the type of functions that processes a task of a key range.
-// The function can update completedRegions via atomic operations.
-type RangeTaskHandler = func(ctx context.Context, r kv.KeyRange, completedRegions *int32) error
+// The function should return the number of successfully processed regions.
+type RangeTaskHandler = func(ctx context.Context, r kv.KeyRange) (int, error)
 
 // NewRangeTaskRunner creates a RangeTaskRunner.
 //
@@ -92,6 +94,8 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 
 	// Periodically log the progress
 	statLogTicker := time.NewTicker(s.statLogInterval)
+	// Periodically update metrics
+	metricsTicker := time.NewTicker(rangeTaskMetricsUpdateInterval)
 
 	ctx, cancel := context.WithCancel(ctx)
 	taskCh := make(chan *kv.KeyRange, s.concurrency)
@@ -111,13 +115,6 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		statLogTicker.Stop()
 		wg.Wait()
 		cancel()
-
-		logutil.Logger(ctx).Info("range task finished",
-			zap.String("name", s.name),
-			zap.Binary("startKey", startKey),
-			zap.Binary("endKey", endKey),
-			zap.Duration("cost time", time.Since(startTime)),
-			zap.Int32("completed regions", s.CompletedRegions()))
 	}()
 
 	// Iterate all regions and send each region's range as a task to the workers.
@@ -133,6 +130,8 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.Binary("endKey", endKey),
 				zap.Duration("cost time", time.Since(startTime)),
 				zap.Int32("completed regions", s.CompletedRegions()))
+		case <-metricsTicker.C:
+			metrics.TiKVRangeTaskStats.WithLabelValues(s.name, "completed").Set(float64(s.CompletedRegions()))
 		default:
 		}
 
@@ -166,6 +165,13 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 
 		key = task.EndKey
 	}
+
+	logutil.Logger(ctx).Info("range task finished",
+		zap.String("name", s.name),
+		zap.Binary("startKey", startKey),
+		zap.Binary("endKey", endKey),
+		zap.Duration("cost time", time.Since(startTime)),
+		zap.Int32("completed regions", s.CompletedRegions()))
 
 	return nil
 }
@@ -201,9 +207,7 @@ type rangeTaskWorker struct {
 
 // run starts the worker. It collects all objects from `w.taskCh` and process them one by one.
 func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
-	defer func() {
-		w.wg.Done()
-	}()
+	defer w.wg.Done()
 
 	for r := range w.taskCh {
 		select {
@@ -212,7 +216,8 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 		default:
 		}
 
-		err := w.handler(ctx, *r, w.completedRegions)
+		completedRegions, err := w.handler(ctx, *r)
+		atomic.AddInt32(w.completedRegions, int32(completedRegions))
 
 		if err != nil {
 			logutil.Logger(ctx).Info("canceling range task because of error",
@@ -221,7 +226,6 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 				zap.Binary("failed endKey", r.EndKey),
 				zap.Error(err))
 			cancel()
-			return
 		}
 	}
 }

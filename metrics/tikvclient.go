@@ -216,4 +216,12 @@ var (
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 20),
 			Help:    "batch client unavailable",
 		})
+
+	TiKVRangeTaskStats = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "range_task_stats",
+			Help:      "stat of range tasks",
+		}, []string{LblType, LblResult})
 )
