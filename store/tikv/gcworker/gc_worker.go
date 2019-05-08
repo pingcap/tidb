@@ -650,105 +650,124 @@ func (w *GCWorker) checkUseDistributedGC() (bool, error) {
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("resolve_locks").Inc()
-
-	// for scan lock request, we must return all locks even if they are generated
-	// by the same transaction. because gc worker need to make sure all locks have been
-	// cleaned.
-
 	logutil.Logger(ctx).Info("[gc worker] start resolve locks",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint))
 	startTime := time.Now()
 
-	handler := func(ctx context.Context, bo *tikv.Backoffer, r kv.KeyRange, loc *tikv.KeyLocation) ([]byte, error) {
-		return w.resolveLocksForRegion(ctx, bo, r.StartKey, loc, safePoint)
+	handler := func(ctx context.Context, r kv.KeyRange, completedRegions *int32) error {
+		return w.resolveLocksForRange(ctx, safePoint, r.StartKey, r.EndKey, completedRegions)
 	}
 
-	runner := tikv.NewRangeTaskRunner("resolve-lock-runner", w.store, concurrency, handler)
-	runner.SetMaxBackoff(tikv.GcResolveLockMaxBackoff)
+	runner := tikv.NewRangeTaskRunner("resolve-locks-runner", w.store, concurrency, handler)
 	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
 	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] resolve locks failed",
+			zap.String("uuid", w.uuid),
+			zap.Uint64("safePoint", safePoint),
+			zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	logutil.Logger(ctx).Info("[gc worker] finish resolve locks",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
-		zap.Int32("regions", runner.CompletedRegions()),
-		zap.Duration("cost time", time.Since(startTime)))
+		zap.Int32("regions", runner.CompletedRegions()))
 	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
 	return nil
 }
 
-func (w *GCWorker) resolveLocksForRegion(
+func (w *GCWorker) resolveLocksForRange(
 	ctx context.Context,
-	bo *tikv.Backoffer,
-	startKey []byte,
-	loc *tikv.KeyLocation,
 	safePoint uint64,
-) ([]byte, error) {
+	startKey []byte,
+	endKey []byte,
+	completedRegions *int32,
+) error {
+	// for scan lock request, we must return all locks even if they are generated
+	// by the same transaction. because gc worker need to make sure all locks have been
+	// cleaned.
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdScanLock,
 		ScanLock: &kvrpcpb.ScanLockRequest{
 			MaxVersion: safePoint,
 			Limit:      gcScanLockLimit,
-			StartKey:   startKey,
 		},
 	}
 
-	resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	regionErr, err := resp.GetRegionError()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if regionErr != nil {
-		err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
-		if err != nil {
-			return nil, errors.Trace(err)
+	key := startKey
+	for {
+		select {
+		case <-ctx.Done():
+			return errors.New("[gc worker] gc job canceled")
+		default:
 		}
-		// Continue from startKey to retry this region.
-		return startKey, nil
-	}
-	locksResp := resp.ScanLock
-	if locksResp == nil {
-		return nil, errors.Trace(tikv.ErrBodyMissing)
-	}
-	if locksResp.GetError() != nil {
-		return nil, errors.Errorf("unexpected scanlock error: %s", locksResp)
-	}
-	locksInfo := locksResp.GetLocks()
-	locks := make([]*tikv.Lock, len(locksInfo))
-	for i := range locksInfo {
-		locks[i] = tikv.NewLock(locksInfo[i])
-	}
 
-	ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
-	if err1 != nil {
-		return nil, errors.Trace(err1)
-	}
-	if !ok {
-		err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
+		bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+
+		req.ScanLock.StartKey = key
+		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		// Continue from startKey to retry this region.
-		return startKey, nil
-	}
+		resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+		locksResp := resp.ScanLock
+		if locksResp == nil {
+			return errors.Trace(tikv.ErrBodyMissing)
+		}
+		if locksResp.GetError() != nil {
+			return errors.Errorf("unexpected scanlock error: %s", locksResp)
+		}
+		locksInfo := locksResp.GetLocks()
+		locks := make([]*tikv.Lock, len(locksInfo))
+		for i := range locksInfo {
+			locks[i] = tikv.NewLock(locksInfo[i])
+		}
 
-	if len(locks) >= gcScanLockLimit {
-		logutil.Logger(ctx).Info("[gc worker] region has more than limit locks",
-			zap.String("uuid", w.uuid),
-			zap.Uint64("region", loc.Region.GetID()),
-			zap.Int("scan lock limit", gcScanLockLimit))
-		metrics.GCRegionTooManyLocksCounter.Inc()
-		// The amount of lock as reached limit. Continue from the last lock.
-		return locks[len(locks)-1].Key, nil
+		ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		if !ok {
+			err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
+		if len(locks) < gcScanLockLimit {
+			atomic.AddInt32(completedRegions, 1)
+			key = loc.EndKey
+		} else {
+			logutil.Logger(ctx).Info("[gc worker] region has more than limit locks",
+				zap.String("uuid", w.uuid),
+				zap.Uint64("region", loc.Region.GetID()),
+				zap.Int("scan lock limit", gcScanLockLimit))
+			metrics.GCRegionTooManyLocksCounter.Inc()
+			key = locks[len(locks)-1].Key
+		}
+
+		if len(key) == 0 || (len(endKey) != 0 && bytes.Compare(key, endKey) >= 0) {
+			break
+		}
 	}
-	return nil, nil
+	return nil
 }
 
 func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {

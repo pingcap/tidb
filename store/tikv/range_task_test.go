@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"sort"
+	"sync/atomic"
 )
 
 type testRangeTaskSuite struct {
@@ -139,16 +140,17 @@ func (s *testRangeTaskSuite) checkRanges(c *C, obtained []kv.KeyRange, expected 
 func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 	ranges := make(chan *kv.KeyRange, 100)
 
-	task := func(ctx context.Context, bo *Backoffer, r kv.KeyRange, loc *KeyLocation) ([]byte, error) {
+	handler := func(ctx context.Context, r kv.KeyRange, completedRegions *int32) error {
 		ranges <- &r
-		return nil, nil
+		atomic.AddInt32(completedRegions, 1)
+		return nil
 	}
 
 	runner := NewRangeTaskRunner(
 		"test-runner",
 		s.store,
 		concurrency,
-		task)
+		handler)
 
 	for i, r := range s.testRanges {
 		expectedRanges := s.expectedRanges[i]
@@ -164,71 +166,4 @@ func (s *testRangeTaskSuite) TestRangeTask(c *C) {
 	for concurrency := 1; concurrency < 5; concurrency++ {
 		s.testRangeTaskImpl(c, concurrency)
 	}
-}
-
-func (s *testRangeTaskSuite) TestRangeTaskWorker(c *C) {
-	ranges := make(chan *kv.KeyRange, 100)
-
-	task := func(ctx context.Context, bo *Backoffer, r kv.KeyRange, loc *KeyLocation) ([]byte, error) {
-		ranges <- &r
-		return nil, nil
-	}
-	runner := NewRangeTaskRunner(
-		"test-range-request-worker-runner",
-		s.store,
-		1,
-		task)
-	worker := runner.createWorker(nil, nil)
-
-	for i, r := range s.testRanges {
-		expectedRanges := s.expectedRanges[i]
-		runner.completedRegions = 0
-		err := worker.runForRange(context.Background(), r.StartKey, r.EndKey)
-		c.Assert(err, IsNil)
-		s.checkRanges(c, collect(ranges), expectedRanges)
-		c.Assert(int(runner.CompletedRegions()), Equals, len(expectedRanges))
-	}
-}
-
-func (s *testRangeTaskSuite) TestRangeTaskWorkerTaskSplit(c *C) {
-	ranges := make(chan *kv.KeyRange, 100)
-
-	task := func(ctx context.Context, bo *Backoffer, r kv.KeyRange, loc *KeyLocation) ([]byte, error) {
-		if len(r.StartKey) > 0 && r.StartKey[len(r.StartKey)-1] == byte('1') {
-			ranges <- &r
-			return nil, nil
-		}
-		endKey := append(r.StartKey, byte('1'))
-		ranges <- &kv.KeyRange{
-			StartKey: r.StartKey,
-			EndKey:   endKey,
-		}
-		return endKey, nil
-	}
-	runner := NewRangeTaskRunner(
-		"test-task-split-runner",
-		s.store,
-		1,
-		task)
-	worker := runner.createWorker(nil, nil)
-
-	var expectedRanges []kv.KeyRange
-	for _, r := range s.expectedRanges[0] {
-		splitKey := append(r.StartKey, byte('1'))
-		expectedRanges = append(
-			expectedRanges,
-			kv.KeyRange{
-				StartKey: r.StartKey,
-				EndKey:   splitKey,
-			},
-			kv.KeyRange{
-				StartKey: splitKey,
-				EndKey:   r.EndKey,
-			})
-	}
-
-	err := worker.runForRange(context.Background(), []byte(""), []byte(""))
-	c.Assert(err, IsNil)
-	s.checkRanges(c, collect(ranges), expectedRanges)
-	c.Assert(int(runner.CompletedRegions()), Equals, len(s.expectedRanges[0]))
 }

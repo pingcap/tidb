@@ -28,7 +28,6 @@ import (
 
 const (
 	rangeTaskDefaultStatLogInterval = time.Minute * 10
-	rangeTaskDefaultMaxBackoff      = 20000
 )
 
 // RangeTaskRunner splits a range into many ranges to process concurrently, and convenient to send requests to all
@@ -39,17 +38,14 @@ type RangeTaskRunner struct {
 	store           Storage
 	concurrency     int
 	handler         RangeTaskHandler
-	maxBackoff      int
 	statLogInterval time.Duration
 
 	completedRegions int32
 }
 
-// RangeTaskHandler is the type of functions that processes a task of a region. It should be able to be invoked multiple
-// times.
-// If the range can't be processed immediately, returns `nextKey`, which should be in range `r`, to indicate that the
-// next task will start from `nextKey`.
-type RangeTaskHandler = func(ctx context.Context, bo *Backoffer, r kv.KeyRange, loc *KeyLocation) (nextKey []byte, err error)
+// RangeTaskHandler is the type of functions that processes a task of a key range.
+// The function can update completedRegions via atomic operations.
+type RangeTaskHandler = func(ctx context.Context, r kv.KeyRange, completedRegions *int32) error
 
 // NewRangeTaskRunner creates a RangeTaskRunner.
 //
@@ -67,14 +63,8 @@ func NewRangeTaskRunner(
 		store:           store,
 		concurrency:     concurrency,
 		handler:         handler,
-		maxBackoff:      rangeTaskDefaultMaxBackoff,
 		statLogInterval: rangeTaskDefaultStatLogInterval,
 	}
-}
-
-// SetMaxBackoff sets the max backoff for each single task.
-func (s *RangeTaskRunner) SetMaxBackoff(backoff int) {
-	s.maxBackoff = backoff
 }
 
 // SetStatLogInterval sets the time interval to log the stats.
@@ -183,12 +173,11 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 // createWorker creates a worker that can process tasks from the given channel.
 func (s *RangeTaskRunner) createWorker(taskCh chan *kv.KeyRange, wg *sync.WaitGroup) *rangeTaskWorker {
 	return &rangeTaskWorker{
-		name:       s.name,
-		store:      s.store,
-		handler:    s.handler,
-		maxBackoff: s.maxBackoff,
-		taskCh:     taskCh,
-		wg:         wg,
+		name:    s.name,
+		store:   s.store,
+		handler: s.handler,
+		taskCh:  taskCh,
+		wg:      wg,
 
 		completedRegions: &s.completedRegions,
 	}
@@ -201,12 +190,11 @@ func (s *RangeTaskRunner) CompletedRegions() int32 {
 
 // rangeTaskWorker is used by RangeTaskRunner to process tasks concurrently.
 type rangeTaskWorker struct {
-	name       string
-	store      Storage
-	handler    RangeTaskHandler
-	maxBackoff int
-	taskCh     chan *kv.KeyRange
-	wg         *sync.WaitGroup
+	name    string
+	store   Storage
+	handler RangeTaskHandler
+	taskCh  chan *kv.KeyRange
+	wg      *sync.WaitGroup
 
 	completedRegions *int32
 }
@@ -224,63 +212,16 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 		default:
 		}
 
-		err := w.runForRange(ctx, r.StartKey, r.EndKey)
+		err := w.handler(ctx, *r, w.completedRegions)
 
 		if err != nil {
 			logutil.Logger(ctx).Info("canceling range task because of error",
 				zap.String("name", w.name),
+				zap.Binary("failed startKey", r.StartKey),
+				zap.Binary("failed endKey", r.EndKey),
 				zap.Error(err))
 			cancel()
 			return
-		}
-	}
-}
-
-// runForRange runs task for the given range. The range might contains multiple regions, because after the range sent
-// from the master, the region may split.
-func (w *rangeTaskWorker) runForRange(ctx context.Context, startKey []byte, endKey []byte) error {
-	key := startKey
-
-	for {
-		if len(endKey) != 0 && bytes.Compare(key, endKey) >= 0 {
-			return nil
-		}
-
-		bo := NewBackoffer(ctx, w.maxBackoff)
-		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// Compare only once
-		isLast := len(loc.EndKey) == 0 || (len(endKey) > 0 && bytes.Compare(loc.EndKey, endKey) >= 0)
-
-		r := kv.KeyRange{
-			StartKey: key,
-			EndKey:   endKey,
-		}
-		if !isLast {
-			r.EndKey = loc.EndKey
-		}
-
-		nextKey, err := w.handler(ctx, bo, r, loc)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		key = r.EndKey
-		if len(nextKey) > 0 {
-			// The region needs further processing
-			key = nextKey
-			isLast = false
-		} else {
-			// If nextKey is set, it means the current region should be processed again. So calculate stats only when
-			// nextKey is not set.
-			atomic.AddInt32(w.completedRegions, 1)
-		}
-
-		if isLast {
-			return nil
 		}
 	}
 }
