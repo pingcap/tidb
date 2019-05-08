@@ -666,6 +666,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 
 	runner := tikv.NewRangeTaskRunner("resolve-lock-runner", w.store, concurrency, handler)
 	runner.SetMaxBackoff(tikv.GcResolveLockMaxBackoff)
+	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
 	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
 		return errors.Trace(err)
@@ -696,12 +697,6 @@ func (w *GCWorker) resolveLocksForRegion(
 		},
 	}
 
-	select {
-	case <-ctx.Done():
-		return nil, errors.New("[gc worker] gc job canceled")
-	default:
-	}
-
 	resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -715,6 +710,7 @@ func (w *GCWorker) resolveLocksForRegion(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// Continue from startKey to retry this region.
 		return startKey, nil
 	}
 	locksResp := resp.ScanLock
@@ -739,6 +735,7 @@ func (w *GCWorker) resolveLocksForRegion(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// Continue from startKey to retry this region.
 		return startKey, nil
 	}
 
@@ -748,6 +745,7 @@ func (w *GCWorker) resolveLocksForRegion(
 			zap.Uint64("region", loc.Region.GetID()),
 			zap.Int("scan lock limit", gcScanLockLimit))
 		metrics.GCRegionTooManyLocksCounter.Inc()
+		// The amount of lock as reached limit. Continue from the last lock.
 		return locks[len(locks)-1].Key, nil
 	}
 	return nil, nil

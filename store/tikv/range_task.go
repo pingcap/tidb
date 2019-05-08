@@ -83,6 +83,7 @@ func (s *RangeTaskRunner) SetStatLogInterval(interval time.Duration) {
 }
 
 // RunOnRange runs the task on the given range.
+// Empty startKey or endKey means unbounded.
 func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKey []byte) error {
 	s.completedRegions = 0
 
