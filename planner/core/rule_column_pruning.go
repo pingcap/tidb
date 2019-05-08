@@ -167,7 +167,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
 		copy(parentUsedCols, p.schema.Columns)
 	} else {
-		for i := range used {
+		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
 				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			}
