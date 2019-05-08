@@ -102,18 +102,25 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 	var wg sync.WaitGroup
 
 	// Create workers that concurrently process the whole range.
+	workers := make([]*rangeTaskWorker, 0, s.concurrency)
 	for i := 0; i < s.concurrency; i++ {
 		w := s.createWorker(taskCh, &wg)
+		workers = append(workers, w)
 		wg.Add(1)
 		go w.run(ctx, cancel)
 	}
 
 	startTime := time.Now()
 
+	// Make sure taskCh is closed exactly once
+	isClosed := false
 	defer func() {
-		close(taskCh)
+		if !isClosed {
+			close(taskCh)
+			wg.Wait()
+		}
 		statLogTicker.Stop()
-		wg.Wait()
+		metricsTicker.Stop()
 		cancel()
 	}()
 
@@ -143,6 +150,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.String("name", s.name),
 				zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey),
+				zap.Duration("cost time", time.Since(startTime)),
 				zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -164,6 +172,21 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		}
 
 		key = task.EndKey
+	}
+
+	isClosed = true
+	close(taskCh)
+	wg.Wait()
+	for _, w := range workers {
+		if w.err != nil {
+			logutil.Logger(ctx).Info("range task failed",
+				zap.String("name", s.name),
+				zap.Binary("startKey", startKey),
+				zap.Binary("endKey", endKey),
+				zap.Duration("cost time", time.Since(startTime)),
+				zap.Error(w.err))
+		}
+		return errors.Trace(w.err)
 	}
 
 	logutil.Logger(ctx).Info("range task finished",
@@ -202,6 +225,8 @@ type rangeTaskWorker struct {
 	taskCh  chan *kv.KeyRange
 	wg      *sync.WaitGroup
 
+	err error
+
 	completedRegions *int32
 }
 
@@ -225,7 +250,9 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 				zap.Binary("failed startKey", r.StartKey),
 				zap.Binary("failed endKey", r.EndKey),
 				zap.Error(err))
+			w.err = err
 			cancel()
+			break
 		}
 	}
 }
