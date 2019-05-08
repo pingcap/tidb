@@ -18,6 +18,9 @@ type Variables struct {
 	// BackoffLockFast specifies the LockFast backoff base duration in milliseconds.
 	BackoffLockFast int
 
+	// BackOffWeight specifies the weight of the max back off time duration.
+	BackOffWeight int
+
 	// Hook is used for test to verify the variable take effect.
 	Hook func(name string, vars *Variables)
 }
@@ -26,6 +29,7 @@ type Variables struct {
 func NewVariables() *Variables {
 	return &Variables{
 		BackoffLockFast: DefBackoffLockFast,
+		BackOffWeight:   DefBackOffWeight,
 	}
 }
 
@@ -35,4 +39,5 @@ var DefaultVars = NewVariables()
 // Default values
 const (
 	DefBackoffLockFast = 100
+	DefBackOffWeight   = 2
 )

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -30,6 +31,21 @@ import (
 
 var (
 	_ kv.Transaction = (*tikvTxn)(nil)
+)
+
+var (
+	tikvTxnCmdCountWithGet             = metrics.TiKVTxnCmdCounter.WithLabelValues("get")
+	tikvTxnCmdHistogramWithGet         = metrics.TiKVTxnCmdHistogram.WithLabelValues("get")
+	tikvTxnCmdCountWithSeek            = metrics.TiKVTxnCmdCounter.WithLabelValues("seek")
+	tikvTxnCmdHistogramWithSeek        = metrics.TiKVTxnCmdHistogram.WithLabelValues("seek")
+	tikvTxnCmdCountWithSeekReverse     = metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse")
+	tikvTxnCmdHistogramWithSeekReverse = metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse")
+	tikvTxnCmdCountWithDelete          = metrics.TiKVTxnCmdCounter.WithLabelValues("delete")
+	tikvTxnCmdCountWithSet             = metrics.TiKVTxnCmdCounter.WithLabelValues("set")
+	tikvTxnCmdCountWithCommit          = metrics.TiKVTxnCmdCounter.WithLabelValues("commit")
+	tikvTxnCmdHistogramWithCommit      = metrics.TiKVTxnCmdHistogram.WithLabelValues("commit")
+	tikvTxnCmdCountWithRollback        = metrics.TiKVTxnCmdCounter.WithLabelValues("rollback")
+	tikvTxnCmdHistogramWithLockKeys    = metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys")
 )
 
 // tikvTxn implements kv.Transaction.
@@ -106,9 +122,9 @@ func (txn *tikvTxn) Reset() {
 
 // Get implements transaction interface.
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("get").Inc()
+	tikvTxnCmdCountWithGet.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds()) }()
 
 	ret, err := txn.us.Get(k)
 	if kv.IsErrNotFound(err) {
@@ -170,26 +186,26 @@ func (txn *tikvTxn) String() string {
 }
 
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("seek").Inc()
+	tikvTxnCmdCountWithSeek.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("seek").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithSeek.Observe(time.Since(start).Seconds()) }()
 
 	return txn.us.Iter(k, upperBound)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse").Inc()
+	tikvTxnCmdCountWithSeekReverse.Inc()
 	start := time.Now()
 	defer func() {
-		metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse").Observe(time.Since(start).Seconds())
+		tikvTxnCmdHistogramWithSeekReverse.Observe(time.Since(start).Seconds())
 	}()
 
 	return txn.us.IterReverse(k)
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("delete").Inc()
+	tikvTxnCmdCountWithDelete.Inc()
 
 	txn.dirty = true
 	return txn.us.Delete(k)
@@ -219,16 +235,17 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
-	// gofail: var mockCommitError bool
-	// if mockCommitError && kv.IsMockCommitErrorEnable() {
-	//  kv.MockCommitErrorDisable()
-	//	return errors.New("mock commit error")
-	// }
+	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+		if val.(bool) && kv.IsMockCommitErrorEnable() {
+			kv.MockCommitErrorDisable()
+			failpoint.Return(errors.New("mock commit error"))
+		}
+	})
 
-	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
-	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
+	tikvTxnCmdCountWithSet.Add(float64(txn.setCnt))
+	tikvTxnCmdCountWithCommit.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
 
 	// connID is used for log.
 	var connID uint64
@@ -289,13 +306,13 @@ func (txn *tikvTxn) Rollback() error {
 	}
 	txn.close()
 	logutil.Logger(context.Background()).Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
-	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
+	tikvTxnCmdCountWithRollback.Inc()
 
 	return nil
 }
 
 func (txn *tikvTxn) LockKeys(keys ...kv.Key) error {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys").Inc()
+	tikvTxnCmdHistogramWithLockKeys.Inc()
 	txn.mu.Lock()
 	for _, key := range keys {
 		txn.lockKeys = append(txn.lockKeys, key)

@@ -43,7 +43,7 @@ import (
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
 
-const defaultStatusAddr = ":10080"
+const defaultStatusPort = 10080
 
 func (s *Server) startStatusHTTP() {
 	go s.startHTTPServer()
@@ -58,8 +58,10 @@ func (s *Server) startHTTPServer() {
 
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
+	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/settings", settingsHandler{}).Name("Settings")
+	router.Handle("/reload-config", configReloadHandler{}).Name("ConfigReload")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
 
 	tikvHandlerTool := s.newTikvHandlerTool()
@@ -68,7 +70,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
 	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", valueHandler{})
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool}).Name("DDL_History")
-	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.store.(kv.Storage)}).Name("DDL_Owner_Resign")
+	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.Store.(kv.Storage)}).Name("DDL_Owner_Resign")
 
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")
@@ -90,9 +92,9 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	}
-	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
+	addr := fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
-		addr = defaultStatusAddr
+		addr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
 	}
 
 	// HTTP path for web UI.

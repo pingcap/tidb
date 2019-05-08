@@ -40,6 +40,12 @@ const (
 	batchGetSize  = 5120
 )
 
+var (
+	tikvTxnCmdCounterWithBatchGet          = metrics.TiKVTxnCmdCounter.WithLabelValues("batch_get")
+	tikvTxnCmdHistogramWithBatchGet        = metrics.TiKVTxnCmdHistogram.WithLabelValues("batch_get")
+	tikvTxnRegionsNumHistogramWithSnapshot = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot")
+)
+
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
 	store        *tikvStore
@@ -72,9 +78,9 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	if len(keys) == 0 {
 		return m, nil
 	}
-	metrics.TiKVTxnCmdCounter.WithLabelValues("batch_get").Inc()
+	tikvTxnCmdCounterWithBatchGet.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds()) }()
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
@@ -109,7 +115,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		return errors.Trace(err)
 	}
 
-	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot").Observe(float64(len(groups)))
+	tikvTxnRegionsNumHistogramWithSnapshot.Observe(float64(len(groups)))
 
 	var batches []batchKeys
 	for id, g := range groups {
@@ -301,26 +307,31 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return NewLock(locked), nil
 	}
+	return nil, extractKeyErr(keyErr)
+}
+
+func extractKeyErr(keyErr *pb.KeyError) error {
 	if keyErr.Conflict != nil {
 		err := errors.New(conflictToString(keyErr.Conflict))
-		return nil, errors.Annotate(err, txnRetryableMark)
+		return errors.Annotate(err, txnRetryableMark)
 	}
 	if keyErr.Retryable != "" {
 		err := errors.Errorf("tikv restarts txn: %s", keyErr.GetRetryable())
 		logutil.Logger(context.Background()).Debug("error", zap.Error(err))
-		return nil, errors.Annotate(err, txnRetryableMark)
+		return errors.Annotate(err, txnRetryableMark)
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
 		logutil.Logger(context.Background()).Warn("error", zap.Error(err))
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return nil, errors.Errorf("unexpected KeyError: %s", keyErr.String())
+	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
 
 func conflictToString(conflict *pb.WriteConflict) string {
 	var buf bytes.Buffer
-	_, err := fmt.Fprintf(&buf, "WriteConflict: txnStartTS=%d, conflictTS=%d, key=", conflict.StartTs, conflict.ConflictTs)
+	_, err := fmt.Fprintf(&buf, "txnStartTS=%d, conflictTS=%d, key=",
+		conflict.StartTs, conflict.ConflictTs)
 	if err != nil {
 		logutil.Logger(context.Background()).Error("error", zap.Error(err))
 	}

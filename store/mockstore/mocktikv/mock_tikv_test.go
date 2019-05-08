@@ -512,7 +512,7 @@ func (s *testMockTiKVSuite) TestDeleteRange(c *C) {
 
 func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {
 	c.Assert(errs[i], NotNil)
-	c.Assert(strings.Contains(errs[i].Error(), "write conflict"), IsTrue)
+	c.Assert(strings.Contains(errs[i].Error(), writeConflictMarker), IsTrue)
 }
 
 func (s *testMockTiKVSuite) TestRC(c *C) {

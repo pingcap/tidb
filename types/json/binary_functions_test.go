@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -10,17 +10,22 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+package json
 
-package schemautil
+import (
+	. "github.com/pingcap/check"
+)
 
-import "github.com/pingcap/parser/model"
+var _ = Suite(&testJSONFuncSuite{})
 
-// FindIndexByName finds index by name.
-func FindIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
-	for _, idx := range indices {
-		if idx.Name.L == idxName {
-			return idx
-		}
-	}
-	return nil
+type testJSONFuncSuite struct{}
+
+func (s *testJSONFuncSuite) TestdecodeEscapedUnicode(c *C) {
+	c.Parallel()
+	in := "597d"
+	r, size, err := decodeEscapedUnicode([]byte(in))
+	c.Assert(string(r[:]), Equals, "好\x00")
+	c.Assert(size, Equals, 3)
+	c.Assert(err, IsNil)
+
 }

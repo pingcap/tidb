@@ -107,7 +107,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	err := a.executor.Next(ctx, req)
 	if err != nil {
 		a.lastErr = err
-		return errors.Trace(err)
+		return err
 	}
 	numRows := req.NumRows()
 	if numRows == 0 {
@@ -131,7 +131,7 @@ func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.logAudit()
-	return errors.Trace(err)
+	return err
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -166,15 +166,18 @@ func (a *ExecStmt) IsPrepared() bool {
 }
 
 // IsReadOnly returns true if a statement is read only.
-// It will update readOnlyCheckStmt if current ExecStmt can be conveted to
-// a plannercore.Execute. Last step is using ast.IsReadOnly function to determine
-// a statement is read only or not.
-func (a *ExecStmt) IsReadOnly() bool {
-	readOnlyCheckStmt := a.StmtNode
-	if checkPlan, ok := a.Plan.(*plannercore.Execute); ok {
-		readOnlyCheckStmt = checkPlan.Stmt
+// If current StmtNode is an ExecuteStmt, we can get its prepared stmt,
+// then using ast.IsReadOnly function to determine a statement is read only or not.
+func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
+	if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
+		s, err := getPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("getPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(s)
 	}
-	return ast.IsReadOnly(readOnlyCheckStmt)
+	return ast.IsReadOnly(a.StmtNode)
 }
 
 // RebuildPlan rebuilds current execute statement plan.
@@ -183,11 +186,11 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
@@ -204,26 +207,26 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency
 		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
-		terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
+		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
 		sctx.GetSessionVars().DistSQLScanConcurrency = 1
 		sctx.GetSessionVars().IndexSerialScanConcurrency = 1
-		terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
+		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
-			terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
 			sctx.GetSessionVars().DistSQLScanConcurrency = oriScan
 			sctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
-			terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
+			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
 		}()
 	}
 
 	e, err := a.buildExecutor(sctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
@@ -256,7 +259,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	var txnStartTS uint64
 	txn, err1 := sctx.Txn(false)
 	if err1 != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if txn.Valid() {
 		txnStartTS = txn.StartTS()
@@ -286,23 +289,13 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 	var err error
 	defer func() {
-		terror.Log(errors.Trace(e.Close()))
-		txnTS := uint64(0)
-		// Don't active pending txn here.
-		if txn, err1 := sctx.Txn(false); err1 != nil {
-			logutil.Logger(ctx).Error("get current transaction failed", zap.Error(err))
-		} else {
-			if txn.Valid() {
-				txnTS = txn.StartTS()
-			}
-		}
-		a.LogSlowQuery(txnTS, err == nil)
+		terror.Log(e.Close())
 		a.logAudit()
 	}()
 
 	err = e.Next(ctx, chunk.NewRecordBatch(e.newFirstChunk()))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return nil, nil
@@ -313,11 +306,11 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		isPointGet, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		useMaxTS, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
-		if isPointGet {
+		if useMaxTS {
 			logutil.Logger(context.Background()).Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else if ctx.GetSessionVars().SnapshotTS != 0 {
@@ -326,13 +319,13 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			}
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		stmtCtx := ctx.GetSessionVars().StmtCtx
 		if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
 			switch {
-			case isPointGet:
+			case useMaxTS:
 				stmtCtx.Priority = kv.PriorityHigh
 			case a.Expensive:
 				stmtCtx.Priority = kv.PriorityLow
@@ -353,7 +346,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	if executorExec, ok := e.(*ExecuteExec); ok {
 		err := executorExec.Build()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
@@ -410,12 +403,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 		indexIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
+	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
+	statsInfos := a.getStatsInfo()
+	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	if costTime < threshold {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
+		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
 	} else {
 		_, digest := sessVars.StmtCtx.SQLDigest()
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, sql))
+		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, digest, statsInfos, copTaskInfo, memMax, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -441,10 +437,32 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 }
 
+func (a *ExecStmt) getStatsInfo() map[string]uint64 {
+	var physicalPlan plannercore.PhysicalPlan
+	switch p := a.Plan.(type) {
+	case *plannercore.Insert:
+		physicalPlan = p.SelectPlan
+	case *plannercore.Update:
+		physicalPlan = p.SelectPlan
+	case *plannercore.Delete:
+		physicalPlan = p.SelectPlan
+	case plannercore.PhysicalPlan:
+		physicalPlan = p
+	}
+
+	if physicalPlan == nil {
+		return nil
+	}
+
+	statsInfos := make(map[string]uint64)
+	statsInfos = plannercore.CollectPlanStatsVersion(physicalPlan, statsInfos)
+	return statsInfos
+}
+
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
 //  2. txn is not valid
-//  2. plan is point get by pk or unique key
+//  2. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
@@ -454,7 +472,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	// check txn
 	txn, err := ctx.Txn(false)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	if txn.Valid() {
 		return false, nil
@@ -472,14 +490,14 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	case *plannercore.PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
-	case *plannercore.PhysicalIndexLookUpReader:
-		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *plannercore.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
 	case *plannercore.PointGetPlan:
-		return true, nil
+		// If the PointGetPlan needs to read data using unique index (double read), we
+		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
+		// and the data and index would be inconsistent!
+		return v.IndexInfo == nil, nil
 	default:
 		return false, nil
 	}

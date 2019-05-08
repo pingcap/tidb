@@ -16,7 +16,6 @@ package tikv
 import (
 	"context"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -74,7 +73,6 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	s.cluster.StopStore(s.store)
 	_, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "try again later"), IsTrue)
 
 	// start store.
 	s.cluster.StartStore(s.store)

@@ -10,6 +10,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -44,7 +46,7 @@ func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -66,7 +68,7 @@ func (e *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -88,7 +90,7 @@ func (e *countOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, row
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -110,7 +112,7 @@ func (e *countOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalTime(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -132,7 +134,7 @@ func (e *countOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, ro
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalDuration(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -154,7 +156,7 @@ func (e *countOriginal4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalJSON(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -176,7 +178,7 @@ func (e *countOriginal4String) UpdatePartialResult(sctx sessionctx.Context, rows
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -197,7 +199,7 @@ func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -329,7 +331,7 @@ func (e *countOriginalWithDistinct) evalAndEncode(
 		if err != nil || isNull {
 			break
 		}
-		encodedBytes = appendString(encodedBytes, buf, val)
+		encodedBytes = codec.EncodeBytes(encodedBytes, hack.Slice(val))
 	default:
 		return nil, false, errors.Errorf("unsupported column type for encode %d", tp)
 	}
