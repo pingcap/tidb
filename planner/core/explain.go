@@ -58,8 +58,8 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 			break
 		}
 	}
-	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
+	if len(p.rangeInfo) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeInfo)
 	} else if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
@@ -130,12 +130,12 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
-	return "data:" + p.tablePlan.ExplainID()
+	return "data:" + p.tablePlan.ExplainID().String()
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.indexPlan.ExplainID()
+	return "index:" + p.indexPlan.ExplainID().String()
 }
 
 // ExplainInfo implements PhysicalPlan interface.

@@ -39,7 +39,7 @@ type Manager interface {
 	// If table is not "", check global/db/table scope privileges.
 	// priv should be a defined constant like CreatePriv, if pass AllPrivMask to priv,
 	// this means any privilege would be OK.
-	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
+	RequestVerification(activeRole []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
 
 	// RequestVerificationWithUser verifies specific user privilege for the request.
 	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
@@ -48,7 +48,7 @@ type Manager interface {
 	ConnectionVerification(user, host string, auth, salt []byte) (string, string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
-	DBIsVisible(db string) bool
+	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
 	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
 	UserPrivilegesTable() [][]types.Datum
@@ -62,6 +62,9 @@ type Manager interface {
 
 	// GetDefaultRoles returns all default roles for certain user.
 	GetDefaultRoles(user, host string) []*auth.RoleIdentity
+
+	// GetAllRoles return all roles of user.
+	GetAllRoles(user, host string) []*auth.RoleIdentity
 }
 
 const key keyType = 0

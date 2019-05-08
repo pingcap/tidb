@@ -656,29 +656,52 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 }
 
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
-func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column string, priv mysql.PrivilegeType) bool {
-	record1 := p.matchUser(user, host)
-	if record1 != nil && record1.Privileges&priv > 0 {
+func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
+	roleList := p.FindAllRole(activeRoles)
+	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
+
+	var userPriv, dbPriv, tablePriv, columnPriv mysql.PrivilegeType
+	for _, r := range roleList {
+		userRecord := p.matchUser(r.Username, r.Hostname)
+		if userRecord != nil {
+			userPriv |= userRecord.Privileges
+		}
+	}
+	if userPriv&priv > 0 {
 		return true
 	}
 
-	record2 := p.matchDB(user, host, db)
-	if record2 != nil && record2.Privileges&priv > 0 {
+	for _, r := range roleList {
+		dbRecord := p.matchDB(r.Username, r.Hostname, db)
+		if dbRecord != nil {
+			dbPriv |= dbRecord.Privileges
+		}
+	}
+	if dbPriv&priv > 0 {
 		return true
 	}
 
-	record3 := p.matchTables(user, host, db, table)
-	if record3 != nil {
-		if record3.TablePriv&priv > 0 {
-			return true
-		}
-		if column != "" && record3.ColumnPriv&priv > 0 {
-			return true
+	for _, r := range roleList {
+		tableRecord := p.matchTables(r.Username, r.Hostname, db, table)
+		if tableRecord != nil {
+			tablePriv |= tableRecord.TablePriv
+			if column != "" {
+				columnPriv |= tableRecord.ColumnPriv
+			}
 		}
 	}
+	if tablePriv&priv > 0 || columnPriv&priv > 0 {
+		return true
+	}
 
-	record4 := p.matchColumns(user, host, db, table, column)
-	if record4 != nil && record4.ColumnPriv&priv > 0 {
+	columnPriv = 0
+	for _, r := range roleList {
+		columnRecord := p.matchColumns(r.Username, r.Hostname, db, table, column)
+		if columnRecord != nil {
+			columnPriv |= columnRecord.ColumnPriv
+		}
+	}
+	if columnPriv&priv > 0 {
 		return true
 	}
 
@@ -913,6 +936,19 @@ func (p *MySQLPrivilege) getDefaultRoles(user, host string) []*auth.RoleIdentity
 		if r.match(user, host) {
 			ret = append(ret, &auth.RoleIdentity{Username: r.DefaultRoleUser, Hostname: r.DefaultRoleHost})
 		}
+	}
+	return ret
+}
+
+func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
+	key := user + "@" + host
+	edgeTable, ok := p.RoleGraph[key]
+	ret := make([]*auth.RoleIdentity, 0, len(edgeTable.roleList))
+	if !ok {
+		return nil
+	}
+	for _, r := range edgeTable.roleList {
+		ret = append(ret, r)
 	}
 	return ret
 }

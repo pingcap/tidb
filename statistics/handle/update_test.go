@@ -545,7 +545,7 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -615,7 +615,7 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -733,7 +733,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	tests := []struct {
 		sql     string
 		hist    string
@@ -799,7 +799,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	}
 
 	// Test collect feedback by probability.
-	statistics.FeedbackProbability = 0
+	statistics.FeedbackProbability.Store(0)
 	statistics.MaxNumberOfRanges = oriNumber
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
@@ -809,7 +809,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	}
 
 	// Test that after drop stats, the feedback won't cause panic.
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
 	}
@@ -845,7 +845,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 		statistics.FeedbackProbability = oriProbability
 	}()
 	h := s.do.StatsHandle()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	tests := []struct {
 		sql     string
 		hist    string
@@ -969,7 +969,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -993,7 +993,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
 	c.Assert(err, IsNil)
 
-	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint32(2))
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint64(2))
 
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
 		"num: 2 lower_bound: -inf upper_bound: 2 repeats: 0\n"+
@@ -1022,7 +1022,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1062,7 +1062,7 @@ func (h *logHook) field2String(field zapcore.Field) string {
 	switch field.Type {
 	case zapcore.StringType:
 		return field.String
-	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type:
+	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type, zapcore.Uint64Type:
 		return fmt.Sprintf("%v", field.Integer)
 	case zapcore.Float64Type:
 		return fmt.Sprintf("%v", math.Float64frombits(uint64(field.Integer)))
@@ -1094,7 +1094,7 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 		s.do.StatsHandle().Lease = oriLease
 		log.SetLevel(oriLevel)
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	handle.MinLogScanCount = 0
 	handle.MinLogErrorRate = 0
 	s.do.StatsHandle().Lease = 1
@@ -1264,7 +1264,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), index idx_ab(a,b), index idx_ac(a,c), index idx_b(b))")
@@ -1329,7 +1329,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 		}
 		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
 		c.Assert(err, IsNil)
-		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)
+		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, uint64(t.eqCount))
 	}
 }
 
@@ -1341,7 +1341,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx_ab(a,b))")
@@ -1396,7 +1396,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 		c.Assert(tbl.Columns[t.rangeID].ToString(0), Equals, tests[i].hist)
 		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
 		c.Assert(err, IsNil)
-		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)
+		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, uint64(t.eqCount))
 	}
 }
 
@@ -1410,7 +1410,7 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a tinyint, b tinyint, primary key(a), index idx(a, b))")
@@ -1479,7 +1479,7 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")

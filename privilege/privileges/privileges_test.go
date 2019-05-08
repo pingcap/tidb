@@ -105,39 +105,91 @@ func (s *testPrivilegeSuite) TearDownTest(c *C) {
 func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'testcheck'@'localhost';`)
+	mustExec(c, rootSe, `CREATE USER 'testcheck_tmp'@'localhost';`)
 
 	se := newSession(c, s.store, s.dbName)
+	activeRoles := make([]*auth.RoleIdentity, 0)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testcheck", Hostname: "localhost"}, nil, nil), IsTrue)
 	pc := privilege.GetPrivilegeManager(se)
-	c.Assert(pc.RequestVerification("test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.SelectPriv), IsFalse)
 
 	mustExec(c, rootSe, `GRANT SELECT ON *.* TO  'testcheck'@'localhost';`)
-	c.Assert(pc.RequestVerification("test", "", "", mysql.SelectPriv), IsTrue)
-	c.Assert(pc.RequestVerification("test", "", "", mysql.UpdatePriv), IsFalse)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsFalse)
 
 	mustExec(c, rootSe, `GRANT Update ON test.* TO  'testcheck'@'localhost';`)
-	c.Assert(pc.RequestVerification("test", "", "", mysql.UpdatePriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
+
+	activeRoles = append(activeRoles, &auth.RoleIdentity{Username: "testcheck", Hostname: "localhost"})
+	mustExec(c, rootSe, `GRANT 'testcheck'@'localhost' TO 'testcheck_tmp'@'localhost';`)
+	se2 := newSession(c, s.store, s.dbName)
+	c.Assert(se2.Auth(&auth.UserIdentity{Username: "testcheck_tmp", Hostname: "localhost"}, nil, nil), IsTrue)
+	pc = privilege.GetPrivilegeManager(se2)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'test1'@'localhost';`)
+	mustExec(c, rootSe, `CREATE USER 'test1_tmp'@'localhost';`)
 
 	se := newSession(c, s.store, s.dbName)
+	activeRoles := make([]*auth.RoleIdentity, 0)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test1", Hostname: "localhost"}, nil, nil), IsTrue)
 	pc := privilege.GetPrivilegeManager(se)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.SelectPriv), IsFalse)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.SelectPriv), IsFalse)
 
 	mustExec(c, rootSe, `GRANT SELECT ON *.* TO  'test1'@'localhost';`)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.SelectPriv), IsTrue)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.UpdatePriv), IsFalse)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.UpdatePriv), IsFalse)
 
 	mustExec(c, rootSe, `GRANT Update ON test.* TO  'test1'@'localhost';`)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.UpdatePriv), IsTrue)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.IndexPriv), IsFalse)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.UpdatePriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.IndexPriv), IsFalse)
+
+	activeRoles = append(activeRoles, &auth.RoleIdentity{Username: "test1", Hostname: "localhost"})
+	se2 := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `GRANT 'test1'@'localhost' TO 'test1_tmp'@'localhost';`)
+	c.Assert(se2.Auth(&auth.UserIdentity{Username: "test1_tmp", Hostname: "localhost"}, nil, nil), IsTrue)
+	pc2 := privilege.GetPrivilegeManager(se2)
+	c.Assert(pc2.RequestVerification(activeRoles, "test", "test", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc2.RequestVerification(activeRoles, "test", "test", "", mysql.UpdatePriv), IsTrue)
+	c.Assert(pc2.RequestVerification(activeRoles, "test", "test", "", mysql.IndexPriv), IsFalse)
 
 	mustExec(c, rootSe, `GRANT Index ON test.test TO  'test1'@'localhost';`)
-	c.Assert(pc.RequestVerification("test", "test", "", mysql.IndexPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "test", "", mysql.IndexPriv), IsTrue)
+	c.Assert(pc2.RequestVerification(activeRoles, "test", "test", "", mysql.IndexPriv), IsTrue)
+}
+
+func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'test_role'@'localhost';`)
+	mustExec(c, rootSe, `CREATE ROLE r_1, r_2, r_3;`)
+	mustExec(c, rootSe, `GRANT r_1, r_2, r_3 TO 'test_role'@'localhost';`)
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_role", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `SET ROLE r_1, r_2;`)
+	mustExec(c, rootSe, `SET DEFAULT ROLE r_1 TO 'test_role'@'localhost';`)
+
+	mustExec(c, rootSe, `GRANT SELECT ON test.* TO r_1;`)
+	pc := privilege.GetPrivilegeManager(se)
+	activeRoles := se.GetSessionVars().ActiveRoles
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsFalse)
+	mustExec(c, rootSe, `GRANT UPDATE ON test.* TO r_2;`)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
+
+	mustExec(c, se, `flush privileges`)
+	mustExec(c, se, `SET ROLE NONE;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 0)
+	mustExec(c, se, `SET ROLE DEFAULT;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 1)
+	mustExec(c, se, `SET ROLE ALL;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 3)
+	mustExec(c, se, `SET ROLE ALL EXCEPT r_1, r_2;`)
+	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 1)
 }
 
 func (s *testPrivilegeSuite) TestShowGrants(c *C) {
@@ -393,7 +445,7 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	mustExec(c, se1, "drop user 'r3@example.com'@'localhost'")
 }
 
-func (s *testPrivilegeSuite) TestUseDb(c *C) {
+func (s *testPrivilegeSuite) TestUseDB(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
 	// high privileged user
@@ -413,6 +465,21 @@ func (s *testPrivilegeSuite) TestUseDb(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "use mysql")
 	c.Assert(err, IsNil)
+
+	// test `use db` for role.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `CREATE DATABASE app_db`)
+	mustExec(c, se, `CREATE ROLE 'app_developer'`)
+	mustExec(c, se, `GRANT ALL ON app_db.* TO 'app_developer'`)
+	mustExec(c, se, `CREATE USER 'dev'@'localhost'`)
+	mustExec(c, se, `GRANT 'app_developer' TO 'dev'@'localhost'`)
+	mustExec(c, se, `SET DEFAULT ROLE 'app_developer' TO 'dev'@'localhost'`)
+	mustExec(c, se, `FLUSH PRIVILEGES`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "use app_db")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use mysql")
+	c.Assert(err, NotNil)
 }
 
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
@@ -445,6 +512,13 @@ func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthUsername: "tcd2", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, `DROP USER tcd1`)
 	mustExec(c, se, `CREATE USER tcd1`)
+
+	// should pass
+	mustExec(c, se, `GRANT tcd2 TO tcd1`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `SET ROLE tcd2;`)
+	mustExec(c, se, `CREATE USER tcd3`)
+	mustExec(c, se, `DROP USER tcd3`)
 }
 
 func (s *testPrivilegeSuite) TestShowCreateTable(c *C) {

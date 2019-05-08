@@ -40,7 +40,7 @@ type UserPrivileges struct {
 }
 
 // RequestVerification implements the Manager interface.
-func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
+func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
 	if SkipWithGrant {
 		return true
 	}
@@ -56,7 +56,7 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.RequestVerification(p.user, p.host, db, table, column, priv)
+	return mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv)
 }
 
 // RequestVerificationWithUser implements the Manager interface.
@@ -76,7 +76,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.RequestVerification(user.Username, user.Hostname, db, table, column, priv)
+	return mysqlPriv.RequestVerification(nil, user.Username, user.Hostname, db, table, column, priv)
 }
 
 // GetEncodedPassword implements the Manager interface.
@@ -160,12 +160,21 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 }
 
 // DBIsVisible implements the Manager interface.
-func (p *UserPrivileges) DBIsVisible(db string) bool {
+func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string) bool {
 	if SkipWithGrant {
 		return true
 	}
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.DBIsVisible(p.user, p.host, db)
+	if mysqlPriv.DBIsVisible(p.user, p.host, db) {
+		return true
+	}
+	allRoles := mysqlPriv.FindAllRole(activeRoles)
+	for _, role := range allRoles {
+		if mysqlPriv.DBIsVisible(role.Username, role.Hostname, db) {
+			return true
+		}
+	}
+	return false
 }
 
 // UserPrivilegesTable implements the Manager interface.
@@ -223,4 +232,10 @@ func (p *UserPrivileges) GetDefaultRoles(user, host string) []*auth.RoleIdentity
 	mysqlPrivilege := p.Handle.Get()
 	ret := mysqlPrivilege.getDefaultRoles(user, host)
 	return ret
+}
+
+// GetAllRoles return all roles of user.
+func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
+	mysqlPrivilege := p.Handle.Get()
+	return mysqlPrivilege.getAllRoles(user, host)
 }

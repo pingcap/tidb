@@ -15,6 +15,7 @@ package core
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -31,10 +32,11 @@ func (s *columnPruner) optimize(lp LogicalPlan) (LogicalPlan, error) {
 }
 
 func getUsedList(usedCols []*expression.Column, schema *expression.Schema) ([]bool, error) {
-	// gofail: var enableGetUsedListErr bool
-	// if enableGetUsedListErr {
-	// 	return nil, errors.New("getUsedList failed, triggered by gofail enableGetUsedListErr")
-	// }
+	failpoint.Inject("enableGetUsedListErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("getUsedList failed, triggered by gofail enableGetUsedListErr"))
+		}
+	})
 
 	used := make([]bool, schema.Len())
 	for _, col := range usedCols {
@@ -164,6 +166,13 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 	if !hasBeenUsed {
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
 		copy(parentUsedCols, p.schema.Columns)
+	} else {
+		// Issue 10341: p.schema.Columns might contain table name (AsName), but p.Children()0].Schema().Columns does not.
+		for i := len(used) - 1; i >= 0; i-- {
+			if !used[i] {
+				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			}
+		}
 	}
 	for _, child := range p.Children() {
 		err := child.PruneColumns(parentUsedCols)
@@ -171,7 +180,6 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 			return err
 		}
 	}
-	p.schema.Columns = p.children[0].Schema().Columns
 	return nil
 }
 
