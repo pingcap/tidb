@@ -58,7 +58,7 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx1(b, a), index idx2(b))")
@@ -108,7 +108,7 @@ func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, primary key (a, b))")
@@ -142,7 +142,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -202,7 +202,7 @@ func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 	tk.MustExec("use test")
 	tk.MustExec(`prepare stmt1 from "select now(), current_timestamp(), utc_timestamp(), unix_timestamp(), sleep(0.1), now(), current_timestamp(), utc_timestamp(), unix_timestamp()"`)
 	// When executing one statement at the first time, we don't usTestPrepareCacheDeferredFunctione cache, so we need to execute it at least twice to test the cache.
@@ -286,7 +286,7 @@ func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (

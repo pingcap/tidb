@@ -62,6 +62,9 @@ type Manager interface {
 
 	// GetDefaultRoles returns all default roles for certain user.
 	GetDefaultRoles(user, host string) []*auth.RoleIdentity
+
+	// GetAllRoles return all roles of user.
+	GetAllRoles(user, host string) []*auth.RoleIdentity
 }
 
 const key keyType = 0
