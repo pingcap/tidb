@@ -886,7 +886,6 @@ const (
 	// MyISAMUseMmap is the name for 'myisam_use_mmap' system variable.
 	MyISAMUseMmap = "myisam_use_mmap"
 
-
 	// InnodbFilePerTable is the name for 'innodb_file_per_table' system variable.
 	InnodbFilePerTable = "innodb_file_per_table"
 	// InnodbLogCompressedPages is the name for 'innodb_log_compressed_pages' system variable.
