@@ -699,6 +699,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
+	case TiDBBackOffWeight:
+		s.KVVars.BackOffWeight = tidbOptPositiveInt32(val, kv.DefBackOffWeight)
 	case TiDBConstraintCheckInPlace:
 		s.ConstraintCheckInPlace = TiDBOptOn(val)
 	case TiDBBatchInsert:
