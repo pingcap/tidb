@@ -293,6 +293,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	tk.MustExec("insert t values (12, 2, 3)")
 	tk.MustExec("insert t values (13, 2, 3)")
 
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk1.MustExec("begin")
 	tk1.MustExec("update t set c2=21 where c1=11")
 
@@ -507,6 +508,7 @@ func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table retrytxn (a int unique, b int)")
 	tk.MustExec("insert retrytxn values (1, 1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin")
 	tk.MustExec("update retrytxn set b = b + 1 where a = 1")
 
@@ -665,6 +667,7 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk1.MustExec("begin")
 	tk1.MustExec("update t set c2=? where c1=11;", 21)
 
@@ -881,6 +884,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("create table t (c2 int, c1 int not null auto_increment, PRIMARY KEY (c1))")
 	tk.MustExec("insert into t (c2) values (1), (2), (3), (4), (5)")
 
@@ -1308,6 +1312,9 @@ func (s *testSessionSuite) TestRetry(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk3 := testkit.NewTestKitWithInit(c, s.store)
 	tk3.MustExec("SET SESSION autocommit=0;")
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk2.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk3.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -1449,6 +1456,7 @@ func (s *testSessionSuite) TestResetCtx(c *C) {
 
 	tk.MustExec("create table t (i int auto_increment not null key);")
 	tk.MustExec("insert into t values (1);")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t values (10);")
 	tk.MustExec("update t set i = i + row_count();")
@@ -1480,6 +1488,8 @@ func (s *testSessionSuite) TestUnique(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec(`CREATE TABLE test ( id int(11) UNSIGNED NOT NULL AUTO_INCREMENT, val int UNIQUE, PRIMARY KEY (id)); `)
 	tk.MustExec("begin;")
 	tk.MustExec("insert into test(id, val) values(1, 1);")
@@ -1764,6 +1774,7 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`insert into t values(1, 1);`)
 
 	// The schema version is out of date in the first transaction, but the SQL can be retried.
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t add index idx(c);`)
 	tk.MustExec(`insert into t values(2, 2);`)
@@ -1808,6 +1819,7 @@ func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 	tk1.MustExec("execute stmt using @a, @a")
 	tk1.MustExec("commit")
 
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk1.MustExec("begin")
 	tk.MustExec("alter table t drop column b")
 	tk1.MustExec("execute stmt using @a, @a")
@@ -1820,6 +1832,7 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (a int, b int)")
 
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk1.MustExec("begin")
 	tk1.MustExec("insert into t values (1, 1)")
 
@@ -1837,6 +1850,7 @@ func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("insert into t values (1, 1)")
 
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk1.MustExec("begin")
 	tk1.MustExec("update t set b = 5 where a = 1")
 
@@ -1867,6 +1881,7 @@ func (s *testSchemaSuite) TestRetryMissingUnionScan(c *C) {
 	tk.MustExec("create table t (a int primary key, b int unique, c int)")
 	tk.MustExec("insert into t values (1, 1, 1)")
 
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk1.MustExec("begin")
 	tk1.MustExec("update t set b = 1, c = 2 where b = 2")
 	tk1.MustExec("update t set b = 1, c = 2 where a = 1")
@@ -2320,9 +2335,12 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 	tk.MustExec("insert kvvars values (1, 1)")
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("set @@tidb_backoff_lock_fast = 1")
+	tk2.MustExec("set @@tidb_back_off_weight = 100")
 	backoffVal := new(int64)
+	backOffWeightVal := new(int32)
 	tk2.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
 		atomic.StoreInt64(backoffVal, int64(vars.BackoffLockFast))
+		atomic.StoreInt32(backOffWeightVal, int32(vars.BackOffWeight))
 	}
 	wg := new(sync.WaitGroup)
 	wg.Add(2)
@@ -2345,7 +2363,14 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 		wg.Done()
 	}()
 	wg.Wait()
+	for {
+		tk2.MustQuery("select * from kvvars")
+		if atomic.LoadInt32(backOffWeightVal) != 0 {
+			break
+		}
+	}
 	c.Assert(atomic.LoadInt64(backoffVal), Equals, int64(1))
+	c.Assert(atomic.LoadInt32(backOffWeightVal), Equals, int32(100))
 }
 
 func (s *testSessionSuite) TestCommitRetryCount(c *C) {
