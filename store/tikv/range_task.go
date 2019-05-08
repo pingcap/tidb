@@ -114,14 +114,21 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		go w.run(ctx, cancel)
 	}
 
+	startTime := time.Now()
+
 	defer func() {
 		close(taskCh)
 		statLogTicker.Stop()
 		wg.Wait()
 		cancel()
-	}()
 
-	startTime := time.Now()
+		logutil.Logger(ctx).Info("range task finished",
+			zap.String("name", s.name),
+			zap.Binary("startKey", startKey),
+			zap.Binary("endKey", endKey),
+			zap.Duration("cost time", time.Since(startTime)),
+			zap.Int32("completed regions", s.CompletedRegions()))
+	}()
 
 	// Iterate all regions and send each region's range as a task to the workers.
 	key := startKey
@@ -134,8 +141,8 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.String("name", s.name),
 				zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey),
-				zap.Duration("costTime", time.Since(startTime)),
-				zap.Int32("completedRegions", s.CompletedRegions()))
+				zap.Duration("cost time", time.Since(startTime)),
+				zap.Int32("completed regions", s.CompletedRegions()))
 		default:
 		}
 
@@ -169,11 +176,6 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 
 		key = task.EndKey
 	}
-
-	logutil.Logger(ctx).Info("range task finished",
-		zap.String("name", s.name),
-		zap.Binary("startKey", startKey),
-		zap.Binary("endKey", endKey))
 
 	return nil
 }
@@ -237,13 +239,13 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 // runForRange runs task for the given range. The range might contains multiple regions, because after the range sent
 // from the master, the region may split.
 func (w *rangeTaskWorker) runForRange(ctx context.Context, startKey []byte, endKey []byte) error {
-	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
-		return nil
-	}
-
 	key := startKey
 
 	for {
+		if len(endKey) != 0 && bytes.Compare(key, endKey) >= 0 {
+			return nil
+		}
+
 		bo := NewBackoffer(ctx, w.maxBackoff)
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {

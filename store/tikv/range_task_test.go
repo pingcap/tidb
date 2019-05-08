@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -152,7 +151,6 @@ func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 		task)
 
 	for i, r := range s.testRanges {
-		fmt.Println(i)
 		expectedRanges := s.expectedRanges[i]
 
 		err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
@@ -184,9 +182,11 @@ func (s *testRangeTaskSuite) TestRangeTaskWorker(c *C) {
 
 	for i, r := range s.testRanges {
 		expectedRanges := s.expectedRanges[i]
+		runner.completedRegions = 0
 		err := worker.runForRange(context.Background(), r.StartKey, r.EndKey)
 		c.Assert(err, IsNil)
 		s.checkRanges(c, collect(ranges), expectedRanges)
+		c.Assert(int(runner.CompletedRegions()), Equals, len(expectedRanges))
 	}
 }
 
@@ -230,4 +230,5 @@ func (s *testRangeTaskSuite) TestRangeTaskWorkerTaskSplit(c *C) {
 	err := worker.runForRange(context.Background(), []byte(""), []byte(""))
 	c.Assert(err, IsNil)
 	s.checkRanges(c, collect(ranges), expectedRanges)
+	c.Assert(int(runner.CompletedRegions()), Equals, len(s.expectedRanges[0]))
 }
