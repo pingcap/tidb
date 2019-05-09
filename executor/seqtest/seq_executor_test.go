@@ -458,6 +458,13 @@ func (s *seqTestSuite) TestShow(c *C) {
 	result = tk.MustQuery(`show plugins like '%'`)
 	result.Check(result.Rows())
 
+	//for issue #10392
+	testSQL = `drop table if exists vctt`
+	tk.MustExec(testSQL)
+	testSQL = `create table vctt (v varchar(4), c char(4))`
+	tk.MustExec(testSQL)
+	tk.MustExec(`insert into vctt values ("ab  ", "ab   ")`)
+
 	// for issue #4740
 	testSQL = `drop table if exists t`
 	tk.MustExec(testSQL)

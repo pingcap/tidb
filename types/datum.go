@@ -798,6 +798,9 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s = strconv.FormatFloat(d.GetFloat64(), 'f', -1, 64)
 	case KindString, KindBytes:
 		s = d.GetString()
+		if target.Tp == mysql.TypeString {
+			s=strings.TrimRight(s, " ")
+		}
 	case KindMysqlTime:
 		s = d.GetMysqlTime().String()
 	case KindMysqlDuration:
