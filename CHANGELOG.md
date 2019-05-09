@@ -27,9 +27,9 @@ All notable changes to this project will be documented in this file. See also [R
 * Merge the implicit commit time and the SQL execution time in the slow log
 [#10294](https://github.com/pingcap/tidb/pull/10294)
 * Support for SQL Roles (RBAC Privilege Management)
-* Support `SHOW GRANT` [#10016](https://github.com/pingcap/tidb/pull/10016)
-* Support `SET DEFAULT ROLE` [#9949](https://github.com/pingcap/tidb/pull/9949)
-* Support `GRANT ROLE` [#9721](https://github.com/pingcap/tidb/pull/9721)
+    - Support `SHOW GRANT` [#10016](https://github.com/pingcap/tidb/pull/10016)
+    - Support `SET DEFAULT ROLE` [#9949](https://github.com/pingcap/tidb/pull/9949)
+    - Support `GRANT ROLE` [#9721](https://github.com/pingcap/tidb/pull/9721)
 * Fix the plugin `ConnectionEvent` error that makes TiDB exit [#9889](https://github.com/pingcap/tidb/pull/9889)
 * Fix the issue of mistakenly adding read-only statements to the transaction history [#9723](https://github.com/pingcap/tidb/pull/9723)
 * Support stopping SQL execution more quickly by `kill` statements and releasing resources quickly [#9844](https://github.com/pingcap/tidb/pull/9844)
