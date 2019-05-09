@@ -14,11 +14,57 @@
 package executor_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite1) TestPointGet(c *C) {
+type testPointGetSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+	cli   *checkRequestClient
+}
+
+func (s *testPointGetSuite) SetUpSuite(c *C) {
+	cli := &checkRequestClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+	s.cli = cli
+
+	var err error
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	s.dom.SetStatsUpdating(true)
+}
+
+func (s *testPointGetSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testPointGetSuite) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+}
+
+func (s *testPointGetSuite) TestPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
@@ -57,7 +103,7 @@ func (s *testSuite1) TestPointGet(c *C) {
 	))
 }
 
-func (s *testSuite1) TestPointGetCharPK(c *C) {
+func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -114,7 +160,7 @@ func (s *testSuite1) TestPointGetCharPK(c *C) {
 	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows(` `))
 }
 
-func (s *testSuite1) TestIndexLookupCharPK(c *C) {
+func (s *testPointGetSuite) TestIndexLookupCharPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -140,6 +186,7 @@ func (s *testSuite1) TestIndexLookupCharPK(c *C) {
 	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 
+	// TODO: fix https://github.com/pingcap/tidb/issues/10397 and uncomment the following tests.
 	// // Test trailing spaces with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
 	// tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
 	// tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
@@ -152,6 +199,7 @@ func (s *testSuite1) TestIndexLookupCharPK(c *C) {
 	tk.MustExec(`insert into t values("  ", "  ");`)
 	tk.MustExec(`insert into t values("a ", "b ");`)
 
+	// TODO: fix https://github.com/pingcap/tidb/issues/10398 and uncomment the following tests.
 	// // Test trailing spaces without sql mode `PAD_CHAR_TO_FULL_LENGTH`.
 	// tk.MustExec(`set @@sql_mode="";`)
 	// tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
@@ -171,7 +219,7 @@ func (s *testSuite1) TestIndexLookupCharPK(c *C) {
 	// tk.MustIndexLookup(`select * from t tmp where a = "   ";`).Check(testkit.Rows(` `))
 }
 
-func (s *testSuite1) TestPointGetVarcharPK(c *C) {
+func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -234,7 +282,7 @@ func (s *testSuite1) TestPointGetVarcharPK(c *C) {
 	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows(`     `))
 }
 
-func (s *testSuite1) TestPointGetBinaryPK(c *C) {
+func (s *testPointGetSuite) TestPointGetBinaryPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -265,7 +313,7 @@ func (s *testSuite1) TestPointGetBinaryPK(c *C) {
 	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
 }
 
-func (s *testSuite1) TestIndexLookupBinaryPK(c *C) {
+func (s *testPointGetSuite) TestIndexLookupBinaryPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
