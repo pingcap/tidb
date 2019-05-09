@@ -173,7 +173,7 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 	return uint64(val), nil
 }
 
-// ConvertDecimalToUint converts a decimal value to an uint by string instead of float to avoid float overflow.
+// ConvertDecimalToUint converts a decimal to an uint by string instead of float to avoid float overflow (#10181).
 func ConvertDecimalToUint(sc *stmtctx.StatementContext, d *MyDecimal, upperBound uint64, tp byte) (uint64, error) {
 	// since MyDecimal.ToString() doesn't use scientific notation now, it's safe to ignore it.
 	// TODO: handle scientific notation
