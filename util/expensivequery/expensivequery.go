@@ -97,6 +97,7 @@ func (eqh *expensiveQueryHandler) Run(ctx context.Context) {
 func (eqh *expensiveQueryHandler) Close() {
 	if eqh.exitCh != nil {
 		close(eqh.exitCh)
+		eqh.exitCh = nil
 	}
 }
 
