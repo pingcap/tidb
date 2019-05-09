@@ -402,7 +402,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 const (
 	opDefaultRetryCnt = 10
 	failedGetTTLLimit = 20
-	neededCleanTTL    = 50
+	neededCleanTTL    = -60
 	opDefaultTimeout  = 3 * time.Second
 	opRetryInterval   = 500 * time.Millisecond
 )
@@ -497,47 +497,4 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 		return true
 	}
 	return false
-
-	//
-	// 	resp, err := s.etcdCli.Get(ctx, TiDBPath, clientv3.WithPrefix())
-	// 	if err != nil {
-	// 		logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, failed to get.", zap.Error(err))
-	// 	}
-	//
-	// 	logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, get keys.", zap.Int("kvs", len(resp.Kvs)))
-	// 	for _, kv := range resp.Kvs {
-	// 		leaseIDStr := string(bytes.TrimPrefix(kv.Key, []byte(DDLOwnerKey+"/")))
-	// 		leaseID, err := strconv.ParseInt(leaseIDStr, 16, 64) //strconv.Atoi(leaseIDStr)
-	// 		if err != nil {
-	// 			logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, convert value to int failed.", zap.String("leaseID", leaseIDStr), zap.Error(err))
-	// 			continue
-	// 		}
-	// 		ttlResp, err := s.etcdCli.TimeToLive(ctx, clientv3.LeaseID(leaseID))
-	// 		if err != nil {
-	// 			logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, failed to get TTL.", zap.Int64("leaseID", leaseID), zap.Error(err))
-	// 		}
-	// 		if ttlResp.TTL >= 50 {
-	// 			// TODO: remove this log.
-	// 			logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, delete keys.",
-	// 				zap.Int64("leaseID", leaseID), zap.Int64("TTL", ttlResp.TTL), zap.ByteString("leaseID key", kv.Key),
-	// 				zap.String("schema version key", DDLAllSchemaVersions+"/"+string(kv.Value)), zap.Error(err))
-	// 			continue
-	// 		}
-	//
-	// 		txnResp, err := s.etcdCli.Txn(ctx).
-	// 			If(clientv3.Compare(clientv3.LeaseValue(leaseID), "=", clientv3.LeaseID(leaseID))).
-	// 			Then(
-	// 				clientv3.OpDelete(string(kv.Key)),
-	// 				clientv3.OpDelete(DDLAllSchemaVersions+"/"+string(kv.Value)),
-	// 			).Commit()
-	// 		if err != nil {
-	// 			logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, failed to delete keys.",
-	// 				zap.Int64("leaseID", leaseID), zap.Int64("TTL", ttlResp.TTL), zap.ByteString("leaseID key", kv.Key),
-	// 				zap.ByteString("leaseID key", kv.Key), zap.String("schema version key", DDLAllSchemaVersions+string(kv.Value)), zap.Error(err))
-	// 		}
-	// 		logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths,",
-	// 			zap.Int64("leaseID", leaseID), zap.Int64("TTL", ttlResp.TTL), zap.ByteString("leaseID key", kv.Key),
-	// 			zap.ByteString("leaseID key", kv.Key), zap.String("schema version key", DDLAllSchemaVersions+string(kv.Value)),
-	// 			zap.Bool("resp succ", txnResp.Succeeded), zap.Stringer("ops", txnResp.Responses[0]))
-	// 	}
 }
