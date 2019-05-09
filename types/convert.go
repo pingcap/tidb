@@ -173,6 +173,45 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 	return uint64(val), nil
 }
 
+// ConvertDecimalToUint converts a decimal value to an uint by string instead of float to avoid float overflow.
+func ConvertDecimalToUint(sc *stmtctx.StatementContext, d *MyDecimal, upperBound uint64, tp byte) (uint64, error) {
+	// since MyDecimal.ToString() doesn't use scientific notation now, it's safe to ignore it.
+	// TODO: handle scientific notation
+	str := string(d.ToString())
+	var intStr, fracStr string
+	p := strings.Index(str, ".")
+	if p == -1 {
+		intStr = str
+	} else {
+		intStr = str[:p]
+		fracStr = str[p+1:]
+	}
+	for len(intStr) > 0 && intStr[0] == '0' {
+		intStr = intStr[1:]
+	}
+	if sc.ShouldClipToZero() && intStr[0] == '-' {
+		return 0, overflow(str, tp)
+	}
+
+	var round uint64
+	if fracStr != "" {
+		tmp := "5" + strings.Repeat("0", len(fracStr)-1)
+		if fracStr >= tmp {
+			round++
+		}
+	}
+
+	val, err := strconv.ParseUint(intStr, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	val += round
+	if val > upperBound {
+		return upperBound, overflow(str, tp)
+	}
+	return val, nil
+}
+
 // StrToInt converts a string to an integer at the best-effort.
 func StrToInt(sc *stmtctx.StatementContext, str string) (int64, error) {
 	str = strings.TrimSpace(str)
