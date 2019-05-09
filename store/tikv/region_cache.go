@@ -126,7 +126,8 @@ type RegionCache struct {
 		sync.RWMutex
 		stores map[uint64]*Store
 	}
-	closeCh chan struct{}
+	notifyCheckCh chan struct{}
+	closeCh       chan struct{}
 }
 
 // NewRegionCache creates a RegionCache.
@@ -137,6 +138,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.mu.regions = make(map[RegionVerID]*Region)
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
+	c.notifyCheckCh = make(chan struct{}, 1)
 	c.closeCh = make(chan struct{})
 	go c.asyncCheckAndResolveLoop()
 	return c
@@ -147,16 +149,12 @@ func (c *RegionCache) Close() {
 	close(c.closeCh)
 }
 
-const checkStoreInterval = 1 * time.Second
-
 // asyncCheckAndResolveLoop with
 func (c *RegionCache) asyncCheckAndResolveLoop() {
-	tick := time.NewTicker(checkStoreInterval)
-	defer tick.Stop()
 	var needCheckStores []*Store
 	for {
 		select {
-		case <-tick.C:
+		case <-c.notifyCheckCh:
 			c.checkAndResolve(&needCheckStores)
 		case <-c.closeCh:
 			return
@@ -680,7 +678,7 @@ func (c *RegionCache) OnSendRequestFail(ctx *RPCContext, err error) {
 	}
 	c.storeMu.RUnlock()
 
-	store.markAccess(false)
+	store.markAccess(c, false)
 
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r == nil {
@@ -1022,8 +1020,9 @@ func (s *Store) needCheck() bool {
 }
 
 // markAccess marks the processing result.
-func (s *Store) markAccess(success bool) {
+func (s *Store) markAccess(c *RegionCache, success bool) {
 retry:
+	var triggerCheck bool
 	oldValue := atomic.LoadUint64(&s.state)
 	var state storeState
 	*(*uint64)(unsafe.Pointer(&state)) = oldValue
@@ -1038,6 +1037,7 @@ retry:
 		state.failedAttempt = state.failedAttempt + 1
 		if state.resolveState == resolved {
 			state.resolveState = needCheck
+			triggerCheck = true
 		}
 	} else {
 		state.lastFailedTime = 0
@@ -1046,6 +1046,12 @@ retry:
 	newValue := *(*uint64)(unsafe.Pointer(&state))
 	if !atomic.CompareAndSwapUint64(&s.state, oldValue, newValue) {
 		goto retry
+	}
+	if triggerCheck {
+		select {
+		case c.notifyCheckCh <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -1066,7 +1072,7 @@ retry:
 }
 
 // markNeedCheck marks resolved store to be async resolve to check store addr change.
-func (s *Store) markNeedCheck() {
+func (s *Store) markNeedCheck(c *RegionCache) {
 retry:
 	oldValue := atomic.LoadUint64(&s.state)
 	var state storeState
@@ -1079,4 +1085,9 @@ retry:
 	if !atomic.CompareAndSwapUint64(&s.state, oldValue, newValue) {
 		goto retry
 	}
+	select {
+	case c.notifyCheckCh <- struct{}{}:
+	default:
+	}
+
 }
