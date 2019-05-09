@@ -3908,3 +3908,25 @@ func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
 	))
 	tk.MustQuery(`select * from t where b = (select max(b) from t)`).Check(testkit.Rows(`1 2019-04-29 11:56:12`))
 }
+
+func (s *testIntegrationSuite) TestDateTimeAddReal(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{`SELECT "1900-01-01 00:00:00" + INTERVAL 1.123456789e3 SECOND;`, "1900-01-01 00:18:43.456789"},
+		{`SELECT 19000101000000 + INTERVAL 1.123456789e3 SECOND;`, "1900-01-01 00:18:43.456789"},
+		{`select date("1900-01-01") + interval 1.123456789e3 second;`, "1900-01-01 00:18:43.456789"},
+		{`SELECT "1900-01-01 00:18:43.456789" - INTERVAL 1.123456789e3 SECOND;`, "1900-01-01 00:00:00"},
+		{`SELECT 19000101001843.456789 - INTERVAL 1.123456789e3 SECOND;`, "1900-01-01 00:00:00"},
+		{`select date("1900-01-01") - interval 1.123456789e3 second;`, "1899-12-31 23:41:16.543211"},
+		{`select 19000101000000 - interval 1.123456789e3 second;`, "1899-12-31 23:41:16.543211"},
+	}
+
+	for _, c := range cases {
+		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
+	}
+}
