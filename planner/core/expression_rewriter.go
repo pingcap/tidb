@@ -1208,9 +1208,9 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 
 	var op string
 	var l, r expression.Expression
-	l, er.err = expression.NewFunction(ast.GE, &v.Type, expr, lexp)
+	l, er.err = expression.NewFunction(er.ctx, ast.GE, &v.Type, expr, lexp)
 	if er.err == nil {
-		r, er.err = expression.NewFunction(ast.LE, &v.Type, expr, rexp)
+		r, er.err = expression.NewFunction(er.ctx, ast.LE, &v.Type, expr, rexp)
 	}
 	op = ast.LogicAnd
 	if er.err != nil {
