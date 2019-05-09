@@ -2,16 +2,21 @@ package tikv
 
 import (
 	"context"
+	"io"
 	"math/rand"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	grpcCodes "google.golang.org/grpc/codes"
+	grpcStatus "google.golang.org/grpc/status"
 )
 
 // batchClientTester is a thin wrap over the rpcClient used to test command batching
@@ -118,8 +123,38 @@ func (c *batchClientTester) test(addr string, id uint64) {
 	}
 	result, err := c.rpcClient.SendRequest(context.Background(), addr, req, c.cfg.Timeout)
 	if err != nil {
-		// detected conection error on time, success
-		logger().Warnf("Test RPC %d at %v error: %v", id, addr, err)
+		err = errors.Cause(err)
+		if status, ok := grpcStatus.FromError(err); ok {
+			// grpc error
+			switch status.Code() {
+			case grpcCodes.DeadlineExceeded:
+				// just time out
+				logger().Warnf("Test RPC %d at %v timeout. error: %v", id, addr, err)
+				return
+			case grpcCodes.Unavailable:
+				if strings.Contains(status.Message(), "all SubConns are in TransientFailure") {
+					// server not availiable
+					logger().Warnf("Test RPC %d at %v can not complete since connection to the server is not available. error: %v", id, addr, err)
+					return
+				} else if strings.Contains(status.Message(), "transport is closing") {
+					// server is just killed, or panic (and the grpc thread killed)
+					logger().Warnf("Test RPC %d at %v can not complete since the connection is unexpected closed by server. error: %v", id, addr, err)
+					return
+				}
+			case grpcCodes.Internal:
+				if strings.Contains(status.Message(), "RST_STREAM") {
+					// seems like the server gracefully reset the connection when manually exited?
+					logger().Warnf("Test RPC %d at %v is dropped since the stream is resetted. error: %v", id, addr, err)
+					return
+				}
+			}
+		}
+		if err == io.EOF {
+			// I have no idea why this happens in normal run, but it is returned when the connection is previously destroyed
+			logger().Warnf("Test RPC %d at %v is can not complete because of a previously error. error: %v", id, addr, err)
+		}
+		logger().Errorf("Test RPC %d at %v have an unknown error: %v", id, addr, err)
+		c.fail()
 		return
 	}
 	res := result.Test
