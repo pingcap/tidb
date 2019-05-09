@@ -19,17 +19,17 @@ import (
 	grpcStatus "google.golang.org/grpc/status"
 )
 
-// batchClientTester is a thin wrap over the rpcClient used to test command batching
-type batchClientTester struct {
+// clientTester is a thin wrap over the rpcClient used to test command batching
+type clientTester struct {
 	rpcClient Client
-	cfg       BatchClientTestConfig
+	cfg       ClientTestConfig
 	failed    uint32
 	ended     uint32
 	wait      sync.WaitGroup
 }
 
-// BatchClientTestConfig is used to config batchClientTester
-type BatchClientTestConfig struct {
+// ClientTestConfig is used to config clientTester
+type ClientTestConfig struct {
 	Concurrent uint64
 	Timeout    time.Duration
 	MinDelay   uint64
@@ -37,14 +37,14 @@ type BatchClientTestConfig struct {
 	TestLength time.Duration
 }
 
-func (cfg *BatchClientTestConfig) genDelay() uint64 {
+func (cfg *ClientTestConfig) genDelay() uint64 {
 	r := rand.Int63n(int64(cfg.MaxDelay - cfg.MinDelay))
 	return uint64(r) + cfg.MinDelay
 }
 
-// BatchTest start sending test messages to TiKV servers
-func BatchTest(security config.Security, addrs []string, config BatchClientTestConfig) bool {
-	c := &batchClientTester{
+// ClientTest start sending test messages to TiKV servers
+func ClientTest(security config.Security, addrs []string, config ClientTestConfig) bool {
+	c := &clientTester{
 		rpcClient: newRPCClient(security),
 		cfg:       config,
 		failed:    0,
@@ -84,29 +84,29 @@ func logger() *zap.SugaredLogger {
 }
 
 // fail make the test as failed
-func (c *batchClientTester) fail() {
+func (c *clientTester) fail() {
 	atomic.StoreUint32(&c.failed, 1)
 	// Just trigger end when fails
 	c.end()
 }
 
 // isFailed get is it failed
-func (c *batchClientTester) isFailed() bool {
+func (c *clientTester) isFailed() bool {
 	return atomic.LoadUint32(&c.failed) != 0
 }
 
 // end make the test end
-func (c *batchClientTester) end() {
+func (c *clientTester) end() {
 	atomic.StoreUint32(&c.ended, 1)
 }
 
 // isEnded get is it ended
-func (c *batchClientTester) isEnded() bool {
+func (c *clientTester) isEnded() bool {
 	return atomic.LoadUint32(&c.ended) != 0
 }
 
 // unblockedClose close the client, but returns a channel instead of blocking the current goroutine
-func (c *batchClientTester) unblockedClose() <-chan struct{} {
+func (c *clientTester) unblockedClose() <-chan struct{} {
 	done := make(chan struct{}, 1)
 	go func() {
 		c.rpcClient.Close()
@@ -116,7 +116,7 @@ func (c *batchClientTester) unblockedClose() <-chan struct{} {
 }
 
 // test sends test messages to the server and process and check respond
-func (c *batchClientTester) test(addr string, id uint64) {
+func (c *clientTester) test(addr string, id uint64) {
 	logger().Debugf("Invoke test RPC %d at %v", id, addr)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdBatchTest,
@@ -178,7 +178,7 @@ func (c *batchClientTester) test(addr string, id uint64) {
 }
 
 // runTest run test for one TiKV server
-func (c *batchClientTester) runTest(addr string, idStart uint64, idInterval uint64) {
+func (c *clientTester) runTest(addr string, idStart uint64, idInterval uint64) {
 	defer func() { c.wait.Done() }()
 	id := idStart
 	for {

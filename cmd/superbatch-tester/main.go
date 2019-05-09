@@ -9,7 +9,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 )
 
-var testConfig tikv.BatchClientTestConfig
+var testConfig tikv.ClientTestConfig
 
 func init() {
 	flag.Uint64Var(&testConfig.Concurrent, "concurrent", 128, "The number of test RPC loops per tikv instance")
@@ -21,7 +21,7 @@ func init() {
 
 func main() {
 	flag.Parse()
-	result := tikv.BatchTest(config.Security{}, flag.Args(), testConfig)
+	result := tikv.ClientTest(config.Security{}, flag.Args(), testConfig)
 	var exit int
 	if result {
 		exit = 255
