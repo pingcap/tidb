@@ -98,11 +98,11 @@ func (n *CreateDatabaseStmt) Restore(ctx *RestoreCtx) error {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
 	ctx.WriteName(n.Name)
-	for _, option := range n.Options {
+	for i, option := range n.Options {
 		ctx.WritePlain(" ")
 		err := option.Restore(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Annotatef(err, "An error occurred while splicing CreateDatabaseStmt DatabaseOption: [%v]", i)
 		}
 	}
 	return nil
@@ -115,6 +115,43 @@ func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateDatabaseStmt)
+	return v.Leave(n)
+}
+
+// AlterDatabaseStmt is a statement to change the structure of a database.
+// See https://dev.mysql.com/doc/refman/5.7/en/alter-database.html
+type AlterDatabaseStmt struct {
+	ddlNode
+
+	Name                 string
+	AlterDefaultDatabase bool
+	Options              []*DatabaseOption
+}
+
+// Restore implements Node interface.
+func (n *AlterDatabaseStmt) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER DATABASE")
+	if !n.AlterDefaultDatabase {
+		ctx.WritePlain(" ")
+		ctx.WriteName(n.Name)
+	}
+	for i, option := range n.Options {
+		ctx.WritePlain(" ")
+		err := option.Restore(ctx)
+		if err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing AlterDatabaseStmt DatabaseOption: [%v]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterDatabaseStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterDatabaseStmt)
 	return v.Leave(n)
 }
 
