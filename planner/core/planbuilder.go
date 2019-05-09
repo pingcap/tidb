@@ -20,6 +20,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -268,12 +269,18 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
-		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt:
+		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
+	case *ast.CreateBindingStmt:
+		return b.buildCreateBindPlan(x)
+	case *ast.DropBindingStmt:
+		return b.buildDropBindPlan(x)
 	case *ast.ChangeStmt:
 		return b.buildChange(x)
+	case *ast.SplitIndexRegionStmt:
+		return b.buildSplitIndexRegion(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -361,6 +368,31 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	return p, nil
 }
 
+func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSQLBindDrop,
+		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
+		IsGlobal:     v.GlobalScope,
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	return p, nil
+}
+
+func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
+	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	p := &SQLBindPlan{
+		SQLBindOp:    OpSQLBindCreate,
+		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
+		BindSQL:      v.HintedSel.Text(),
+		IsGlobal:     v.GlobalScope,
+		BindStmt:     v.HintedSel,
+		Charset:      charSet,
+		Collation:    collation,
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	return p, nil
+}
+
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
 func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
@@ -406,13 +438,13 @@ func getPathByIndexName(paths []*accessPath, idxName model.CIStr, tblInfo *model
 			return path
 		}
 	}
-	if isPrimaryIndexHint(idxName) && tblInfo.PKIsHandle {
+	if isPrimaryIndex(idxName) && tblInfo.PKIsHandle {
 		return tablePath
 	}
 	return nil
 }
 
-func isPrimaryIndexHint(indexName model.CIStr) bool {
+func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
@@ -729,36 +761,40 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	return
 }
 
-func getPhysicalIDs(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]int64, error) {
+func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]int64, []string, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		if len(partitionNames) != 0 {
-			return nil, errors.Trace(ddl.ErrPartitionMgmtOnNonpartitioned)
+			return nil, nil, errors.Trace(ddl.ErrPartitionMgmtOnNonpartitioned)
 		}
-		return []int64{tblInfo.ID}, nil
+		return []int64{tblInfo.ID}, []string{""}, nil
 	}
 	if len(partitionNames) == 0 {
 		ids := make([]int64, 0, len(pi.Definitions))
+		names := make([]string, 0, len(pi.Definitions))
 		for _, def := range pi.Definitions {
 			ids = append(ids, def.ID)
+			names = append(names, def.Name.O)
 		}
-		return ids, nil
+		return ids, names, nil
 	}
 	ids := make([]int64, 0, len(partitionNames))
+	names := make([]string, 0, len(partitionNames))
 	for _, name := range partitionNames {
 		found := false
 		for _, def := range pi.Definitions {
 			if def.Name.L == name.L {
 				found = true
 				ids = append(ids, def.ID)
+				names = append(names, def.Name.O)
 				break
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("can not found the specified partition name %s in the table definition", name.O)
+			return nil, nil, fmt.Errorf("can not found the specified partition name %s in the table definition", name.O)
 		}
 	}
-	return ids, nil
+	return ids, names, nil
 }
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) {
@@ -768,30 +804,28 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 			return nil, errors.Errorf("analyze %s is not supported now.", tbl.Name.O)
 		}
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
-		physicalIDs, err := getPhysicalIDs(tbl.TableInfo, as.PartitionNames)
+		physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
 		if err != nil {
 			return nil, err
 		}
-		table, ok := b.is.TableByID(tbl.TableInfo.ID)
-		if !ok {
-			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tbl.TableInfo.Name.O)
-		}
 		for _, idx := range idxInfo {
-			for _, id := range physicalIDs {
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
-					PhysicalTableID: id,
-					IndexInfo:       idx,
-					Table:           table,
+					IndexInfo:   idx,
+					analyzeInfo: info,
+					TblInfo:     tbl.TableInfo,
 				})
 			}
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
-			for _, id := range physicalIDs {
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
-					PhysicalTableID: id,
-					PKInfo:          pkInfo,
-					ColsInfo:        colInfo,
-					Table:           table,
+					PKInfo:      pkInfo,
+					ColsInfo:    colInfo,
+					analyzeInfo: info,
+					TblInfo:     tbl.TableInfo,
 				})
 			}
 		}
@@ -802,17 +836,26 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
 	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
-	physicalIDs, err := getPhysicalIDs(tblInfo, as.PartitionNames)
+	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
+		if isPrimaryIndex(idxName) && tblInfo.PKIsHandle {
+			pkCol := tblInfo.GetPkColInfo()
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PKInfo: pkCol, analyzeInfo: info})
+			}
+			continue
+		}
 		idx := tblInfo.FindIndexByName(idxName.L)
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
-		for _, id := range physicalIDs {
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
+		for i, id := range physicalIDs {
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -821,15 +864,23 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
 	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
-	physicalIDs, err := getPhysicalIDs(tblInfo, as.PartitionNames)
+	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			for _, id := range physicalIDs {
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 			}
+		}
+	}
+	if tblInfo.PKIsHandle {
+		pkCol := tblInfo.GetPkColInfo()
+		for i, id := range physicalIDs {
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PKInfo: pkCol, analyzeInfo: info})
 		}
 	}
 	return p, nil
@@ -1008,6 +1059,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		Flag:        show.Flag,
 		Full:        show.Full,
 		User:        show.User,
+		Roles:       show.Roles,
 		IfNotExists: show.IfNotExists,
 		GlobalScope: show.GlobalScope,
 	}.Init(b.ctx)
@@ -1095,7 +1147,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 		}
-	case *ast.AlterUserStmt:
+	case *ast.AlterUserStmt, *ast.SetDefaultRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
@@ -1555,6 +1607,46 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
+func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitIndexRegionStmt) (Plan, error) {
+	tblInfo := node.Table.TableInfo
+	indexInfo := tblInfo.FindIndexByName(strings.ToLower(node.IndexName))
+	if indexInfo == nil {
+		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
+	}
+
+	indexValues := make([][]types.Datum, 0, len(node.ValueLists))
+	for i, valuesItem := range node.ValueLists {
+		if len(valuesItem) > len(indexInfo.Columns) {
+			return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
+		}
+		valueList := make([]types.Datum, 0, len(valuesItem))
+		for j, valueItem := range valuesItem {
+			x, ok := valueItem.(*driver.ValueExpr)
+			if !ok {
+				return nil, errors.New("expect constant values")
+			}
+			colOffset := indexInfo.Columns[j].Offset
+			value, err := x.Datum.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[colOffset].FieldType)
+			if err != nil {
+				return nil, err
+			}
+
+			valueList = append(valueList, value)
+		}
+		indexValues = append(indexValues, valueList)
+	}
+	tableInPlan, ok := b.is.TableByID(tblInfo.ID)
+	if !ok {
+		return nil, errors.Errorf("Can't get table %s.", tblInfo.Name.O)
+	}
+	return &SplitIndexRegion{
+		Table:      tableInPlan,
+		IndexInfo:  indexInfo,
+		ValueLists: indexValues,
+	}, nil
+
+}
+
 func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	var authErr error
 	switch v := node.(type) {
@@ -1886,6 +1978,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowDatabases:
 		names = []string{"Database"}
+	case ast.ShowOpenTables:
+		names = []string{"Database", "Table", "In_use", "Name_locked"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeLong}
 	case ast.ShowTables:
 		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
 		if s.Full {
@@ -1981,6 +2076,12 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 	case ast.ShowPrivileges:
 		names = []string{"Privilege", "Context", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowBindings:
+		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowAnalyzeStatus:
+		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "State"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

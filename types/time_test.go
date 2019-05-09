@@ -1189,6 +1189,32 @@ func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
 	res, err = types.ExtractDatetimeNum(&in, "TEST_ERROR")
 	c.Assert(res, Equals, int64(0))
 	c.Assert(err, ErrorMatches, "invalid unit.*")
+
+	in = types.Time{
+		Time: types.FromDate(0000, 00, 00, 00, 00, 00, 0000),
+		Type: mysql.TypeTimestamp,
+		Fsp:  types.DefaultFsp,
+	}
+
+	res, err = types.ExtractDatetimeNum(&in, "day")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(0))
+
+	res, err = types.ExtractDatetimeNum(&in, "week")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(0))
+
+	res, err = types.ExtractDatetimeNum(&in, "MONTH")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(0))
+
+	res, err = types.ExtractDatetimeNum(&in, "QUARTER")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(0))
+
+	res, err = types.ExtractDatetimeNum(&in, "YEAR")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(0))
 }
 
 func (s *testTimeSuite) TestExtractDurationNum(c *C) {
@@ -1427,5 +1453,45 @@ func (s *testTimeSuite) TestTimeSub(c *C) {
 		c.Assert(err, IsNil)
 		rec := v1.Sub(sc, &v2)
 		c.Assert(rec, Equals, dur)
+	}
+}
+
+func (s *testTimeSuite) TestCheckMonthDay(c *C) {
+	dates := []struct {
+		date        types.MysqlTime
+		isValidDate bool
+	}{
+		{types.FromDate(1900, 2, 29, 0, 0, 0, 0), false},
+		{types.FromDate(1900, 2, 28, 0, 0, 0, 0), true},
+		{types.FromDate(2000, 2, 29, 0, 0, 0, 0), true},
+		{types.FromDate(2000, 1, 1, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 1, 1, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 1, 31, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 4, 1, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 4, 31, 0, 0, 0, 0), false},
+		{types.FromDate(1900, 4, 30, 0, 0, 0, 0), true},
+		{types.FromDate(2000, 2, 30, 0, 0, 0, 0), false},
+		{types.FromDate(2000, 13, 1, 0, 0, 0, 0), false},
+		{types.FromDate(4000, 2, 29, 0, 0, 0, 0), true},
+		{types.FromDate(3200, 2, 29, 0, 0, 0, 0), true},
+	}
+
+	sc := &stmtctx.StatementContext{
+		TimeZone:         time.UTC,
+		AllowInvalidDate: false,
+	}
+
+	for _, t := range dates {
+		tt := types.Time{
+			Time: t.date,
+			Type: mysql.TypeDate,
+			Fsp:  types.DefaultFsp,
+		}
+		err := tt.Check(sc)
+		if t.isValidDate {
+			c.Check(err, IsNil)
+		} else {
+			c.Check(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+		}
 	}
 }

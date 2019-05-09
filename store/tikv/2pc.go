@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -42,6 +43,11 @@ const (
 	actionPrewrite twoPhaseCommitAction = 1
 	actionCommit   twoPhaseCommitAction = 2
 	actionCleanup  twoPhaseCommitAction = 3
+)
+
+var (
+	tikvSecondaryLockCleanupFailureCounterCommit   = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
+	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
 )
 
 func (ca twoPhaseCommitAction) String() string {
@@ -302,7 +308,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 					zap.Uint64("conn", c.connID),
 					zap.Stringer("action type", action),
 					zap.Error(e))
-				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
+				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
 			}
 		}()
 	} else {
@@ -581,7 +587,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	if keyErr := commitResp.GetError(); keyErr != nil {
 		c.mu.RLock()
 		defer c.mu.RUnlock()
-		err = errors.Errorf("conn%d 2PC commit failed: %v", c.connID, keyErr.String())
+		err = extractKeyErr(keyErr)
 		if c.mu.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
@@ -594,7 +600,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		logutil.Logger(context.Background()).Debug("2PC failed commit primary key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
-		return errors.Annotate(err, txnRetryableMark)
+		return err
 	}
 
 	c.mu.Lock()
@@ -666,6 +672,9 @@ func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) err
 	return errors.Trace(err)
 }
 
+// mockGetTSErrorInRetryOnce use to make sure gofail mockGetTSErrorInRetry only mock get TS error once.
+var mockGetTSErrorInRetryOnce = true
+
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	defer func() {
@@ -680,7 +689,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
 				err := c.cleanupKeys(NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
 				if err != nil {
-					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
+					tikvSecondaryLockCleanupFailureCounterRollback.Inc()
 					logutil.Logger(ctx).Info("2PC cleanup failed",
 						zap.Error(err),
 						zap.Uint64("txnStartTS", c.startTS))
@@ -712,6 +721,17 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	// mockGetTSErrorInRetry should wait MockCommitErrorOnce first, then will run into retry() logic.
+	// Then mockGetTSErrorInRetry will return retryable error when first retry.
+	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
+	// This may cause duplicate data to be written.
+	failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
+		if val.(bool) && !kv.IsMockCommitErrorEnable() && mockGetTSErrorInRetryOnce {
+			mockGetTSErrorInRetryOnce = false
+			failpoint.Return(errors.Errorf("PD server timeout[try again later]"))
+		}
+	})
+
 	start = time.Now()
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
 	if err != nil {
@@ -734,15 +754,16 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// gofail: var tmpMaxTxnTime uint64
-	// if tmpMaxTxnTime > 0 {
-	//  c.maxTxnTimeUse = tmpMaxTxnTime
-	// }
+	failpoint.Inject("tmpMaxTxnTime", func(val failpoint.Value) {
+		if tmpMaxTxnTime := uint64(val.(int)); tmpMaxTxnTime > 0 {
+			c.maxTxnTimeUse = tmpMaxTxnTime
+		}
+	})
 
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
 		err = errors.Errorf("conn%d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
-		return errors.Annotate(err, txnRetryableMark)
+		return err
 	}
 
 	start = time.Now()

@@ -1847,6 +1847,9 @@ func (b *builtinStrToDateDateSig) evalTime(row chunk.Row) (types.Time, bool, err
 	if !succ {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
 	}
+	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+	}
 	t.Type, t.Fsp = mysql.TypeDate, types.MinFsp
 	return t, false, nil
 }
@@ -1874,6 +1877,9 @@ func (b *builtinStrToDateDatetimeSig) evalTime(row chunk.Row) (types.Time, bool,
 	sc := b.ctx.GetSessionVars().StmtCtx
 	succ := t.StrToDate(sc, date, format)
 	if !succ {
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+	}
+	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
 	}
 	t.Type, t.Fsp = mysql.TypeDatetime, b.tp.Decimal
@@ -1906,6 +1912,9 @@ func (b *builtinStrToDateDurationSig) evalDuration(row chunk.Row) (types.Duratio
 	sc := b.ctx.GetSessionVars().StmtCtx
 	succ := t.StrToDate(sc, date, format)
 	if !succ {
+		return types.Duration{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+	}
+	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
 		return types.Duration{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
 	}
 	t.Fsp = b.tp.Decimal
@@ -5491,11 +5500,28 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 	default:
 		return "", true, types.ErrInvalidTimeFormat.GenWithStackByArgs(unit)
 	}
-	r := types.Time{Time: types.FromGoTime(tb), Type: mysql.TypeDatetime, Fsp: fsp}
+	r := types.Time{Time: types.FromGoTime(tb), Type: b.resolveType(arg.Type, unit), Fsp: fsp}
 	if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {
 		return "", true, handleInvalidTimeError(b.ctx, err)
 	}
 	return r.String(), false, nil
+}
+
+func (b *builtinTimestampAddSig) resolveType(typ uint8, unit string) uint8 {
+	// The approach below is from MySQL.
+	// The field type for the result of an Item_date function is defined as
+	// follows:
+	//
+	//- If first arg is a MYSQL_TYPE_DATETIME result is MYSQL_TYPE_DATETIME
+	//- If first arg is a MYSQL_TYPE_DATE and the interval type uses hours,
+	//	minutes, seconds or microsecond then type is MYSQL_TYPE_DATETIME.
+	//- Otherwise the result is MYSQL_TYPE_STRING
+	//	(This is because you can't know if the string contains a DATE, MYSQL_TIME
+	//	or DATETIME argument)
+	if typ == mysql.TypeDate && (unit == "HOUR" || unit == "MINUTE" || unit == "SECOND" || unit == "MICROSECOND") {
+		return mysql.TypeDatetime
+	}
+	return typ
 }
 
 type toDaysFunctionClass struct {

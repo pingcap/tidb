@@ -10,7 +10,7 @@
 [![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 
 - [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
-- Community [**Slack Channel**](http://bit.ly/tidbslack)
+- Community [**Slack Channel**](https://pingcap.com/tidbslack/)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - [**Reddit**](https://www.reddit.com/r/TiDB/)
 - **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
@@ -27,7 +27,7 @@ TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports 
 
 - __MySQL Compatible Syntax__
 
-    TiDB acts like it is a MySQL 5.7 server to your applications. You can continue to use all of the existing MySQL client libraries, and in many cases, you will not need to change a single line of code in your application. Because TiDB is built from scratch, not a MySQL fork, please check out the list of [known compatibility differences](./sql/mysql-compatibility.md).
+    TiDB acts like it is a MySQL 5.7 server to your applications. You can continue to use all of the existing MySQL client libraries, and in many cases, you will not need to change a single line of code in your application. Because TiDB is built from scratch, not a MySQL fork, please check out the list of [known compatibility differences](https://www.pingcap.com/docs/sql/mysql-compatibility/).
 
 - __Distributed Transactions with Strong Consistency__
 

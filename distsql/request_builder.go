@@ -14,16 +14,19 @@
 package distsql
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -38,6 +41,14 @@ type RequestBuilder struct {
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	return &builder.Request, builder.err
+}
+
+// SetMemTracker sets a memTracker for this request.
+func (builder *RequestBuilder) SetMemTracker(sctx sessionctx.Context, label fmt.Stringer) *RequestBuilder {
+	t := memory.NewTracker(label, sctx.GetSessionVars().MemQuotaDistSQL)
+	t.AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
+	builder.Request.MemTracker = t
+	return builder
 }
 
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
@@ -169,7 +180,7 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 
 // TableRangesToKVRanges converts table ranges to "KeyRange".
 func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
-	if fb == nil || fb.Hist() == nil {
+	if fb == nil || fb.Hist == nil {
 		return tableRangesToKVRangesWithoutSplit(tid, ranges)
 	}
 	krs := make([]kv.KeyRange, 0, len(ranges))
@@ -246,7 +257,7 @@ func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
 func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
-	if fb == nil || fb.Hist() == nil {
+	if fb == nil || fb.Hist == nil {
 		return indexRangesToKVWithoutSplit(sc, tid, idxID, ranges)
 	}
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
@@ -258,7 +269,7 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 		feedbackRanges = append(feedbackRanges, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
 	}
-	feedbackRanges = fb.Hist().SplitRange(sc, feedbackRanges, true)
+	feedbackRanges = fb.Hist.SplitRange(sc, feedbackRanges, true)
 	krs := make([]kv.KeyRange, 0, len(feedbackRanges))
 	for _, ran := range feedbackRanges {
 		low, high := ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()

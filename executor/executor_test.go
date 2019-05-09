@@ -29,7 +29,9 @@ import (
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -64,7 +66,9 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestT(t *testing.T) {
@@ -84,6 +88,7 @@ var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
+var _ = Suite(&testOOMSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -1763,8 +1768,15 @@ func (s *testSuite) TestSQLMode(c *C) {
 
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	_, err = tk.Exec("insert t values (null)")
+	c.Check(err, NotNil)
+	tk.MustExec("insert ignore t values (null)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
+	tk.MustExec("insert t select null")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert t values (1000)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("0", "127"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0", "0", "0", "127"))
 
 	tk.MustExec("insert tdouble values (10.23)")
 	tk.MustQuery("select * from tdouble").Check(testkit.Rows("9.99"))
@@ -1842,7 +1854,8 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
-		"select * from help_topic where name='aaa'":         true,
+		"select * from help_topic where name='aaa'":         false,
+		"select 1 from help_topic where name='aaa'":         true,
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
@@ -1859,6 +1872,42 @@ func (s *testSuite) TestIsPointGet(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, result)
 	}
+}
+
+func (s *testSuite) TestPointGetRepeatableRead(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec(`create table point_get (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into point_get values (1, 1, 1)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	var (
+		step1 = "github.com/pingcap/tidb/executor/pointGetRepeatableReadTest-step1"
+		step2 = "github.com/pingcap/tidb/executor/pointGetRepeatableReadTest-step2"
+	)
+
+	c.Assert(failpoint.Enable(step1, "return"), IsNil)
+	c.Assert(failpoint.Enable(step2, "pause"), IsNil)
+
+	updateWaitCh := make(chan struct{})
+	go func() {
+		ctx := context.WithValue(context.Background(), "pointGetRepeatableReadTest", updateWaitCh)
+		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
+			return fpname == step1 || fpname == step2
+		})
+		rs, err := tk1.Se.Execute(ctx, "select c from point_get where b = 1")
+		c.Assert(err, IsNil)
+		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+		result.Check(testkit.Rows("1"))
+	}()
+
+	<-updateWaitCh // Wait `POINT GET` first time `get`
+	c.Assert(failpoint.Disable(step1), IsNil)
+	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
+	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
 func (s *testSuite) TestRow(c *C) {
@@ -2465,6 +2514,7 @@ func (s *testSuite1) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.dom.SetStatsUpdating(true)
 }
 
 func (s *testSuite1) TearDownSuite(c *C) {
@@ -3587,6 +3637,57 @@ func (s *testSuite3) TearDownTest(c *C) {
 	}
 }
 
+type testSuite4 struct {
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	store     kv.Storage
+	domain    *domain.Domain
+	*parser.Parser
+	ctx *mock.Context
+}
+
+func (s *testSuite4) SetUpSuite(c *C) {
+	s.Parser = parser.New()
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
+	if useMockTikv {
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
+	}
+	d, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
+	s.domain = d
+}
+
+func (s *testSuite4) TearDownSuite(c *C) {
+	s.domain.Close()
+	s.store.Close()
+}
+
+func (s *testSuite4) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
+}
+
 func (s *testSuite) TestStrToDateBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select str_to_date('18/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2018-10-22"))
@@ -3642,4 +3743,104 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select b from pt where b = 3").Check(testkit.Rows("3"))
 	// Index lookup
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
+}
+
+func (s *testSuite) TestSplitIndexRegion(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
+	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
+	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
+	c.Assert(err, NotNil)
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
+}
+
+type testOOMSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+	oom   *oomCapturer
+}
+
+func (s *testOOMSuite) SetUpSuite(c *C) {
+	c.Skip("log.ReplaceGlobals(lg, r) in registerHook() may result in data race")
+	testleak.BeforeTest()
+	s.registerHook()
+	var err error
+	s.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	session.SetSchemaLease(0)
+	domain.RunAutoAnalyze = false
+	s.do, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testOOMSuite) registerHook() {
+	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	_, r, _ := log.InitLogger(conf)
+	s.oom = &oomCapturer{r.Core, ""}
+	lg := zap.New(s.oom)
+	log.ReplaceGlobals(lg, r)
+}
+
+func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+
+	s.oom.tracker = ""
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "TableReaderDistSQLTracker")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+
+	s.oom.tracker = ""
+	tk.MustQuery("select a from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select a from t use index(idx_a)")
+	c.Assert(s.oom.tracker, Equals, "IndexReaderDistSQLTracker")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+
+	s.oom.tracker = ""
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select * from t use index(idx_a)")
+	c.Assert(s.oom.tracker, Equals, "IndexLookupDistSQLTracker")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+}
+
+type oomCapturer struct {
+	zapcore.Core
+	tracker string
+}
+
+func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	if strings.Contains(entry.Message, "memory exceeds quota") {
+		err, _ := fields[0].Interface.(error)
+		str := err.Error()
+		begin := strings.Index(str, "8001]")
+		if begin == -1 {
+			panic("begin not found")
+		}
+		end := strings.Index(str, " holds")
+		if end == -1 {
+			panic("end not found")
+		}
+		h.tracker = str[begin+len("8001]") : end]
+	}
+	return nil
+}
+
+func (h *oomCapturer) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if h.Enabled(e.Level) {
+		return ce.AddCore(e, h)
+	}
+	return ce
 }

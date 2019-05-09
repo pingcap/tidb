@@ -351,7 +351,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
-		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace:
+		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace, serverReadOnly:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
@@ -388,13 +388,31 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBHashAggFinalConcurrency,
 		TiDBDistSQLScanConcurrency,
 		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
-		TiDBBackoffLockFast,
+		TiDBBackoffLockFast, TiDBBackOffWeight,
 		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:
 		v, err := strconv.Atoi(value)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
 		if v <= 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
+	case TiDBOptCorrelationExpFactor:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
+	case TiDBOptCorrelationThreshold:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < 0 || v > 1 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
@@ -429,7 +447,21 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		switch upVal {
 		case "SERIALIZABLE", "READ-UNCOMMITTED":
-			return "", ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
+			skipIsolationLevelCheck, err := GetSessionSystemVar(vars, TiDBSkipIsolationLevelCheck)
+			returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(value)
+			if err != nil {
+				returnErr = err
+			}
+			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
+				return "", returnErr
+			}
+			//SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
+			// 1. tx_isolation
+			// 2. transaction_isolation
+			// The following if condition is used to deduplicate two same warnings.
+			if name == "transaction_isolation" {
+				vars.StmtCtx.AppendWarning(returnErr)
+			}
 		}
 		return upVal, nil
 	case TiDBInitChunkSize:
@@ -453,6 +485,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, errors.Errorf("tidb_max_chunk_size(%d) cannot be smaller than %d", v, maxChunkSizeLowerBound)
 		}
 		return value, nil
+	case TiDBOptJoinReorderThreshold:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < 0 || v >= 64 {
+			return value, errors.Errorf("tidb_join_order_algo_threshold(%d) cannot be smaller than 0 or larger than 63", v)
+		}
 	}
 	return value, nil
 }
@@ -472,6 +512,14 @@ func tidbOptPositiveInt32(opt string, defaultVal int) int {
 
 func tidbOptInt64(opt string, defaultVal int64) int64 {
 	val, err := strconv.ParseInt(opt, 10, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return val
+}
+
+func tidbOptFloat64(opt string, defaultVal float64) float64 {
+	val, err := strconv.ParseFloat(opt, 64)
 	if err != nil {
 		return defaultVal
 	}

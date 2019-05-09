@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -66,6 +67,7 @@ var (
 	_ builtinFunc = &builtinJSONMergeSig{}
 	_ builtinFunc = &builtinJSONContainsSig{}
 	_ builtinFunc = &builtinJSONDepthSig{}
+	_ builtinFunc = &builtinJSONSearchSig{}
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
 	_ builtinFunc = &builtinJSONLengthSig{}
@@ -645,10 +647,24 @@ func (b *builtinJSONContainsSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonContainsFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+		return json.ErrInvalidJSONData.GenWithStackByArgs(1, "json_contains")
+	}
+	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+		return json.ErrInvalidJSONData.GenWithStackByArgs(2, "json_contains")
+	}
+	return nil
+}
+
 func (c *jsonContainsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+
 	argTps := []types.EvalType{types.ETJson, types.ETJson}
 	if len(args) == 3 {
 		argTps = append(argTps, types.ETString)
@@ -876,8 +892,121 @@ type jsonSearchFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONSearchSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONSearchSig) Clone() builtinFunc {
+	newSig := &builtinJSONSearchSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_SEARCH")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	// json_doc, one_or_all, search_str[, escape_char[, path] ...])
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETJson)
+	for range args[1:] {
+		argTps = append(argTps, types.ETString)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
+	sig := &builtinJSONSearchSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonSearchSig)
+	return sig, nil
+}
+
+func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+	// json_doc
+	var obj json.BinaryJSON
+	obj, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	// one_or_all
+	var containType string
+	containType, isNull, err = b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
+		return res, true, errors.AddStack(json.ErrInvalidJSONContainsPathType)
+	}
+
+	// search_str & escape_char
+	var searchStr string
+	searchStr, isNull, err = b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	escape := byte('\\')
+	if len(b.args) >= 4 {
+		var escapeStr string
+		escapeStr, isNull, err = b.args[3].EvalString(b.ctx, row)
+		if err != nil {
+			return res, isNull, err
+		}
+		if isNull || len(escapeStr) == 0 {
+			escape = byte('\\')
+		} else if len(escapeStr) == 1 {
+			escape = byte(escapeStr[0])
+		} else {
+			return res, true, errIncorrectArgs.GenWithStackByArgs("ESCAPE")
+		}
+	}
+	patChars, patTypes := stringutil.CompilePattern(searchStr, escape)
+
+	// result
+	result := make([]interface{}, 0)
+
+	// walk json_doc
+	walkFn := func(fullpath json.PathExpression, bj json.BinaryJSON) (stop bool, err error) {
+		if bj.TypeCode == json.TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
+			result = append(result, fullpath.String())
+			if containType == json.ContainsPathOne {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	if len(b.args) >= 5 { // path...
+		pathExprs := make([]json.PathExpression, 0, len(b.args)-4)
+		for i := 4; i < len(b.args); i++ {
+			var s string
+			s, isNull, err = b.args[i].EvalString(b.ctx, row)
+			if isNull || err != nil {
+				return res, isNull, err
+			}
+			var pathExpr json.PathExpression
+			pathExpr, err = json.ParseJSONPathExpr(s)
+			if err != nil {
+				return res, true, err
+			}
+			pathExprs = append(pathExprs, pathExpr)
+		}
+		err = obj.Walk(walkFn, pathExprs...)
+		if err != nil {
+			return res, true, err
+		}
+	} else {
+		err = obj.Walk(walkFn)
+		if err != nil {
+			return res, true, err
+		}
+	}
+
+	// return
+	switch len(result) {
+	case 0:
+		return res, true, nil
+	case 1:
+		return json.CreateBinary(result[0]), false, nil
+	default:
+		return json.CreateBinary(result), false, nil
+	}
 }
 
 type jsonStorageSizeFunctionClass struct {
@@ -1005,7 +1134,7 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(row chunk.Row) (res json.BinaryJSON, 
 		return res, true, nil
 	}
 	if res.TypeCode != json.TypeCodeObject {
-		return res, true, json.ErrInvalidJSONData
+		return res, true, nil
 	}
 
 	return res.GetKeys(), false, nil

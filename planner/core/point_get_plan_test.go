@@ -51,7 +51,7 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory = math.MaxUint64
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, key idx_bc(b,c))")
@@ -68,6 +68,7 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustQuery("explain delete from t where a = 1").Check(testkit.Rows(
 		"Point_Get_1 1.00 root table:t, handle:1",
 	))
+	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}

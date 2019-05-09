@@ -21,6 +21,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -177,17 +178,19 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	}
 
 	// mockCommitError8942 is used for PR #8942.
-	// gofail: var mockCommitError8942 bool
-	// if mockCommitError8942 {
-	//	return kv.ErrRetryable
-	// }
+	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(kv.ErrRetryable)
+		}
+	})
 
 	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
-	// gofail: var mockCommitRetryForAutoID bool
-	// if mockCommitRetryForAutoID && !mockAutoIDRetry() {
-	//	enableMockAutoIDRetry()
-	//	return kv.ErrRetryable
-	// }
+	failpoint.Inject("mockCommitRetryForAutoID", func(val failpoint.Value) {
+		if val.(bool) && !mockAutoIDRetry() {
+			enableMockAutoIDRetry()
+			failpoint.Return(kv.ErrRetryable)
+		}
+	})
 
 	return st.Transaction.Commit(ctx)
 }
@@ -343,23 +346,10 @@ type txnFuture struct {
 	mockFail bool
 }
 
-// mockGetTSErrorInRetryOnce use to make sure gofail mockGetTSErrorInRetry only mock get TS error once.
-var mockGetTSErrorInRetryOnce = true
-
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	if tf.mockFail {
 		return nil, errors.New("mock get timestamp fail")
 	}
-
-	// mockGetTSErrorInRetry should wait mockCommitErrorOnce first, then will run into retry() logic.
-	// Then mockGetTSErrorInRetry will return retryable error when first retry.
-	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
-	// This may cause duplicate data to be written.
-	// gofail: var mockGetTSErrorInRetry bool
-	// if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockCommitErrorOnce {
-	//	 mockGetTSErrorInRetryOnce = false
-	//	 return nil, errors.Errorf("PD server timeout[try again later]")
-	// }
 
 	startTS, err := tf.future.Wait()
 	if err == nil {
@@ -391,11 +381,12 @@ func (s *session) StmtCommit() error {
 	st := &s.txn
 	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
+			if val.(bool) {
+				count++
+			}
+		})
 
-		// gofail: var mockStmtCommitError bool
-		// if mockStmtCommitError {
-		// 	count++
-		// }
 		if count > 3 {
 			return errors.New("mock stmt commit error")
 		}

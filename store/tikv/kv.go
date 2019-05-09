@@ -24,9 +24,8 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -36,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 )
 
 type storeCache struct {
@@ -55,11 +53,7 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
-		DialOptions: []grpc.DialOption{
-			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
-		},
-		TLS: tlsConfig,
+		TLS:              tlsConfig,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -87,9 +81,6 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	})
 
 	if err != nil {
-		if strings.Contains(err.Error(), "i/o timeout") {
-			return nil, errors.Annotate(err, txnRetryableMark)
-		}
 		return nil, errors.Trace(err)
 	}
 
@@ -121,6 +112,13 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 	mc.cache[uuid] = s
 	return s, nil
+}
+
+// EtcdBackend is used for judging a storage is a real TiKV.
+type EtcdBackend interface {
+	EtcdAddrs() []string
+	TLSConfig() *tls.Config
+	StartGCWorker() error
 }
 
 // update oracle's lastTS every 2000ms.
@@ -334,6 +332,18 @@ func (s *tikvStore) GetClient() kv.Client {
 
 func (s *tikvStore) GetOracle() oracle.Oracle {
 	return s.oracle
+}
+
+func (s *tikvStore) Name() string {
+	return "TiKV"
+}
+
+func (s *tikvStore) Describe() string {
+	return "TiKV is a distributed transactional key-value database"
+}
+
+func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, kv.ErrNotImplemented
 }
 
 func (s *tikvStore) SupportDeleteRange() (supported bool) {
