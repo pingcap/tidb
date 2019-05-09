@@ -481,8 +481,11 @@ type LoadStats struct {
 type SplitIndexRegion struct {
 	baseSchemaProducer
 
-	Table      table.Table
+	TableInfo  *model.TableInfo
 	IndexInfo  *model.IndexInfo
+	Min        []types.Datum
+	Max        []types.Datum
+	Num        int
 	ValueLists [][]types.Datum
 }
 

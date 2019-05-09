@@ -1254,8 +1254,11 @@ func (b *executorBuilder) buildSplitIndexRegion(v *plannercore.SplitIndexRegion)
 	base.initCap = chunk.ZeroCapacity
 	return &SplitIndexRegionExec{
 		baseExecutor: base,
-		table:        v.Table,
+		tableInfo:    v.TableInfo,
 		indexInfo:    v.IndexInfo,
+		min:          v.Min,
+		max:          v.Max,
+		num:          v.Num,
 		valueLists:   v.ValueLists,
 	}
 }

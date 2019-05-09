@@ -3755,6 +3755,27 @@ func (s *testSuite) TestSplitIndexRegion(c *C) {
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
+
+	// Check min value is more than max value.
+	tk.MustExec(`split table t index idx1 min (0) max (1000000000) num 10`)
+	_, err = tk.Exec(`split table t index idx1 min (2) max (1) num 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index region `idx1` min value [{1 0 0 0 2 [] <nil>}] should less than the max value [{1 0 0 0 1 [] <nil>}]")
+
+	// Check min value is invalid.
+	_, err = tk.Exec(`split table t index idx1 min () max (1) num 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index region `idx1` min value count should more than 0")
+
+	// Check max value is invalid.
+	_, err = tk.Exec(`split table t index idx1 min (1) max () num 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index region `idx1` max value count should more than 0")
+
+	// Check pre-split region num is too large.
+	_, err = tk.Exec(`split table t index idx1 min (0) max (1000000000) num 10000`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index region num is exceed the limit 1000")
 }
 
 type testOOMSuite struct {
