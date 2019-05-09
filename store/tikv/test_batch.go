@@ -96,21 +96,6 @@ func (c *batchClientTester) isEnded() bool {
 	return atomic.LoadUint32(&c.ended) != 0
 }
 
-// unblockedSend invoke SendRequest, but returns a channel instead of blocking the current goroutine
-func (c *batchClientTester) unblockedSend(
-	ctx context.Context,
-	addr string,
-	req *tikvrpc.Request,
-	timeout time.Duration,
-) <-chan sendRequestResult {
-	done := make(chan sendRequestResult, 1)
-	go func() {
-		res, err := c.rpcClient.SendRequest(ctx, addr, req, timeout)
-		done <- sendRequestResult{res, err}
-	}()
-	return done
-}
-
 // unblockedClose close the client, but returns a channel instead of blocking the current goroutine
 func (c *batchClientTester) unblockedClose() <-chan struct{} {
 	done := make(chan struct{}, 1)
@@ -131,34 +116,24 @@ func (c *batchClientTester) test(addr string, id uint64) {
 			DelayTime: c.cfg.genDelay(),
 		},
 	}
-	done := c.unblockedSend(context.Background(), addr, req, ReadTimeoutMedium)
-	select {
-	case result := <-done:
-		err := result.error
-		if err != nil {
-			// detected conection error on time, success
-			logger().Warnf("Test RPC %d at %v error: %v", id, addr, err)
-			return
-		}
-		res := result.Response.Test
-		if res == nil {
-			// wrong response type
-			logger().Errorf("Test RPC %d at %v returned wrong type of response", id, addr)
-			c.fail()
-			return
-		}
-		if res.TestId != id {
-			// wrong id
-			logger().Errorf("Test RPC %d at %v returned wrong id %d", id, addr, res.TestId)
-			c.fail()
-			return
-		}
-		//TODO: check timing
-	case <-time.After(c.cfg.Timeout):
-		// do not finish in time
-		// better timing?
-		logger().Errorf("Test RPC %d at %v do not response or error on time", id, addr)
+	result, err := c.rpcClient.SendRequest(context.Background(), addr, req, c.cfg.Timeout)
+	if err != nil {
+		// detected conection error on time, success
+		logger().Warnf("Test RPC %d at %v error: %v", id, addr, err)
+		return
+	}
+	res := result.Test
+	if res == nil {
+		// wrong response type
+		logger().Errorf("Test RPC %d at %v returned wrong type of response", id, addr)
 		c.fail()
+		return
+	}
+	if res.TestId != id {
+		// wrong id
+		logger().Errorf("Test RPC %d at %v returned wrong id %d", id, addr, res.TestId)
+		c.fail()
+		return
 	}
 }
 
