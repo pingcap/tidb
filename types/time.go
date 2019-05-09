@@ -1644,35 +1644,38 @@ func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int6
 		if dv >= 500000 { // Round up, and we should keep 6 digits for microsecond, so dv should in [000000, 999999].
 			riv++
 		}
+		if unit != "SECOND" {
+			err = ErrTruncatedWrongValue.GenWithStackByArgs(format)
+		}
 	}
 	const gotimeDay = 24 * gotime.Hour
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
 		dayCount := riv / int64(gotimeDay/gotime.Microsecond)
 		riv %= int64(gotimeDay / gotime.Microsecond)
-		return 0, 0, dayCount, riv * int64(gotime.Microsecond), nil
+		return 0, 0, dayCount, riv * int64(gotime.Microsecond), err
 	case "SECOND":
 		dayCount := iv / int64(gotimeDay/gotime.Second)
 		iv %= int64(gotimeDay / gotime.Second)
-		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), nil
+		return 0, 0, dayCount, iv*int64(gotime.Second) + dv*int64(gotime.Microsecond), err
 	case "MINUTE":
 		dayCount := riv / int64(gotimeDay/gotime.Minute)
 		riv %= int64(gotimeDay / gotime.Minute)
-		return 0, 0, dayCount, riv * int64(gotime.Minute), nil
+		return 0, 0, dayCount, riv * int64(gotime.Minute), err
 	case "HOUR":
 		dayCount := riv / 24
 		riv %= 24
-		return 0, 0, dayCount, riv * int64(gotime.Hour), nil
+		return 0, 0, dayCount, riv * int64(gotime.Hour), err
 	case "DAY":
-		return 0, 0, riv, 0, nil
+		return 0, 0, riv, 0, err
 	case "WEEK":
-		return 0, 0, 7 * riv, 0, nil
+		return 0, 0, 7 * riv, 0, err
 	case "MONTH":
-		return 0, riv, 0, 0, nil
+		return 0, riv, 0, 0, err
 	case "QUARTER":
-		return 0, 3 * riv, 0, 0, nil
+		return 0, 3 * riv, 0, 0, err
 	case "YEAR":
-		return riv, 0, 0, 0, nil
+		return riv, 0, 0, 0, err
 	}
 
 	return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)

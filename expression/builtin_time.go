@@ -2705,12 +2705,12 @@ func (du *baseDateArithmitical) getIntervalFromInt(ctx sessionctx.Context, args 
 
 func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
 	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
-	if err != nil {
-		return types.Time{}, true, handleInvalidTimeError(ctx, err)
+	if err := handleInvalidTimeError(ctx, err); err != nil {
+		return types.Time{}, true, err
 	}
 
 	goTime, err := date.Time.GoTime(time.Local)
-	if err != nil {
+	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
 
@@ -2725,7 +2725,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 
 	date.Time = types.FromGoTime(goTime)
 	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
-	if err != nil {
+	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
 	if overflow {
@@ -2736,13 +2736,13 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 
 func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
 	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
-	if err != nil {
-		return types.Time{}, true, handleInvalidTimeError(ctx, err)
+	if err := handleInvalidTimeError(ctx, err); err != nil {
+		return types.Time{}, true, err
 	}
 	year, month, day, nano = -year, -month, -day, -nano
 
 	goTime, err := date.Time.GoTime(time.Local)
-	if err != nil {
+	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
 
@@ -2758,7 +2758,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 
 	date.Time = types.FromGoTime(goTime)
 	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
-	if err != nil {
+	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
 	if overflow {
