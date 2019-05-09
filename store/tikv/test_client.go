@@ -133,29 +133,29 @@ func (c *clientTester) test(addr string, id uint64) {
 			switch status.Code() {
 			case grpcCodes.DeadlineExceeded:
 				// just time out
-				logger().Warnf("Test RPC %d at %v timeout. error: %v", id, addr, err)
+				logger().Debugf("Test RPC %d at %v timeout. error: %v", id, addr, err)
 				return
 			case grpcCodes.Unavailable:
 				if strings.Contains(status.Message(), "all SubConns are in TransientFailure") {
 					// server not availiable
-					logger().Warnf("Test RPC %d at %v can not complete since connection to the server is not available. error: %v", id, addr, err)
+					logger().Debugf("Test RPC %d at %v can not complete since connection to the server is not available. error: %v", id, addr, err)
 					return
 				} else if strings.Contains(status.Message(), "transport is closing") {
 					// server is just killed, or panic (and the grpc thread killed)
-					logger().Warnf("Test RPC %d at %v can not complete since the connection is unexpected closed by server. error: %v", id, addr, err)
+					logger().Debugf("Test RPC %d at %v can not complete since the connection is unexpected closed by server. error: %v", id, addr, err)
 					return
 				}
 			case grpcCodes.Internal:
 				if strings.Contains(status.Message(), "RST_STREAM") {
 					// seems like the server gracefully reset the connection when manually exited?
-					logger().Warnf("Test RPC %d at %v is dropped since the stream is resetted. error: %v", id, addr, err)
+					logger().Debugf("Test RPC %d at %v is dropped since the stream is resetted. error: %v", id, addr, err)
 					return
 				}
 			}
 		}
 		if err == io.EOF {
 			// I have no idea why this happens in normal run, but it is returned when the connection is previously destroyed
-			logger().Warnf("Test RPC %d at %v is can not complete because of a previously error. error: %v", id, addr, err)
+			logger().Debugf("Test RPC %d at %v is can not complete because of a previously error. error: %v", id, addr, err)
 			return
 		}
 		logger().Errorf("Test RPC %d at %v have an unknown error: %v", id, addr, err)
