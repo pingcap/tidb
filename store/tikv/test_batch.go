@@ -56,8 +56,10 @@ func BatchTest(security config.Security, addrs []string, config BatchClientTestC
 			go c.runTest(addr, i, c.cfg.Concurrent)
 		}
 	}
-	<-time.After(c.cfg.TestLength)
-	c.end()
+	go func() {
+		<-time.After(c.cfg.TestLength)
+		c.end()
+	}()
 	c.wait.Wait()
 	done := c.unblockedClose()
 	select {
@@ -84,6 +86,8 @@ func logger() *zap.SugaredLogger {
 // fail make the test as failed
 func (c *batchClientTester) fail() {
 	atomic.StoreUint32(&c.failed, 1)
+	// Just trigger end when fails
+	c.end()
 }
 
 // isFailed get is it failed
@@ -152,6 +156,7 @@ func (c *batchClientTester) test(addr string, id uint64) {
 		if err == io.EOF {
 			// I have no idea why this happens in normal run, but it is returned when the connection is previously destroyed
 			logger().Warnf("Test RPC %d at %v is can not complete because of a previously error. error: %v", id, addr, err)
+			return
 		}
 		logger().Errorf("Test RPC %d at %v have an unknown error: %v", id, addr, err)
 		c.fail()
