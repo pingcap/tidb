@@ -280,6 +280,7 @@ func (testModelSuite) TestString(c *C) {
 		{ActionDropIndex, "drop index"},
 		{ActionAddColumn, "add column"},
 		{ActionDropColumn, "drop column"},
+		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
 	}
 
 	for _, v := range acts {
