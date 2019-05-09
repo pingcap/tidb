@@ -1124,10 +1124,11 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 	if !prop.AllColsFromSchema(la.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil
 	}
+	join := la.getHashJoin(prop, 1)
 	apply := PhysicalApply{
-		PhysicalJoin:  la.getHashJoin(prop, 1),
-		OuterSchema:   la.corCols,
-		rightChOffset: la.children[0].Schema().Len(),
+		PhysicalHashJoin: *join,
+		OuterSchema:      la.corCols,
+		rightChOffset:    la.children[0].Schema().Len(),
 	}.Init(la.ctx,
 		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: prop.Items},
