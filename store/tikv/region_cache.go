@@ -694,15 +694,6 @@ func (c *RegionCache) OnSendRequestFail(ctx *RPCContext, err error) {
 
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
 func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	cachedRegion, ok := c.mu.regions[ctx.Region]
-	if ok {
-		tikvRegionCacheCounterWithDropRegionFromCacheOK.Inc()
-		cachedRegion.invalidate()
-	}
-
 	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, backoff.
 	for _, meta := range currentRegions {
 		if meta.GetId() == ctx.Region.id &&
@@ -714,6 +705,9 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 		}
 	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	needInvalidateOld := true
 	// If the region epoch is not ahead of TiKV's, replace region meta in region cache.
 	for _, meta := range currentRegions {
 		if _, ok := c.pdClient.(*codecPDClient); ok {
@@ -729,6 +723,16 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 		region.initStores(c)
 		c.switchWorkStore(region, ctx.Store.storeID)
 		c.insertRegionToCache(region)
+		if ctx.Region == region.VerID() {
+			needInvalidateOld = false
+		}
+	}
+	if needInvalidateOld {
+		cachedRegion, ok := c.mu.regions[ctx.Region]
+		if ok {
+			tikvRegionCacheCounterWithDropRegionFromCacheOK.Inc()
+			cachedRegion.invalidate()
+		}
 	}
 	return nil
 }
