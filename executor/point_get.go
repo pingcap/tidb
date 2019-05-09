@@ -161,7 +161,7 @@ func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
 // CHAR[N] index columns.
 
 // NOTE: kv.ErrNotExist is returned to indicate that this value can not match
-//		 any (key, value) pair in tikv storage. This error should be handle by
+//		 any (key, value) pair in tikv storage. This error should be handled by
 //		 the caller.
 func handlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum) (types.Datum, error) {
 	targetStr, err := val.ToString()
@@ -170,10 +170,10 @@ func handlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType
 	}
 
 	hasBinaryFlag := mysql.HasBinaryFlag(ft.Flag)
-	isVarchar := ft.Tp == mysql.TypeVarString || ft.Tp == mysql.TypeVarchar
 	isChar := ft.Tp == mysql.TypeString
-	isBinary := ft.Tp == mysql.TypeString && ft.Collate == charset.CollationBin
-	isVarBinary := ft.Tp == mysql.TypeString && ft.Collate == charset.CollationBin
+	isBinary := isChar && ft.Collate == charset.CollationBin
+	isVarchar := ft.Tp == mysql.TypeVarString || ft.Tp == mysql.TypeVarchar
+	isVarBinary := isVarchar && ft.Collate == charset.CollationBin
 	switch {
 	case isBinary || isVarBinary:
 		val.SetString(targetStr)
