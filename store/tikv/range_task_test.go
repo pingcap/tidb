@@ -16,10 +16,11 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"sort"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"sort"
 )
 
 type testRangeTaskSuite struct {
