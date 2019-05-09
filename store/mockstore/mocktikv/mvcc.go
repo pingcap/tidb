@@ -23,7 +23,6 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -34,6 +33,8 @@ const (
 	typeDelete
 	typeRollback
 )
+
+const writeConflictMarker = "write conflict"
 
 type mvccValue struct {
 	valueType mvccValueType
@@ -256,7 +257,7 @@ func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, err
 func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
 	if len(e.values) > 0 {
 		if e.values[0].commitTS >= startTS {
-			return ErrRetryable(util.WriteConflictMarker)
+			return ErrRetryable(writeConflictMarker)
 		}
 	}
 	if e.lock != nil {
