@@ -318,7 +318,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 		}
 
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-			innerRow := types.CopyRow(innerChunkRow.GetDatumRow(fields))
+			innerRow := types.CloneRow(innerChunkRow.GetDatumRow(fields))
 			e.rowCount++
 			row, err := e.getRow(innerRow)
 			if err != nil {
