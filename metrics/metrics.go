@@ -139,4 +139,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(CPUUsagePercentageGauge)
 	prometheus.MustRegister(TiKVPendingBatchRequests)
 	prometheus.MustRegister(TiKVBatchWaitDuration)
+	prometheus.MustRegister(TiKVBatchClientUnavailable)
 }
