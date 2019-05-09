@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -87,7 +88,16 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 }
 
 func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
-	idxKeys := make([][]byte, 0, len(e.valueLists))
+	var idxKeys [][]byte
+	if e.num > 0 {
+		idxKeys = make([][]byte, 0, e.num)
+	} else {
+		idxKeys = make([][]byte, 0, len(e.valueLists)+1)
+	}
+	// Split in the start of the index key.
+	startIdxKey := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, e.indexInfo.ID)
+	idxKeys = append(idxKeys, startIdxKey)
+
 	index := tables.NewIndex(e.tableInfo.ID, e.tableInfo, e.indexInfo)
 	if len(e.valueLists) > 0 {
 		for _, v := range e.valueLists {
@@ -110,8 +120,7 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	if bytes.Compare(minIdxKey, maxIdxKey) >= 0 {
 		return nil, errors.Errorf("Split index region `%v` min value %v should less than the max value %v", e.indexInfo.Name, e.min, e.max)
 	}
-	idxKeys = make([][]byte, 0, e.num+1)
-	return getValuesList(minIdxKey, maxIdxKey, e.num), nil
+	return getValuesList(minIdxKey, maxIdxKey, e.num, idxKeys), nil
 }
 
 func longestCommonPrefixLen(s1, s2 []byte) int {
@@ -164,7 +173,7 @@ func getDiffBytesValue(startIdx int, min, max []byte) uint64 {
 	return diffValue
 }
 
-func getValuesList(min, max []byte, num int) [][]byte {
+func getValuesList(min, max []byte, num int, valuesList [][]byte) [][]byte {
 	startIdx := longestCommonPrefixLen(min, max)
 	diffValue := getDiffBytesValue(startIdx, min, max)
 	step := diffValue / uint64(num)
@@ -179,8 +188,8 @@ func getValuesList(min, max []byte, num int) [][]byte {
 		startValue = append(startValue, 0)
 	}
 	startV := binary.BigEndian.Uint64(startValue)
-	valuesList := make([][]byte, 0, num+1)
-	valuesList = append(valuesList, min)
+	// To get `num` regions, only need to split `num-1` idx keys.
+	num--
 	tmp := make([]byte, 8)
 	for i := 0; i < num; i++ {
 		value := make([]byte, 0, startIdx+8)

@@ -111,8 +111,7 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	// Test for int index.
 	// range is 0 ~ 100, and split into 10 region.
 	// So 10 regions range is like below:
-	// region0: -inf ~ 0
-	// region1: 0 ~ 10
+	// region1: -inf ~ 10
 	// region2: 10 ~ 20
 	// region3: 20 ~ 30
 	// region4: 30 ~ 40
@@ -133,19 +132,18 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	}
 	valueList, err := e.getSplitIdxKeys()
 	c.Assert(err, IsNil)
-	c.Assert(len(valueList), Equals, e.num+1)
+	c.Assert(len(valueList), Equals, e.num)
 
 	cases := []struct {
 		value        int
 		lessEqualIdx int
 	}{
-		{-1, -1},
+		{-1, 0},
 		{0, 0},
 		{1, 0},
 		{10, 1},
 		{11, 1},
 		{20, 2},
-		{21, 2},
 		{21, 2},
 		{31, 3},
 		{41, 4},
@@ -154,8 +152,8 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 		{71, 7},
 		{81, 8},
 		{91, 9},
-		{100, 10},
-		{1000, 10},
+		{100, 9},
+		{1000, 9},
 	}
 
 	index := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
@@ -175,12 +173,12 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	// Test for varchar index.
 	// range is a ~ z, and split into 26 region.
 	// So 26 regions range is like below:
-	// region0: -inf ~ a
-	// region1: a ~ b
+	// region1: -inf ~ b
+	// region2: b ~ c
 	// .
 	// .
 	// .
-	// region26: z ~ +inf
+	// region26: y ~ +inf
 	e.min = []types.Datum{types.NewDatum("a")}
 	e.max = []types.Datum{types.NewDatum("z")}
 	e.num = 26
@@ -189,21 +187,21 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 
 	valueList, err = e.getSplitIdxKeys()
 	c.Assert(err, IsNil)
-	c.Assert(len(valueList), Equals, e.num+1)
+	c.Assert(len(valueList), Equals, e.num)
 
 	cases2 := []struct {
 		value        string
 		lessEqualIdx int
 	}{
-		{"", -1},
+		{"", 0},
 		{"a", 0},
 		{"abcde", 0},
 		{"b", 1},
 		{"bzzzz", 1},
 		{"c", 2},
 		{"czzzz", 2},
-		{"z", 26},
-		{"zabcd", 26},
+		{"z", 25},
+		{"zabcd", 25},
 	}
 
 	for _, ca := range cases2 {
@@ -223,12 +221,12 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	// Test for timestamp index.
 	// range is 2010-01-01 00:00:00 ~ 2020-01-01 00:00:00, and split into 10 region.
 	// So 10 regions range is like below:
-	// region0: -inf			    ~ 2010-01-01 00:00:00
-	// region1: 2010-01-01 00:00:00 ~ 2011-01-01 00:00:00
+	// region1: -inf			    ~ 2011-01-01 00:00:00
+	// region2: 2011-01-01 00:00:00 ~ 2012-01-01 00:00:00
 	// .
 	// .
 	// .
-	// region10: 2020-01-01 00:00:00 ~ +inf
+	// region10: 2019-01-01 00:00:00 ~ +inf
 	minTime := types.Time{
 		Time: types.FromDate(2010, 1, 1, 0, 0, 0, 0),
 		Type: mysql.TypeTimestamp,
@@ -246,13 +244,13 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 
 	valueList, err = e.getSplitIdxKeys()
 	c.Assert(err, IsNil)
-	c.Assert(len(valueList), Equals, e.num+1)
+	c.Assert(len(valueList), Equals, e.num)
 
 	cases3 := []struct {
 		value        types.MysqlTime
 		lessEqualIdx int
 	}{
-		{types.FromDate(2009, 11, 20, 12, 50, 59, 0), -1},
+		{types.FromDate(2009, 11, 20, 12, 50, 59, 0), 0},
 		{types.FromDate(2010, 1, 1, 0, 0, 0, 0), 0},
 		{types.FromDate(2011, 12, 31, 23, 59, 59, 0), 1},
 		{types.FromDate(2011, 2, 1, 0, 0, 0, 0), 1},
@@ -264,8 +262,8 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 		{types.FromDate(2017, 9, 1, 0, 0, 0, 0), 7},
 		{types.FromDate(2018, 10, 1, 0, 0, 0, 0), 8},
 		{types.FromDate(2019, 11, 1, 0, 0, 0, 0), 9},
-		{types.FromDate(2020, 12, 1, 0, 0, 0, 0), 10},
-		{types.FromDate(2030, 12, 1, 0, 0, 0, 0), 10},
+		{types.FromDate(2020, 12, 1, 0, 0, 0, 0), 9},
+		{types.FromDate(2030, 12, 1, 0, 0, 0, 0), 9},
 	}
 
 	for _, ca := range cases3 {
