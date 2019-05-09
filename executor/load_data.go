@@ -60,7 +60,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		return errors.New("Load Data: don't support load data without local field")
 	}
 	// TODO: support load data with replace field.
-	if e.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore {
+	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
 		return errors.New("Load Data: don't support load data with replace field")
 	}
 	// TODO: support lines terminated is "".
