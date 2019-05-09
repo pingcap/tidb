@@ -351,7 +351,7 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 	}
 }
 
-func (ts *testDatumSuite) TestCopyDatum(c *C) {
+func (ts *testDatumSuite) TestCloneDatum(c *C) {
 	var raw Datum
 	raw.b = []byte("raw")
 	raw.k = KindRaw
@@ -366,7 +366,7 @@ func (ts *testDatumSuite) TestCopyDatum(c *C) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
-		tt1 := CopyDatum(tt)
+		tt1 := CloneDatum(tt)
 		res, err := tt.CompareDatum(sc, &tt1)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, 0)
