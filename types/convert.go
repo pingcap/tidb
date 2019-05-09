@@ -201,13 +201,16 @@ func ConvertDecimalToUint(sc *stmtctx.StatementContext, d *MyDecimal, upperBound
 		}
 	}
 
+	upperBound -= round
+	upperStr := strconv.FormatUint(upperBound, 10)
+	if len(intStr) > len(upperStr) ||
+		(len(intStr) == len(upperStr) && intStr > upperStr) {
+		return upperBound, overflow(str, tp)
+	}
+
 	val, err := strconv.ParseUint(intStr, 10, 64)
 	if err != nil {
 		return 0, err
-	}
-	val += round
-	if val > upperBound {
-		return upperBound, overflow(str, tp)
 	}
 	return val, nil
 }
