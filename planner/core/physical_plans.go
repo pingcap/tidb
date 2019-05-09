@@ -187,11 +187,9 @@ type PhysicalTopN struct {
 
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
-	physicalSchemaProducer
+	PhysicalHashJoin
 
-	PhysicalJoin *PhysicalHashJoin
-	OuterSchema  []*expression.CorrelatedColumn
-
+	OuterSchema   []*expression.CorrelatedColumn
 	rightChOffset int
 }
 
