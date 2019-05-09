@@ -31,6 +31,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
@@ -72,6 +73,7 @@ const (
 	pColumnFlag = "colFlag"
 	pColumnLen  = "colLen"
 	pRowBin     = "rowBin"
+	pSnapshot   = "snapshot"
 )
 
 // For query string
@@ -517,6 +519,16 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 		meta, leader, err := t.RegionCache.PDClient().GetRegionByID(context.TODO(), regionID)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+
+		failpoint.Inject("errGetRegionByIDEmpty", func(val failpoint.Value) {
+			if val.(bool) {
+				meta = nil
+			}
+		})
+
+		if meta == nil {
+			return nil, errors.Errorf("region not found for regionID %q", regionID)
 		}
 		regions[i] = RegionMeta{
 			ID:          regionID,

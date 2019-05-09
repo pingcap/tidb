@@ -699,6 +699,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
+	case TiDBBackOffWeight:
+		s.KVVars.BackOffWeight = tidbOptPositiveInt32(val, kv.DefBackOffWeight)
 	case TiDBConstraintCheckInPlace:
 		s.ConstraintCheckInPlace = TiDBOptOn(val)
 	case TiDBBatchInsert:
@@ -945,7 +947,7 @@ const (
 
 // SlowLogFormat uses for formatting slow log.
 // The slow log output is like below:
-// # Time: 2019-02-12-19:33:56.571953 +0800
+// # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
 // # User: root@127.0.0.1
 // # Conn_ID: 6

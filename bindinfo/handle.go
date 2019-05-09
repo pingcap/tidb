@@ -59,6 +59,7 @@ type BindHandle struct {
 	bindInfo struct {
 		sync.Mutex
 		atomic.Value
+		parser *parser.Parser
 	}
 
 	// invalidBindRecordMap indicates the invalid bind records found during querying.
@@ -68,7 +69,6 @@ type BindHandle struct {
 		atomic.Value
 	}
 
-	parser         *parser.Parser
 	lastUpdateTime types.Time
 }
 
@@ -78,10 +78,11 @@ type invalidBindRecordMap struct {
 }
 
 // NewBindHandle creates a new BindHandle.
-func NewBindHandle(ctx sessionctx.Context, parser *parser.Parser) *BindHandle {
-	handle := &BindHandle{parser: parser}
+func NewBindHandle(ctx sessionctx.Context) *BindHandle {
+	handle := &BindHandle{}
 	handle.sctx.Context = ctx
 	handle.bindInfo.Value.Store(make(cache, 32))
+	handle.bindInfo.parser = parser.New()
 	handle.invalidBindRecordMap.Value.Store(make(map[string]*invalidBindRecordMap))
 	return handle
 }
@@ -151,14 +152,18 @@ func (h *BindHandle) AddBindRecord(record *BindRecord) (err error) {
 			return
 		}
 
+		// Make sure there is only one goroutine writes the cache and use parser.
+		h.bindInfo.Lock()
 		// update the BindMeta to the cache.
 		hash, meta, err1 := h.newBindMeta(record)
 		if err1 != nil {
 			err = err1
+			h.bindInfo.Unlock()
 			return
 		}
 
 		h.appendBindMeta(hash, meta)
+		h.bindInfo.Unlock()
 	}()
 
 	// remove all the unused sql binds.
@@ -279,8 +284,8 @@ func (h *BindHandle) Size() int {
 }
 
 // GetBindRecord return the bindMeta of the (normdOrigSQL,db) if bindMeta exist.
-func (h *BindHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
-	return h.bindInfo.Load().(cache).getBindRecord(normdOrigSQL, db)
+func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindMeta {
+	return h.bindInfo.Load().(cache).getBindRecord(hash, normdOrigSQL, db)
 }
 
 // GetAllBindRecord return all bind record in cache.
@@ -294,7 +299,7 @@ func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 
 func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
 	hash = parser.DigestHash(record.OriginalSQL)
-	stmtNodes, _, err := h.parser.Parse(record.BindSQL, record.Charset, record.Collation)
+	stmtNodes, _, err := h.bindInfo.parser.Parse(record.BindSQL, record.Charset, record.Collation)
 	if err != nil {
 		return "", nil, err
 	}
@@ -311,16 +316,10 @@ func newBindMetaWithoutAst(record *BindRecord) (hash string, meta *BindMeta) {
 // appendBindMeta addes the BindMeta to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
 func (h *BindHandle) appendBindMeta(hash string, meta *BindMeta) {
-	// Make sure there is only one goroutine writes the cache.
-	h.bindInfo.Lock()
 	newCache := h.bindInfo.Value.Load().(cache).copy()
-	defer func() {
-		h.bindInfo.Value.Store(newCache)
-		h.bindInfo.Unlock()
-	}()
-
 	newCache.removeStaleBindMetas(hash, meta)
 	newCache[hash] = append(newCache[hash], meta)
+	h.bindInfo.Value.Store(newCache)
 }
 
 // removeBindMeta removes the BindMeta from the cache.
@@ -388,8 +387,7 @@ func copyInvalidBindRecordMap(oldMap map[string]*invalidBindRecordMap) map[strin
 	return newMap
 }
 
-func (c cache) getBindRecord(normdOrigSQL, db string) *BindMeta {
-	hash := parser.DigestHash(normdOrigSQL)
+func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindMeta {
 	bindRecords := c[hash]
 	if bindRecords != nil {
 		for _, bindRecord := range bindRecords {

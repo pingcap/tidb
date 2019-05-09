@@ -157,7 +157,6 @@ func (b *PlanBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 			col.OrigTblName = col.TblName
 			if x.AsName.L != "" {
 				col.TblName = x.AsName
-				col.DBName = model.NewCIStr("")
 			}
 		}
 		// Duplicate column name in one table is not allowed.
@@ -2515,7 +2514,10 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 			return nil, err
 		}
 	}
-	orderedList, np, err := b.buildUpdateLists(tableList, update.List, p)
+
+	var updateTableList []*ast.TableName
+	updateTableList = extractTableList(sel.From.TableRefs, updateTableList, true)
+	orderedList, np, err := b.buildUpdateLists(updateTableList, update.List, p)
 	if err != nil {
 		return nil, err
 	}
@@ -2606,10 +2608,19 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col, Expr: newExpr})
 	}
+
+	tblDbMap := make(map[string]string, len(tableList))
+	for _, tbl := range tableList {
+		tblDbMap[tbl.Name.L] = tbl.DBInfo.Name.L
+	}
 	for _, assign := range newList {
 		col := assign.Col
 
 		dbName := col.DBName.L
+		// To solve issue#10028, we need to get database name by the table alias name.
+		if dbNameTmp, ok := tblDbMap[col.TblName.L]; ok {
+			dbName = dbNameTmp
+		}
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
