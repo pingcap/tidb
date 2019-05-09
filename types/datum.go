@@ -1835,14 +1835,14 @@ func DatumsToStrNoErr(datums []Datum) string {
 	return str
 }
 
-// CopyDatum returns a new copy of the datum.
+// CloneDatum returns a new copy of the datum.
 // TODO: Abandon this function.
-func CopyDatum(datum Datum) Datum {
+func CloneDatum(datum Datum) Datum {
 	return *datum.Copy()
 }
 
-// CopyRow deep copies a Datum slice.
-func CopyRow(dr []Datum) []Datum {
+// CloneRow deep copies a Datum slice.
+func CloneRow(dr []Datum) []Datum {
 	c := make([]Datum, len(dr))
 	for i, d := range dr {
 		c[i] = *d.Copy()
