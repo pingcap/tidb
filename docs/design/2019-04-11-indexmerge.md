@@ -218,7 +218,7 @@ We can take some tricks to make execution at pipeline mode without considering t
 
 (1)	IndexMergeIntersection
   
- <img alt="Execution Model" src="./imgs/and.jpeg" width="500pt"/>
+ <img alt="IndexMergeIntersection" src="./imgs/and.jpeg" width="500pt"/>
    We take an example to explain it. Use set1 to record rowids which are returned by ix1 but not sent to tableWorker. Use set2 to record the same thing for ix2.
 If new rowid comes from ix1, first we check if it is in set2. If so, we delete it from set2 and send it to tableWorker. Otherwise, we add it into set1. For the above figure, we use the following table to show the processing.
 
