@@ -13,10 +13,10 @@ All notable changes to this project will be documented in this file. See also [R
 * Properly push the filter down to child nodes of the join operator if the filter is a constant [#9848](https://github.com/pingcap/tidb/pull/9848)
 * Specially handle some functions such as `RAND()` when pruning columns during the logical optimization phase to prevent a result with an incompatibility with MySQL [# 10064](https://github.com/pingcap/tidb/pull/10064)
 * Support `FAST ANALYZE`, which speeds up statistics collection by sampling the region instead of scanning the entire region. This feature is disabled by default. To enable it, set the variable `tidb_enable_fast_analyze` to true [#10258](https://github.com/pingcap/tidb/pull/10258)
-* Support `SQL PLAN MANAGEMENT`, which ensures execution stability by performing execution plan binding on SQL statements. This feature is currently in beta and only supports using bound execution plans for SELECT statements. It is not recommended to use it in the production environment. [#10284](https://github.com/pingcap/tidb/pull/10284)
+* Support SQL Plan Management, which ensures execution stability by performing execution plan binding on SQL statements. This feature is currently in beta and only supports using bound execution plans for SELECT statements. It is not recommended to use it in the production environment. [#10284](https://github.com/pingcap/tidb/pull/10284)
 ### Execution Engine
 * Support tracing and controlling memory usage in three operators - `TableReader`, `IndexReader` and `IndexLookupReader` [#10003](https://github.com/pingcap/tidb/pull/10003)
-* Support showing more information about COPROCESSOR tasks in the slow log such as the number of tasks in COPROCESSOR, the average/longest/90% of execution/waiting time and the longest execution/waiting time of the TiKV address [#10165](https://github.com/pingcap/tidb/pull/10165)
+* Support showing more information about coprocessor tasks in the slow log such as the number of tasks in coprocessor, the average/longest/90% of execution/waiting time and the longest execution/waiting time of the TiKV address [#10165](https://github.com/pingcap/tidb/pull/10165)
 * Support the prepared DDL statements with no placeholders
 [#10144](https://github.com/pingcap/tidb/pull/10144)
 ### Server
@@ -26,7 +26,7 @@ All notable changes to this project will be documented in this file. See also [R
 [#10065](https://github.com/pingcap/tidb/pull/10065)
 * Merge the implicit commit time and the SQL execution time in the slow log
 [#10294](https://github.com/pingcap/tidb/pull/10294)
-* RBAC Privilege Management
+* Support for SQL Roles (RBAC Privilege Management)
 * Support `SHOW GRANT` [#10016](https://github.com/pingcap/tidb/pull/10016)
 * Support `SET DEFAULT ROLE` [#9949](https://github.com/pingcap/tidb/pull/9949)
 * Support `GRANT ROLE` [#9721](https://github.com/pingcap/tidb/pull/9721)
