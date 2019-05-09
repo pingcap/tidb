@@ -173,23 +173,23 @@ GetIndexMergeIntersectionPaths(pushDownConditions, usedConditionsInOr, indexInfo
 	var partialPaths
 
 	if len(pushDownConditions) - len(usedConditionsInOr) < 2 {
-	return nil
-}
-tableFilters := append(tableFilters, usedConditionsInOr...)
-newConsiderConditions := remove(pushDownConditions, usedConditionsInOr)
-for cond in newConsiderConditions {
-	indexPaths = buildAccessPath([]{cond}, indexInfos)
-	if indexPaths == nil {
-		tableFiltes = append(tableFilters,cond)
-		continue
-}
-indexPath := GetIndexMergePartialPath(indexPaths,indexInfos)
-partialPaths = append(partialPaths, indexPath)
-}
-if len(partialPaths) < 2 {
-	return nil
-}
-return CreateIndexMergeIntersectionPath(partialPaths, tableFilters)
+		return nil
+	}
+	tableFilters := append(tableFilters, usedConditionsInOr...)
+	newConsiderConditions := remove(pushDownConditions, usedConditionsInOr)
+	for cond in newConsiderConditions {
+		indexPaths = buildAccessPath([]{cond}, indexInfos)
+		if indexPaths == nil {
+			tableFiltes = append(tableFilters,cond)
+			continue
+		}
+		indexPath := GetIndexMergePartialPath(indexPaths,indexInfos)
+		partialPaths = append(partialPaths, indexPath)
+	}
+	if len(partialPaths) < 2 {
+		return nil
+	}
+	return CreateIndexMergeIntersectionPath(partialPaths, tableFilters)
 }
 
 // Now, we just use all path in partialPaths to generate a IndexMergeIntersection.
@@ -209,8 +209,7 @@ CreateIndexMergeIntersectionPath(partialPaths, tableFilters) {
 	
 ### 3.3 Executor
 Graph bellow illustrates execution of IndexMerge scan. 
-
-![Execution model](./execution_model.png =400x200)
+<img alt="Execution Model" src="./imgs/execution_model.png" width="500pt"/>
 
 Every index plan in `PhysicalIndexMergeLookUpReader` will start an `IndexWorker` to execute the IndexScan plan and send handles to AndOrWorker. AndOrWorker is responsible for doing set operations (and, or) to get final handles. Then `AndOrWoker` sends final handles to `TableWokers` to get rows from TiKV.
 
@@ -218,9 +217,8 @@ We can take some tricks to make execution at pipeline mode without considering t
 
 
 (1)	IndexMergeIntersection
-
-
- ![Execution model](./and.jpg =400x150)  
+  
+ <img alt="Execution Model" src="./imgs/and.jpeg" width="500pt"/>
    We take an example to explain it. Use set1 to record rowids which are returned by ix1 but not sent to tableWorker. Use set2 to record the same thing for ix2.
 If new rowid comes from ix1, first we check if it is in set2. If so, we delete it from set2 and send it to tableWorker. Otherwise, we add it into set1. For the above figure, we use the following table to show the processing.
 
@@ -261,14 +259,14 @@ Cost model will consider three factors: IO, CPU, and Network.
 	
 - `IndexMergeType` = 3
 
-	IO Cost = (totalRowCount + totalRowCount) * scanFactor
+	IO Cost = (totalRowCount + mergedRowCount) * scanFactor
 	
-	Network Cost = (totalRowCount + totalRowCount) * networkFactor
+	Network Cost = (totalRowCount + mergedRowCount) * networkFactor
 	
-	Cpu Memory Cost = totalRowCount * cpuFactor + totalRowCount * memoryFactor
+	Cpu Memory Cost = totalRowCount * cpuFactor + mergedRowCount * memoryFactor
 	
 
-**NB**:
+**Note**:
 
 - totalRowCount: sum of handles collected from every index scan.
 	
