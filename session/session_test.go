@@ -2416,7 +2416,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.Se.NewTxn(context.Background())
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
-	// Autocommit update will retry, so it would not fail.
+	// AutoCommit update will retry, so it would not fail.
 	tk1.MustExec("update no_retry set id = 5")
 
 	// RestrictedSQL should retry.
