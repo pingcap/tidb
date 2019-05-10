@@ -238,7 +238,7 @@ func (e *ShowExec) fetchShowDatabases() error {
 	// let information_schema be the first database
 	moveInfoSchemaToFront(dbs)
 	for _, d := range dbs {
-		if checker != nil && !checker.DBIsVisible(d) {
+		if checker != nil && !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, d) {
 			continue
 		}
 		e.appendRow([]interface{}{
@@ -283,8 +283,10 @@ func (e *ShowExec) fetchShowOpenTables() error {
 
 func (e *ShowExec) fetchShowTables() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(e.DBName.O) {
-		return e.dbAccessDenied()
+	if checker != nil && e.ctx.GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.O) {
+			return e.dbAccessDenied()
+		}
 	}
 	if !e.is.SchemaExists(e.DBName) {
 		return ErrBadDB.GenWithStackByArgs(e.DBName)
@@ -319,8 +321,10 @@ func (e *ShowExec) fetchShowTables() error {
 
 func (e *ShowExec) fetchShowTableStatus() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(e.DBName.O) {
-		return e.dbAccessDenied()
+	if checker != nil && e.ctx.GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.O) {
+			return e.dbAccessDenied()
+		}
 	}
 	if !e.is.SchemaExists(e.DBName) {
 		return ErrBadDB.GenWithStackByArgs(e.DBName)
@@ -883,8 +887,10 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(e.DBName)) {
-		return e.dbAccessDenied()
+	if checker != nil && e.ctx.GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.String()) {
+			return e.dbAccessDenied()
+		}
 	}
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {

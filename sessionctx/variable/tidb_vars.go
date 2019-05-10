@@ -222,6 +222,12 @@ const (
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
+	// tidb_back_off_weight is used to control the max back off time in TiDB.
+	// The default maximum back off time is a small value.
+	// BackOffWeight could multiply it to let the user adjust the maximum time for retrying.
+	// Only positive integers can be accepted, which means that the maximum back off time can only grow.
+	TiDBBackOffWeight = "tidb_back_off_weight"
+
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 
@@ -303,7 +309,7 @@ const (
 	DefTiDBMemQuotaDistSQL           = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
-	DefTiDBDisableTxnAutoRetry       = false
+	DefTiDBDisableTxnAutoRetry       = true
 	DefTiDBConstraintCheckInPlace    = false
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
@@ -335,7 +341,8 @@ var (
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold uint32 = DefTiDBDDLSlowOprThreshold
-	ForcePriority              = int32(DefTiDBForcePriority)
-	ServerHostname, _          = os.Hostname()
+	DDLSlowOprThreshold   uint32 = DefTiDBDDLSlowOprThreshold
+	ForcePriority                = int32(DefTiDBForcePriority)
+	ServerHostname, _            = os.Hostname()
+	MaxOfMaxAllowedPacket uint64 = 1073741824
 )

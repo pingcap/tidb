@@ -648,6 +648,19 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		if err = checkConflictValue(iter, mutation.Key, startTS); err != nil {
 			return err
 		}
+		return nil
+	}
+
+	dec1 := valueDecoder{
+		expectKey: mutation.Key,
+	}
+	ok, err = dec1.Decode(iter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Note that it's a write conflict here, even if the value is a rollback one.
+	if ok && dec1.value.commitTS >= startTS {
+		return ErrRetryable(tidbutil.WriteConflictMarker)
 	}
 
 	op := mutation.GetOp()

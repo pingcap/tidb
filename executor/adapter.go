@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -378,16 +378,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 	var err error
 	defer func() {
 		terror.Log(e.Close())
-		txnTS := uint64(0)
-		// Don't active pending txn here.
-		if txn, err1 := sctx.Txn(false); err1 != nil {
-			logutil.Logger(ctx).Error("get current transaction failed", zap.Error(err))
-		} else {
-			if txn.Valid() {
-				txnTS = txn.StartTS()
-			}
-		}
-		a.LogSlowQuery(txnTS, err == nil)
 		a.logAudit()
 	}()
 
@@ -435,7 +425,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, nil
 	}
 	errStr := err.Error()
-	if !strings.Contains(errStr, tidbutil.WriteConflictMarker) {
+	if !strings.Contains(errStr, util.WriteConflictMarker) {
 		return nil, err
 	}
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {

@@ -24,9 +24,13 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -140,6 +144,8 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	)
 	c.Assert(err, IsNil)
 	var dom *domain.Domain
+	session.SetStatsLease(0)
+	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
@@ -209,6 +215,8 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	)
 	c.Assert(err, IsNil)
 	var dom *domain.Domain
+	session.SetStatsLease(0)
+	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
@@ -240,7 +248,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
 	sTbl := fmt.Sprintln(tbl)
 	matched := false
-	if sTbl == "Table:37 Count:3000\n"+
+	if sTbl == "Table:39 Count:3000\n"+
 		"column:1 ndv:3000 totColSize:0\n"+
 		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
 		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
@@ -259,7 +267,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
 		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
 		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" ||
-		sTbl == "Table:37 Count:3000\n"+
+		sTbl == "Table:39 Count:3000\n"+
 			"column:2 ndv:3000 totColSize:0\n"+
 			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
 			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
@@ -299,4 +307,36 @@ func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	tk.MustExec("analyze incremental table t index")
 	// Result should not change.
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 2 1 2 2", "test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2"))
+
+	// Test analyze incremental with feedback.
+	tk.MustExec("insert into t values (3,3)")
+	oriProbability := statistics.FeedbackProbability.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+	}()
+	statistics.FeedbackProbability.Store(1)
+	is := s.dom.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	tk.MustQuery("select * from t use index(idx) where b = 3")
+	tk.MustQuery("select * from t where a > 1")
+	h := s.dom.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(is), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 3 0 2 2147483647", "test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2"))
+	tblStats := h.GetTableStats(tblInfo)
+	val, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
+	c.Assert(err, IsNil)
+	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(val), Equals, uint64(1))
+	c.Assert(statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag), IsFalse)
+	c.Assert(statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag), IsFalse)
+
+	tk.MustExec("analyze incremental table t index")
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 2 1 2 2", "test t  a 0 2 3 1 3 3",
+		"test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2", "test t  idx 1 2 3 1 3 3"))
+	tblStats = h.GetTableStats(tblInfo)
+	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(val), Equals, uint64(1))
 }

@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -197,12 +196,17 @@ const (
 	Version1        = 1
 )
 
-// AnalyzeFlag is one for column flag. We can use IsAnalyzed to check whether this column is analyzed or not.
+// AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
 const AnalyzeFlag = 1
 
 // IsAnalyzed checks whether this flag contains AnalyzeFlag.
 func IsAnalyzed(flag int64) bool {
 	return (flag & AnalyzeFlag) > 0
+}
+
+// ResetAnalyzeFlag resets the AnalyzeFlag because it has been modified by feedback.
+func ResetAnalyzeFlag(flag int64) int64 {
+	return flag &^ AnalyzeFlag
 }
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
@@ -566,17 +570,6 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
-// ContainsFeedback checks if the histogram contains feedback updates.
-// We can test it from the `repeat` field because only feedback will update it to 0.
-func (hg *Histogram) ContainsFeedback() bool {
-	for _, bkt := range hg.Buckets {
-		if bkt.Repeat == 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // Copy deep copies the histogram.
 func (hg *Histogram) Copy() *Histogram {
 	newHist := *hg
@@ -586,6 +579,22 @@ func (hg *Histogram) Copy() *Histogram {
 		newHist.Buckets = append(newHist.Buckets, bkt)
 	}
 	return &newHist
+}
+
+// RemoveUpperBound removes the upper bound from histogram.
+// It is used when merge stats for incremental analyze.
+func (hg *Histogram) RemoveUpperBound() *Histogram {
+	hg.Buckets[hg.Len()-1].Count -= hg.Buckets[hg.Len()-1].Repeat
+	hg.Buckets[hg.Len()-1].Repeat = 0
+	return hg
+}
+
+// TruncateHistogram truncates the histogram to `numBkt` buckets.
+func (hg *Histogram) TruncateHistogram(numBkt int) *Histogram {
+	hist := hg.Copy()
+	hist.Buckets = hist.Buckets[:numBkt]
+	hist.Bounds.TruncateTo(numBkt * 2)
+	return hist
 }
 
 // ErrorRate is the error rate of estimate row count by bucket and cm sketch.
@@ -629,6 +638,8 @@ type Column struct {
 	Info       *model.ColumnInfo
 	IsHandle   bool
 	ErrorRate
+	Flag           int64
+	LastAnalyzePos types.Datum
 }
 
 func (c *Column) String() string {
@@ -730,8 +741,10 @@ type Index struct {
 	Histogram
 	*CMSketch
 	ErrorRate
-	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Info     *model.IndexInfo
+	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	Info           *model.IndexInfo
+	Flag           int64
+	LastAnalyzePos types.Datum
 }
 
 func (idx *Index) String() string {
@@ -988,28 +1001,6 @@ func (idx *Index) outOfRange(val types.Datum) bool {
 		matchPrefix(idx.Bounds.GetRow(0), 0, &val)
 	withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
 	return !withInLowBoundOrPrefixMatch || !withInHighBound
-}
-
-// RemoveUpperBound removes the upper bound the index stats.
-// It is used when merge stats for incremental analyze.
-func (idx *Index) RemoveUpperBound(sc *stmtctx.StatementContext, values []types.Datum) (*Histogram, *CMSketch, error) {
-	hist, cms := idx.Histogram.Copy(), idx.CMSketch.Copy()
-	hist.Buckets[hist.Len()-1].Count -= hist.Buckets[hist.Len()-1].Repeat
-	hist.Buckets[hist.Len()-1].Repeat = 0
-	if cms == nil {
-		return hist, nil, nil
-	}
-	var data []byte
-	var err error
-	for _, val := range values {
-		data, err = codec.EncodeKey(sc, data, val)
-		if err != nil {
-			return nil, nil, err
-		}
-		h1, h2 := murmur3.Sum128(data)
-		cms.setValue(h1, h2, 0)
-	}
-	return hist, cms, nil
 }
 
 // matchPrefix checks whether ad is the prefix of value
