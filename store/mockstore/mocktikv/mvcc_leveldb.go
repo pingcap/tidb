@@ -645,7 +645,8 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		}
 		// Overwrite the pessimistic lock.
 	} else {
-		if err = checkConflictValue(iter, mutation.Key, startTS); err != nil {
+		err = checkConflictValue(iter, mutation.Key, startTS)
+		if err != nil {
 			return err
 		}
 		return nil
