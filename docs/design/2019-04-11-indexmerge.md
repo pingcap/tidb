@@ -1,6 +1,6 @@
 # Proposal: scan a table using IndexMerge
 - Author(s) : WHU
-- Last updated : April 11
+- Last updated : May 10
 - Discussion at :
 
 
@@ -59,9 +59,9 @@ Test SQL Form:
 		SELECT * FROM T200M WHERE C1 < $3 AND C2 < $4;
 ```
 
-We load two million rows into `T200M` with one to two million sequence for all columns. We audit `$1-$4` to obtain equal selectivity on `C1` and `C2`, while the difference between `CNF-1` and `CNF-2` is `CNF-1` has no final results. The result can be seen in the follow graph:
+We load two million rows into `T200M` with one to two million sequence for all columns. We alter `$1-$4` to obtain equal selectivity on `C1` and `C2`, while the difference between `CNF-1` and `CNF-2` is `CNF-1` has no final results. The result can be seen in the following graph:
 
-<img alt="DNF 200" src="./imgs/cnf200m2.png" width="500pt"/>
+<img alt="CNF 200" src="./imgs/cnf200m2.png" width="500pt"/>
 
 **Note:** `SELECTIVITY`is for the single column.
 
@@ -87,7 +87,7 @@ Table Schema:
 Test SQL Form:
 	SELECT * FROM T200 WHERE a < $1 OR b > $2;
 ```  
-We load two million rows into `T200` with one to two million sequence for all columns. We audit the value of `$1` and `$2` in test sql form to obtain the accurate selectivities. The result can be seen in the follow graph:
+We load two million rows into `T200` with one to two million sequence for all columns. We alter the value of `$1` and `$2` in test sql form to obtain the accurate selectivities. The result can be seen in the following graph:
 
 <img alt="DNF 200" src="./imgs/dnf200.png" width="500pt"/>
 
