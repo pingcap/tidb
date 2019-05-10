@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/tools/container/intsets"
@@ -199,7 +200,7 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 
 // candidatePath is used to maintain required info for skyline pruning.
 type candidatePath struct {
-	path         *accessPath
+	path         *util.AccessPath
 	columnSet    *intsets.Sparse // columnSet is the set of columns that occurred in the access conditions.
 	isSingleScan bool
 	isMatchProp  bool
@@ -258,31 +259,31 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 	return 0
 }
 
-func (ds *DataSource) getTableCandidate(path *accessPath, prop *property.PhysicalProperty) *candidatePath {
+func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	pkCol := ds.getPKIsHandleCol()
 	candidate.isMatchProp = len(prop.Cols) == 1 && pkCol != nil && prop.Cols[0].Equal(nil, pkCol)
-	candidate.columnSet = expression.ExtractColumnSet(path.accessConds)
+	candidate.columnSet = expression.ExtractColumnSet(path.AccessConds)
 	candidate.isSingleScan = true
 	return candidate
 }
 
-func (ds *DataSource) getIndexCandidate(path *accessPath, prop *property.PhysicalProperty) *candidatePath {
+func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	// When the prop is empty, `isMatchProp` is better to be `false` because
 	// it needs not to keep order for index scan.
 	if !prop.IsEmpty() {
-		for i, col := range path.index.Columns {
+		for i, col := range path.Index.Columns {
 			if col.Name.L == prop.Cols[0].ColName.L {
-				candidate.isMatchProp = matchIndicesProp(path.index.Columns[i:], prop.Cols)
+				candidate.isMatchProp = matchIndicesProp(path.Index.Columns[i:], prop.Cols)
 				break
-			} else if i >= path.eqCondCount {
+			} else if i >= path.EqCondCount {
 				break
 			}
 		}
 	}
-	candidate.columnSet = expression.ExtractColumnSet(path.accessConds)
-	candidate.isSingleScan = isCoveringIndex(ds.schema.Columns, path.index.Columns, ds.tableInfo.PKIsHandle)
+	candidate.columnSet = expression.ExtractColumnSet(path.AccessConds)
+	candidate.isSingleScan = isCoveringIndex(ds.schema.Columns, path.Index.Columns, ds.tableInfo.PKIsHandle)
 	return candidate
 }
 
@@ -292,13 +293,13 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 	candidates := make([]*candidatePath, 0, 4)
 	for _, path := range ds.possibleAccessPaths {
 		// if we already know the range of the scan is empty, just return a TableDual
-		if len(path.ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
+		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
 			return []*candidatePath{{path: path}}
 		}
 		var currentCandidate *candidatePath
-		if path.isTablePath {
+		if path.IsTablePath {
 			currentCandidate = ds.getTableCandidate(path, prop)
-		} else if len(path.accessConds) > 0 || !prop.IsEmpty() || path.forced {
+		} else if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced {
 			// We will use index to generate physical plan if:
 			// this path's access cond is not nil or
 			// we have prop to match or
@@ -385,14 +386,14 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 	for _, candidate := range candidates {
 		path := candidate.path
 		// if we already know the range of the scan is empty, just return a TableDual
-		if len(path.ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
+		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
 			dual := PhysicalTableDual{}.init(ds.ctx, ds.stats)
 			dual.SetSchema(ds.schema)
 			return &rootTask{
 				p: dual,
 			}, nil
 		}
-		if path.isTablePath {
+		if path.IsTablePath {
 			tblTask, err := ds.convertToTableScan(prop, candidate)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -453,18 +454,18 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
 	path := candidate.path
-	idx := path.index
+	idx := path.Index
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
 		Columns:          ds.Columns,
 		Index:            idx,
-		IdxCols:          path.idxCols,
-		IdxColLens:       path.idxColLens,
-		AccessCondition:  path.accessConds,
-		Ranges:           path.ranges,
-		filterCondition:  path.indexFilters,
+		IdxCols:          path.IdxCols,
+		IdxColLens:       path.IdxColLens,
+		AccessCondition:  path.AccessConds,
+		Ranges:           path.Ranges,
+		filterCondition:  path.IndexFilters,
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
@@ -473,7 +474,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	if statsTbl.Indices[idx.ID] != nil {
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
-	rowCount := path.countAfterAccess
+	rowCount := path.CountAfterAccess
 	cop := &copTask{indexPlan: is}
 	if !candidate.isSingleScan {
 		// If it's parent requires single read task, return max cost.
@@ -498,7 +499,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
 	if (candidate.isMatchProp || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
-		selectivity := ds.stats.RowCount / path.countAfterAccess
+		selectivity := ds.stats.RowCount / path.CountAfterAccess
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	is.stats = property.NewSimpleStats(rowCount)
@@ -565,14 +566,14 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64, path *accessPath) {
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64, path *util.AccessPath) {
 	// Add filter condition to table plan now.
-	indexConds, tableConds := path.indexFilters, path.tableFilters
+	indexConds, tableConds := path.IndexFilters, path.TableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
-		count := path.countAfterAccess
+		count := path.CountAfterAccess
 		if count >= 1.0 {
-			selectivity := path.countAfterIndex / path.countAfterAccess
+			selectivity := path.CountAfterIndex / path.CountAfterAccess
 			count = is.stats.RowCount * selectivity
 		}
 		stats := &property.StatsInfo{RowCount: count}
@@ -638,9 +639,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 	}
 	path := candidate.path
-	ts.Ranges = path.ranges
-	ts.AccessCondition, ts.filterCondition = path.accessConds, path.tableFilters
-	rowCount := path.countAfterAccess
+	ts.Ranges = path.Ranges
+	ts.AccessCondition, ts.filterCondition = path.AccessConds, path.TableFilters
+	rowCount := path.CountAfterAccess
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,

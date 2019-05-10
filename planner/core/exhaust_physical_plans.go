@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
@@ -414,9 +415,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	if !ok {
 		return nil
 	}
-	var tblPath *accessPath
+	var tblPath *util.AccessPath
 	for _, path := range x.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			tblPath = path
 			break
 		}
@@ -448,10 +449,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		keyOff2IdxOff  []int
 	)
 	for _, path := range x.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			continue
 		}
-		indexInfo := path.index
+		indexInfo := path.Index
 		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
 		// We choose the index by the number of used columns of the range, the much the better.
 		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
@@ -540,7 +541,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(remainedConds, idx.Columns, ds.tableInfo)
-	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
+	path := &util.AccessPath{IndexFilters: indexConds, TableFilters: tblConds, CountAfterIndex: math.MaxFloat64}
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
 	t := finishCopTask(ds.ctx, cop)
 	return t.plan()

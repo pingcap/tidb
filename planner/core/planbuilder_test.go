@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/planner/util"
 )
 
 var _ = Suite(&testPlanBuilderSuite{})
@@ -65,9 +66,9 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 		PKIsHandle: true,
 	}
 
-	accessPath := []*accessPath{
-		{isTablePath: true},
-		{index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
+	accessPath := []*util.AccessPath{
+		{IsTablePath: true},
+		{Index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
 	}
 
 	path := getPathByIndexName(accessPath, model.NewCIStr("idx"), tblInfo)

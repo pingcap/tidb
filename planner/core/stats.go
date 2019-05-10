@@ -62,6 +62,19 @@ func (p *baseLogicalPlan) deriveStats() (*property.StatsInfo, error) {
 	return profile, nil
 }
 
+func (ds *DataSource) initStats() {
+	profile := &property.StatsInfo{
+		RowCount:       float64(ds.statisticTable.Count),
+		Cardinality:    make([]float64, len(ds.Columns)),
+		HistColl:       ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
+		UsePseudoStats: ds.statisticTable.Pseudo,
+	}
+	for i, col := range ds.Columns {
+		profile.Cardinality[i] = ds.getColumnNDV(col.ID)
+	}
+	ds.stats = profile
+}
+
 // getColumnNDV computes estimated NDV of specified column using the original
 // histogram of `DataSource` which is retrieved from storage(not the derived one).
 func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
@@ -76,22 +89,12 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 }
 
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.StatsInfo {
-	profile := &property.StatsInfo{
-		RowCount:       float64(ds.statisticTable.Count),
-		Cardinality:    make([]float64, len(ds.Columns)),
-		HistColl:       ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
-		UsePseudoStats: ds.statisticTable.Pseudo,
-	}
-	for i, col := range ds.Columns {
-		profile.Cardinality[i] = ds.getColumnNDV(col.ID)
-	}
-	ds.stats = profile
-	selectivity, err := profile.HistColl.Selectivity(ds.ctx, conds)
+	selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, conds, ds.possibleAccessPaths)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("an error happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
-	return profile.Scale(selectivity)
+	return ds.stats.Scale(selectivity)
 }
 
 func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
@@ -99,15 +102,25 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
+	ds.initStats()
+	for _, path := range ds.possibleAccessPaths {
+		if path.IsTablePath {
+			continue
+		}
+		err := ds.fillRangesForIndexPath(path)
+		if err != nil {
+			return nil, err
+		}
+	}
 	ds.stats = ds.getStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.ranges) == 0 {
+			if noIntervalRanges || len(path.Ranges) == 0 {
 				ds.possibleAccessPaths[0] = path
 				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 				break
@@ -119,7 +132,7 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		// If we have empty range, or point range on unique index, just remove other possible paths.
-		if (noIntervalRanges && path.index.Unique) || len(path.ranges) == 0 {
+		if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
 			ds.possibleAccessPaths[0] = path
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 			break
