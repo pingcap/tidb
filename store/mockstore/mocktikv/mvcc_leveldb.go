@@ -592,7 +592,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	}
 
 	// Check assertions.
-	if (ok && mutation.Assertion == kvrpcpb.Assertion_NotExist) ||
+	if (ok && dec1.value.valueType == typePut && mutation.Assertion == kvrpcpb.Assertion_NotExist) ||
 		(!ok && mutation.Assertion == kvrpcpb.Assertion_Exist) {
 		logutil.Logger(context.Background()).Error("ASSERTION FAIL!!!", zap.Stringer("mutation", mutation))
 	}
