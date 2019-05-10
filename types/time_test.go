@@ -1363,22 +1363,6 @@ func (s *testTimeSuite) TestTimeOverflow(c *C) {
 	}
 }
 
-func (s *testTimeSuite) TestTruncateFrac(c *C) {
-	cols := []struct {
-		input  time.Time
-		fsp    int
-		output time.Time
-	}{
-		{time.Date(2011, 11, 11, 10, 10, 10, 888888, time.UTC), 0, time.Date(2011, 11, 11, 10, 10, 10, 11, time.UTC)},
-		{time.Date(2011, 11, 11, 10, 10, 10, 111111, time.UTC), 0, time.Date(2011, 11, 11, 10, 10, 10, 10, time.UTC)},
-	}
-
-	for _, col := range cols {
-		res, err := types.TruncateFrac(col.input, col.fsp)
-		c.Assert(res.Second(), Equals, col.output.Second())
-		c.Assert(err, IsNil)
-	}
-}
 func (s *testTimeSuite) TestTimeSub(c *C) {
 	tbl := []struct {
 		Arg1 string
