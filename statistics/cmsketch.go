@@ -298,6 +298,31 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 	return nil
 }
 
+// MergeCMSketch4IncrementalAnalyze merges two CM Sketch for incremental analyze. Since there is no value
+// that appears partially in `c` and `rc` for incremental analyze, it uses `max` to merge them.
+// Here is a simple proof: when we query from the CM sketch, we use the `min` to get the answer:
+//   (1): For values that only appears in `c, using `max` to merge them affects the `min` query result less than using `sum`;
+//   (2): For values that only appears in `rc`, it is the same as condition (1);
+//   (3): For values that appears both in `c` and `rc`, if they do not appear partially in `c` and `rc`, for example,
+//        if `v` appears 5 times in the table, it can appears 5 times in `c` and 3 times in `rc`, then `max` also gives the correct answer.
+// So in fact, if we can know the number of appearances of each value in the first place, it is better to use `max` to construct the CM sketch rather than `sum`.
+func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch) error {
+	if c.depth != rc.depth || c.width != rc.width {
+		return errors.New("Dimensions of Count-Min Sketch should be the same")
+	}
+	if c.topN != nil || rc.topN != nil {
+		return errors.New("CMSketch with Top-N does not support merge")
+	}
+	for i := range c.table {
+		c.count = 0
+		for j := range c.table[i] {
+			c.table[i][j] = mathutil.MaxUint32(c.table[i][j], rc.table[i][j])
+			c.count += uint64(c.table[i][j])
+		}
+	}
+	return nil
+}
+
 // CMSketchToProto converts CMSketch to its protobuf representation.
 func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 	protoSketch := &tipb.CMSketch{Rows: make([]*tipb.CMSketchRow, c.depth)}

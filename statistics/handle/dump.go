@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -59,10 +60,10 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch) *jso
 }
 
 // DumpStatsToJSON dumps statistic to json.
-func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JSONTable, error) {
+func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
-		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID)
+		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, historyStatsExec)
 	}
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
@@ -70,7 +71,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
 	}
 	for _, def := range pi.Definitions {
-		tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID)
+		tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID, historyStatsExec)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -82,13 +83,14 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 	return jsonTbl, nil
 }
 
-func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64) (*JSONTable, error) {
-	tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, true)
-	if err != nil {
-		return nil, errors.Trace(err)
+func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
+	tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, true, historyStatsExec)
+	if err != nil || tbl == nil {
+		return nil, err
 	}
-	if tbl == nil {
-		return nil, nil
+	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, historyStatsExec)
+	if err != nil {
+		return nil, err
 	}
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
