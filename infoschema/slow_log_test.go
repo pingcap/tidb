@@ -16,10 +16,12 @@ package infoschema_test
 import (
 	"bufio"
 	"bytes"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -36,10 +38,10 @@ func (s *testSuite) TestParseSlowLogFile(c *C) {
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8
 # Mem_max: 70724
 select * from t;`)
-	scanner := bufio.NewScanner(slowLog)
+	reader := bufio.NewReader(slowLog)
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	rows, err := infoschema.ParseSlowLog(loc, scanner)
+	rows, err := infoschema.ParseSlowLog(loc, reader)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows), Equals, 1)
 	recordString := ""
@@ -67,8 +69,8 @@ select a# from t;
 # Stats: t1:1,t2:2
 select * from t;
 `)
-	scanner = bufio.NewScanner(slowLog)
-	_, err = infoschema.ParseSlowLog(loc, scanner)
+	reader = bufio.NewReader(slowLog)
+	_, err = infoschema.ParseSlowLog(loc, reader)
 	c.Assert(err, IsNil)
 
 	// test for time format compatibility.
@@ -78,8 +80,8 @@ select * from t;
 # Time: 2019-04-24-19:41:21.716221 +0800
 select * from t;
 `)
-	scanner = bufio.NewScanner(slowLog)
-	rows, err = infoschema.ParseSlowLog(loc, scanner)
+	reader = bufio.NewReader(slowLog)
+	rows, err = infoschema.ParseSlowLog(loc, reader)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows) == 2, IsTrue)
 	t0Str, err := rows[0][0].ToString()
@@ -88,6 +90,26 @@ select * from t;
 	t1Str, err := rows[1][0].ToString()
 	c.Assert(err, IsNil)
 	c.Assert(t1Str, Equals, "2019-04-24 19:41:21.716221")
+
+	// test for bufio.Scanner: token too long.
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+select * from t;
+# Time: 2019-04-24-19:41:21.716221 +0800
+`)
+	originValue := variable.MaxOfMaxAllowedPacket
+	variable.MaxOfMaxAllowedPacket = 65536
+	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
+	slowLog.WriteString(sql)
+	reader = bufio.NewReader(slowLog)
+	_, err = infoschema.ParseSlowLog(loc, reader)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "single line length exceeds limit: 65536")
+
+	variable.MaxOfMaxAllowedPacket = originValue
+	reader = bufio.NewReader(slowLog)
+	_, err = infoschema.ParseSlowLog(loc, reader)
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TestSlowLogParseTime(c *C) {
