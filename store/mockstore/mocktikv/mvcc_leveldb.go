@@ -649,7 +649,6 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		if err != nil {
 			return err
 		}
-		return nil
 	}
 
 	dec1 := valueDecoder{
