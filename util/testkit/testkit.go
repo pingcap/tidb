@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -213,13 +214,25 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 
 // ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
-	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	sRows, err := ResultSetToStringSlice(ctx, tk.Se, rs)
+	if err != nil {
+		tk.c.Assert(err, check.IsNil)
+	}
+	return &Result{rows: sRows, c: tk.c, comment: comment}
+}
+
+// ResultSetToStringSlice .
+func ResultSetToStringSlice(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([][]string, error) {
+	rows, err := session.GetRows4Test(ctx, sctx, rs)
+	if err != nil {
+		return nil, err
+	}
 	err = rs.Close()
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	if err != nil {
+		return nil, err
+	}
 	sRows := make([][]string, len(rows))
-	for i := range rows {
-		row := rows[i]
+	for i, row := range rows {
 		iRow := make([]string, row.Len())
 		for j := 0; j < row.Len(); j++ {
 			if row.IsNull(j) {
@@ -227,12 +240,14 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 			} else {
 				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
 				iRow[j], err = d.ToString()
-				tk.c.Assert(err, check.IsNil)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 		sRows[i] = iRow
 	}
-	return &Result{rows: sRows, c: tk.c, comment: comment}
+	return sRows, nil
 }
 
 // Rows is similar to RowsWithSep, use white space as separator string.

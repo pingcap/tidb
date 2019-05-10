@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -409,9 +410,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			return nil
 		}
 	}
-	var tblPath *accessPath
+	var tblPath *util.AccessPath
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			tblPath = path
 			break
 		}
@@ -436,10 +437,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	helper := &indexJoinBuildHelper{join: p}
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			continue
 		}
-		indexInfo := path.index
+		indexInfo := path.Index
 		err := helper.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("build index join failed", zap.Error(err))
@@ -584,7 +585,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)
-	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
+	path := &util.AccessPath{IndexFilters: indexConds, TableFilters: tblConds, CountAfterIndex: math.MaxFloat64}
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
 	t := finishCopTask(ds.ctx, cop)
 	reader := t.plan()
