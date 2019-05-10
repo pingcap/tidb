@@ -96,3 +96,12 @@ explain select * from t where _tidb_rowid = 0;
 explain select * from t where _tidb_rowid > 0;
 explain select a, _tidb_rowid from t where a > 0;
 explain select * from t where _tidb_rowid > 0 and a > 0;
+
+# https://github.com/pingcap/tidb/issues/10344
+drop table if exists t;
+create table t(a int);
+begin;
+insert into t values (1);
+explain select * from t left outer join t t1 on t.a = t1.a where t.a not between 1 and 2;
+rollback;
+drop table if exists t;
