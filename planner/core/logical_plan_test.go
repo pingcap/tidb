@@ -1032,109 +1032,120 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		{
 			sql: "select count(*) from t group by a",
 			ans: map[int][]string{
-				1: {"a"},
+				1: {"test.t.a"},
 			},
 		},
 		{
 			sql: "select count(*) from t",
 			ans: map[int][]string{
-				1: {},
+				1: {"test.t.a"},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b where a.a < 1",
 			ans: map[int][]string{
-				1: {"a"},
-				2: {},
+				1: {"test.a.a"},
+				2: {"test.b.a"},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b on a.a = b.d",
 			ans: map[int][]string{
-				1: {"a"},
-				2: {"d"},
+				1: {"test.a.a"},
+				2: {"test.b.d"},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b on a.a = b.d order by sum(a.d)",
 			ans: map[int][]string{
-				1: {"a", "d"},
-				2: {"d"},
+				1: {"test.a.a", "test.a.d"},
+				2: {"test.b.d"},
 			},
 		},
 		{
 			sql: "select count(b.a) from t a join t b on a.a = b.d group by b.b order by sum(a.d)",
 			ans: map[int][]string{
-				1: {"a", "d"},
-				2: {"a", "b", "d"},
+				1: {"test.a.a", "test.a.d"},
+				2: {"test.b.a", "test.b.b", "test.b.d"},
 			},
 		},
 		{
 			sql: "select * from (select count(b.a) from t a join t b on a.a = b.d group by b.b having sum(a.d) < 0) tt",
 			ans: map[int][]string{
-				1: {"a", "d"},
-				2: {"a", "b", "d"},
+				1: {"test.a.a", "test.a.d"},
+				2: {"test.b.a", "test.b.b", "test.b.d"},
 			},
 		},
 		{
 			sql: "select (select count(a) from t where b = k.a) from t k",
 			ans: map[int][]string{
-				1: {"a"},
-				3: {"a", "b"},
+				1: {"test.k.a"},
+				3: {"test.t.a", "test.t.b"},
 			},
 		},
 		{
 			sql: "select exists (select count(*) from t where b = k.a) from t k",
 			ans: map[int][]string{
-				1: {},
+				1: {"test.k.a"},
 			},
 		},
 		{
 			sql: "select b = (select count(*) from t where b = k.a) from t k",
 			ans: map[int][]string{
-				1: {"a", "b"},
-				3: {"b"},
+				1: {"test.k.a", "test.k.b"},
+				3: {"test.t.b"},
 			},
 		},
 		{
 			sql: "select exists (select count(a) from t where b = k.a group by b) from t k",
 			ans: map[int][]string{
-				1: {"a"},
-				3: {"b"},
+				1: {"test.k.a"},
+				3: {"test.t.b"},
 			},
 		},
 		{
 			sql: "select a as c1, b as c2 from t order by 1, c1 + c2 + c",
 			ans: map[int][]string{
-				1: {"a", "b", "c"},
+				1: {"test.t.a", "test.t.b", "test.t.c"},
 			},
 		},
 		{
 			sql: "select a from t where b < any (select c from t)",
 			ans: map[int][]string{
-				1: {"a", "b"},
-				3: {"c"},
+				1: {"test.t.a", "test.t.b"},
+				3: {"test.t.c"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) != all (select c,d from t)",
 			ans: map[int][]string{
-				1: {"a", "b"},
-				3: {"c", "d"},
+				1: {"test.t.a", "test.t.b"},
+				3: {"test.t.c", "test.t.d"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) in (select c,d from t)",
 			ans: map[int][]string{
-				1: {"a", "b"},
-				3: {"c", "d"},
+				1: {"test.t.a", "test.t.b"},
+				3: {"test.t.c", "test.t.d"},
 			},
 		},
 		{
 			sql: "select a from t where a in (select a from t s group by t.b)",
 			ans: map[int][]string{
-				1: {"a"},
-				3: {"a"},
+				1: {"test.t.a"},
+				3: {"test.s.a"},
+			},
+		},
+		{
+			sql: "select t01.a from (select a from t t21 union all select a from t t22) t2 join t t01 on 1 left outer join t t3 on 1 join t t4 on 1",
+			ans: map[int][]string{
+				1:  {"test.t22.a"},
+				3:  {"test.t21.a"},
+				5:  {"t2.a"},
+				8:  {"test.t01.a"},
+				10: {"test.t3.a"},
+				12: {"test.t4.a"},
 			},
 		},
 	}
@@ -1162,9 +1173,17 @@ func checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment Comm
 	switch p.(type) {
 	case *DataSource:
 		colList, ok := ans[p.ID()]
-		c.Assert(ok, IsTrue, comment)
+		c.Assert(ok, IsTrue, Commentf("For %v DataSource ID %d Not found", comment, p.ID()))
+		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
 		for i, colName := range colList {
-			c.Assert(colName, Equals, p.Schema().Columns[i].ColName.L, comment)
+			c.Assert(p.Schema().Columns[i].String(), Equals, colName, comment)
+		}
+	case *LogicalUnionAll:
+		colList, ok := ans[p.ID()]
+		c.Assert(ok, IsTrue, Commentf("For %v UnionAll ID %d Not found", comment, p.ID()))
+		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
+		for i, colName := range colList {
+			c.Assert(p.Schema().Columns[i].String(), Equals, colName, comment)
 		}
 	}
 	for _, child := range p.Children() {
