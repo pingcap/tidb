@@ -162,6 +162,12 @@ func (c *clientTester) test(addr string, id uint64) {
 		c.fail()
 		return
 	}
+	if result == nil {
+		// the tikv server do not support test command
+		logger().Errorf("Test RPC %d at %v was replied with a <nil>, the tikv instance do not support test command, please re-config the test", id, addr)
+		c.fail()
+		return
+	}
 	res := result.Test
 	if res == nil {
 		// wrong response type
