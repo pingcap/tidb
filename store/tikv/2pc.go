@@ -160,7 +160,11 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			}
 			delCnt++
 		}
-		if isPessimistic && !bytes.Equal(k, c.primaryKey) {
+		if isPessimistic {
+			if !bytes.Equal(k, c.primaryKey) {
+				keys = append(keys, k)
+			}
+		} else {
 			keys = append(keys, k)
 		}
 		entrySize := len(k) + len(v)
