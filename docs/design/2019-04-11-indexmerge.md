@@ -4,11 +4,11 @@
 - Discussion at :
 
 
-## 1 Abstract
+## Abstract
 
 The proposal proposes to use multiple indexes to scan a table if possible. In some cases, using multiple indexes will improve performance.
 
-## 2 Background
+## Background
 
 In present TiDB, a SQL statement with conditions involving multiple indexed attributes only uses one of the conditions as the index filter to build access condition, while others are regarded as table filters. Firstly, use index scan (at most one index) to get handles (rowid in TiDB). Then use the handles to get rows and check whether the rows satisfy the conditions of table filters. Some relational databases implement a table access path using multiple indexes. In some cases, this way will improve performance.
 
@@ -23,10 +23,10 @@ We take an example to explain it. We define the table schema as :
 And use a test SQL statement `SELECT * FROM t1 where a < 2 or b > 50`. Currently, TiDB does a table scan  and puts `a < 2 or b > 50` as a Selection on top of it. If the selectivity of `a < 2 ` and `b > 50` is low, a better approach would be using indexes on columns `a` and `b` to retrieve rows respectively, and applying a union operation on the result sets.
 
 
-## 3 Proposal
+## Proposal
 In short, we need to consider access paths using multiple indexes.
 
-### 3.1 Planner
+### Planner
 We propose to add new `IndexMergeReader / PhysicalIndexMergeReader` and `IndexMergeLookUpReader / PhysicalIndexMergeLookUpReader` operators.
 
 Now we just consider the following two kinds of queries: 
@@ -44,6 +44,27 @@ In this form, each CNF item can be covered by a single index respectively. For e
 	```
 For the CNF items not covered by any index, we take them as table filters and convert them to selection on top of the scan node. For SQL `select * from t1 where (a < 10 or c >100) and b < 10`, only item `b < 10` can be used as index access condition, so we can only consider single index lookup reader.
 
+We set up a experiment for the CNF form to compare our demo implement with the master branch. The schema and test sql form we define are following:
+
+```
+Table Schema:
+	CREATE TABLE T200M(c1 int, c2 int, c3 int, c4 int, c5 int, c6 int, c7 int, c8 int);
+	CREATE INDEX T200Ma on T200M(a);
+	CREATE INDEX T200Mb on T200M(b);
+
+Test SQL Form:	
+	CNF-1
+		SELECT * FROM T200M WHERE C1 < $1 AND C2 > $2;
+	CNF-2 
+		SELECT * FROM T200M WHERE C1 < $3 AND C2 < $4;
+```
+
+We load two million rows into `T200M` with one to two million sequence for all columns. We audit `$1-$4` to obtain equal selectivity on `C1` and `C2`, while the difference between `CNF-1` and `CNF-2` is `CNF-1` has no final results. The result can be seen in the follow graph:
+
+<img alt="DNF 200" src="./imgs/cnf200m2.png" width="500pt"/>
+
+**Note:** `SELECTIVITY`is for the single column.
+
 （2） Conditions in DNF, e.g, `select * from t1 where c1 or c2 or c3 or …` 
 
 In this form, every DNF item must be covered by a single index. If any DNF item cannot be covered by a single index, we cannot choose IndexMerge scan. For example, SQL `select * from t1 where a > 1 or ( b >1 and b <10)` will generate a possible plan like:
@@ -54,6 +75,22 @@ In this form, every DNF item must be covered by a single index. If any DNF item 
 		IndexScan(t1b)
 		TableScan
 ```
+
+We set up a experiment for the DNF form to compare our demo implement with the master branch. The schema and test sql form we define are following:
+
+```
+Table Schema:
+	CREATE TABLE T200(a int, b int, c int); 
+	CREATE INDEX T200a on T2OO(a);
+	CREATE INDEX T200b on T200(b);
+
+Test SQL Form:
+	SELECT * FROM T200 WHERE a < $1 OR b > $2;
+```  
+We load two million rows into `T200` with one to two million sequence for all columns. We audit the value of `$1` and `$2` in test sql form to obtain the accurate selectivities. The result can be seen in the follow graph:
+
+<img alt="DNF 200" src="./imgs/dnf200.png" width="500pt"/>
+
 
 We design PhysicalIndexMergeLookUpReader structure as:
 	
@@ -82,7 +119,8 @@ We design PhysicalIndexMergeLookUpReader structure as:
  
 In first version, we just take `PhysicalIndexMergeLookUpReader` and `PhysicalIndexMergeReader` together.
 
-### 3.2 IndexMergePath Generate
+
+### IndexMergePath Generate
 Now, we first generate all possible IndexMergeOr paths, then generate possible IndexMergeIntersection path. 
 
 ```
@@ -207,7 +245,7 @@ CreateIndexMergeIntersectionPath(partialPaths, tableFilters) {
 
 ```
 	
-### 3.3 Executor
+### Executor
 Graph bellow illustrates execution of IndexMerge scan. 
 <img alt="Execution Model" src="./imgs/execution_model.png" width="500pt"/>
 
@@ -238,7 +276,7 @@ If new rowid comes from ix1, first we check if it is in set2. If so, we delete i
 
    We take a structure(we call it set) to record which rowids are accessed. If a new rowid returned by IndexScan, check if it is in set. If in it, we just skip it. Otherwise, we add it into set and send it to tableWorker. 
 
-### 3.4 Cost Model
+### Cost Model
 Cost model will consider three factors: IO, CPU, and Network. 
 
 - `IndexMergeType` = 1
@@ -272,10 +310,10 @@ Cost model will consider three factors: IO, CPU, and Network.
 	
 - mergedRowCount: number of handles after set operating.
 
-## 4 Compatibility
+## Compatibility
 This proposal has no effect on the compatibility.
 
-## 5 Implementation
+## Implementation
 1. Implement planner operators
 1. Enhance `explain` to display the plan
 3. Implement executor operators
