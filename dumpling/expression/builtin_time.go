@@ -2683,14 +2683,14 @@ func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, a
 		interval = "00:" + interval
 	case "SECOND_MICROSECOND":
 		/* keep interval as original decimal */
-	case "SECOND", "MICROSECOND":
-		args[1] = WrapWithCastAsReal(ctx, args[1])
+	case "SECOND":
+		// Decimal's EvalString is like %f format.
 		interval, isNull, err = args[1].EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
 	default:
-		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE
+		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, MICROSECOND
 		args[1] = WrapWithCastAsInt(ctx, args[1])
 		interval, isNull, err = args[1].EvalString(ctx, row)
 		if isNull || err != nil {
@@ -2718,18 +2718,17 @@ func (du *baseDateArithmitical) getIntervalFromReal(ctx sessionctx.Context, args
 }
 
 func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
-	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
-	if err != nil {
-		return types.Time{}, true, handleInvalidTimeError(ctx, err)
-	}
-
-	goTime, err := date.Time.GoTime(time.Local)
-	if err != nil {
+	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
+	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
 
-	duration := time.Duration(dur)
-	goTime = goTime.Add(duration)
+	goTime, err := date.Time.GoTime(time.Local)
+	if err := handleInvalidTimeError(ctx, err); err != nil {
+		return types.Time{}, true, err
+	}
+
+	goTime = goTime.Add(time.Duration(nano))
 	goTime = types.AddDate(year, month, day, goTime)
 
 	if goTime.Nanosecond() == 0 {
@@ -2740,7 +2739,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 
 	date.Time = types.FromGoTime(goTime)
 	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
-	if err != nil {
+	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
 	if overflow {
@@ -2750,18 +2749,18 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 }
 
 func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
-	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
-	if err != nil {
-		return types.Time{}, true, handleInvalidTimeError(ctx, err)
+	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
+	if err := handleInvalidTimeError(ctx, err); err != nil {
+		return types.Time{}, true, err
 	}
-	year, month, day, dur = -year, -month, -day, -dur
+	year, month, day, nano = -year, -month, -day, -nano
 
 	goTime, err := date.Time.GoTime(time.Local)
-	if err != nil {
+	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
 
-	duration := time.Duration(dur)
+	duration := time.Duration(nano)
 	goTime = goTime.Add(duration)
 	goTime = types.AddDate(year, month, day, goTime)
 
@@ -2773,7 +2772,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 
 	date.Time = types.FromGoTime(goTime)
 	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
-	if err != nil {
+	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
 	if overflow {
