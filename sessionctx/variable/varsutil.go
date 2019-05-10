@@ -377,10 +377,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace, serverReadOnly, SlaveAllowBatching,
 		Flush, PerformanceSchema, LocalInFile, ShowOldTemporals, KeepFilesOnCreate, AutoCommit,
 		SQLWarnings, UniqueChecks, OldAlterTable, LogBinTrustFunctionCreators, SQLBigSelects,
-		BinlogDirectNonTransactionUpdates, SQLQuoteShowCreate, AutomaticSpPrivileges,
+		BinlogDirectNonTransactionalUpdates, SQLQuoteShowCreate, AutomaticSpPrivileges,
 		RelayLogPurge, SQLAutoIsNull, QueryCacheWlockInvalidate, ValidatePasswordCheckUserName,
-		SuperReadOnly, BinlogOrderCommits, MasterVerifyChecksum, BinlogRowQueryLogEvent, LogSlowSlaveStatements,
-		LogSlowAdminStatements, LogQueriesNotUsingIndexes:
+		SuperReadOnly, BinlogOrderCommits, MasterVerifyChecksum, BinlogRowQueryLogEvents, LogSlowSlaveStatements,
+		LogSlowAdminStatements, LogQueriesNotUsingIndexes, Profiling:
 		if strings.EqualFold(value, "ON") {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") {

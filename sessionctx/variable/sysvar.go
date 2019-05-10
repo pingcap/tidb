@@ -191,7 +191,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "new", "OFF"},
 	{ScopeGlobal | ScopeSession, "myisam_sort_buffer_size", "8388608"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_offset", "-1"},
-	{ScopeGlobal, InnodbBufferPoolDumpAtShutdown, "1"},
+	{ScopeGlobal, InnodbBufferPoolDumpAtShutdown, "0"},
 	{ScopeGlobal | ScopeSession, SQLNotes, "1"},
 	{ScopeGlobal, InnodbCmpPerIndexEnabled, "0"},
 	{ScopeGlobal, "innodb_ft_server_stopword_table", ""},
@@ -278,7 +278,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "disconnect_on_expired_password", "1"},
 	{ScopeNone, "performance_schema_max_file_classes", "50"},
 	{ScopeGlobal, "expire_logs_days", "0"},
-	{ScopeGlobal | ScopeSession, BinlogRowQueryLogEvent, "0"},
+	{ScopeGlobal | ScopeSession, BinlogRowQueryLogEvents, "0"},
 	{ScopeGlobal, "default_password_lifetime", ""},
 	{ScopeNone, "pid_file", "/usr/local/mysql/data/localhost.pid"},
 	{ScopeNone, "innodb_undo_tablespaces", "0"},
@@ -364,14 +364,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_log_files_in_group", "2"},
 	{ScopeGlobal, InnodbBufferPoolLoadNow, "0"},
 	{ScopeNone, "performance_schema_max_rwlock_classes", "40"},
-	{ScopeNone, "binlog_gtid_simple_recovery", "OFF"},
+	{ScopeNone, "binlog_gtid_simple_recovery", "1"},
 	{ScopeNone, Port, "4000"},
 	{ScopeNone, "performance_schema_digests_size", "10000"},
-	{ScopeGlobal | ScopeSession, "profiling", "OFF"},
+	{ScopeGlobal | ScopeSession, Profiling, "0"},
 	{ScopeNone, "lower_case_table_names", "2"},
 	{ScopeSession, "rand_seed1", ""},
 	{ScopeGlobal, "sha256_password_proxy_users", ""},
-	{ScopeGlobal | ScopeSession, SQLQuoteShowCreate, "0"},
+	{ScopeGlobal | ScopeSession, SQLQuoteShowCreate, "1"},
 	{ScopeGlobal | ScopeSession, "binlogging_impossible_mode", "IGNORE_ERROR"},
 	{ScopeGlobal, "query_cache_size", "1048576"},
 	{ScopeGlobal, "innodb_stats_transient_sample_pages", "8"},
@@ -398,7 +398,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, InnodbStatsAutoRecalc, "1"},
 	{ScopeGlobal | ScopeSession, "lc_messages", "en_US"},
 	{ScopeGlobal | ScopeSession, "bulk_insert_buffer_size", "8388608"},
-	{ScopeGlobal | ScopeSession, BinlogDirectNonTransactionUpdates, "0"},
+	{ScopeGlobal | ScopeSession, BinlogDirectNonTransactionalUpdates, "0"},
 	{ScopeGlobal, "innodb_change_buffering", "all"},
 	{ScopeGlobal | ScopeSession, SQLBigSelects, "1"},
 	{ScopeGlobal | ScopeSession, CharacterSetResults, mysql.DefaultCharset},
@@ -814,9 +814,10 @@ const (
 	Port = "port"
 	// DataDir is the name for 'datadir' system variable.
 	DataDir = "datadir"
+	// Profiling is the name for 'Profiling' system variable.
+	Profiling = "profiling"
 	// Socket is the name for 'socket' system variable.
 	Socket = "socket"
-
 	// BinlogOrderCommits is the name for 'binlog_order_commits' system variable.
 	BinlogOrderCommits = "binlog_order_commits"
 	// MasterVerifyChecksum is the name for 'master_verify_checksum' system variable.
@@ -831,8 +832,8 @@ const (
 	QueryCacheType = "query_cache_type"
 	// SlaveCompressedProtocol is the name for 'slave_compressed_protocol' system variable.
 	SlaveCompressedProtocol = "slave_compressed_protocol"
-	// BinlogRowQueryLogEvent is the name for 'binlog_rows_query_log_events' system variable.
-	BinlogRowQueryLogEvent = "binlog_rows_query_log_events"
+	// BinlogRowQueryLogEvents is the name for 'binlog_rows_query_log_events' system variable.
+	BinlogRowQueryLogEvents = "binlog_rows_query_log_events"
 	// LogSlowSlaveStatements is the name for 'log_slow_slave_statements' system variable.
 	LogSlowSlaveStatements = "log_slow_slave_statements"
 	// LogSlowAdminStatements is the name for 'log_slow_admin_statements' system variable.
@@ -851,8 +852,8 @@ const (
 	SQLQuoteShowCreate = "sql_quote_show_create"
 	// SlowQueryLog is the name for 'slow_query_log' system variable.
 	SlowQueryLog = "slow_query_log"
-	// BinlogDirectNonTransactionUpdates is the name for 'binlog_direct_non_transactional_updates' system variable.
-	BinlogDirectNonTransactionUpdates = "binlog_direct_non_transactional_updates"
+	// BinlogDirectNonTransactionalUpdates is the name for 'binlog_direct_non_transactional_updates' system variable.
+	BinlogDirectNonTransactionalUpdates = "binlog_direct_non_transactional_updates"
 	// SQLBigSelects is the name for 'sql_big_selects' system variable.
 	SQLBigSelects = "sql_big_selects"
 	// LogBinTrustFunctionCreators is the name for 'log_bin_trust_function_creators' system variable.
@@ -881,10 +882,8 @@ const (
 	Flush = "flush"
 	// SlaveAllowBatching is the name for 'slave_allow_batching' system variable.
 	SlaveAllowBatching = "slave_allow_batching"
-
 	// MyISAMUseMmap is the name for 'myisam_use_mmap' system variable.
 	MyISAMUseMmap = "myisam_use_mmap"
-
 	// InnodbFilePerTable is the name for 'innodb_file_per_table' system variable.
 	InnodbFilePerTable = "innodb_file_per_table"
 	// InnodbLogCompressedPages is the name for 'innodb_log_compressed_pages' system variable.
