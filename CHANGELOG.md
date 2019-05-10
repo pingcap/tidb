@@ -71,7 +71,6 @@ All notable changes to this project will be documented in this file. See also [R
     - Add the transaction commit time to slow query log [#10310](https://github.com/pingcap/tidb/pull/10310)
     - Fix the issue some time formats cannot be parsed by pt-query-digest [#10323](https://github.com/pingcap/tidb/pull/10323) 
 
-
 ## [2.1.8] 2019-04-12
 
 * Fix the issue that the processing logic of `GROUP_CONCAT` function is incompatible with MySQL when there is a NULL-valued parameter [#9930](https://github.com/pingcap/tidb/pull/9930)
