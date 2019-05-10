@@ -1621,6 +1621,10 @@ func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int6
 	if decimalPointPos == -1 {
 		decimalPointPos = len(format)
 	}
+	sign := int64(1)
+	if len(format) > 0 && format[0] == '-' {
+		sign = int64(-1)
+	}
 	iv, err := strconv.ParseInt(format[0:decimalPointPos], 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
@@ -1642,7 +1646,7 @@ func parseSingleTimeValue(unit string, format string) (int64, int64, int64, int6
 			}
 		}
 		if dv >= 500000 { // Round up, and we should keep 6 digits for microsecond, so dv should in [000000, 999999].
-			riv++
+			riv += sign
 		}
 		if unit != "SECOND" {
 			err = ErrTruncatedWrongValue.GenWithStackByArgs(format)
