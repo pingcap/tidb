@@ -63,7 +63,8 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	c.Assert(workableRegionsInBtree(s.cache, s.cache.mu.sorted, ts), Equals, len)
 	for _, r := range s.cache.mu.regions {
 		if r.checkRegionCacheTTL(ts) {
-			if store, _ := s.cache.routeStoreInRegion(r, ts); store != nil {
+			bo := NewBackoffer(context.Background(), 100)
+			if store, _, _, _ := s.cache.routeStoreInRegion(bo, r, ts); store != nil {
 				c.Assert(r, DeepEquals, s.cache.searchCachedRegion(r.StartKey(), false))
 			}
 		}
@@ -75,7 +76,8 @@ func workableRegions(cache *RegionCache, regions map[RegionVerID]*Region, ts int
 		if !region.checkRegionCacheTTL(ts) {
 			continue
 		}
-		store, _ := cache.routeStoreInRegion(region, ts)
+		bo := NewBackoffer(context.Background(), 100)
+		store, _, _, _ := cache.routeStoreInRegion(bo, region, ts)
 		if store != nil {
 			len++
 		}
@@ -89,7 +91,8 @@ func workableRegionsInBtree(cache *RegionCache, t *btree.BTree, ts int64) (len i
 		if !r.checkRegionCacheTTL(ts) {
 			return true
 		}
-		store, _ := cache.routeStoreInRegion(r, ts)
+		bo := NewBackoffer(context.Background(), 100)
+		store, _, _, _ := cache.routeStoreInRegion(bo, r, ts)
 		if store != nil {
 			len++
 		}
@@ -100,7 +103,8 @@ func workableRegionsInBtree(cache *RegionCache, t *btree.BTree, ts int64) (len i
 
 func reachableStore(stores map[uint64]*Store, ts int64) (cnt int) {
 	for _, store := range stores {
-		if store.Available(ts) {
+		state := store.getState()
+		if state.Available(ts) {
 			cnt++
 		}
 	}
@@ -347,6 +351,9 @@ func (s *testRegionCacheSuite) TestSendFailBlackTwoRegion(c *C) {
 	region2 := s.cluster.AllocID()
 	newPeers := s.cluster.AllocIDs(2)
 	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+	defer func() {
+		s.cache.Close()
+	}()
 
 	// Check the two regions.
 	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
@@ -553,7 +560,8 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	}
 	region := cache.getRegionByIDFromCache(loc.Region.id)
 	b.ResetTimer()
-	store, peer, _ := region.WorkStorePeer()
+	regionStore := region.getStore()
+	store, peer, _ := region.WorkStorePeer(regionStore)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			rpcCtx := &RPCContext{
