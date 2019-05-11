@@ -33,6 +33,8 @@ const (
 	RetryInterval uint64 = 500
 	// GCTimeFormat is the format that gc_worker used to store times.
 	GCTimeFormat = "20060102-15:04:05 -0700"
+	// WriteConflictMarker is used when transaction writing is conflicted.
+	WriteConflictMarker = "write conflict"
 )
 
 // RunWithRetry will run the f with backoff and retry.
