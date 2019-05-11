@@ -549,9 +549,17 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 			indexCols = append(indexCols, colFound)
 		}
 	}
-	// If it's double read case, the index scan must return handle, so we add extra handle column.
-	// Note that, even if PKIsHandle is true, we can still use ExtraHandleID to represent it.
-	if isDoubleRead {
+	setHandle := false
+	for _, col := range is.Columns {
+		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+			indexCols = append(indexCols, is.dataSourceSchema.FindColumnByName(col.Name.L))
+			setHandle = true
+			break
+		}
+	}
+	// If it's double read case, the index scan must return handle, so we add extra handle column
+	// if there isn't one.
+	if isDoubleRead && !setHandle {
 		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, ColName: model.ExtraHandleName, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
