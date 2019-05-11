@@ -1342,3 +1342,43 @@ func (s *testTimeSuite) TestgetFracIndex(c *C) {
 		c.Assert(index, Equals, testCase.expectIndex)
 	}
 }
+
+func (s *testTimeSuite) TestCheckMonthDay(c *C) {
+	dates := []struct {
+		date        types.MysqlTime
+		isValidDate bool
+	}{
+		{types.FromDate(1900, 2, 29, 0, 0, 0, 0), false},
+		{types.FromDate(1900, 2, 28, 0, 0, 0, 0), true},
+		{types.FromDate(2000, 2, 29, 0, 0, 0, 0), true},
+		{types.FromDate(2000, 1, 1, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 1, 1, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 1, 31, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 4, 1, 0, 0, 0, 0), true},
+		{types.FromDate(1900, 4, 31, 0, 0, 0, 0), false},
+		{types.FromDate(1900, 4, 30, 0, 0, 0, 0), true},
+		{types.FromDate(2000, 2, 30, 0, 0, 0, 0), false},
+		{types.FromDate(2000, 13, 1, 0, 0, 0, 0), false},
+		{types.FromDate(4000, 2, 29, 0, 0, 0, 0), true},
+		{types.FromDate(3200, 2, 29, 0, 0, 0, 0), true},
+	}
+
+	sc := &stmtctx.StatementContext{
+		TimeZone:         time.UTC,
+		AllowInvalidDate: false,
+	}
+
+	for _, t := range dates {
+		tt := types.Time{
+			Time: t.date,
+			Type: mysql.TypeDate,
+			Fsp:  types.DefaultFsp,
+		}
+		err := tt.Check(sc)
+		if t.isValidDate {
+			c.Check(err, IsNil)
+		} else {
+			c.Check(types.ErrInvalidTimeFormat.Equal(err), IsTrue)
+		}
+	}
+}
