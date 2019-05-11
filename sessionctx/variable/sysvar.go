@@ -513,6 +513,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "have_symlink", "YES"},
 	{ScopeGlobal | ScopeSession, "storage_engine", "InnoDB"},
 	{ScopeGlobal | ScopeSession, "sql_log_off", "0"},
+	// In MySQL, the default value of `explicit_defaults_for_timestamp` is `0`.
+	// But In TiDB, it's set to `1` to be consistent with TiDB timestamp behavior.
+	// See: https://github.com/pingcap/tidb/pull/6068 for details
 	{ScopeNone, "explicit_defaults_for_timestamp", "1"},
 	{ScopeNone, "performance_schema_events_waits_history_size", "10"},
 	{ScopeGlobal, "log_syslog_tag", ""},
