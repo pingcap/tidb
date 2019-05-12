@@ -776,7 +776,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, err
 		}
-		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutoCommit, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, err
 		}
@@ -792,7 +792,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, err
 		}
-		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutoCommit, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, err
 		}
@@ -1617,7 +1617,7 @@ func finishBootstrap(store kv.Storage) {
 const quoteCommaQuote = "', '"
 
 var builtinGlobalVariable = []string{
-	variable.AutocommitVar,
+	variable.AutoCommit,
 	variable.SQLModeVar,
 	variable.MaxAllowedPacket,
 	variable.TimeZone,
