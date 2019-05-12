@@ -679,7 +679,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err != nil {
 			return err
 		}
-	case AutocommitVar:
+	case AutoCommit:
 		isAutocommit := TiDBOptOn(val)
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
@@ -813,7 +813,6 @@ func SetLocalSystemVar(name string, val string) {
 // special session variables.
 const (
 	SQLModeVar           = "sql_mode"
-	AutocommitVar        = "autocommit"
 	CharacterSetResults  = "character_set_results"
 	MaxAllowedPacket     = "max_allowed_packet"
 	TimeZone             = "time_zone"
