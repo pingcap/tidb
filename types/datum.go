@@ -798,9 +798,6 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s = strconv.FormatFloat(d.GetFloat64(), 'f', -1, 64)
 	case KindString, KindBytes:
 		s = d.GetString()
-		if target.Tp == mysql.TypeString {
-			s = strings.TrimRight(s, " ")
-		}
 	case KindMysqlTime:
 		s = d.GetMysqlTime().String()
 	case KindMysqlDuration:
@@ -851,7 +848,17 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 					}
 					runeCount++
 				}
-				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+
+				truncateTrailingSpacesLen := math.MaxInt32
+				if tp.Tp == mysql.TypeString {
+					truncateTrailingSpaces := strings.TrimRightFunc(s, func(r rune) bool {
+						return r == '\t' || r == '\n' || r == '\r' || r == ' '
+					})
+					truncateTrailingSpacesLen = len(truncateTrailingSpaces)
+				}
+				if truncateTrailingSpacesLen > flen {
+					err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+				}
 				s = truncateStr(s, truncateLen)
 			}
 		} else if len(s) > flen {
