@@ -22,42 +22,36 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"github.com/sirupsen/logrus"
 )
 
 type Handle struct {
 	sctx            sessionctx.Context
 	memExceedConnCh chan uint64
+	exitCh          chan struct{}
 }
 
-func NewExpensiveQueryHandle(sctx sessionctx.Context) *Handle {
+func NewExpensiveQueryHandle(sctx sessionctx.Context, exitCh chan struct{}) *Handle {
 	return &Handle{
 		sctx,
 		make(chan uint64),
+		exitCh,
 	}
 }
 
 // Run starts a expensive query checker goroutine at the start time of the server.
-func (eqh *Handle) Run(exitCh chan struct{}) {
+func (eqh *Handle) Run(sm util.SessionManager) {
 	defer close(eqh.memExceedConnCh)
 	sctx := eqh.sctx
-	sm := sctx.GetSessionManager()
 	curInterval := time.Second * time.Duration(sctx.GetSessionVars().ExpensiveQueryTimeThreshold)
 	ticker := time.NewTicker(curInterval / 2)
 	// lastQueryStartTime is used to avoid print duplicated log when exceeding time threshold.
 	lastQueryStartTime := make(map[uint64]time.Time)
 	for {
-		// sm maybe nil because that server has not been started.
-		if sm == nil {
-			logrus.Warning("sm == nil")
-			time.Sleep(200 * time.Millisecond)
-			sm = sctx.GetSessionManager()
-			continue
-		}
 		select {
 		case <-ticker.C:
 			if log.GetLevel() > zapcore.WarnLevel {
@@ -65,12 +59,16 @@ func (eqh *Handle) Run(exitCh chan struct{}) {
 			}
 			processInfo := sm.ShowProcessList()
 			for connID, info := range processInfo {
-				if info.Time.Equal(lastQueryStartTime[connID]) {
+				if len(info.Info) == 0 || info.Time.Equal(lastQueryStartTime[connID]) {
 					continue
 				}
-				lastQueryStartTime[connID] = info.Time
+				sessVars, ok := sm.GetSessionVars(connID)
+				if !ok {
+					continue
+				}
 				if costTime := time.Since(info.Time); costTime >= curInterval {
-					logExpensiveQuery(sctx, costTime, info)
+					logExpensiveQuery(sessVars, costTime, info)
+					lastQueryStartTime[connID] = info.Time
 				}
 			}
 			if newInterval := time.Second * time.Duration(sctx.GetSessionVars().ExpensiveQueryTimeThreshold); curInterval != newInterval {
@@ -82,15 +80,16 @@ func (eqh *Handle) Run(exitCh chan struct{}) {
 			if log.GetLevel() > zapcore.WarnLevel {
 				continue
 			}
-			logrus.Warning("sm == nil", sm == nil)
 			info, ok := sm.GetProcessInfo(connID)
 			if !ok {
 				continue
 			}
-			if costTime := time.Since(info.Time); costTime >= curInterval {
-				logExpensiveQuery(sctx, costTime, info)
+			sessVars, ok := sm.GetSessionVars(connID)
+			if !ok {
+				continue
 			}
-		case <-exitCh:
+			logExpensiveQuery(sessVars, time.Since(info.Time), info)
+		case <-eqh.exitCh:
 			return
 		}
 	}
@@ -101,15 +100,10 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 }
 
 // logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
-func logExpensiveQuery(sctx sessionctx.Context, costTime time.Duration, info util.ProcessInfo) {
-	level := log.GetLevel()
-	if level > zapcore.WarnLevel {
-		return
-	}
+func logExpensiveQuery(sessVars *variable.SessionVars, costTime time.Duration, info util.ProcessInfo) {
 	logFields := make([]zap.Field, 0, 20)
-	sessVars := sctx.GetSessionVars()
-	execDetail := sessVars.StmtCtx.GetExecDetails()
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
+	execDetail := sessVars.StmtCtx.GetExecDetails()
 	logFields = append(logFields, execDetail.ToZapFields()...)
 	if copTaskInfo := sessVars.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
 		logFields = append(logFields, copTaskInfo.ToZapFields()...)

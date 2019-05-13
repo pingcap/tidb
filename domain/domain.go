@@ -1013,12 +1013,8 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
 }
 
-func (do *Domain) CheckExpensiveQuery(sctx sessionctx.Context) {
-	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(sctx)
-	go func(){
-		recoverInDomain("checkExpensiveQuery", false)
-		do.expensiveQueryHandle.Run(do.exit)
-	}()
+func (do *Domain) InitExpensiveQueryHandle(sctx sessionctx.Context) {
+	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(sctx, do.exit)
 }
 
 const privilegeKey = "/tidb/privilege"

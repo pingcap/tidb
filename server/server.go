@@ -508,6 +508,17 @@ func (s *Server) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
 	return conn.ctx.ShowProcess(), ok
 }
 
+// // GetSessionVars implements the SessionManager interface.
+func (s *Server) GetSessionVars(id uint64) (*variable.SessionVars, bool) {
+	s.rwlock.RLock()
+	conn, ok := s.clients[uint32(id)]
+	s.rwlock.RUnlock()
+	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
+		return nil, false
+	}
+	return conn.ctx.GetSessionVars(), ok
+}
+
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.Lock()

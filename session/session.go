@@ -1476,7 +1476,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	dom.CheckExpensiveQuery(se3)
+	dom.InitExpensiveQueryHandle(se3)
 	if raw, ok := store.(tikv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
