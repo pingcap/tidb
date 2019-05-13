@@ -16,7 +16,6 @@ package tikv
 import (
 	"context"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -74,7 +73,6 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	s.cluster.StopStore(s.store)
 	_, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "try again later"), IsTrue)
 
 	// start store.
 	s.cluster.StartStore(s.store)
@@ -207,6 +205,9 @@ func (s *mockTikvGrpcServer) KvScanLock(context.Context, *kvrpcpb.ScanLockReques
 func (s *mockTikvGrpcServer) KvResolveLock(context.Context, *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
 	return nil, errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) KvPessimisticLock(context.Context, *kvrpcpb.PessimisticLockRequest) (*kvrpcpb.PessimisticLockResponse, error) {
+	return nil, errors.New("unreachable")
+}
 func (s *mockTikvGrpcServer) KvGC(context.Context, *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
 	return nil, errors.New("unreachable")
 }
@@ -271,6 +272,10 @@ func (s *mockTikvGrpcServer) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv
 
 func (s *mockTikvGrpcServer) BatchCommands(tikvpb.Tikv_BatchCommandsServer) error {
 	return errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) ReadIndex(context.Context, *kvrpcpb.ReadIndexRequest) (*kvrpcpb.ReadIndexResponse, error) {
+	return nil, errors.New("unreachable")
 }
 
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {

@@ -50,8 +50,19 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		enable = false
 	default:
 		// When tidb_enable_table_partition = 'auto',
-		// Partition by range expression is enabled by default.
-		if s.Partition.Tp == model.PartitionTypeRange && s.Partition.ColumnNames == nil {
+		if s.Partition.Tp == model.PartitionTypeRange {
+			// Partition by range expression is enabled by default.
+			if s.Partition.ColumnNames == nil {
+				enable = true
+			}
+			// Partition by range columns and just one column.
+			if len(s.Partition.ColumnNames) == 1 {
+				enable = true
+			}
+		}
+		// Partition by hash is enabled by default.
+		// Note that linear hash is not enabled.
+		if s.Partition.Tp == model.PartitionTypeHash {
 			enable = true
 		}
 	}
@@ -202,7 +213,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 	buf := new(bytes.Buffer)
 	s.Partition.Expr.Format(buf)
 	exprStr := buf.String()
-	if s.Partition.Tp == model.PartitionTypeRange {
+	if s.Partition.Tp == model.PartitionTypeRange || s.Partition.Tp == model.PartitionTypeHash {
 		// if partition by columnExpr, check the column type
 		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
 			for _, col := range cols {
@@ -215,13 +226,19 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 		}
 	}
 
-	e, err := expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
+	e, err := expression.ParseSimpleExprWithTableInfo(ctx, exprStr, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if e.GetType().EvalType() == types.ETInt {
 		return nil
 	}
+	if s.Partition.Tp == model.PartitionTypeHash {
+		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
+			return ErrNotAllowedTypeInPartition.GenWithStackByArgs(exprStr)
+		}
+	}
+
 	return ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION")
 }
 
@@ -428,7 +445,7 @@ func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	return nil
 }
 
-func checkNoHashPartitions(partitionNum uint64) error {
+func checkNoHashPartitions(ctx sessionctx.Context, partitionNum uint64) error {
 	if partitionNum == 0 {
 		return ErrNoParts.GenWithStackByArgs("partitions")
 	}
