@@ -462,14 +462,14 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result.Check(testkit.Rows("sql_select_limit 100000000000"))
 
 	result = tk.MustQuery("select @@global.autocommit;")
-	result.Check(testkit.Rows("ON"))
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select @@autocommit;")
-	result.Check(testkit.Rows("ON"))
+	result.Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.autocommit = 0;")
 	result = tk.MustQuery("select @@global.autocommit;")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select @@autocommit;")
-	result.Check(testkit.Rows("ON"))
+	result.Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.autocommit=1")
 
 	_, err = tk.Exec("set global time_zone = 'timezone'")
@@ -2416,7 +2416,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.Se.NewTxn(context.Background())
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
-	// Autocommit update will retry, so it would not fail.
+	// AutoCommit update will retry, so it would not fail.
 	tk1.MustExec("update no_retry set id = 5")
 
 	// RestrictedSQL should retry.
@@ -2611,4 +2611,52 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 
 	tk.MustExec("rollback")
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
+}
+
+func (s *testSessionSuite) TestPessimisticTxn(c *C) {
+	if !config.GetGlobalConfig().PessimisticTxn.Enable {
+		c.Skip("pessimistic transaction is not enabled")
+	}
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// Make the name has different indent for easier read.
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists pessimistic")
+	tk.MustExec("create table pessimistic (k int, v int)")
+	tk.MustExec("insert into pessimistic values (1, 1)")
+
+	// t1 lock, t2 update, t1 update and retry statement.
+	tk1.MustExec("begin lock")
+
+	tk.MustExec("update pessimistic set v = 2 where v = 1")
+
+	// Update can see the change, so this statement affects 0 roews.
+	tk1.MustExec("update pessimistic set v = 3 where v = 1")
+	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(0))
+	// select for update can see the change of another transaction.
+	tk1.MustQuery("select * from pessimistic for update").Check(testkit.Rows("1 2"))
+	// plain select can not see the change of another transaction.
+	tk1.MustQuery("select * from pessimistic").Check(testkit.Rows("1 1"))
+	tk1.MustExec("update pessimistic set v = 3 where v = 2")
+	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(1))
+
+	// pessimistic lock doesn't block read operation of other transactions.
+	tk.MustQuery("select * from pessimistic").Check(testkit.Rows("1 2"))
+
+	tk1.MustExec("commit")
+	tk1.MustQuery("select * from pessimistic").Check(testkit.Rows("1 3"))
+
+	// t1 lock, t1 select for update, t2 wait t1.
+	tk1.MustExec("begin lock")
+	tk1.MustExec("select * from pessimistic where k = 1 for update")
+	finishCh := make(chan struct{})
+	go func() {
+		tk.MustExec("update pessimistic set v = 5 where k = 1")
+		finishCh <- struct{}{}
+	}()
+	time.Sleep(time.Millisecond * 10)
+	tk1.MustExec("update pessimistic set v = 3 where k = 1")
+	tk1.MustExec("commit")
+	<-finishCh
+	tk.MustQuery("select * from pessimistic").Check(testkit.Rows("1 5"))
 }
