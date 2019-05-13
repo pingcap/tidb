@@ -15,24 +15,21 @@ package executor
 
 import (
 	"context"
-	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
@@ -141,7 +138,7 @@ func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
 	for i := range e.idxVals {
 		colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
 		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
-			e.idxVals[i], err = handlePadCharToFullLength(sc, &colInfo.FieldType, e.idxVals[i])
+			e.idxVals[i], err = ranger.HandlePadCharToFullLength(sc, &colInfo.FieldType, e.idxVals[i])
 		} else {
 			e.idxVals[i], err = table.CastValue(e.ctx, e.idxVals[i], colInfo)
 		}
@@ -155,61 +152,6 @@ func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
 		return nil, err
 	}
 	return tablecodec.EncodeIndexSeekKey(e.tblInfo.ID, e.idxInfo.ID, encodedIdxVals), nil
-}
-
-// handlePadCharToFullLength handles the "PAD_CHAR_TO_FULL_LENGTH" sql mode for
-// CHAR[N] index columns.
-
-// NOTE: kv.ErrNotExist is returned to indicate that this value can not match
-//		 any (key, value) pair in tikv storage. This error should be handled by
-//		 the caller.
-func handlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum) (types.Datum, error) {
-	targetStr, err := val.ToString()
-	if err != nil {
-		return val, err
-	}
-
-	hasBinaryFlag := mysql.HasBinaryFlag(ft.Flag)
-	isChar := ft.Tp == mysql.TypeString
-	isBinary := isChar && ft.Collate == charset.CollationBin
-	isVarchar := ft.Tp == mysql.TypeVarString || ft.Tp == mysql.TypeVarchar
-	isVarBinary := isVarchar && ft.Collate == charset.CollationBin
-	switch {
-	case isBinary || isVarBinary:
-		val.SetString(targetStr)
-		return val, nil
-	case isVarchar && hasBinaryFlag:
-		noTrailingSpace := strings.TrimRight(targetStr, " ")
-		if numSpacesToFill := ft.Flen - len(noTrailingSpace); numSpacesToFill > 0 {
-			noTrailingSpace += strings.Repeat(" ", numSpacesToFill)
-		}
-		val.SetString(noTrailingSpace)
-		return val, nil
-	case isVarchar && !hasBinaryFlag:
-		val.SetString(targetStr)
-		return val, nil
-	case isChar && hasBinaryFlag:
-		noTrailingSpace := strings.TrimRight(targetStr, " ")
-		val.SetString(noTrailingSpace)
-		return val, nil
-	case isChar && !hasBinaryFlag && !sc.PadCharToFullLength:
-		val.SetString(targetStr)
-		return val, nil
-	case isChar && !hasBinaryFlag && sc.PadCharToFullLength:
-		if len(targetStr) != ft.Flen {
-			// return kv.ErrNotExist to indicate that this value can not match any
-			// (key, value) pair in tikv storage.
-			return val, kv.ErrNotExist
-		}
-		// Trailing spaces of data typed "CHAR[N]" is trimed in the storage, we
-		// need to trim these trailing spaces as well.
-		noTrailingSpace := strings.TrimRight(targetStr, " ")
-		val.SetString(noTrailingSpace)
-		return val, nil
-	default:
-		// should never happen.
-		return val, errors.Errorf("handlePadCharToFullLength: unhandled FieldType: %v", ft.String())
-	}
 }
 
 func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {

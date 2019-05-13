@@ -186,12 +186,11 @@ func (s *testPointGetSuite) TestIndexLookupCharPK(c *C) {
 	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 
-	// TODO: fix https://github.com/pingcap/tidb/issues/10397 and uncomment the following tests.
-	// // Test trailing spaces with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
-	// tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
-	// tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
-	// tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
-	// tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	// Test trailing spaces with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
+	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -199,24 +198,23 @@ func (s *testPointGetSuite) TestIndexLookupCharPK(c *C) {
 	tk.MustExec(`insert into t values("  ", "  ");`)
 	tk.MustExec(`insert into t values("a ", "b ");`)
 
-	// TODO: fix https://github.com/pingcap/tidb/issues/10398 and uncomment the following tests.
-	// // Test trailing spaces without sql mode `PAD_CHAR_TO_FULL_LENGTH`.
-	// tk.MustExec(`set @@sql_mode="";`)
-	// tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
-	// tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
-	// tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows(`a b`))
-	// tk.MustIndexLookup(`select * from t tmp where a = " ";`).Check(testkit.Rows(` `))
-	// tk.MustIndexLookup(`select * from t tmp where a = "  ";`).Check(testkit.Rows(` `))
-	// tk.MustIndexLookup(`select * from t tmp where a = "   ";`).Check(testkit.Rows(` `))
+	// Test trailing spaces without sql mode `PAD_CHAR_TO_FULL_LENGTH`.
+	tk.MustExec(`set @@sql_mode="";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = " ";`).Check(testkit.Rows(` `))
+	tk.MustIndexLookup(`select * from t tmp where a = "  ";`).Check(testkit.Rows(` `))
+	tk.MustIndexLookup(`select * from t tmp where a = "   ";`).Check(testkit.Rows(` `))
 
-	// // Test trailing spaces with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
-	// tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
-	// tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
-	// tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
-	// tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows(`a b`))
-	// tk.MustIndexLookup(`select * from t tmp where a = " ";`).Check(testkit.Rows(` `))
-	// tk.MustIndexLookup(`select * from t tmp where a = "  ";`).Check(testkit.Rows(` `))
-	// tk.MustIndexLookup(`select * from t tmp where a = "   ";`).Check(testkit.Rows(` `))
+	// Test trailing spaces with sql mode `PAD_CHAR_TO_FULL_LENGTH`.
+	tk.MustExec(`set @@sql_mode="PAD_CHAR_TO_FULL_LENGTH";`)
+	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t tmp where a = " ";`).Check(testkit.Rows(` `))
+	tk.MustIndexLookup(`select * from t tmp where a = "  ";`).Check(testkit.Rows(` `))
+	tk.MustIndexLookup(`select * from t tmp where a = "   ";`).Check(testkit.Rows(` `))
 }
 
 func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
