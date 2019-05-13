@@ -1112,6 +1112,7 @@ func (s *testTimeSuite) TestExtractDurationValue(c *C) {
 		unit   string
 		format string
 		ans    string
+		failed bool
 	}{
 		{
 			unit:   "MICROSECOND",
@@ -1193,12 +1194,51 @@ func (s *testTimeSuite) TestExtractDurationValue(c *C) {
 			format: "1 1",
 			ans:    "25:00:00",
 		},
+		{
+			unit:   "DAY",
+			format: "-35",
+			failed: true,
+		},
+		{
+			unit:   "day",
+			format: "34",
+			ans:    "816:00:00",
+		},
+		{
+			unit:   "SECOND",
+			format: "-3020400",
+			failed: true,
+		},
+		{
+			unit:   "MONTH",
+			format: "1",
+			ans:    "720:00:00",
+		},
+		{
+			unit:   "MONTH",
+			format: "-2",
+			failed: true,
+		},
+		{
+			unit:   "DAY_second",
+			format: "34 23:59:59",
+			failed: true,
+		},
+		{
+			unit:   "DAY_hOUR",
+			format: "-34 23",
+			failed: true,
+		},
 	}
 	failedComment := "failed at case %d, unit: %s, format: %s"
 	for i, tt := range tests {
 		dur, err := types.ExtractDurationValue(tt.unit, tt.format)
-		c.Assert(err, IsNil, Commentf(failedComment+", error stack", i, tt.unit, tt.format, errors.ErrorStack(err)))
-		c.Assert(dur.String(), Equals, tt.ans, Commentf(failedComment, i, tt.unit, tt.format))
+		if tt.failed {
+			c.Assert(err, NotNil, Commentf(failedComment+", dur: %v", i, tt.unit, tt.format, dur.String()))
+		} else {
+			c.Assert(err, IsNil, Commentf(failedComment+", error stack", i, tt.unit, tt.format, errors.ErrorStack(err)))
+			c.Assert(dur.String(), Equals, tt.ans, Commentf(failedComment, i, tt.unit, tt.format))
+		}
 	}
 }
 
