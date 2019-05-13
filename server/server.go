@@ -508,7 +508,7 @@ func (s *Server) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
 	return conn.ctx.ShowProcess(), ok
 }
 
-// // GetSessionVars implements the SessionManager interface.
+// GetSessionVars implements the SessionManager interface.
 func (s *Server) GetSessionVars(id uint64) (*variable.SessionVars, bool) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[uint32(id)]

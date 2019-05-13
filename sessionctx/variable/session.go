@@ -100,6 +100,7 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	ForUpdate     bool
+	forUpdateTS   uint64
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
@@ -108,6 +109,7 @@ type TransactionContext struct {
 	StartTS       uint64
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
+	IsPessimistic bool
 
 	// For metrics.
 	CreateTime     time.Time
@@ -143,6 +145,21 @@ func (tc *TransactionContext) Cleanup() {
 // ClearDelta clears the delta map.
 func (tc *TransactionContext) ClearDelta() {
 	tc.TableDeltaMap = nil
+}
+
+// GetForUpdateTS returns the ts for update.
+func (tc *TransactionContext) GetForUpdateTS() uint64 {
+	if tc.forUpdateTS > tc.StartTS {
+		return tc.forUpdateTS
+	}
+	return tc.StartTS
+}
+
+// SetForUpdateTS sets the ts for update.
+func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
+	if forUpdateTS > tc.forUpdateTS {
+		tc.forUpdateTS = forUpdateTS
+	}
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -357,6 +374,10 @@ type SessionVars struct {
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
 
+	// PessimisticLock indicates whether new transaction should be pessimistic .
+	PessimisticLock bool
+
+	// ExpensiveQueryTimeThreshold indicates the time threshold when trigger the expensive query log.
 	ExpensiveQueryTimeThreshold int
 }
 
@@ -662,7 +683,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err != nil {
 			return err
 		}
-	case AutocommitVar:
+	case AutoCommit:
 		isAutocommit := TiDBOptOn(val)
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
@@ -776,6 +797,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.WaitTableSplitFinish = TiDBOptOn(val)
 	case TiDBExpensiveQueryTimeThreshold:
 		s.ExpensiveQueryTimeThreshold = tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)
+	case TiDBPessimisticLock:
+		s.PessimisticLock = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -796,7 +819,6 @@ func SetLocalSystemVar(name string, val string) {
 // special session variables.
 const (
 	SQLModeVar           = "sql_mode"
-	AutocommitVar        = "autocommit"
 	CharacterSetResults  = "character_set_results"
 	MaxAllowedPacket     = "max_allowed_packet"
 	TimeZone             = "time_zone"

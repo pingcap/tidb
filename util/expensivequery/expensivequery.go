@@ -29,12 +29,14 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// Handle is the handler for expensive query.
 type Handle struct {
 	sctx            sessionctx.Context
 	memExceedConnCh chan uint64
 	exitCh          chan struct{}
 }
 
+// NewExpensiveQueryHandle builds a new expensive query handler.
 func NewExpensiveQueryHandle(sctx sessionctx.Context, exitCh chan struct{}) *Handle {
 	return &Handle{
 		sctx,
@@ -95,6 +97,8 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 	}
 }
 
+// LogOnQueryExceedMemQuota passes the connID to `memExceedConnCh` to notify the
+// expensive query handler to log it.
 func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	eqh.memExceedConnCh <- connID
 }

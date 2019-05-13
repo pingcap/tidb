@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -363,8 +364,10 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	dbname := model.NewCIStr(s.DBName)
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(dbname)) {
-		return e.dbAccessDenied(dbname.O)
+	if checker != nil && e.ctx.GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, dbname.String()) {
+			return e.dbAccessDenied(dbname.O)
+		}
 	}
 
 	dbinfo, exists := e.is.SchemaByName(dbname)
@@ -396,8 +399,16 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
-	if _, err := e.ctx.Txn(true); err != nil {
+	pTxnConf := config.GetGlobalConfig().PessimisticTxn
+	if pTxnConf.Enable && (s.Pessimistic || pTxnConf.Default || e.ctx.GetSessionVars().PessimisticLock) {
+		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	}
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
 		return err
+	}
+	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		txn.SetOption(kv.Pessimistic, true)
 	}
 	return nil
 }

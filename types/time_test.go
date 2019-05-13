@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -1245,51 +1246,59 @@ func (s *testTimeSuite) TestExtractDurationNum(c *C) {
 	c.Assert(err, ErrorMatches, "invalid unit.*")
 }
 
-func (s *testTimeSuite) TestExtractTimeValue(c *C) {
+func (s *testTimeSuite) TestParseDurationValue(c *C) {
 	tbl := []struct {
 		format string
 		unit   string
 		res1   int64
 		res2   int64
 		res3   int64
-		res4   float64
+		res4   int64
+		err    *terror.Error
 	}{
-		{"52", "WEEK", 0, 0, 52 * 7, 0},
-		{"12", "DAY", 0, 0, 12, 0},
-		{"04", "MONTH", 0, 04, 0, 0},
-		{"1", "QUARTER", 0, 1 * 3, 0, 0},
-		{"2019", "YEAR", 2019, 0, 0, 0},
-		{"10567890", "SECOND_MICROSECOND", 0, 0, 0, 1.056789e+10},
-		{"10.567890", "SECOND_MICROSECOND", 0, 0, 0, 1.056789e+10},
-		{"-10.567890", "SECOND_MICROSECOND", 0, 0, 0, -1.056789e+10},
-		{"35:10567890", "MINUTE_SECOND", 0, 0, 0, 1.056999e+16},
-		{"3510567890", "MINUTE_SECOND", 0, 0, 0, 3.51056789e+18},
-		{"11:35:10.567890", "HOUR_MICROSECOND", 0, 0, 0, 4.171056789e+13},
-		{"567890", "HOUR_MICROSECOND", 0, 0, 0, 5.6789e+08},
-		{"14:00", "HOUR_MINUTE", 0, 0, 0, 5.04e+13},
-		{"14", "HOUR_MINUTE", 0, 0, 0, 8.4e+11},
-		{"12 14:00:00.345", "DAY_MICROSECOND", 0, 0, 12, 5.0400345e+13},
-		{"12 14:00:00", "DAY_SECOND", 0, 0, 12, 5.04e+13},
-		{"12 14:00", "DAY_MINUTE", 0, 0, 12, 5.04e+13},
-		{"12 14", "DAY_HOUR", 0, 0, 12, 5.04e+13},
-		{"1:1", "DAY_HOUR", 0, 0, 1, 3.6e+12},
-		{"aa1bb1", "DAY_HOUR", 0, 0, 1, 3.6e+12},
-		{"-1:1", "DAY_HOUR", 0, 0, -1, -3.6e+12},
-		{"-aa1bb1", "DAY_HOUR", 0, 0, -1, -3.6e+12},
-		{"2019-12", "YEAR_MONTH", 2019, 12, 0, 0},
-		{"1 1", "YEAR_MONTH", 1, 1, 0, 0},
-		{"aa1bb1", "YEAR_MONTH", 1, 1, 0, 0},
-		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0},
-		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0},
-		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0},
+		{"52", "WEEK", 0, 0, 52 * 7, 0, nil},
+		{"12", "DAY", 0, 0, 12, 0, nil},
+		{"04", "MONTH", 0, 04, 0, 0, nil},
+		{"1", "QUARTER", 0, 1 * 3, 0, 0, nil},
+		{"2019", "YEAR", 2019, 0, 0, 0, nil},
+		{"10567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, nil},
+		{"10.567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, nil},
+		{"-10.567890", "SECOND_MICROSECOND", 0, 0, 0, -10567890000, nil},
+		{"35:10567890", "MINUTE_SECOND", 0, 0, 122, 29190000000000, nil},      // 122 * 3600 * 24 + 29190 = 35 * 60 + 10567890
+		{"3510567890", "MINUTE_SECOND", 0, 0, 40631, 49490000000000, nil},     // 40631 * 3600 * 24 + 49490 = 3510567890
+		{"11:35:10.567890", "HOUR_MICROSECOND", 0, 0, 0, 41710567890000, nil}, // = (11 * 3600 + 35 * 60) * 1000000000 + 10567890000
+		{"567890", "HOUR_MICROSECOND", 0, 0, 0, 567890000, nil},
+		{"14:00", "HOUR_MINUTE", 0, 0, 0, 50400000000000, nil},
+		{"14", "HOUR_MINUTE", 0, 0, 0, 840000000000, nil},
+		{"12 14:00:00.345", "DAY_MICROSECOND", 0, 0, 12, 50400345000000, nil},
+		{"12 14:00:00", "DAY_SECOND", 0, 0, 12, 50400000000000, nil},
+		{"12 14:00", "DAY_MINUTE", 0, 0, 12, 50400000000000, nil},
+		{"12 14", "DAY_HOUR", 0, 0, 12, 50400000000000, nil},
+		{"1:1", "DAY_HOUR", 0, 0, 1, 3600000000000, nil},
+		{"aa1bb1", "DAY_HOUR", 0, 0, 1, 3600000000000, nil},
+		{"-1:1", "DAY_HOUR", 0, 0, -1, -3600000000000, nil},
+		{"-aa1bb1", "DAY_HOUR", 0, 0, -1, -3600000000000, nil},
+		{"2019-12", "YEAR_MONTH", 2019, 12, 0, 0, nil},
+		{"1 1", "YEAR_MONTH", 1, 1, 0, 0, nil},
+		{"aa1bb1", "YEAR_MONTH", 1, 1, 0, 0, nil},
+		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0, nil},
+		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0, nil},
+		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0, nil},
+		{"1.111", "MICROSECOND", 0, 0, 0, 1000, types.ErrTruncatedWrongValue},
+		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongValue},
 	}
 	for _, col := range tbl {
-		res1, res2, res3, res4, err := types.ExtractTimeValue(col.unit, col.format)
-		c.Assert(res1, Equals, col.res1)
-		c.Assert(res2, Equals, col.res2)
-		c.Assert(res3, Equals, col.res3)
-		c.Assert(res4, Equals, col.res4)
-		c.Assert(err, IsNil)
+		comment := Commentf("Extract %v Unit %v", col.format, col.unit)
+		res1, res2, res3, res4, err := types.ParseDurationValue(col.unit, col.format)
+		c.Assert(res1, Equals, col.res1, comment)
+		c.Assert(res2, Equals, col.res2, comment)
+		c.Assert(res3, Equals, col.res3, comment)
+		c.Assert(res4, Equals, col.res4, comment)
+		if col.err == nil {
+			c.Assert(err, IsNil, comment)
+		} else {
+			c.Assert(col.err.Equal(err), IsTrue)
+		}
 	}
 
 }

@@ -133,7 +133,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1, 0)
+	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
@@ -151,7 +151,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		err = txn1.Set([]byte("b"), []byte("b1"))
 		c.Assert(err, IsNil)
-		committer, err = newTwoPhaseCommitter(txn1, 0)
+		committer, err = newTwoPhaseCommitterWithInit(txn1, 0)
 		c.Assert(err, IsNil)
 		err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 		c.Assert(err, IsNil)
@@ -173,7 +173,7 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1, 0)
+	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
 
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
@@ -203,7 +203,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	// txn1 locks "b"
 	err := txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1, 0)
+	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
@@ -326,11 +326,22 @@ func errMsgMustContain(c *C, err error, msg string) {
 	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
 }
 
+func newTwoPhaseCommitterWithInit(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
+	c, err := newTwoPhaseCommitter(txn, connID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err = c.initKeysAndMutations(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return c, nil
+}
+
 func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	txn := s.begin(c)
 	err := txn.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	commiter, err := newTwoPhaseCommitter(txn, 0)
+	commiter, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
 	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
@@ -375,7 +386,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 
 	// clean again, shouldn't be failed when a rollback already exist.
 	ctx := context.Background()
-	commiter, err := newTwoPhaseCommitter(txn2, 0)
+	commiter, err := newTwoPhaseCommitterWithInit(txn2, 0)
 	c.Assert(err, IsNil)
 	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
 	c.Assert(err, IsNil)
@@ -410,13 +421,13 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 		txn1 := s.begin(c)
 		txn2 := s.begin(c)
 		txn2.Set([]byte("x1"), []byte("1"))
-		commiter2, err := newTwoPhaseCommitter(txn2, 2)
+		commiter2, err := newTwoPhaseCommitterWithInit(txn2, 2)
 		c.Assert(err, IsNil)
 		err = commiter2.execute(context.Background())
 		c.Assert(err, IsNil)
 		txn1.Set([]byte("x1"), []byte("1"))
 		txn1.Set([]byte("y1"), []byte("2"))
-		commiter1, err := newTwoPhaseCommitter(txn1, 2)
+		commiter1, err := newTwoPhaseCommitterWithInit(txn1, 2)
 		c.Assert(err, IsNil)
 		err = commiter1.execute(context.Background())
 		c.Assert(err, NotNil)

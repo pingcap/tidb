@@ -122,6 +122,9 @@ const (
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
+	// tidb_pessimistic_lock is used to control the transactin behavior.
+	TiDBPessimisticLock = "tidb_pessimistic_lock"
+
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
 	// auto: enable table partition when that feature is implemented.
@@ -308,11 +311,12 @@ const (
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                  = 0
 	DefTiDBRetryLimit                  = 10
-	DefTiDBDisableTxnAutoRetry         = false
+	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
 	DefTiDBHashJoinConcurrency         = 5
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
+	DefTiDBPessimisticLock             = 0
 	DefTiDBDDLReorgWorkerCount         = 16
 	DefTiDBDDLReorgBatchSize           = 1024
 	DefTiDBDDLErrorCountLimit          = 512
@@ -326,7 +330,7 @@ const (
 	DefTiDBUseFastAnalyze              = false
 	DefTiDBSkipIsolationLevelCheck     = false
 	DefTiDBWaitTableSplitFinish        = false
-	DefTiDBExpensiveQueryTimeThreshold = 10 // 60s
+	DefTiDBExpensiveQueryTimeThreshold = 60 // 60s
 )
 
 // Process global variables.
@@ -340,7 +344,8 @@ var (
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold uint32 = DefTiDBDDLSlowOprThreshold
-	ForcePriority              = int32(DefTiDBForcePriority)
-	ServerHostname, _          = os.Hostname()
+	DDLSlowOprThreshold   uint32 = DefTiDBDDLSlowOprThreshold
+	ForcePriority                = int32(DefTiDBForcePriority)
+	ServerHostname, _            = os.Hostname()
+	MaxOfMaxAllowedPacket uint64 = 1073741824
 )

@@ -1008,11 +1008,12 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	}
 }
 
-// StatsHandle returns the statistic handle.
+// ExpensiveQueryHandle returns the expensive query handle.
 func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
 }
 
+// InitExpensiveQueryHandle init the expensive query handler.
 func (do *Domain) InitExpensiveQueryHandle(sctx sessionctx.Context) {
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(sctx, do.exit)
 }
