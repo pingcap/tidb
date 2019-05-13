@@ -3336,6 +3336,12 @@ type builtinAddDateDurationStringSig struct {
 	baseDateArithmitical
 }
 
+func (b *builtinAddDateDurationStringSig) Clone() builtinFunc {
+	newSig := &builtinAddDateDurationStringSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinAddDateDurationStringSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -3361,6 +3367,12 @@ type builtinAddDateDurationIntSig struct {
 	baseDateArithmitical
 }
 
+func (b *builtinAddDateDurationIntSig) Clone() builtinFunc {
+	newSig := &builtinAddDateDurationIntSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinAddDateDurationIntSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -3383,6 +3395,12 @@ func (b *builtinAddDateDurationIntSig) evalDuration(row chunk.Row) (types.Durati
 type builtinAddDateDurationDecimalSig struct {
 	baseBuiltinFunc
 	baseDateArithmitical
+}
+
+func (b *builtinAddDateDurationDecimalSig) Clone() builtinFunc {
+	newSig := &builtinAddDateDurationDecimalSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinAddDateDurationDecimalSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
