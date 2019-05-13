@@ -910,9 +910,10 @@ type storeState struct {
 	lastFailedTime uint32
 	failedAttempt  uint16
 	resolveState   resolveState
+	_Align         int8
 }
 
-type resolveState uint16
+type resolveState uint8
 
 const (
 	unresolved resolveState = iota

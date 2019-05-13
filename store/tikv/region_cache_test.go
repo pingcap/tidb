@@ -17,10 +17,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/btree"
 	"testing"
 	"time"
 
+	"github.com/google/btree"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -51,6 +51,10 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewBackoffer(context.Background(), 5000)
+}
+
+func (s *testRegionCacheSuite) TearDownTest(c *C) {
+	s.cache.Close()
 }
 
 func (s *testRegionCacheSuite) storeAddr(id uint64) string {
@@ -351,9 +355,6 @@ func (s *testRegionCacheSuite) TestSendFailBlackTwoRegion(c *C) {
 	region2 := s.cluster.AllocID()
 	newPeers := s.cluster.AllocIDs(2)
 	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
-	defer func() {
-		s.cache.Close()
-	}()
 
 	// Check the two regions.
 	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
@@ -472,6 +473,7 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
 		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
 	}
+	defer client.Close()
 	testKey := []byte("test_key")
 	testValue := []byte("test_value")
 	err := client.Put(testKey, testValue)
