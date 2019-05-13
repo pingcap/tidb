@@ -160,7 +160,16 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 		return nil, err
 	}
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
-		return txn.Get(key)
+		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
+		// different for pessimistic transaction.
+		val, err = txn.GetMemBuffer().Get(key)
+		if err == nil {
+			return val, err
+		}
+		if !kv.IsErrNotFound(err) {
+			return nil, err
+		}
+		// fallthrough to snapshot get.
 	}
 	return e.snapshot.Get(key)
 }

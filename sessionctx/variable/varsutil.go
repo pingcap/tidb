@@ -305,7 +305,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
 	// See "https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_allowed_packet"
 	case MaxAllowedPacket:
-		return checkUInt64SystemVar(name, value, 1024, 1073741824, vars)
+		return checkUInt64SystemVar(name, value, 1024, MaxOfMaxAllowedPacket, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
@@ -349,16 +349,71 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
-	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
-		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
-		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace, serverReadOnly:
-		if strings.EqualFold(value, "ON") || value == "1" {
-			return "1", nil
-		} else if strings.EqualFold(value, "OFF") || value == "0" {
-			return "0", nil
+	case EnforceGtidConsistency:
+		if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		} else if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil
+		} else if strings.EqualFold(value, "WARN") || value == "2" {
+			return "WARN", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
+	case QueryCacheType:
+		if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		} else if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil
+		} else if strings.EqualFold(value, "DEMAND") || value == "2" {
+			return "DEMAND", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case SecureAuth:
+		if strings.EqualFold(value, "ON") || value == "1" {
+			return "1", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
+		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
+		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace, serverReadOnly, SlaveAllowBatching,
+		Flush, PerformanceSchema, LocalInFile, ShowOldTemporals, KeepFilesOnCreate, AutoCommit,
+		SQLWarnings, UniqueChecks, OldAlterTable, LogBinTrustFunctionCreators, SQLBigSelects,
+		BinlogDirectNonTransactionalUpdates, SQLQuoteShowCreate, AutomaticSpPrivileges,
+		RelayLogPurge, SQLAutoIsNull, QueryCacheWlockInvalidate, ValidatePasswordCheckUserName,
+		SuperReadOnly, BinlogOrderCommits, MasterVerifyChecksum, BinlogRowQueryLogEvents, LogSlowSlaveStatements,
+		LogSlowAdminStatements, LogQueriesNotUsingIndexes, Profiling:
+		if strings.EqualFold(value, "ON") {
+			return "1", nil
+		} else if strings.EqualFold(value, "OFF") {
+			return "0", nil
+		}
+		val, err := strconv.ParseInt(value, 10, 64)
+		if err == nil {
+			if val == 0 {
+				return "0", nil
+			} else if val == 1 {
+				return "1", nil
+			}
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case MyISAMUseMmap, InnodbTableLocks, InnodbStatusOutput, InnodbAdaptiveFlushing, InnodbRandomReadAhead,
+		InnodbStatsPersistent, InnodbBufferPoolLoadAbort, InnodbBufferPoolLoadNow, InnodbBufferPoolDumpNow,
+		InnodbCmpPerIndexEnabled, InnodbFilePerTable, InnodbPrintAllDeadlocks,
+		InnodbStrictMode, InnodbAdaptiveHashIndex, InnodbFtEnableStopword, InnodbStatusOutputLocks:
+		if strings.EqualFold(value, "ON") {
+			return "1", nil
+		} else if strings.EqualFold(value, "OFF") {
+			return "0", nil
+		}
+		val, err := strconv.ParseInt(value, 10, 64)
+		if err == nil {
+			if val == 1 || val < 0 {
+				return "1", nil
+			} else if val == 0 {
+				return "0", nil
+			}
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
