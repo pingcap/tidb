@@ -19,6 +19,9 @@ jobs:
       - run:
           name: "Build & Test"
           command: make test
+      - run:
+          name: "Upload coverage"
+          command: bash <(curl -s https://codecov.io/bash)
   build-integration:
     docker:
     - image: golang:1.11
