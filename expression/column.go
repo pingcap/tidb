@@ -124,6 +124,11 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 	return true
 }
 
+// ConstItem implements Expression interface.
+func (col *CorrelatedColumn) ConstItem() bool {
+	return false
+}
+
 // Decorrelate implements Expression interface.
 func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 	if !schema.Contains(&col.Column) {
@@ -293,6 +298,11 @@ func (col *Column) Clone() Expression {
 
 // IsCorrelated implements Expression interface.
 func (col *Column) IsCorrelated() bool {
+	return false
+}
+
+// ConstItem implements Expression interface.
+func (col *Column) ConstItem() bool {
 	return false
 }
 
