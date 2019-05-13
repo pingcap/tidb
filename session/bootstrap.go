@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -214,17 +215,27 @@ const (
 
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
-	b, err := checkBootstrapped(s)
-	if err != nil {
-		logutil.Logger(context.Background()).Fatal("check bootstrap error",
-			zap.Error(err))
+	dom := domain.GetDomain(s)
+	for {
+		b, err := checkBootstrapped(s)
+		if err != nil {
+			logutil.Logger(context.Background()).Fatal("check bootstrap error",
+				zap.Error(err))
+		}
+		// For rolling upgrade, we can't do upgrade only in the owner.
+		if b {
+			upgrade(s)
+			return
+		}
+		// To reduce conflict when multiple TiDB-server start at the same time.
+		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
+		if dom.DDL().OwnerManager().IsOwner() {
+			doDDLWorks(s)
+			doDMLWorks(s)
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
-	if b {
-		upgrade(s)
-		return
-	}
-	doDDLWorks(s)
-	doDMLWorks(s)
 }
 
 const (
