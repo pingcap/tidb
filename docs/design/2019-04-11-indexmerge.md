@@ -15,10 +15,10 @@ In present TiDB, a SQL statement with conditions involving multiple indexed attr
 We take an example to explain it. We define the table schema as :
 
 ```
-	CREATE TABLE t1 (a int, b int, c int);
-	CREATE INDEX t1a on t1(a);
-	CREATE INDEX t1b on t1(b);
-	CREATE INDEX t1c on t1(c);
+CREATE TABLE t1 (a int, b int, c int);
+CREATE INDEX t1a on t1(a);
+CREATE INDEX t1b on t1(b);
+CREATE INDEX t1c on t1(c);
 ```
 And use a test SQL statement `SELECT * FROM t1 where a < 2 or b > 50`. Currently, TiDB does a table scan  and puts `a < 2 or b > 50` as a Selection on top of it. If the selectivity of `a < 2 ` and `b > 50` is low, a better approach would be using indexes on columns `a` and `b` to retrieve rows respectively, and applying a union operation on the result sets.
 
@@ -35,13 +35,14 @@ Now we just consider the following two kinds of queries:
 
 In this form, each CNF item can be covered by a single index respectively. For example, if we have single column indexes for `t1.a`, `ta.b` and `t1.c` respectively, for SQL `select * from t1 where (a < 10 or a > 100) and b < 10 and c > 1000`, we can use all the three indexes to read the table handles. The result plan for it is like:
 
-	```
-  	PhysicalIndexMergeLookUpReader(IndexMergeIntersect)
-		IndexScan(t1a)
-		IndexScan(t1b)
-		IndexScan(t1c)
-		TableScan
-	```
+```
+PhysicalIndexMergeLookUpReader(IndexMergeIntersect)
+	IndexScan(t1a)
+	IndexScan(t1b)
+	IndexScan(t1c)
+	TableScan
+```
+
 For the CNF items not covered by any index, we take them as table filters and convert them to selection on top of the scan node. For SQL `select * from t1 where (a < 10 or c >100) and b < 10`, only item `b < 10` can be used as index access condition, so we can only consider single index lookup reader.
 
 We set up a experiment for the CNF form to compare our demo implement with the master branch. The schema and test sql form we define are following:
@@ -70,10 +71,10 @@ We load two million rows into `T200M` with one to two million sequence for all c
 In this form, every DNF item must be covered by a single index. If any DNF item cannot be covered by a single index, we cannot choose IndexMerge scan. For example, SQL `select * from t1 where a > 1 or ( b >1 and b <10)` will generate a possible plan like:
 	
 ```
-	PhysicalIndexMergeLookUpReader(IndexMergeUnion)
-		IndexScan(t1a)
-		IndexScan(t1b)
-		TableScan
+PhysicalIndexMergeLookUpReader(IndexMergeUnion)
+	IndexScan(t1a)
+	IndexScan(t1b)
+	TableScan
 ```
 
 We set up a experiment for the DNF form to compare our demo implement with the master branch. The schema and test sql form we define are following:
@@ -95,19 +96,19 @@ We load two million rows into `T200` with one to two million sequence for all co
 We design PhysicalIndexMergeLookUpReader structure as:
 	
 ```
-	// PhysicalIndexMergeLookUpReader
-	type PhysicalIndexMergeLookUpReader struct {
-		physicalSchemaProducer
+// PhysicalIndexMergeLookUpReader
+type PhysicalIndexMergeLookUpReader struct {
+	physicalSchemaProducer
 
-		//Follow two plans flat to construct executor pb.
-		IndexPlans []PhysicalPlan
-		TablePlans []PhysicalPlan
+	//Follow two plans flat to construct executor pb.
+	IndexPlans []PhysicalPlan
+	TablePlans []PhysicalPlan
 
-		indexPlans []PhysicalPlan
-		tablePlan PhysicalPlan
+	indexPlans []PhysicalPlan
+	tablePlan PhysicalPlan
 		
-		IndexMergeType int
-	}
+	IndexMergeType int
+}
 ```
 
 
