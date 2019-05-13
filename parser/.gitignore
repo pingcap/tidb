@@ -4,3 +4,4 @@ y.go
 .idea/
 go.mod
 go.sum
+coverage.txt
