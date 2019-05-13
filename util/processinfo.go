@@ -22,15 +22,16 @@ import (
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID      uint64
-	User    string
-	Host    string
-	DB      string
-	Command byte
-	Plan    interface{}
-	Time    time.Time
-	State   uint16
-	Info    string
+	ID        uint64
+	User      string
+	Host      string
+	DB        string
+	Command   byte
+	Plan      interface{}
+	Time      time.Time
+	State     uint16
+	Info      string
+	StatsInfo map[string]uint64
 }
 
 // ToRow returns []interface{} for the row data of "show processlist" and "select * from infoschema.processlist".

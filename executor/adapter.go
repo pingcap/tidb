@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -130,7 +129,6 @@ func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	expensivequery.GlobalExpensiveQueryHandler.Unregister(a.stmt.Ctx.GetSessionVars().ConnectionID)
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	a.stmt.logAudit()
 	return err
@@ -204,7 +202,6 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	a.StartTime = time.Now()
 	sctx := a.Ctx
-	expensivequery.GlobalExpensiveQueryHandler.Register(sctx, a.Text, a.StartTime, a.Plan)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
@@ -275,8 +272,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 }
 
 func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
-	expensivequery.GlobalExpensiveQueryHandler.Register(sctx, a.Text, time.Now(), a.Plan)
-	defer expensivequery.GlobalExpensiveQueryHandler.Unregister(sctx.GetSessionVars().ConnectionID)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()

@@ -18,100 +18,90 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/log"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"github.com/sirupsen/logrus"
 )
 
-var zeroTime = time.Time{}
-
-type expensiveQueryCheckItems struct {
-	sql        string
-	sc         sessionctx.Context
-	startTime  time.Time
-	memTracker *memory.Tracker
-	plan       plannercore.Plan
-}
-
-type expensiveQueryHandler struct {
-	sync.Map
-	ticker          *time.Ticker
+type Handle struct {
+	sctx            sessionctx.Context
 	memExceedConnCh chan uint64
-	exitCh          chan struct{}
 }
 
-func (eqh *expensiveQueryHandler) Register(sc sessionctx.Context, sql string, startTime time.Time, plan plannercore.Plan) {
-	connID := sc.GetSessionVars().ConnectionID
-	memTracker := sc.GetSessionVars().StmtCtx.MemTracker
-	eqh.Store(connID, &expensiveQueryCheckItems{sql, sc, startTime, memTracker, plan})
-}
-
-func (eqh *expensiveQueryHandler) Unregister(connID uint64) {
-	eqh.Delete(connID)
+func NewExpensiveQueryHandle(sctx sessionctx.Context) *Handle {
+	return &Handle{
+		sctx,
+		make(chan uint64),
+	}
 }
 
 // Run starts a expensive query checker goroutine at the start time of the server.
-func (eqh *expensiveQueryHandler) Run(ctx context.Context) {
-	defer eqh.ticker.Stop()
-	checkExceedTime := func(key, value interface{}) bool {
-		item := value.(*expensiveQueryCheckItems)
-		startTime := item.startTime
-		if startTime.Equal(zeroTime) {
-			return true
-		}
-		costTime := time.Since(startTime)
-		if costTime >= time.Second*time.Duration(item.sc.GetSessionVars().ExpensiveQueryTimeThreshold) {
-			// Set startTime to Zero to avoid print duplicated log.
-			item.startTime = zeroTime
-			logExpensiveQuery(ctx, item.sc, costTime, item.plan, item.sql)
-		}
-		return true
-	}
+func (eqh *Handle) Run(exitCh chan struct{}) {
+	defer close(eqh.memExceedConnCh)
+	sctx := eqh.sctx
+	sm := sctx.GetSessionManager()
+	curInterval := time.Second * time.Duration(sctx.GetSessionVars().ExpensiveQueryTimeThreshold)
+	ticker := time.NewTicker(curInterval / 2)
+	// lastQueryStartTime is used to avoid print duplicated log when exceeding time threshold.
+	lastQueryStartTime := make(map[uint64]time.Time)
 	for {
+		// sm maybe nil because that server has not been started.
+		if sm == nil {
+			logrus.Warning("sm == nil")
+			time.Sleep(200 * time.Millisecond)
+			sm = sctx.GetSessionManager()
+			continue
+		}
 		select {
-		case <-eqh.ticker.C:
-			eqh.Range(checkExceedTime)
-		case connID := <-eqh.memExceedConnCh:
-			value, _ := eqh.Load(connID)
-			item := value.(*expensiveQueryCheckItems)
-			startTime := item.startTime
-			if startTime.Equal(zeroTime) {
-				break
+		case <-ticker.C:
+			if log.GetLevel() > zapcore.WarnLevel {
+				continue
 			}
-			costTime := time.Since(startTime)
-			logExpensiveQuery(ctx, item.sc, costTime, item.plan, item.sql)
-		case <-eqh.exitCh:
+			processInfo := sm.ShowProcessList()
+			for connID, info := range processInfo {
+				if info.Time.Equal(lastQueryStartTime[connID]) {
+					continue
+				}
+				lastQueryStartTime[connID] = info.Time
+				if costTime := time.Since(info.Time); costTime >= curInterval {
+					logExpensiveQuery(sctx, costTime, info)
+				}
+			}
+			if newInterval := time.Second * time.Duration(sctx.GetSessionVars().ExpensiveQueryTimeThreshold); curInterval != newInterval {
+				curInterval = newInterval
+				ticker.Stop()
+				ticker = time.NewTicker(curInterval / 2)
+			}
+		case connID := <-eqh.memExceedConnCh:
+			if log.GetLevel() > zapcore.WarnLevel {
+				continue
+			}
+			logrus.Warning("sm == nil", sm == nil)
+			info, ok := sm.GetProcessInfo(connID)
+			if !ok {
+				continue
+			}
+			if costTime := time.Since(info.Time); costTime >= curInterval {
+				logExpensiveQuery(sctx, costTime, info)
+			}
+		case <-exitCh:
 			return
 		}
 	}
 }
 
-// Close terminates the execution.
-func (eqh *expensiveQueryHandler) Close() {
-	if eqh.exitCh != nil {
-		close(eqh.exitCh)
-		eqh.exitCh = nil
-	}
+func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
+	eqh.memExceedConnCh <- connID
 }
 
-// GlobalExpensiveQueryHandler checks all the running sqls, and print logs for
-// the expensive queries.
-var GlobalExpensiveQueryHandler = &expensiveQueryHandler{
-	sync.Map{},
-	time.NewTicker(time.Second),
-	make(chan uint64, 1024),
-	make(chan struct{}),
-}
-
-// LogExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
-func logExpensiveQuery(ctx context.Context, sctx sessionctx.Context, costTime time.Duration, p plannercore.Plan, sql string) {
+// logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
+func logExpensiveQuery(sctx sessionctx.Context, costTime time.Duration, info util.ProcessInfo) {
 	level := log.GetLevel()
 	if level > zapcore.WarnLevel {
 		return
@@ -124,11 +114,11 @@ func logExpensiveQuery(ctx context.Context, sctx sessionctx.Context, costTime ti
 	if copTaskInfo := sessVars.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
 		logFields = append(logFields, copTaskInfo.ToZapFields()...)
 	}
-	if statsInfos := plannercore.GetStatsInfo(p); len(statsInfos) > 0 {
+	if len(info.StatsInfo) > 0 {
 		var buf strings.Builder
 		firstComma := false
 		vStr := ""
-		for k, v := range statsInfos {
+		for k, v := range info.StatsInfo {
 			if v == 0 {
 				vStr = "pseudo"
 			} else {
@@ -168,10 +158,11 @@ func logExpensiveQuery(ctx context.Context, sctx sessionctx.Context, costTime ti
 	}
 
 	const logSQLLen = 1024 * 8
+	sql := info.Info
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	logFields = append(logFields, zap.String("sql", sql))
 
-	logutil.Logger(ctx).Warn("expensive_query", logFields...)
+	logutil.Logger(context.Background()).Warn("expensive_query", logFields...)
 }

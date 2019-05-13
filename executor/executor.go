@@ -1300,9 +1300,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case config.OOMActionCancel:
 		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
 	case config.OOMActionLog:
-		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
+		action.SetHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		sc.MemTracker.SetActionOnExceed(action)
 	default:
-		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
+		action.SetHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		sc.MemTracker.SetActionOnExceed(action)
 	}
 
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {

@@ -907,13 +907,14 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	pi := util.ProcessInfo{
-		ID:      s.sessionVars.ConnectionID,
-		DB:      s.sessionVars.CurrentDB,
-		Command: command,
-		Plan:    s.currentPlan,
-		Time:    t,
-		State:   s.Status(),
-		Info:    sql,
+		ID:        s.sessionVars.ConnectionID,
+		DB:        s.sessionVars.CurrentDB,
+		Command:   command,
+		Plan:      s.currentPlan,
+		Time:      t,
+		State:     s.Status(),
+		Info:      sql,
+		StatsInfo: plannercore.GetStatsInfo(s.currentPlan),
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
@@ -1471,7 +1472,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	se3, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	dom.CheckExpensiveQuery(se3)
 	if raw, ok := store.(tikv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
