@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 )
 
@@ -45,14 +46,19 @@ var _ = Suite(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
-	store, err := mockstore.NewMockTikvStore()
+
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	store, err := mockstore.NewMockTikvStore(mockstore.WithCluster(cluster))
+
 	s.store = store.(tikv.Storage)
 	c.Assert(err, IsNil)
 	s.oracle = &mockoracle.MockOracle{}
 	s.store.SetOracle(s.oracle)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	gcWorker, err := NewGCWorker(s.store, nil)
+
+	gcWorker, err := NewGCWorker(s.store, mocktikv.NewPDClient(cluster))
 	c.Assert(err, IsNil)
 	gcWorker.Start()
 	gcWorker.Close()
@@ -201,17 +207,23 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency))
 	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20, 1)
+	concurrency, err := s.gcWorker.getGCConcurrency(ctx)
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20, concurrency)
 	c.Assert(err, IsNil)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
 	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20, 1)
+	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20, concurrency)
 	c.Assert(err, IsNil)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency))
 	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20, 1)
+	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20, concurrency)
 	c.Assert(err, IsNil)
 }
 

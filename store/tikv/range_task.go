@@ -90,7 +90,8 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 	logutil.Logger(ctx).Info("range task started",
 		zap.String("name", s.name),
 		zap.Binary("startKey", startKey),
-		zap.Binary("endKey", endKey))
+		zap.Binary("endKey", endKey),
+		zap.Int("concurrency", s.concurrency))
 
 	// Periodically log the progress
 	statLogTicker := time.NewTicker(s.statLogInterval)
@@ -135,6 +136,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.String("name", s.name),
 				zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey),
+				zap.Int("concurrency", s.concurrency),
 				zap.Duration("cost time", time.Since(startTime)),
 				zap.Int32("completed regions", s.CompletedRegions()))
 		case <-metricsTicker.C:
