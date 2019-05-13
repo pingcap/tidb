@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -73,10 +72,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		err = t.CreateTableOrView(schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
-		}
-		if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
-			// TODO: Add restrictions to this operation.
-			go splitTableRegion(d.store, tbInfo.ID)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -340,6 +335,13 @@ type splitableStore interface {
 	WaitScatterRegionFinish(regionID uint64) error
 }
 
+func splitPartitionTableRegion(store kv.Storage, pi *model.PartitionInfo) {
+	// Max partition count is 4096, should we sample and just choose some of the partition to split?
+	for _, def := range pi.Definitions {
+		splitTableRegion(store, def.ID)
+	}
+}
+
 func splitTableRegion(store kv.Storage, tableID int64) {
 	s, ok := store.(splitableStore)
 	if !ok {
@@ -535,6 +537,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	// No need to check `newBase` again, because `RebaseAutoID` will do this check.
 	tblInfo.AutoIncID = newBase
 	tbl, err := getTable(store, schemaID, tblInfo)
 	if err != nil {
@@ -606,7 +609,7 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 		return errors.Trace(err)
 	}
 	if tables.OverflowShardBits(autoIncID, shardRowIDBits) {
-		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID overflow", shardRowIDBits)
+		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID %v overflow", shardRowIDBits, autoIncID)
 	}
 	return nil
 }

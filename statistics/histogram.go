@@ -196,12 +196,17 @@ const (
 	Version1        = 1
 )
 
-// AnalyzeFlag is one for column flag. We can use IsAnalyzed to check whether this column is analyzed or not.
+// AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
 const AnalyzeFlag = 1
 
 // IsAnalyzed checks whether this flag contains AnalyzeFlag.
 func IsAnalyzed(flag int64) bool {
 	return (flag & AnalyzeFlag) > 0
+}
+
+// ResetAnalyzeFlag resets the AnalyzeFlag because it has been modified by feedback.
+func ResetAnalyzeFlag(flag int64) int64 {
+	return flag &^ AnalyzeFlag
 }
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
@@ -565,6 +570,33 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
+// Copy deep copies the histogram.
+func (hg *Histogram) Copy() *Histogram {
+	newHist := *hg
+	newHist.Bounds = hg.Bounds.CopyConstruct()
+	newHist.Buckets = make([]Bucket, 0, len(hg.Buckets))
+	for _, bkt := range hg.Buckets {
+		newHist.Buckets = append(newHist.Buckets, bkt)
+	}
+	return &newHist
+}
+
+// RemoveUpperBound removes the upper bound from histogram.
+// It is used when merge stats for incremental analyze.
+func (hg *Histogram) RemoveUpperBound() *Histogram {
+	hg.Buckets[hg.Len()-1].Count -= hg.Buckets[hg.Len()-1].Repeat
+	hg.Buckets[hg.Len()-1].Repeat = 0
+	return hg
+}
+
+// TruncateHistogram truncates the histogram to `numBkt` buckets.
+func (hg *Histogram) TruncateHistogram(numBkt int) *Histogram {
+	hist := hg.Copy()
+	hist.Buckets = hist.Buckets[:numBkt]
+	hist.Bounds.TruncateTo(numBkt * 2)
+	return hist
+}
+
 // ErrorRate is the error rate of estimate row count by bucket and cm sketch.
 type ErrorRate struct {
 	ErrorTotal float64
@@ -606,6 +638,8 @@ type Column struct {
 	Info       *model.ColumnInfo
 	IsHandle   bool
 	ErrorRate
+	Flag           int64
+	LastAnalyzePos types.Datum
 }
 
 func (c *Column) String() string {
@@ -707,8 +741,10 @@ type Index struct {
 	Histogram
 	*CMSketch
 	ErrorRate
-	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Info     *model.IndexInfo
+	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	Info           *model.IndexInfo
+	Flag           int64
+	LastAnalyzePos types.Datum
 }
 
 func (idx *Index) String() string {

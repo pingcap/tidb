@@ -356,8 +356,8 @@ func (s *session) doCommit(ctx context.Context) error {
 
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
-		if val.(bool) && mockCommitErrorOnce {
-			mockCommitErrorOnce = false
+		if val.(bool) && kv.IsMockCommitErrorEnable() {
+			kv.MockCommitErrorDisable()
 			failpoint.Return(kv.ErrRetryable)
 		}
 	})
@@ -394,8 +394,10 @@ func (s *session) doCommit(ctx context.Context) error {
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
 	var txnSize int
+	var isPessimistic bool
 	if s.txn.Valid() {
 		txnSize = s.txn.Size()
+		isPessimistic = s.txn.IsPessimistic()
 	}
 	err := s.doCommit(ctx)
 	if err != nil {
@@ -405,14 +407,14 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			// For autocommit single statement transactions, the history count is always 1.
 			// For explicit transactions, the statement count is more than 1.
 			history := GetHistory(s)
-			if history.Count() > 1 && strings.Contains(err.Error(), util.WriteConflictMarker) {
+			if history.Count() > 1 {
 				commitRetryLimit = 0
 			}
 		}
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
+		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -460,18 +462,12 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		defer span1.Finish()
 	}
 
-	stmt := executor.ExecStmt{
-		Text:      "commitTxn",
-		Ctx:       s,
-		StartTime: time.Now(),
-	}
 	var commitDetail *execdetails.CommitDetails
 	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
-	stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
 	s.sessionVars.TxnCtx.Cleanup()
 	s.recordTransactionCounter(err)
 	return err
@@ -780,7 +776,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, err
 		}
-		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutoCommit, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, err
 		}
@@ -796,7 +792,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, err
 		}
-		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutoCommit, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, err
 		}
@@ -997,8 +993,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sessionExecuteParseDurationGeneral.Observe(time.Since(startTS).Seconds())
 	}
 
+	var tempStmtNodes []ast.StmtNode
 	compiler := executor.Compiler{Ctx: s}
-	for _, stmtNode := range stmtNodes {
+	for idx, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -1009,11 +1006,22 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
-			s.rollbackOnError(ctx)
-			logutil.Logger(ctx).Warn("compile sql error",
-				zap.Error(err),
-				zap.String("sql", sql))
-			return nil, err
+			if tempStmtNodes == nil {
+				tempStmtNodes, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+				if err != nil || warns != nil {
+					//just skip errcheck, because parse will not return an error.
+				}
+			}
+			stmtNode = tempStmtNodes[idx]
+			stmt, err = compiler.SkipBindCompile(ctx, stmtNode)
+			if err != nil {
+				s.rollbackOnError(ctx)
+				logutil.Logger(ctx).Warn("compile sql error",
+					zap.Error(err),
+					zap.String("sql", sql))
+				return nil, err
+			}
+			s.handleInvalidBindRecord(ctx, stmtNode)
 		}
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(time.Since(startTS).Seconds())
@@ -1037,6 +1045,60 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	return recordSets, nil
+}
+
+func (s *session) handleInvalidBindRecord(ctx context.Context, stmtNode ast.StmtNode) {
+	var normdOrigSQL, hash string
+	switch x := stmtNode.(type) {
+	case *ast.ExplainStmt:
+		switch x.Stmt.(type) {
+		case *ast.SelectStmt:
+			normalizeExplainSQL := parser.Normalize(x.Text())
+			idx := strings.Index(normalizeExplainSQL, "select")
+			normdOrigSQL = normalizeExplainSQL[idx:]
+			hash = parser.DigestHash(normdOrigSQL)
+		default:
+			return
+		}
+	case *ast.SelectStmt:
+		normdOrigSQL, hash = parser.NormalizeDigest(x.Text())
+	default:
+		return
+	}
+	sessionHandle := s.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindMeta := sessionHandle.GetBindRecord(normdOrigSQL, s.GetSessionVars().CurrentDB)
+	if bindMeta != nil {
+		bindMeta.Status = bindinfo.Invalid
+		return
+	}
+
+	globalHandle := domain.GetDomain(s).BindHandle()
+	bindMeta = globalHandle.GetBindRecord(hash, normdOrigSQL, s.GetSessionVars().CurrentDB)
+	if bindMeta == nil {
+		bindMeta = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
+	}
+	if bindMeta != nil {
+		record := &bindinfo.BindRecord{
+			OriginalSQL: bindMeta.OriginalSQL,
+			BindSQL:     bindMeta.BindSQL,
+			Db:          s.GetSessionVars().CurrentDB,
+			Charset:     bindMeta.Charset,
+			Collation:   bindMeta.Collation,
+			Status:      bindinfo.Invalid,
+		}
+
+		err := sessionHandle.AddBindRecord(record)
+		if err != nil {
+			logutil.Logger(ctx).Warn("handleInvalidBindRecord failed", zap.Error(err))
+		}
+
+		globalHandle := domain.GetDomain(s).BindHandle()
+		dropBindRecord := &bindinfo.BindRecord{
+			OriginalSQL: bindMeta.OriginalSQL,
+			Db:          bindMeta.Db,
+		}
+		globalHandle.AddDropInvalidBindTask(dropBindRecord)
+	}
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -1160,6 +1222,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			return &s.txn, err
 		}
 		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
+		if s.sessionVars.TxnCtx.IsPessimistic {
+			s.txn.SetOption(kv.Pessimistic, true)
+		}
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
@@ -1407,7 +1472,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = dom.LoadBindInfoLoop(se2, se2.parser)
+	err = dom.LoadBindInfoLoop(se2)
 	if err != nil {
 		return nil, err
 	}
@@ -1464,7 +1529,7 @@ func createSession(store kv.Storage) (*session, error) {
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory)
+			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
@@ -1487,7 +1552,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory)
+			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
@@ -1499,7 +1564,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 29
+	currentBootstrapVersion = 31
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1552,7 +1617,7 @@ func finishBootstrap(store kv.Storage) {
 const quoteCommaQuote = "', '"
 
 var builtinGlobalVariable = []string{
-	variable.AutocommitVar,
+	variable.AutoCommit,
 	variable.SQLModeVar,
 	variable.MaxAllowedPacket,
 	variable.TimeZone,
@@ -1572,6 +1637,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
 	variable.TiDBBackoffLockFast,
+	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,
 	variable.TiDBDDLReorgWorkerCount,
 	variable.TiDBDDLReorgBatchSize,
@@ -1671,6 +1737,12 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
+	}
+	if !s.sessionVars.IsAutocommit() {
+		txnConf := config.GetGlobalConfig().PessimisticTxn
+		if txnConf.Enable && (txnConf.Default || s.sessionVars.PessimisticLock) {
+			s.sessionVars.TxnCtx.IsPessimistic = true
+		}
 	}
 }
 

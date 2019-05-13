@@ -200,7 +200,8 @@ func (l *mvccLock) lockErr(key []byte) error {
 
 func (l *mvccLock) check(ts uint64, key []byte) (uint64, error) {
 	// ignore when ts is older than lock or lock's type is Lock.
-	if l.startTS > ts || l.op == kvrpcpb.Op_Lock {
+	// Pessimistic lock doesn't block read.
+	if l.startTS > ts || l.op == kvrpcpb.Op_Lock || l.op == kvrpcpb.Op_PessimisticLock {
 		return ts, nil
 	}
 	// for point get latest version.
@@ -424,6 +425,7 @@ type MVCCStore interface {
 	Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
+	PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS, forUpdateTS uint64, ttl uint64) []error
 	Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error
 	Commit(keys [][]byte, startTS, commitTS uint64) error
 	Rollback(keys [][]byte, startTS uint64) error

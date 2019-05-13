@@ -58,8 +58,8 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 			break
 		}
 	}
-	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
+	if len(p.rangeInfo) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeInfo)
 	} else if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
@@ -201,12 +201,6 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 			}
 		}
 	}
-	return buffer.String()
-}
-
-// ExplainInfo implements PhysicalPlan interface.
-func (p *PhysicalApply) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.PhysicalJoin.ExplainInfo())
 	return buffer.String()
 }
 

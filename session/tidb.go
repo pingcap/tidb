@@ -163,6 +163,10 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 		if !sessVars.InTxn() {
 			logutil.Logger(context.Background()).Info("rollbackTxn for ddl/autocommit error.")
 			se.RollbackTxn(ctx)
+		} else if se.txn.Valid() && se.txn.IsPessimistic() && strings.Contains(meetsErr.Error(), "deadlock") {
+			logutil.Logger(context.Background()).Info("rollbackTxn for deadlock error", zap.Uint64("txn", se.txn.StartTS()))
+			meetsErr = errDeadlock
+			se.RollbackTxn(ctx)
 		}
 		return meetsErr
 	}
@@ -196,16 +200,21 @@ func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, s
 }
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (sqlexec.RecordSet, error) {
+func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", s.OriginText())
 		defer span1.Finish()
 	}
-
-	var err error
-	var rs sqlexec.RecordSet
 	se := sctx.(*session)
+	defer func() {
+		// If it is not a select statement, we record its slow log here,
+		// then it could include the transaction commit time.
+		if rs == nil {
+			s.(*executor.ExecStmt).LogSlowQuery(se.GetSessionVars().TxnCtx.StartTS, err != nil)
+		}
+	}()
+
 	err = se.checkTxnAborted(s)
 	if err != nil {
 		return nil, err
@@ -319,15 +328,18 @@ func IsQuery(sql string) bool {
 var (
 	errForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
 		mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
+	errDeadlock = terror.ClassSession.New(codeDeadlock, mysql.MySQLErrName[mysql.ErrLockDeadlock])
 )
 
 const (
 	codeForUpdateCantRetry terror.ErrCode = mysql.ErrForUpdateCantRetry
+	codeDeadlock           terror.ErrCode = mysql.ErrLockDeadlock
 )
 
 func init() {
 	sessionMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
+		codeDeadlock:           mysql.ErrLockDeadlock,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSession] = sessionMySQLErrCodes
 }

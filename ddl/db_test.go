@@ -1280,6 +1280,7 @@ func (s *testDBSuite8) TestColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
+	s.tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	s.testAddColumn(c)
 	s.testDropColumn(c)
 	s.tk.MustExec("drop table t2")
@@ -2292,7 +2293,7 @@ func (s *testDBSuite4) TestCheckTooBigFieldLength(c *C) {
 	assertErrorCode(c, s.tk, "alter table tr_04 add column b varchar(20000) charset utf8mb4;", tmysql.ErrTooBigFieldlength)
 	assertErrorCode(c, s.tk, "alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
 	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
-	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8;", tmysql.ErrTooBigFieldlength)
+	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
 	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(65536), purchased date ) default charset=latin1;", tmysql.ErrTooBigFieldlength)
 
 	s.tk.MustExec("drop table if exists tr_05;")
@@ -2728,7 +2729,7 @@ func (s *testDBSuite2) TestAlterShardRowIDBits(c *C) {
 	// Test increase shard_row_id_bits failed by overflow global auto ID.
 	_, err := tk.Exec("alter table t1 SHARD_ROW_ID_BITS = 10;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID overflow")
+	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID 72057594037932936 overflow")
 
 	// Test reduce shard_row_id_bits will be ok.
 	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 3;")
