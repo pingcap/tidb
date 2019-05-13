@@ -243,4 +243,15 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
+
+	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("1"))
+	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(v.LowResolutionTSO, Equals, true)
+	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("0"))
+	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(v.LowResolutionTSO, Equals, false)
 }

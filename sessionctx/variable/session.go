@@ -319,6 +319,9 @@ type SessionVars struct {
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
+
+	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
+	LowResolutionTSO bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -361,6 +364,7 @@ func NewSessionVars() *SessionVars {
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
 		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
+		LowResolutionTSO:          false,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -643,6 +647,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
+	case TiDBLowResolutionTSO:
+		s.LowResolutionTSO = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

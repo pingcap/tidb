@@ -140,3 +140,21 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 func (o *pdOracle) Close() {
 	close(o.quit)
 }
+
+type lowResolutionTsFuture uint64
+
+// Wait implements the oracle.Future interface.
+func (f lowResolutionTsFuture) Wait() (uint64, error) {
+	return uint64(f), nil
+}
+
+// GetLowResolutionTimestamp gets a new increasing time.
+func (o *pdOracle) GetLowResolutionTimestamp(ctx context.Context) (uint64, error) {
+	lastTS := atomic.LoadUint64(&o.lastTS)
+	return lastTS, nil
+}
+
+func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context) oracle.Future {
+	lastTS := atomic.LoadUint64(&o.lastTS)
+	return lowResolutionTsFuture(lastTS)
+}
