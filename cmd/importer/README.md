@@ -139,6 +139,33 @@ mysql> select * from t;
 10 rows in set (0.00 sec)
 ```
 
+### incremental
+
+```
+./importer -t "create table t(a date comment '[[incremental=1;repeats=3]]');" -P 4000 -c 1 -n 10
+```
+
+Then the table rows will be like this:
+
+```
+MySQL [test]> select * from t;
++------------+
+| a          |
++------------+
+| 2019-05-13 |
+| 2019-05-13 |
+| 2019-05-13 |
+| 2019-05-14 |
+| 2019-05-14 |
+| 2019-05-14 |
+| 2019-05-15 |
+| 2019-05-15 |
+| 2019-05-15 |
+| 2019-05-16 |
++------------+
+10 rows in set (0.002 sec)
+```
+
 Support Type [can only be used in none unique index]: 
 
 tinyint | smallint | int | bigint | float | double | decimal | varchar.
