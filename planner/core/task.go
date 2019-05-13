@@ -125,8 +125,7 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.PhysicalJoin.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildPhysicalJoinSchema(p.PhysicalJoin.JoinType, p)
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + lTask.count()*rTask.cost(),

@@ -205,12 +205,6 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *PhysicalApply) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.PhysicalJoin.ExplainInfo())
-	return buffer.String()
-}
-
-// ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	fmt.Fprintf(buffer, ", inner:%s", p.Children()[1-p.OuterIndex].ExplainID())
