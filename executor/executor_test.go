@@ -2514,6 +2514,7 @@ func (s *testSuite1) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.dom.SetStatsUpdating(true)
 }
 
 func (s *testSuite1) TearDownSuite(c *C) {
@@ -3623,6 +3624,57 @@ func (s *testSuite3) TearDownSuite(c *C) {
 }
 
 func (s *testSuite3) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
+}
+
+type testSuite4 struct {
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	store     kv.Storage
+	domain    *domain.Domain
+	*parser.Parser
+	ctx *mock.Context
+}
+
+func (s *testSuite4) SetUpSuite(c *C) {
+	s.Parser = parser.New()
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
+	if useMockTikv {
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
+	}
+	d, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
+	s.domain = d
+}
+
+func (s *testSuite4) TearDownSuite(c *C) {
+	s.domain.Close()
+	s.store.Close()
+}
+
+func (s *testSuite4) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show full tables")

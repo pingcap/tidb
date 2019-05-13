@@ -1075,13 +1075,13 @@ func (e *AnalyzeTestFastExec) TestFastSample() error {
 
 type analyzeIndexIncrementalExec struct {
 	AnalyzeIndexExec
-	index *statistics.Index
+	oldHist *statistics.Histogram
+	oldCMS  *statistics.CMSketch
 }
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
-	idx := idxExec.index
-	highBound := idx.Histogram.GetUpper(idx.Len() - 1)
-	values, err := codec.Decode(highBound.GetBytes(), len(idxExec.idxInfo.Columns))
+	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
+	values, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
@@ -1090,16 +1090,12 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
-	oldHist, oldCMS, err := idx.RemoveUpperBound(idxExec.ctx.GetSessionVars().StmtCtx, values)
+	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, idxExec.oldHist, hist, int(idxExec.maxNumBuckets))
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
-	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, oldHist, hist, int(idxExec.maxNumBuckets))
-	if err != nil {
-		return analyzeResult{Err: err, job: idxExec.job}
-	}
-	if oldCMS != nil && cms != nil {
-		err = cms.MergeCMSketch(oldCMS)
+	if idxExec.oldCMS != nil && cms != nil {
+		err = cms.MergeCMSketch4IncrementalAnalyze(idxExec.oldCMS)
 		if err != nil {
 			return analyzeResult{Err: err, job: idxExec.job}
 		}
@@ -1120,26 +1116,24 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 
 type analyzePKIncrementalExec struct {
 	AnalyzeColumnsExec
-	pkStats *statistics.Column
+	oldHist *statistics.Histogram
 }
 
 func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
-	pkStats := colExec.pkStats
-	high := pkStats.GetUpper(pkStats.Len() - 1)
 	var maxVal types.Datum
 	if mysql.HasUnsignedFlag(colExec.pkInfo.Flag) {
 		maxVal = types.NewUintDatum(math.MaxUint64)
 	} else {
 		maxVal = types.NewIntDatum(math.MaxInt64)
 	}
-	ran := ranger.Range{LowVal: []types.Datum{*high}, LowExclude: true, HighVal: []types.Datum{maxVal}}
+	startPos := *colExec.oldHist.GetUpper(colExec.oldHist.Len() - 1)
+	ran := ranger.Range{LowVal: []types.Datum{startPos}, LowExclude: true, HighVal: []types.Datum{maxVal}}
 	hists, _, err := colExec.buildStats([]*ranger.Range{&ran})
 	if err != nil {
 		return analyzeResult{Err: err, job: colExec.job}
 	}
 	hist := hists[0]
-	oldHist := pkStats.Histogram.Copy()
-	hist, err = statistics.MergeHistograms(colExec.ctx.GetSessionVars().StmtCtx, oldHist, hist, int(colExec.maxNumBuckets))
+	hist, err = statistics.MergeHistograms(colExec.ctx.GetSessionVars().StmtCtx, colExec.oldHist, hist, int(colExec.maxNumBuckets))
 	if err != nil {
 		return analyzeResult{Err: err, job: colExec.job}
 	}

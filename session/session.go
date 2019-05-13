@@ -356,8 +356,8 @@ func (s *session) doCommit(ctx context.Context) error {
 
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
-		if val.(bool) && mockCommitErrorOnce {
-			mockCommitErrorOnce = false
+		if val.(bool) && kv.IsMockCommitErrorEnable() {
+			kv.MockCommitErrorDisable()
 			failpoint.Return(kv.ErrRetryable)
 		}
 	})
@@ -394,8 +394,10 @@ func (s *session) doCommit(ctx context.Context) error {
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
 	var txnSize int
+	var isPessimistic bool
 	if s.txn.Valid() {
 		txnSize = s.txn.Size()
+		isPessimistic = s.txn.IsPessimistic()
 	}
 	err := s.doCommit(ctx)
 	if err != nil {
@@ -412,7 +414,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
+		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -774,7 +776,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, err
 		}
-		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutoCommit, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, err
 		}
@@ -790,7 +792,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, err
 		}
-		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutoCommit, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, err
 		}
@@ -1220,6 +1222,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			return &s.txn, err
 		}
 		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
+		if s.sessionVars.TxnCtx.IsPessimistic {
+			s.txn.SetOption(kv.Pessimistic, true)
+		}
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
@@ -1559,7 +1564,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 30
+	currentBootstrapVersion = 31
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1612,7 +1617,7 @@ func finishBootstrap(store kv.Storage) {
 const quoteCommaQuote = "', '"
 
 var builtinGlobalVariable = []string{
-	variable.AutocommitVar,
+	variable.AutoCommit,
 	variable.SQLModeVar,
 	variable.MaxAllowedPacket,
 	variable.TimeZone,
@@ -1632,6 +1637,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
 	variable.TiDBBackoffLockFast,
+	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,
 	variable.TiDBDDLReorgWorkerCount,
 	variable.TiDBDDLReorgBatchSize,
@@ -1731,6 +1737,12 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
+	}
+	if !s.sessionVars.IsAutocommit() {
+		txnConf := config.GetGlobalConfig().PessimisticTxn
+		if txnConf.Enable && (txnConf.Default || s.sessionVars.PessimisticLock) {
+			s.sessionVars.TxnCtx.IsPessimistic = true
+		}
 	}
 }
 
