@@ -202,12 +202,12 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			locks = append(locks, lock)
 		}
 		if len(lockedKeys) > 0 {
-			ok, err := s.store.lockResolver.ResolveLocks(bo, locks)
+			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, locks)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !ok {
-				err = bo.Backoff(boTxnLockFast, errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+			if msBeforeExpired > 0 {
+				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -276,12 +276,12 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			ok, err := s.store.lockResolver.ResolveLocks(bo, []*Lock{lock})
+			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if !ok {
-				err = bo.Backoff(boTxnLockFast, errors.New(keyErr.String()))
+			if msBeforeExpired > 0 {
+				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

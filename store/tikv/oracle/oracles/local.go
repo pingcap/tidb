@@ -68,5 +68,10 @@ func (f *future) Wait() (uint64, error) {
 	return f.l.GetTimestamp(f.ctx)
 }
 
+// UntilExpired implement oracle.Oracle interface.
+func (l *localOracle) UntilExpired(lockTimeStamp uint64, TTL uint64) int64 {
+	return oracle.ExtractPhysical(lockTimeStamp) + int64(TTL) - oracle.GetPhysical(time.Now())
+}
+
 func (l *localOracle) Close() {
 }
