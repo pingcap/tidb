@@ -245,8 +245,8 @@ type ddl struct {
 	quitCh     chan struct{}
 
 	*ddlCtx
-	workers map[workerType]*worker
-	sessPool        *sessionPool
+	workers  map[workerType]*worker
+	sessPool *sessionPool
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
