@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -424,15 +424,14 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	if err == nil {
 		return nil, nil
 	}
-	errStr := err.Error()
-	if !strings.Contains(errStr, util.WriteConflictMarker) {
+	if !terror.ErrorEqual(tikv.ErrWriteConflict, err) {
 		return nil, err
 	}
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
-	conflictTS := extractConflictTS(errStr)
+	conflictTS := extractConflictTS(err.Error())
 	if conflictTS == 0 {
 		logutil.Logger(ctx).Warn("failed to extract conflictTS from a conflict error")
 	}
