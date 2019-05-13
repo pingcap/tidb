@@ -1,4 +1,4 @@
-# Proposal: scan a table using IndexMerge
+# Proposal: Access a table using multiple indexes
 - Author(s) : WHU
 - Last updated : May 10
 - Discussion at :
