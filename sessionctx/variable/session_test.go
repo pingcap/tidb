@@ -100,8 +100,8 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Stats: t1:pseudo
 # Num_cop_tasks: 10
-# Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s
-# Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms
+# Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3
+# Cop_wait_avg: 0.01 Cop_wait_p90: 0.02 Cop_wait_max: 0.03
 # Mem_max: 2333
 select * from t;`
 	sql := "select * from t"

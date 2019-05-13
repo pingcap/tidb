@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -257,11 +258,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// gofail: var truncateTableErr bool
-	// if truncateTableErr {
-	//  job.State = model.JobStateCancelled
-	//  return ver, errors.New("occur an error after dropping table.")
-	// }
+	failpoint.Inject("truncateTableErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("occur an error after dropping table"))
+		}
+	})
 
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
@@ -388,11 +390,14 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// gofail: var renameTableErr bool
-	// if renameTableErr {
-	//	job.State = model.JobStateCancelled
-	//	return ver, errors.New("occur an error after renaming table.")
-	// }
+
+	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("occur an error after renaming table"))
+		}
+	})
+
 	tblInfo.Name = tableName
 	err = t.CreateTable(newSchemaID, tblInfo)
 	if err != nil {

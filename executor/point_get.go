@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -88,6 +89,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
+
 		handleVal, err1 := e.get(idxKey)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return errors.Trace(err1)
@@ -99,7 +101,22 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
+
+		// The injection is used to simulate following scenario:
+		// 1. Session A create a point get query but pause before second time `GET` kv from backend
+		// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
+		// 3. Then point get retrieve data from backend after step 2 finished
+		// 4. Check the result
+		failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step1", func() {
+			if ch, ok := ctx.Value("pointGetRepeatableReadTest").(chan struct{}); ok {
+				// Make `UPDATE` continue
+				close(ch)
+			}
+			// Wait `UPDATE` finished
+			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
+		})
 	}
+
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
 	val, err := e.get(key)
 	if err != nil && !kv.ErrNotExist.Equal(err) {

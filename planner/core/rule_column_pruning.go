@@ -138,11 +138,17 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
 	if !hasBeenUsed {
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
 		copy(parentUsedCols, p.schema.Columns)
+	} else {
+		// Issue 10341: p.schema.Columns might contain table name (AsName), but p.Children()0].Schema().Columns does not.
+		for i := len(used) - 1; i >= 0; i-- {
+			if !used[i] {
+				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			}
+		}
 	}
 	for _, child := range p.Children() {
 		child.PruneColumns(parentUsedCols)
 	}
-	p.schema.Columns = p.children[0].Schema().Columns
 }
 
 // PruneColumns implements LogicalPlan interface.

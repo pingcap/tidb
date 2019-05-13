@@ -673,6 +673,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		// no more data.
 		if e.childResult.NumRows() == 0 {
 			return nil

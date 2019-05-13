@@ -786,17 +786,25 @@ const (
 	SlowLogStatsInfoStr = "Stats"
 	// SlowLogNumCopTasksStr is the number of cop-tasks.
 	SlowLogNumCopTasksStr = "Num_cop_tasks"
-	// SlowLogCopProcessStr includes some useful information about cop-tasks' process time.
-	SlowLogCopProcessStr = "Cop_process"
-	// SlowLogCopWaitStr includes some useful information about cop-tasks' wait time.
-	SlowLogCopWaitStr = "Cop_wait"
+	// SlowLogCopProcAvg is the average process time of all cop-tasks.
+	SlowLogCopProcAvg = "Cop_proc_avg"
+	// SlowLogCopProcP90 is the p90 process time of all cop-tasks.
+	SlowLogCopProcP90 = "Cop_proc_p90"
+	// SlowLogCopProcMax is the max process time of all cop-tasks.
+	SlowLogCopProcMax = "Cop_proc_max"
+	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
+	SlowLogCopWaitAvg = "Cop_wait_avg"
+	// SlowLogCopWaitP90 is the p90 wait time of all cop-tasks.
+	SlowLogCopWaitP90 = "Cop_wait_p90"
+	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
+	SlowLogCopWaitMax = "Cop_wait_max"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
 )
 
 // SlowLogFormat uses for formatting slow log.
 // The slow log output is like below:
-// # Time: 2019-02-12-19:33:56.571953 +0800
+// # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
 // # User: root@127.0.0.1
 // # Conn_ID: 6
@@ -859,12 +867,14 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 	}
 	if copTasks != nil {
 		buf.WriteString(SlowLogPrefixStr + SlowLogNumCopTasksStr + SlowLogSpaceMarkStr + strconv.FormatInt(int64(copTasks.NumCopTasks), 10) + "\n")
-		buf.WriteString(SlowLogPrefixStr + SlowLogCopProcessStr + SlowLogSpaceMarkStr +
-			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v", copTasks.AvgProcessTime,
-				copTasks.P90ProcessTime, copTasks.MaxProcessTime) + "\n")
-		buf.WriteString(SlowLogPrefixStr + SlowLogCopWaitStr + SlowLogSpaceMarkStr +
-			fmt.Sprintf("Avg_time: %v P90_time: %v Max_time: %v", copTasks.AvgWaitTime,
-				copTasks.P90WaitTime, copTasks.MaxWaitTime) + "\n")
+		buf.WriteString(SlowLogPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v",
+			SlowLogCopProcAvg, SlowLogSpaceMarkStr, copTasks.AvgProcessTime.Seconds(),
+			SlowLogCopProcP90, SlowLogSpaceMarkStr, copTasks.P90ProcessTime.Seconds(),
+			SlowLogCopProcMax, SlowLogSpaceMarkStr, copTasks.MaxProcessTime.Seconds()) + "\n")
+		buf.WriteString(SlowLogPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v",
+			SlowLogCopWaitAvg, SlowLogSpaceMarkStr, copTasks.AvgWaitTime.Seconds(),
+			SlowLogCopWaitP90, SlowLogSpaceMarkStr, copTasks.P90WaitTime.Seconds(),
+			SlowLogCopWaitMax, SlowLogSpaceMarkStr, copTasks.MaxWaitTime.Seconds()) + "\n")
 	}
 	if memMax > 0 {
 		buf.WriteString(SlowLogPrefixStr + SlowLogMemMax + SlowLogSpaceMarkStr + strconv.FormatInt(memMax, 10) + "\n")

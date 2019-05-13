@@ -19,7 +19,7 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
@@ -825,6 +825,47 @@ func (s *testSuite) TestReplace(c *C) {
 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(3))
 	r = tk.MustQuery("select * from tIssue1012;")
 	r.Check(testkit.Rows("1 1"))
+}
+
+func (s *testSuite) TestGeneratedColumnForInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// test cases for default behavior
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(id int, id_gen int as(id + 42), b int, unique key id_gen(id_gen));`)
+	tk.MustExec(`insert into t1 (id, b) values(1,1),(2,2),(3,3),(4,4),(5,5);`)
+	tk.MustExec(`replace into t1 (id, b) values(1,1);`)
+	tk.MustExec(`replace into t1 (id, b) values(1,1),(2,2);`)
+	tk.MustExec(`replace into t1 (id, b) values(6,16),(7,17),(8,18);`)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows(
+		"1 43 1", "2 44 2", "3 45 3", "4 46 4", "5 47 5", "6 48 16", "7 49 17", "8 50 18"))
+	tk.MustExec(`insert into t1 (id, b) values (6,18) on duplicate key update id = -id;`)
+	tk.MustExec(`insert into t1 (id, b) values (7,28) on duplicate key update b = -values(b);`)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows(
+		"1 43 1", "2 44 2", "3 45 3", "4 46 4", "5 47 5", "-6 36 16", "7 49 -28", "8 50 18"))
+
+	// test cases for virtual and stored columns in the same table
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i), unique key idx_j(j))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_j(j))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
 }
 
 func (s *testSuite) TestPartitionedTableReplace(c *C) {
@@ -2199,9 +2240,9 @@ func (s *testSuite) TestAutoIDInRetry(c *C) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	gofail.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	gofail.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))

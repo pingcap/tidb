@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -137,10 +138,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	// gofail: var errorBeforeDecodeArgs bool
-	// if errorBeforeDecodeArgs {
-	// 	return ver, errors.New("occur an error before decode args")
-	// }
+	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("occur an error before decode args"))
+		}
+	})
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
 	offset := 0
@@ -336,12 +338,13 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 		}
 	}
 
-	// gofail: var uninitializedOffsetAndState bool
-	// if uninitializedOffsetAndState {
-	// if newCol.State != model.StatePublic {
-	//      return ver, errors.New("the column state is wrong")
-	// }
-	// }
+	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
+		if val.(bool) {
+			if newCol.State != model.StatePublic {
+				failpoint.Return(ver, errors.New("the column state is wrong"))
+			}
+		}
+	})
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset

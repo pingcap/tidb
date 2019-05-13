@@ -15,6 +15,8 @@ package infoschema
 
 import (
 	"bufio"
+	"context"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -28,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var slowQueryCols = []columnInfo{
@@ -48,6 +50,13 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogStatsInfoStr, mysql.TypeVarchar, 512, 0, nil, nil},
+	{variable.SlowLogCopProcAvg, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcP90, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcMax, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitAvg, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitP90, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitMax, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeVarchar, 4096, 0, nil, nil},
 }
 
@@ -64,22 +73,27 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 	}
 	defer func() {
 		if err = file.Close(); err != nil {
-			log.Error(err)
+			logutil.Logger(context.Background()).Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
 		}
 	}()
-
-	return ParseSlowLog(tz, bufio.NewScanner(file))
+	return ParseSlowLog(tz, bufio.NewReader(file))
 }
 
 // ParseSlowLog exports for testing.
 // TODO: optimize for parse huge log-file.
-func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, error) {
+func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, error) {
 	var rows [][]types.Datum
 	startFlag := false
 	var st *slowQueryTuple
-	var err error
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		lineByte, err := getOneLine(reader)
+		if err != nil {
+			if err == io.EOF {
+				return rows, nil
+			}
+			return rows, err
+		}
+		line := string(hack.String(lineByte))
 		// Check slow log entry start flag.
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
@@ -117,30 +131,54 @@ func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, e
 			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, errors.AddStack(err)
+}
+
+func getOneLine(reader *bufio.Reader) ([]byte, error) {
+	lineByte, isPrefix, err := reader.ReadLine()
+	if err != nil {
+		return lineByte, err
 	}
-	return rows, nil
+	var tempLine []byte
+	for isPrefix {
+		tempLine, isPrefix, err = reader.ReadLine()
+		lineByte = append(lineByte, tempLine...)
+
+		// Use the max value of max_allowed_packet to check the single line length.
+		if len(lineByte) > int(variable.MaxOfMaxAllowedPacket) {
+			return lineByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
+		}
+		if err != nil {
+			return lineByte, err
+		}
+	}
+	return lineByte, err
 }
 
 type slowQueryTuple struct {
-	time         time.Time
-	txnStartTs   uint64
-	user         string
-	connID       uint64
-	queryTime    float64
-	processTime  float64
-	waitTime     float64
-	backOffTime  float64
-	requestCount uint64
-	totalKeys    uint64
-	processKeys  uint64
-	db           string
-	indexNames   string
-	isInternal   bool
-	digest       string
-	statsInfo    string
-	sql          string
+	time           time.Time
+	txnStartTs     uint64
+	user           string
+	connID         uint64
+	queryTime      float64
+	processTime    float64
+	waitTime       float64
+	backOffTime    float64
+	requestCount   uint64
+	totalKeys      uint64
+	processKeys    uint64
+	db             string
+	indexIDs       string
+	isInternal     bool
+	digest         string
+	statsInfo      string
+	avgProcessTime float64
+	p90ProcessTime float64
+	maxProcessTime float64
+	avgWaitTime    float64
+	p90WaitTime    float64
+	maxWaitTime    float64
+	memMax         int64
+	sql            string
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
@@ -213,13 +251,55 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 	case variable.SlowLogDBStr:
 		st.db = value
 	case variable.SlowLogIndexIDsStr:
-		st.indexNames = value
+		st.indexIDs = value
 	case variable.SlowLogIsInternalStr:
 		st.isInternal = value == "true"
 	case variable.SlowLogDigestStr:
 		st.digest = value
 	case variable.SlowLogStatsInfoStr:
 		st.statsInfo = value
+	case variable.SlowLogCopProcAvg:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.avgProcessTime = num
+	case variable.SlowLogCopProcP90:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.p90ProcessTime = num
+	case variable.SlowLogCopProcMax:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.maxProcessTime = num
+	case variable.SlowLogCopWaitAvg:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.avgWaitTime = num
+	case variable.SlowLogCopWaitP90:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.p90WaitTime = num
+	case variable.SlowLogCopWaitMax:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.maxWaitTime = num
+	case variable.SlowLogMemMax:
+		num, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		st.memMax = num
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
 	}
@@ -244,10 +324,17 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewUintDatum(st.totalKeys))
 	record = append(record, types.NewUintDatum(st.processKeys))
 	record = append(record, types.NewStringDatum(st.db))
-	record = append(record, types.NewStringDatum(st.indexNames))
+	record = append(record, types.NewStringDatum(st.indexIDs))
 	record = append(record, types.NewDatum(st.isInternal))
 	record = append(record, types.NewStringDatum(st.digest))
 	record = append(record, types.NewStringDatum(st.statsInfo))
+	record = append(record, types.NewFloat64Datum(st.avgProcessTime))
+	record = append(record, types.NewFloat64Datum(st.p90ProcessTime))
+	record = append(record, types.NewFloat64Datum(st.maxProcessTime))
+	record = append(record, types.NewFloat64Datum(st.avgWaitTime))
+	record = append(record, types.NewFloat64Datum(st.p90WaitTime))
+	record = append(record, types.NewFloat64Datum(st.maxWaitTime))
+	record = append(record, types.NewIntDatum(st.memMax))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record
 }
@@ -256,7 +343,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 func ParseTime(s string) (time.Time, error) {
 	t, err := time.Parse(logutil.SlowLogTimeFormat, s)
 	if err != nil {
-		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\", err: %v", s, logutil.SlowLogTimeFormat, err)
+		// This is for compatibility.
+		t, err = time.Parse(logutil.OldSlowLogTimeFormat, s)
+		if err != nil {
+			err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\", err: %v", s, logutil.SlowLogTimeFormat, err)
+		}
 	}
 	return t, err
 }
