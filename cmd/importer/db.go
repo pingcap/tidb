@@ -134,15 +134,15 @@ func genRowData(table *table) (string, error) {
 func genColumnData(table *table, column *column) (string, error) {
 	tp := column.tp
 	incremental := column.incremental
-	if _, ok := table.uniqIndices[column.name]; ok {
-		incremental = true
-	}
 	if incremental {
 		incremental = uint32(rand.Int31n(100))+1 <= column.data.probability
 		// If incremental, there is only one worker, so it is safe to directly access datum.
 		if !incremental && column.data.remains > 0 {
 			column.data.remains--
 		}
+	}
+	if _, ok := table.uniqIndices[column.name]; ok {
+		incremental = true
 	}
 	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
 
