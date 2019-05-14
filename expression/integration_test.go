@@ -1462,10 +1462,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	}
 
 	// for period_diff
-	result = tk.MustQuery(`SELECT period_diff(191, 2), period_diff(191, -2), period_diff(0, 0), period_diff(191, 191);`)
-	result.Check(testkit.Rows("101 -2213609288845122103 0 0"))
-	result = tk.MustQuery(`SELECT period_diff(NULL, 2), period_diff(-191, NULL), period_diff(NULL, NULL), period_diff(12.09, 2), period_diff("21aa", "11aa"), period_diff("", "");`)
-	result.Check(testkit.Rows("<nil> <nil> <nil> 10 10 0"))
+	result = tk.MustQuery(`SELECT period_diff(200807, 200705), period_diff(200807, 200908);`)
+	result.Check(testkit.Rows("14 -13"))
+	result = tk.MustQuery(`SELECT period_diff(NULL, 2), period_diff(-191, NULL), period_diff(NULL, NULL), period_diff(12.09, 2), period_diff("12aa", "11aa");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> 10 1"))
+	for _, errPeriod := range []string{
+		"period_diff(-00013,1)", "period_diff(00013,1)", "period_diff(0, 0)", "period_diff(200013, 1)", "period_diff(5612, 4513)", "period_diff('', '')",
+	} {
+		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
+		c.Assert(err.Error(), Equals, "[expression:1210]Incorrect arguments to period_diff")
+	}
 
 	// TODO: fix `CAST(xx as duration)` and release the test below:
 	// result = tk.MustQuery(`SELECT hour("aaa"), hour(123456), hour(1234567);`)
