@@ -564,26 +564,23 @@ func sendBatchRequest(
 		err:      nil,
 	}
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	select {
 	case connArray.batchCommandsCh <- entry:
 	case <-ctx1.Done():
 		logutil.Logger(context.Background()).Warn("send request is timeout", zap.String("to", addr))
-		cancel()
 		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
 	}
 
 	select {
 	case res, ok := <-entry.res:
 		if !ok {
-			cancel()
 			return nil, errors.Trace(entry.err)
 		}
-		cancel()
 		return tikvrpc.FromBatchCommandsResponse(res), nil
 	case <-ctx1.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
 		logutil.Logger(context.Background()).Warn("send request is canceled", zap.String("to", addr))
-		cancel()
 		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
 	}
 }
