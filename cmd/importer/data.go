@@ -121,7 +121,8 @@ func (d *datum) nextTime() string {
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else if d.remains <= 0 {
+	}
+	if d.remains <= 0 {
 		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 		d.remains = d.repeats
 	}
@@ -135,7 +136,8 @@ func (d *datum) nextDate() string {
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else if d.remains <= 0 {
+	}
+	if d.remains <= 0 {
 		d.timeValue = d.timeValue.AddDate(0, 0, int(d.step))
 		d.remains = d.repeats
 	}
@@ -149,8 +151,10 @@ func (d *datum) nextTimestamp() string {
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else if d.remains <= 0 {
+	}
+	if d.remains <= 0 {
 		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
+		d.remains = d.repeats
 	}
 	d.updateRemains()
 	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d",
@@ -164,7 +168,8 @@ func (d *datum) nextYear() string {
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else if d.remains <= 0 {
+	}
+	if d.remains <= 0 {
 		d.timeValue = d.timeValue.AddDate(int(d.step), 0, 0)
 		d.remains = d.repeats
 	}
