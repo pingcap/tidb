@@ -166,7 +166,8 @@ MySQL [test]> select * from t;
 10 rows in set (0.002 sec)
 ```
 
-`probability` controls the exceptions of `incremental` and `repeats`.
+`probability` controls the exceptions of `incremental` and `repeats`, higher probability indicates that rows are
+in more strict incremental order, and that number of rows in each group is closer to specified `repeats`.
 
 Support Type [can only be used in none unique index]: 
 
