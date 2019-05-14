@@ -287,16 +287,21 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 //		 any (key, value) pair in tikv storage. This error should be handled by
 //		 the caller.
 func HandlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum) (types.Datum, error) {
+	isChar := (ft.Tp == mysql.TypeString)
+	isBinary := (isChar && ft.Collate == charset.CollationBin)
+	isVarchar := (ft.Tp == mysql.TypeVarString || ft.Tp == mysql.TypeVarchar)
+	isVarBinary := (isVarchar && ft.Collate == charset.CollationBin)
+
+	if !isChar && !isVarchar && !isBinary && !isVarBinary {
+		return val, nil
+	}
+
+	hasBinaryFlag := mysql.HasBinaryFlag(ft.Flag)
 	targetStr, err := val.ToString()
 	if err != nil {
 		return val, err
 	}
 
-	hasBinaryFlag := mysql.HasBinaryFlag(ft.Flag)
-	isChar := ft.Tp == mysql.TypeString
-	isBinary := isChar && ft.Collate == charset.CollationBin
-	isVarchar := ft.Tp == mysql.TypeVarString || ft.Tp == mysql.TypeVarchar
-	isVarBinary := isVarchar && ft.Collate == charset.CollationBin
 	switch {
 	case isBinary || isVarBinary:
 		val.SetString(targetStr)
