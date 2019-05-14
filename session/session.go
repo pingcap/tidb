@@ -1625,13 +1625,18 @@ var builtinGlobalVariable = []string{
 	variable.WaitTimeout,
 	variable.InteractiveTimeout,
 	variable.MaxPreparedStmtCount,
+	variable.InitConnect,
 	variable.TxnIsolation,
 	variable.TxReadOnly,
+	variable.TransactionIsolation,
+	variable.TransactionReadOnly,
 	variable.NetBufferLength,
 	variable.QueryCacheType,
 	variable.QueryCacheSize,
 	variable.CharacterSetServer,
 	variable.AutoIncrementIncrement,
+	variable.CollationServer,
+	variable.NetWriteTimeout,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,

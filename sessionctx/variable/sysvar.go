@@ -174,7 +174,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_max_undo_log_size", ""},
 	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096"},
 	{ScopeGlobal, ConnectTimeout, "10"},
-	{ScopeGlobal | ScopeSession, "collation_server", mysql.DefaultCollationName},
+	{ScopeGlobal | ScopeSession, CollationServer, mysql.DefaultCollationName},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},
 	{ScopeGlobal, "innodb_file_format", "Antelope"},
@@ -266,7 +266,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_rollback_on_timeout", "0"},
 	{ScopeGlobal | ScopeSession, "query_alloc_block_size", "8192"},
 	{ScopeGlobal, SlaveCompressedProtocol, "0"},
-	{ScopeGlobal, "init_connect", ""},
+	{ScopeGlobal | ScopeSession, InitConnect, ""},
 	{ScopeGlobal, "rpl_semi_sync_slave_trace_level", ""},
 	{ScopeNone, "have_compress", "YES"},
 	{ScopeNone, "thread_concurrency", "10"},
@@ -373,7 +373,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "sha256_password_proxy_users", ""},
 	{ScopeGlobal | ScopeSession, SQLQuoteShowCreate, "1"},
 	{ScopeGlobal | ScopeSession, "binlogging_impossible_mode", "IGNORE_ERROR"},
-	{ScopeGlobal, QueryCacheSize, "1048576"},
+	{ScopeGlobal | ScopeSession, QueryCacheSize, "1048576"},
 	{ScopeGlobal, "innodb_stats_transient_sample_pages", "8"},
 	{ScopeGlobal, InnodbStatsOnMetadata, "0"},
 	{ScopeNone, "server_uuid", "00000000-0000-0000-0000-000000000000"},
@@ -410,7 +410,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "optimizer_trace", "enabled=off,one_line=off"},
 	{ScopeGlobal | ScopeSession, "read_rnd_buffer_size", "262144"},
 	{ScopeNone, "version_comment", "MySQL Community Server (Apache License 2.0)"},
-	{ScopeGlobal | ScopeSession, "net_write_timeout", "60"},
+	{ScopeGlobal | ScopeSession, NetWriteTimeout, "60"},
 	{ScopeGlobal, InnodbBufferPoolLoadAbort, "0"},
 	{ScopeGlobal | ScopeSession, TxnIsolation, "REPEATABLE-READ"},
 	{ScopeGlobal | ScopeSession, TransactionIsolation, "REPEATABLE-READ"},
@@ -600,7 +600,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "ndbinfo_show_hidden", ""},
 	{ScopeGlobal | ScopeSession, "net_read_timeout", "30"},
 	{ScopeNone, "innodb_page_size", "16384"},
-	{ScopeGlobal, MaxAllowedPacket, "67108864"},
+	{ScopeGlobal | ScopeSession, MaxAllowedPacket, "67108864"},
 	{ScopeNone, "innodb_log_file_size", "50331648"},
 	{ScopeGlobal, "sync_relay_log_info", "10000"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_limit", "1"},
@@ -945,6 +945,12 @@ const (
 	CharacterSetServer = "character_set_server"
 	// AutoIncrementIncrement it the name of 'auto_increment_increment' system variable.
 	AutoIncrementIncrement = "auto_increment_increment"
+	// InitConnect is the name of 'init_connect' system variable.
+	InitConnect = "init_connect"
+	// CollationServer is the name of 'collation_server' variable.
+	CollationServer = "collation_server"
+	// NetWriteTimeout is the name of 'net_write_timeout' variable.
+	NetWriteTimeout = "net_write_timeout"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
