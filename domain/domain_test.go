@@ -14,6 +14,7 @@
 package domain
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -61,6 +63,7 @@ func (*testSuite) TestT(c *C) {
 	store = dom.Store()
 	ctx := mock.NewContext()
 	ctx.Store = store
+	snapTS := oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
 	dd := dom.DDL()
 	c.Assert(dd, NotNil)
 	c.Assert(dd.GetLease(), Equals, 80*time.Millisecond)
@@ -75,6 +78,27 @@ func (*testSuite) TestT(c *C) {
 
 	// for setting lease
 	lease := 100 * time.Millisecond
+
+	// for updating the self schema version
+	goCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	cancel()
+	c.Assert(err, IsNil)
+	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
+	c.Assert(snapIs, NotNil)
+	c.Assert(err, IsNil)
+	// Make sure that the self schema version doesn't be changed.
+	goCtx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
+	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	cancel()
+	c.Assert(err, IsNil)
+
+	// for GetSnapshotInfoSchema
+	snapTS = oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
+	snapIs, err = dom.GetSnapshotInfoSchema(snapTS)
+	c.Assert(err, IsNil)
+	c.Assert(snapIs, NotNil)
+	c.Assert(snapIs.SchemaMetaVersion(), Equals, is.SchemaMetaVersion())
 
 	// for schemaValidator
 	schemaVer := dom.SchemaValidator.(*schemaValidator).latestSchemaVer

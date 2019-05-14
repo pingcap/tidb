@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"golang.org/x/net/context"
 )
 
@@ -85,9 +87,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	if e.idxInfo != nil {
 		idxKey, err1 := e.encodeIndexKey()
-		if err1 != nil {
-			return errors.Trace(err1)
+		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
+			return err1
 		}
+
 		handleVal, err1 := e.get(idxKey)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return errors.Trace(err1)
@@ -99,7 +102,22 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
+
+		// The injection is used to simulate following scenario:
+		// 1. Session A create a point get query but pause before second time `GET` kv from backend
+		// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
+		// 3. Then point get retrieve data from backend after step 2 finished
+		// 4. Check the result
+		failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step1", func() {
+			if ch, ok := ctx.Value("pointGetRepeatableReadTest").(chan struct{}); ok {
+				// Make `UPDATE` continue
+				close(ch)
+			}
+			// Wait `UPDATE` finished
+			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
+		})
 	}
+
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
 	val, err := e.get(key)
 	if err != nil && !kv.ErrNotExist.Equal(err) {
@@ -115,16 +133,21 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return e.decodeRowValToChunk(val, chk)
 }
 
-func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {
+func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for i := range e.idxVals {
 		colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
-		casted, err := table.CastValue(e.ctx, e.idxVals[i], colInfo)
+		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
+			e.idxVals[i], err = ranger.HandlePadCharToFullLength(sc, &colInfo.FieldType, e.idxVals[i])
+		} else {
+			e.idxVals[i], err = table.CastValue(e.ctx, e.idxVals[i], colInfo)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.idxVals[i] = casted
 	}
-	encodedIdxVals, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
+
+	encodedIdxVals, err := codec.EncodeKey(sc, nil, e.idxVals...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

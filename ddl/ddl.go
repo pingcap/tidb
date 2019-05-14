@@ -245,7 +245,8 @@ type ddl struct {
 	quitCh     chan struct{}
 
 	*ddlCtx
-	workers map[workerType]*worker
+	workers  map[workerType]*worker
+	sessPool *sessionPool
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -374,7 +375,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	if RunWorker {
 		err := d.ownerManager.CampaignOwner(ctx)
 		terror.Log(errors.Trace(err))
-
+		d.sessPool = &sessionPool{resPool: ctxPool}
 		d.workers = make(map[workerType]*worker, 2)
 		d.workers[generalWorker] = newWorker(generalWorker, d.store, ctxPool)
 		d.workers[addIdxWorker] = newWorker(addIdxWorker, d.store, ctxPool)
@@ -413,6 +414,9 @@ func (d *ddl) close() {
 
 	for _, worker := range d.workers {
 		worker.close()
+	}
+	if d.sessPool != nil {
+		d.sessPool.close()
 	}
 	logutil.Logger(ddlLogCtx).Info("[ddl] closing DDL", zap.String("ID", d.uuid), zap.Duration("takeTime", time.Since(startTime)))
 }
