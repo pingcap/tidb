@@ -30,15 +30,16 @@ import (
 )
 
 type column struct {
-	idx     int
-	name    string
-	data    *datum
-	tp      *types.FieldType
-	comment string
-	min     string
-	max     string
-	step    int64
-	set     []string
+	idx         int
+	name        string
+	data        *datum
+	tp          *types.FieldType
+	comment     string
+	min         string
+	max         string
+	incremental bool
+	step        int64
+	set         []string
 
 	table *table
 
@@ -54,7 +55,7 @@ func (col *column) String() string {
 		col.idx, col.name, col.tp, col.min, col.max, col.step, col.set)
 }
 
-func (col *column) parseRule(kvs []string) {
+func (col *column) parseRule(kvs []string, uniq bool) {
 	if len(kvs) != 2 {
 		return
 	}
@@ -80,13 +81,29 @@ func (col *column) parseRule(kvs []string) {
 		for _, field := range fields {
 			col.set = append(col.set, strings.TrimSpace(field))
 		}
+	} else if key == "incremental" {
+		var err error
+		col.incremental, err = strconv.ParseBool(value)
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else if key == "repeats" {
+		repeats, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if uniq && repeats > 1 {
+			log.Fatal("cannot repeat more than 1 times on unique columns")
+		}
+		col.data.repeats = repeats
+		col.data.remains = repeats
 	}
 }
 
 // parse the data rules.
 // rules like `a int unique comment '[[range=1,10;step=1]]'`,
 // then we will get value from 1,2...10
-func (col *column) parseColumnComment() {
+func (col *column) parseColumnComment(uniq bool) {
 	comment := strings.TrimSpace(col.comment)
 	start := strings.Index(comment, "[[")
 	end := strings.Index(comment, "]]")
@@ -99,7 +116,7 @@ func (col *column) parseColumnComment() {
 	for _, field := range fields {
 		field = strings.TrimSpace(field)
 		kvs := strings.Split(field, "=")
-		col.parseRule(kvs)
+		col.parseRule(kvs, uniq)
 	}
 }
 
@@ -107,7 +124,8 @@ func (col *column) parseColumn(cd *ast.ColumnDef) {
 	col.name = cd.Name.Name.L
 	col.tp = cd.Tp
 	col.parseColumnOptions(cd.Options)
-	col.parseColumnComment()
+	_, uniq := col.table.uniqIndices[col.name]
+	col.parseColumnComment(uniq)
 	col.table.columns = append(col.table.columns, col)
 }
 
