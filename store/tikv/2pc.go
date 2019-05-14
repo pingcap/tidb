@@ -95,9 +95,10 @@ type twoPhaseCommitter struct {
 	maxTxnTimeUse uint64
 	detail        *execdetails.CommitDetails
 	// For pessimistic transaction
-	primaryKey  []byte
-	forUpdateTS uint64
-	isFirstLock bool
+	isPessimistic bool
+	primaryKey    []byte
+	forUpdateTS   uint64
+	isFirstLock   bool
 }
 
 type mutationEx struct {
@@ -126,8 +127,8 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	)
 	mutations := make(map[string]*mutationEx)
 	txn := c.txn
-	isPessimistic := txn.IsPessimistic()
-	if isPessimistic && len(c.primaryKey) > 0 {
+	c.isPessimistic = txn.IsPessimistic()
+	if c.isPessimistic && len(c.primaryKey) > 0 {
 		keys = append(keys, c.primaryKey)
 		mutations[string(c.primaryKey)] = &mutationEx{
 			Mutation: pb.Mutation{
@@ -160,7 +161,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			}
 			delCnt++
 		}
-		if isPessimistic {
+		if c.isPessimistic {
 			if !bytes.Equal(k, c.primaryKey) {
 				keys = append(keys, k)
 			}
@@ -185,13 +186,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 					Op:  pb.Op_Lock,
 					Key: lockKey,
 				},
-				isPessimisticLock: isPessimistic,
+				isPessimisticLock: c.isPessimistic,
 			}
 			lockCnt++
 			keys = append(keys, lockKey)
 			size += len(lockKey)
 		} else {
-			muEx.isPessimisticLock = isPessimistic
+			muEx.isPessimisticLock = c.isPessimistic
 		}
 	}
 	if len(keys) == 0 {
@@ -449,21 +450,20 @@ func (c *twoPhaseCommitter) keySize(key []byte) int {
 	return len(key)
 }
 
-func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
+func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Request {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	var isPessimisticLock []bool
+	if c.isPessimistic {
+		isPessimisticLock = make([]bool, len(mutations))
+	}
 	for i, k := range batch.keys {
 		tmp := c.mutations[string(k)]
 		mutations[i] = &tmp.Mutation
 		if tmp.isPessimisticLock {
-			if len(isPessimisticLock) == 0 {
-				isPessimisticLock = make([]bool, len(mutations))
-			}
 			isPessimisticLock[i] = true
 		}
 	}
-
-	req := &tikvrpc.Request{
+	return &tikvrpc.Request{
 		Type: tikvrpc.CmdPrewrite,
 		Prewrite: &pb.PrewriteRequest{
 			Mutations:         mutations,
@@ -477,6 +477,10 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			SyncLog:  c.syncLog,
 		},
 	}
+}
+
+func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
+	req := c.buildPrewriteRequest(batch)
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
