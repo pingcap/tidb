@@ -63,8 +63,13 @@ func ClientTest(security config.Security, addrs []string, config ClientTestConfi
 	c.wait.Wait()
 	done := c.unblockedClose()
 	select {
-	case <-done:
+	case err := <-done:
 		// closed normally
+		if err != nil {
+			// this is just literally impossible!
+			logger().Error("The rpcClient errors when closing!")
+			c.fail()
+		}
 	case <-time.After(100 * time.Millisecond):
 		// do not close in time!
 		logger().Error("The rpcClient do not close in time! Maybe there is goroutine leaking")
@@ -106,11 +111,11 @@ func (c *clientTester) isEnded() bool {
 }
 
 // unblockedClose close the client, but returns a channel instead of blocking the current goroutine
-func (c *clientTester) unblockedClose() <-chan struct{} {
-	done := make(chan struct{}, 1)
+func (c *clientTester) unblockedClose() <-chan error {
+	done := make(chan error, 1)
 	go func() {
-		c.rpcClient.Close()
-		done <- struct{}{}
+		err := c.rpcClient.Close()
+		done <- err
 	}()
 	return done
 }
@@ -137,7 +142,7 @@ func (c *clientTester) test(addr string, id uint64) {
 				return
 			case grpcCodes.Unavailable:
 				if strings.Contains(status.Message(), "all SubConns are in TransientFailure") {
-					// server not availiable
+					// server not available
 					logger().Debugf("Test RPC %d at %v can not complete since connection to the server is not available. error: %v", id, addr, err)
 					return
 				} else if strings.Contains(status.Message(), "transport is closing") {
