@@ -926,6 +926,8 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenByArgs("length 8 is less than origin 10")},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
+		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.Gen("unsupported modify decimal column precision")},
+		{"decimal(2,1)", "decimal(2,1)", nil},
 	}
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)
