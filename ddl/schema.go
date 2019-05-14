@@ -14,8 +14,6 @@
 package ddl
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
@@ -118,13 +116,9 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
-	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
-		if infoschema.ErrDatabaseDropExists.Equal(err) {
-			desc := fmt.Sprintf("(Schema ID %d)", job.ID)
-			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(desc)
-		}
-		return ver, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	dbInfo.Charset = toCharset
