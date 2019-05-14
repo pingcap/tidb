@@ -381,9 +381,8 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future        oracle.Future
-	store         kv.Storage
-	lowResolution bool
+	future oracle.Future
+	store  kv.Storage
 
 	mockFail bool
 }
@@ -410,15 +409,12 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 
 	oracleStore := s.store.GetOracle()
 	var tsFuture oracle.Future
-	var lowResolution bool
 	if s.sessionVars.LowResolutionTSO {
 		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
-		lowResolution = true
 	} else {
 		tsFuture = oracleStore.GetTimestampAsync(ctx)
-		lowResolution = false
 	}
-	ret := &txnFuture{future: tsFuture, store: s.store, lowResolution: lowResolution}
+	ret := &txnFuture{future: tsFuture, store: s.store}
 	if x := ctx.Value("mockGetTSFail"); x != nil {
 		ret.mockFail = true
 	}
