@@ -53,7 +53,7 @@ func (msm *mockSessionManager1) Kill(cid uint64, query bool) {
 }
 
 // GetSessionVars implements the SessionManager.GetSessionVars interface.
-func (msm *mockSessionManager) GetSessionVars(cid uint64) (*variable.SessionVars, bool) {
+func (msm *mockSessionManager1) GetSessionVars(cid uint64) (*variable.SessionVars, bool) {
 	return nil, false
 }
 

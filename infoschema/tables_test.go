@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -252,6 +253,10 @@ func (sm *mockSessionManager) GetProcessInfo(id uint64) (util.ProcessInfo, bool)
 }
 
 func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
+
+func (sm *mockSessionManager) GetSessionVars(cID uint64) (*variable.SessionVars, bool) {
+	return nil, false
+}
 
 func (s *testTableSuite) TestSomeTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
