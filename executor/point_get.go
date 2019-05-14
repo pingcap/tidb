@@ -45,6 +45,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		idxVals: p.IndexValues,
 		handle:  p.Handle,
 		startTS: startTS,
+		done:    p.UnsignedHandle && p.Handle < 0,
 	}
 }
 
