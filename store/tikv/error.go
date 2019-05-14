@@ -43,6 +43,7 @@ var (
 	ErrRegionUnavailable  = terror.ClassTiKV.New(mysql.ErrRegionUnavailable, mysql.MySQLErrName[mysql.ErrRegionUnavailable])
 	ErrTiKVServerBusy     = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy])
 	ErrGCTooEarly         = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
+	ErrWriteConflict      = terror.ClassTiKV.New(mysql.ErrWriteConflict, mysql.MySQLErrName[mysql.ErrWriteConflict])
 )
 
 func init() {
@@ -54,6 +55,7 @@ func init() {
 		mysql.ErrTiKVServerBusy:      mysql.ErrTiKVServerBusy,
 		mysql.ErrGCTooEarly:          mysql.ErrGCTooEarly,
 		mysql.ErrTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
+		mysql.ErrWriteConflict:       mysql.ErrWriteConflict,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
 }
