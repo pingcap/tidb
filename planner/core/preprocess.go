@@ -327,7 +327,7 @@ func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) 
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
-	// for 'ALTER DATABASE' statement, database name can be empty to alter default database
+	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
 	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}

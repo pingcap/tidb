@@ -118,7 +118,12 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return ver, errors.Trace(err)
+	}
+
+	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
 	}
 
 	dbInfo.Charset = toCharset

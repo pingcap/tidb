@@ -135,17 +135,10 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 		return errors.Trace(err)
 	}
 	if di == nil {
-		// When we apply an old schema diff, the database may has been dropped already
+		// This should never happen.
 		return ErrDatabaseNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
-	}
-	oldInfo, ok := b.is.SchemaByName(di.Name)
-	if !ok {
-		return ErrDatabaseNotExists.GenWithStackByArgs(di.Name.O)
-	}
-	if oldInfo.Charset == di.Charset && oldInfo.Collate == di.Collate {
-		return nil
 	}
 	newDbInfo := b.copySchemaTables(di.Name.O)
 	newDbInfo.Charset = di.Charset

@@ -1645,7 +1645,7 @@ func (s *testIntegrationSuite11) TestChangingDBCharset(c *C) {
 	tk.MustExec("DROP DATABASE IF EXISTS alterdb1")
 	tk.MustExec("CREATE DATABASE alterdb1 CHARSET=utf8 COLLATE=utf8_unicode_ci")
 
-	// No default DB error
+	// No default DB errors.
 	noDBFailedCases := []struct {
 		stmt   string
 		errMsg string
@@ -1664,7 +1664,7 @@ func (s *testIntegrationSuite11) TestChangingDBCharset(c *C) {
 	}
 
 	verifyDBCharsetAndCollate := func(dbName, chs string, coll string) {
-		// check `SHOW CREATE SCHEMA`
+		// check `SHOW CREATE SCHEMA`.
 		r := tk.MustQuery("SHOW CREATE SCHEMA " + dbName).Rows()[0][1].(string)
 		c.Assert(strings.Contains(r, "CHARACTER SET "+chs), IsTrue)
 

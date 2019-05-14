@@ -91,7 +91,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	return errors.Trace(err)
 }
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
-	// Resolve target charset and collation from options
+	// Resolve target charset and collation from options.
 	var toCharset, toCollate string
 	for _, val := range stmt.Options {
 		switch val.Tp {
@@ -120,7 +120,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		}
 	}
 
-	// Check if need change charset/collation
+	// Check if need to change charset/collation.
 	dbName := model.NewCIStr(stmt.Name)
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
@@ -131,12 +131,12 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		return nil
 	}
 
-	// check current TiDB limitations
+	// Check the current TiDB limitations.
 	if err = modifiableCharsetAndCollation(toCharset, toCollate, dbInfo.Charset, dbInfo.Collate); err != nil {
 		return errors.Trace(err)
 	}
 
-	// Do DDL job
+	// Do the DDL job.
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionModifySchemaCharsetAndCollate,
