@@ -368,11 +368,11 @@ func (s *testRegionCacheSuite) TestSendFailBlackTwoRegion(c *C) {
 	s.checkCache(c, 2)
 
 	// send request fail in 2 regions backed by same 2 stores.
-	for i := 0; i < 20; i++ {
+	for i := 0; i < startBlackoutAfterAttempt; i++ {
 		ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
 		s.cache.OnSendRequestFail(ctx, errors.New("test error"))
 	}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < startBlackoutAfterAttempt; i++ {
 		ctx, _ := s.cache.GetRPCContext(s.bo, loc2.Region)
 		s.cache.OnSendRequestFail(ctx, errors.New("test error"))
 	}

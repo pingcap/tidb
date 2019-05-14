@@ -61,7 +61,7 @@ type Region struct {
 	lastAccess int64          // last region access time, see checkRegionCacheTTL
 }
 
-// RegionStore presents region stores info
+// RegionStore represents region stores info
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
 	workStoreIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx)
@@ -111,15 +111,15 @@ func (r *Region) compareAndSwapStore(oldStore, newStore *RegionStore) bool {
 }
 
 func (r *Region) checkRegionCacheTTL(ts int64) bool {
-retry:
-	lastAccess := atomic.LoadInt64(&r.lastAccess)
-	if ts-lastAccess > rcDefaultRegionCacheTTLSec {
-		return false
+	for {
+		lastAccess := atomic.LoadInt64(&r.lastAccess)
+		if ts-lastAccess > rcDefaultRegionCacheTTLSec {
+			return false
+		}
+		if atomic.CompareAndSwapInt64(&r.lastAccess, lastAccess, ts) {
+			return true
+		}
 	}
-	if !atomic.CompareAndSwapInt64(&r.lastAccess, lastAccess, ts) {
-		goto retry
-	}
-	return true
 }
 
 // invalidate invalidates a region, next time it will got null result.
@@ -189,14 +189,14 @@ func (c *RegionCache) asyncCheckAndResolveLoop() {
 		case <-c.closeCh:
 			return
 		case <-c.notifyCheckCh:
-			c.checkAndResolve(&needCheckStores)
+			needCheckStores = c.checkAndResolve(needCheckStores)
 		}
 	}
 }
 
 // checkAndResolve checks and resolve addr of failed stores.
 // this method isn't thread-safe and only be used by one goroutine.
-func (c *RegionCache) checkAndResolve(needCheckStores *[]*Store) {
+func (c *RegionCache) checkAndResolve(needCheckStores []*Store) []*Store {
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -206,19 +206,20 @@ func (c *RegionCache) checkAndResolve(needCheckStores *[]*Store) {
 		}
 	}()
 
-	*needCheckStores = (*needCheckStores)[0:]
+	needCheckStores = needCheckStores[0:]
 	c.storeMu.RLock()
 	for _, store := range c.storeMu.stores {
 		state := store.getState()
 		if state.resolveState == needCheck {
-			*needCheckStores = append(*needCheckStores, store)
+			needCheckStores = append(needCheckStores, store)
 		}
 	}
 	c.storeMu.RUnlock()
 
-	for _, store := range *needCheckStores {
+	for _, store := range needCheckStores {
 		store.reResolve(c)
 	}
+	return needCheckStores
 }
 
 // RPCContext contains data that is needed to send RPC to a region.
@@ -291,31 +292,9 @@ func (l *KeyLocation) Contains(key []byte) bool {
 
 // LocateKey searches for the region and range that the key is located.
 func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
-	r := c.searchCachedRegion(key, false)
-	if r == nil {
-		// load region when it is not exists or expired.
-		lr, err := c.loadRegion(bo, key, false)
-		if err != nil {
-			// no region data, return error if failure.
-			return nil, err
-		}
-		r = lr
-		c.mu.Lock()
-		c.insertRegionToCache(r)
-		c.mu.Unlock()
-	} else if r.needReload() {
-		// load region when it be marked as need reload.
-		lr, err := c.loadRegion(bo, key, false)
-		if err != nil {
-			// ignore error and use old region info.
-			logutil.Logger(bo.ctx).Error("load region failure",
-				zap.ByteString("key", key), zap.Error(err))
-		} else {
-			r = lr
-			c.mu.Lock()
-			c.insertRegionToCache(r)
-			c.mu.Unlock()
-		}
+	r, err := c.findRegionByKey(bo, key, false)
+	if err != nil {
+		return nil, err
 	}
 	return &KeyLocation{
 		Region:   r.VerID(),
@@ -338,10 +317,22 @@ func (c *RegionCache) loadAndInsertRegion(bo *Backoffer, key []byte) (*Region, e
 // LocateEndKey searches for the region and range that the key is located.
 // Unlike LocateKey, start key of a region is exclusive and end key is inclusive.
 func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
-	r := c.searchCachedRegion(key, true)
+	r, err := c.findRegionByKey(bo, key, true)
+	if err != nil {
+		return nil, err
+	}
+	return &KeyLocation{
+		Region:   r.VerID(),
+		StartKey: r.StartKey(),
+		EndKey:   r.EndKey(),
+	}, nil
+}
+
+func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) (r *Region, err error) {
+	r = c.searchCachedRegion(key, isEndKey)
 	if r == nil {
 		// load region when it is not exists or expired.
-		lr, err := c.loadRegion(bo, key, true)
+		lr, err := c.loadRegion(bo, key, isEndKey)
 		if err != nil {
 			// no region data, return error if failure.
 			return nil, err
@@ -352,7 +343,7 @@ func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, err
 		c.mu.Unlock()
 	} else if r.needReload() {
 		// load region when it be marked as need reload.
-		lr, err := c.loadRegion(bo, key, true)
+		lr, err := c.loadRegion(bo, key, isEndKey)
 		if err != nil {
 			// ignore error and use old region info.
 			logutil.Logger(bo.ctx).Error("load region failure",
@@ -364,11 +355,7 @@ func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, err
 			c.mu.Unlock()
 		}
 	}
-	return &KeyLocation{
-		Region:   r.VerID(),
-		StartKey: r.StartKey(),
-		EndKey:   r.EndKey(),
-	}, nil
+	return r, nil
 }
 
 // LocateRegionByID searches for the region with ID.
@@ -671,10 +658,18 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 		addr, err = store.initResolve(bo)
 		return
 	case deleted:
-		c.storeMu.RLock()
-		store = c.storeMu.stores[store.storeID]
-		c.storeMu.RUnlock()
-	retry:
+		addr = c.changeToActiveStore(region, store, storeIdx)
+		return
+	default:
+		panic("unsupported resolve state")
+	}
+}
+
+func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx int) (addr string) {
+	c.storeMu.RLock()
+	store = c.storeMu.stores[store.storeID]
+	c.storeMu.RUnlock()
+	for {
 		oldRegionStore := region.getStore()
 		newRegionStore := oldRegionStore.clone()
 		newRegionStore.stores = make([]*Store, 0, len(oldRegionStore.stores))
@@ -685,14 +680,12 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 				newRegionStore.stores = append(newRegionStore.stores, s)
 			}
 		}
-		if !region.compareAndSwapStore(oldRegionStore, newRegionStore) {
-			goto retry
+		if region.compareAndSwapStore(oldRegionStore, newRegionStore) {
+			break
 		}
-		addr = store.addr
-		return
-	default:
-		panic("unsupported resolve state")
 	}
+	addr = store.addr
+	return
 }
 
 // hasAvailableStore checks whether region has available store.
