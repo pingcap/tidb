@@ -338,9 +338,8 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future        oracle.Future
-	store         kv.Storage
-	lowResolution bool
+	future oracle.Future
+	store  kv.Storage
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
@@ -356,15 +355,12 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	oracleStore := s.store.GetOracle()
 	var tsFuture oracle.Future
-	var lowResolution bool
 	if s.sessionVars.LowResolutionTSO {
 		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
-		lowResolution = true
 	} else {
 		tsFuture = oracleStore.GetTimestampAsync(ctx)
-		lowResolution = false
 	}
-	return &txnFuture{tsFuture, s.store, lowResolution}
+	return &txnFuture{tsFuture, s.store}
 }
 
 // StmtCommit implements the sessionctx.Context interface.

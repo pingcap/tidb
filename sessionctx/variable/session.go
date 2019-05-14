@@ -320,7 +320,7 @@ type SessionVars struct {
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
 
-	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
+	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	LowResolutionTSO bool
 }
 
