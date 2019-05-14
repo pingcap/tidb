@@ -90,6 +90,14 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point, nil
 	}
+
+	if mysql.HasUnsignedFlag(tp.Flag) && (tp.Tp == mysql.TypeTiny ||
+		tp.Tp == mysql.TypeShort || tp.Tp == mysql.TypeInt24 ||
+		tp.Tp == mysql.TypeLong || tp.Tp == mysql.TypeLonglong) {
+		if point.value.Kind() == types.KindInt64 && point.value.GetInt64() < 0 {
+			point.value.SetInt64(int64(0))
+		}
+	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
 		return point, errors.Trace(err)
