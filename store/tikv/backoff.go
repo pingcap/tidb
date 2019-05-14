@@ -104,6 +104,7 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 			zap.Int("sleep", sleep))
 
 		realSleep := sleep
+		// when set maxSleepMs >= 0 in `tikv.BackoffWithMaxSleep` will force sleep maxSleepMs milliseconds.
 		if maxSleepMs >= 0 && realSleep > maxSleepMs {
 			realSleep = maxSleepMs
 		}
