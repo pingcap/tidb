@@ -1057,6 +1057,11 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	return errors.Trace(err)
 }
 
+func checkTableInfoValid(tblInfo *model.TableInfo) error {
+	_, err := tables.TableFromMeta(nil, tblInfo)
+	return err
+}
+
 func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) model.TableInfo {
 	tblInfo := *referTblInfo
 	// Check non-public column and adjust column offset.
@@ -1191,6 +1196,12 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	tbInfo.State = model.StatePublic
+	err = checkTableInfoValid(tbInfo)
+	if err != nil {
+		return err
+	}
+	tbInfo.State = model.StateNone
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2151,6 +2162,19 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 	// We don't support dropping column with PK handle covered now.
 	if col.IsPKHandleColumn(tblInfo) {
 		return errUnsupportedPKHandle
+	}
+
+	// Clone table info to avoid change memory schema.
+	checkTblInfo := tblInfo.Clone()
+	adjustColumnInfoInDropColumn(checkTblInfo, col.Offset)
+	checkCol := model.FindColumnInfo(checkTblInfo.Columns, colName.L)
+	if checkCol == nil {
+		return ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+	}
+	checkCol.State = model.StateWriteOnly
+	err = checkTableInfoValid(checkTblInfo)
+	if err != nil {
+		return err
 	}
 
 	job := &model.Job{

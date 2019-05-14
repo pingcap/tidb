@@ -1526,6 +1526,13 @@ func (s *testDBSuite2) TestDropColumn(c *C) {
 		}
 	}
 
+	// Test for drop partition table column.
+	s.tk.MustExec("drop table if exists t1")
+	s.tk.MustExec("create table t1 (a int,b int) partition by hash(a) partitions 4;")
+	_, err := s.tk.Exec("alter table t1 drop column a")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+
 	s.tk.MustExec("drop database drop_col_db")
 }
 
@@ -1803,6 +1810,16 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	assertErrorCode(c, s.tk, failSQL, tmysql.ErrDuplicatedValueInType)
 	_, err = s.tk.Exec("create table t_enum (a enum('B','b'));")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
+
+	// Test for invalid expression.
+	s.tk.MustExec("drop table if exists t1")
+	_, err = s.tk.Exec(`CREATE TABLE t1 (
+		c0 int(11) ,
+  		c1 int(11),
+    	c2 decimal(16,4) GENERATED ALWAYS AS ((case when (c0 = 0) then 0 when (c0 > 0) then (c1 / c0) end))
+	);`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 55 near \"THEN (`c1` / `c0`) END)\" ")
 }
 
 func (s *testDBSuite2) TestTableForeignKey(c *C) {
