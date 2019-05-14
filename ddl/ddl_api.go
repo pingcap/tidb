@@ -2192,6 +2192,10 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
 func modifiable(origin *types.FieldType, to *types.FieldType) error {
+	// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
+	if origin.Tp == mysql.TypeNewDecimal && (to.Flen != origin.Flen || to.Decimal != origin.Decimal) {
+		return errUnsupportedModifyColumn.GenWithStack("unsupported modify decimal column precision")
+	}
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
