@@ -604,7 +604,7 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 				HighExclude: t.exclude[i+1],
 			})
 		}
-		ranges = h.SplitRange(nil, ranges)
+		ranges, _ = h.SplitRange(nil, ranges, false)
 		var ranStrs []string
 		for _, ran := range ranges {
 			ranStrs = append(ranStrs, ran.String())
