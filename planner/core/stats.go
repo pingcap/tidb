@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
@@ -135,7 +136,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 			}
 			continue
 		}
-		noIntervalRanges, err := ds.deriveIndexPathStats(path)
+		noIntervalRanges, err := ds.deriveIndexPathStats(path, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -146,7 +147,108 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 			break
 		}
 	}
+	// consider the IndexMergePath.
+	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 2 && ds.ctx.GetSessionVars().EnableIndexMerge {
+		ds.generateIndexMergeOrPaths()
+	}
 	return ds.stats, nil
+}
+
+// getIndexMergeOrPath generates all possible IndexMergeOrPaths.
+func (ds *DataSource) generateIndexMergeOrPaths() {
+	usedIndexCount := len(ds.possibleAccessPaths) - 1
+	for i, cond := range ds.pushedDownConds {
+		var ixMergePartialIxPaths = make([]*accessPath, 0, 0)
+
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.LogicOr {
+			continue
+		}
+		dnfItems := expression.FlattenDNFConditions(sf)
+		for _, item := range dnfItems {
+			var indexAccessPaths []*accessPath = nil
+			if itemF, ok := item.(*expression.ScalarFunction); ok && itemF.FuncName.L == ast.LogicAnd {
+				cnfItems := expression.FlattenCNFConditions(itemF)
+				indexAccessPaths = ds.buildAccessPath(cnfItems, usedIndexCount)
+			} else {
+				tempArgs := []expression.Expression{item}
+				indexAccessPaths = ds.buildAccessPath(tempArgs, usedIndexCount)
+			}
+			if indexAccessPaths == nil {
+				ixMergePartialIxPaths = nil
+				break
+			}
+			ixMergePartialIxPath := ds.generateIndexMergePartialIndexPath(indexAccessPaths)
+			if ixMergePartialIxPath == nil {
+				ixMergePartialIxPaths = nil
+				break
+			}
+			ixMergePartialIxPaths = append(ixMergePartialIxPaths, ixMergePartialIxPath)
+		}
+		if len(ixMergePartialIxPaths) > 1 {
+			possiblePath := ds.generateIndexMergeOrPath(ixMergePartialIxPaths, i)
+			if possiblePath != nil {
+				ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
+			}
+		}
+	}
+}
+
+// buildAccessPath generates all possible index paths for conditions.
+func (ds *DataSource) buildAccessPath(conditions []expression.Expression, usedIndexCount int) []*accessPath {
+	var results = make([]*accessPath, 0, 0)
+	for i := 1; i <= usedIndexCount; i++ {
+		newAccessPath := new(accessPath)
+		newAccessPath.index = ds.possibleAccessPaths[i].index
+		_, err := ds.deriveIndexPathStats(newAccessPath, conditions)
+		if err != nil {
+			return nil
+		}
+		// if accessConds is empty or tableFilter is not empty, we ignore the access path.
+		if len(newAccessPath.tableFilters) > 0 || len(newAccessPath.accessConds) == 0 {
+			continue
+		}
+		results = append(results, newAccessPath)
+	}
+	if len(results) == 0 {
+		results = nil
+	}
+	return results
+}
+
+// generateIndexMergePartialIndexPath chooses a best index path from all possible index paths.
+// Now we just choose the index with more columns.
+func (ds *DataSource) generateIndexMergePartialIndexPath(indexAccessPaths []*accessPath) *accessPath {
+	if len(indexAccessPaths) == 1 {
+		return indexAccessPaths[0]
+	}
+
+	maxColsIndex := 0
+	maxCols := len(indexAccessPaths[0].idxCols)
+	for i := 0; i < len(indexAccessPaths); i++ {
+		current := len(indexAccessPaths[i].idxCols)
+		if current > maxCols {
+			maxColsIndex = i
+			maxCols = current
+		}
+	}
+	return indexAccessPaths[maxColsIndex]
+}
+
+// generateIndexMergeOrPath generates one possible IndexMergePath
+func (ds *DataSource) generateIndexMergeOrPath(ixMergePartialIxPaths []*accessPath, current int) *accessPath {
+	indexMergePath := new(accessPath)
+	indexMergePath.isIndexMergePath = true
+	indexMergePath.indexMergeType = 3
+	indexMergePath.partialIndexPaths = append(indexMergePath.partialIndexPaths, ixMergePartialIxPaths...)
+
+	for i := 0; i < len(ds.pushedDownConds); i++ {
+		if i == current {
+			continue
+		}
+		indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[i])
+	}
+	return indexMergePath
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
