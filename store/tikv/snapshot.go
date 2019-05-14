@@ -312,7 +312,7 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 
 func extractKeyErr(keyErr *pb.KeyError) error {
 	if keyErr.Conflict != nil {
-		err := errors.New(conflictToString(keyErr.Conflict))
+		err := newWriteConflictError(keyErr.Conflict)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 	if keyErr.Retryable != "" {
@@ -328,7 +328,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
 
-func conflictToString(conflict *pb.WriteConflict) string {
+func newWriteConflictError(conflict *pb.WriteConflict) error {
 	var buf bytes.Buffer
 	_, err := fmt.Fprintf(&buf, "txnStartTS=%d, conflictTS=%d, key=",
 		conflict.StartTs, conflict.ConflictTs)
@@ -338,7 +338,7 @@ func conflictToString(conflict *pb.WriteConflict) string {
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return buf.String()
+	return ErrWriteConflict.FastGen(buf.String())
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {

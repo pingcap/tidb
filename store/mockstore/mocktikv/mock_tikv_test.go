@@ -15,12 +15,10 @@ package mocktikv
 
 import (
 	"math"
-	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/util"
 )
 
 func TestT(t *testing.T) {
@@ -513,7 +511,8 @@ func (s *testMockTiKVSuite) TestDeleteRange(c *C) {
 
 func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {
 	c.Assert(errs[i], NotNil)
-	c.Assert(strings.Contains(errs[i].Error(), util.WriteConflictMarker), IsTrue)
+	_, ok := errs[i].(*ErrConflict)
+	c.Assert(ok, IsTrue)
 }
 
 func (s *testMockTiKVSuite) TestRC(c *C) {
