@@ -81,6 +81,7 @@ var _ = Suite(&testContextOptionSuite{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
+var _ = Suite(&testPointGetSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
