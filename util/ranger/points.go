@@ -330,8 +330,7 @@ func HandlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType
 		val.SetString(noTrailingSpace)
 		return val, nil
 	default:
-		// should never happen.
-		return val, errors.Errorf("HandlePadCharToFullLength: unhandled FieldType: %v", ft.String())
+		return val, nil
 	}
 }
 
