@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -90,6 +91,7 @@ var _ = Suite(&testSuite4{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
+var _ = Suite(&testPointGetSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -3769,6 +3771,21 @@ func (s *testSuite) TestIssue10435(c *C) {
 	tk.MustQuery("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w").Check(
 		testkit.Rows("1", "2", "3", "4", "11", "22", "31", "33", "44", "61", "62", "93", "122", "124", "183", "244"),
 	)
+}
+
+func (s *testSuite) TestUnsignedFeedback(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	oriProbability := statistics.FeedbackProbability.Load()
+	statistics.FeedbackProbability.Store(1.0)
+	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
+	tk.MustExec("insert into t values (1,1),(2,2)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(distinct b) from t").Check(testkit.Rows("2"))
+	result := tk.MustQuery("explain analyze select count(distinct b) from t")
+	c.Assert(result.Rows()[2][3], Equals, "table:t, range:[0,+inf], keep order:false")
 }
 
 type testOOMSuite struct {
