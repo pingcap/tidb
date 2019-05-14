@@ -77,7 +77,7 @@ mysql> select * from t;
 10 rows in set (0.00 sec)
 ```
 
-Support Type: 
+Support Type [can only be used in none unique index without incremental rule]:
 
 tinyint | smallint | int | bigint | float | double | decimal | char | varchar | date | time | datetime | timestamp.
 
@@ -108,7 +108,7 @@ mysql> select * from t;
 10 rows in set (0.00 sec)
 ```
 
-Support Type [can only be used in unique index]: 
+Support Type [can only be used in unique index, or with incremental rule]:
 
 tinyint | smallint | int | bigint | float | double | decimal | date | time | datetime | timestamp.
 
@@ -142,7 +142,7 @@ mysql> select * from t;
 ### incremental
 
 ```
-./importer -t "create table t(a date comment '[[incremental=1;repeats=3]]');" -P 4000 -c 1 -n 10
+./importer -t "create table t(a date comment '[[incremental=1;repeats=3;probability=100]]');" -P 4000 -c 1 -n 10
 ```
 
 Then the table rows will be like this:
@@ -166,9 +166,11 @@ MySQL [test]> select * from t;
 10 rows in set (0.002 sec)
 ```
 
+`probability` controls the exceptions of `incremental` and `repeats`.
+
 Support Type [can only be used in none unique index]: 
 
-tinyint | smallint | int | bigint | float | double | decimal | varchar.
+tinyint | smallint | int | bigint | float | double | decimal | date | time | datetime | timestamp.
 
 ## License
 Apache 2.0 license. See the [LICENSE](../../LICENSE) file for details.
