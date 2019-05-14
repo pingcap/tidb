@@ -60,6 +60,14 @@ func (d *datum) setInitInt64Value(min int64, max int64) {
 	d.init = true
 }
 
+func (d *datum) updateRemains() {
+	if uint32(rand.Int31n(100))+1 <= 100-d.probability {
+		d.remains -= uint64(rand.Int63n(int64(d.remains))) + 1
+	} else {
+		d.remains--
+	}
+}
+
 func (d *datum) nextInt64() int64 {
 	d.Lock()
 	defer d.Unlock()
@@ -72,11 +80,7 @@ func (d *datum) nextInt64() int64 {
 		d.intValue = mathutil.MinInt64(d.intValue, d.maxIntValue)
 		d.intValue = mathutil.MaxInt64(d.intValue, d.minIntValue)
 	}
-	if uint32(rand.Int31n(100))+1 <= 100-d.probability {
-		d.remains -= uint64(rand.Int63n(int64(d.remains))) + 1
-	} else {
-		d.remains--
-	}
+	d.updateRemains()
 	return d.intValue
 }
 
@@ -121,11 +125,7 @@ func (d *datum) nextTime() string {
 		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 		d.remains = d.repeats
 	}
-	if uint32(rand.Int31n(100))+1 <= 100-d.probability {
-		d.remains -= uint64(rand.Int63n(int64(d.remains))) + 1
-	} else {
-		d.remains--
-	}
+	d.updateRemains()
 	return fmt.Sprintf("%02d:%02d:%02d", d.timeValue.Hour(), d.timeValue.Minute(), d.timeValue.Second())
 }
 
@@ -139,11 +139,7 @@ func (d *datum) nextDate() string {
 		d.timeValue = d.timeValue.AddDate(0, 0, int(d.step))
 		d.remains = d.repeats
 	}
-	if uint32(rand.Int31n(100))+1 <= 100-d.probability {
-		d.remains -= uint64(rand.Int63n(int64(d.remains))) + 1
-	} else {
-		d.remains--
-	}
+	d.updateRemains()
 	return fmt.Sprintf("%04d-%02d-%02d", d.timeValue.Year(), d.timeValue.Month(), d.timeValue.Day())
 }
 
@@ -156,11 +152,7 @@ func (d *datum) nextTimestamp() string {
 	} else if d.remains <= 0 {
 		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 	}
-	if uint32(rand.Int31n(100))+1 <= 100-d.probability {
-		d.remains -= uint64(rand.Int63n(int64(d.remains))) + 1
-	} else {
-		d.remains--
-	}
+	d.updateRemains()
 	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d",
 		d.timeValue.Year(), d.timeValue.Month(), d.timeValue.Day(),
 		d.timeValue.Hour(), d.timeValue.Minute(), d.timeValue.Second())
@@ -176,10 +168,6 @@ func (d *datum) nextYear() string {
 		d.timeValue = d.timeValue.AddDate(int(d.step), 0, 0)
 		d.remains = d.repeats
 	}
-	if uint32(rand.Int31n(100))+1 <= 100-d.probability {
-		d.remains -= uint64(rand.Int63n(int64(d.remains))) + 1
-	} else {
-		d.remains--
-	}
+	d.updateRemains()
 	return fmt.Sprintf("%04d", d.timeValue.Year())
 }
