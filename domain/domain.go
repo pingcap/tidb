@@ -1051,7 +1051,7 @@ var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
 	ErrInfoSchemaExpired = terror.ClassDomain.New(codeInfoSchemaExpired, "Information schema is out of date.")
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged, "Information schema is changed.")
+	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged, "Information schema is changed."+kv.TxnRetryableMark)
 )
 
 func init() {
