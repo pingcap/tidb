@@ -141,6 +141,7 @@ func (o *pdOracle) Close() {
 	close(o.quit)
 }
 
+// A future that resolves immediately to a low resolution timestamp.
 type lowResolutionTsFuture uint64
 
 // Wait implements the oracle.Future interface.

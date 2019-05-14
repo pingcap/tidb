@@ -374,10 +374,10 @@ type SessionVars struct {
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
 
-	// PessimisticLock indicates whether new transaction should be pessimistic .
+	// PessimisticLock indicates whether new transaction should be pessimistic.
 	PessimisticLock bool
 
-	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
+	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	LowResolutionTSO bool
 }
 
