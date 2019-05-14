@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -49,6 +50,11 @@ func (msm *mockSessionManager1) GetProcessInfo(id uint64) (util.ProcessInfo, boo
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager1) Kill(cid uint64, query bool) {
 
+}
+
+// GetSessionVars implements the SessionManager.GetSessionVars interface.
+func (msm *mockSessionManager) GetSessionVars(cid uint64) (*variable.SessionVars, bool) {
+	return nil, false
 }
 
 func (s *testSuite) TestExplainFor(c *C) {
