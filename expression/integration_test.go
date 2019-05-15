@@ -1457,7 +1457,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	for _, errPeriod := range []string{
 		"period_add(0, 20)", "period_add(0, 0)", "period_add(-1, 1)", "period_add(200013, 1)", "period_add(-200012, 1)", "period_add('', '')",
 	} {
-		_, err := tk.Exec(fmt.Sprintf("SELECT %v;", errPeriod))
+		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
 		c.Assert(err.Error(), Equals, "[expression:1210]Incorrect arguments to period_add")
 	}
 
