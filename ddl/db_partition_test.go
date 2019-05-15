@@ -1283,8 +1283,10 @@ func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
 	// Test for pr 10475.
 	tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by hash(a) partitions 5;")
-	tk.MustExec("insert into t1 values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5);")
+	tk.MustExec("insert into t1 values (0,0),(1,1),(2,2),(3,3);")
+	tk.MustExec("alter table t1 add index idx(a)")
 	tk.MustExec("admin check table t1;")
 }
 
