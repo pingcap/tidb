@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -91,15 +93,14 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	r, err := NewRegionFrameRange(region)
+	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(r.first.IndexID, Equals, sIndex)
-	c.Assert(r.first.IsRecord, IsFalse)
-	c.Assert(r.first.RecordID, Equals, int64(0))
-	c.Assert(r.first.IndexValues, DeepEquals, expectIndexValues)
-	c.Assert(r.last.IsRecord, IsTrue)
-	c.Assert(r.last.RecordID, Equals, recordID)
-	c.Assert(r.last.IndexValues, IsNil)
+	c.Assert(r.First.IndexID, Equals, sIndex)
+	c.Assert(r.First.IsRecord, IsFalse)
+	c.Assert(r.First.RecordID, Equals, int64(0))
+	c.Assert(r.First.IndexValues, DeepEquals, expectIndexValues)
+	c.Assert(r.Last.RecordID, Equals, recordID)
+	c.Assert(r.Last.IndexValues, IsNil)
 
 	testCases := []struct {
 		tableID int64
@@ -118,11 +119,11 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 		{10, 1, false},
 	}
 	for _, t := range testCases {
-		var f *FrameItem
+		var f *helper.FrameItem
 		if t.indexID == 0 {
-			f = r.getRecordFrame(t.tableID, "", "")
+			f = r.GetRecordFrame(t.tableID, "", "")
 		} else {
-			f = r.getIndexFrame(t.tableID, t.indexID, "", "", "")
+			f = r.GetIndexFrame(t.tableID, t.indexID, "", "", "")
 		}
 		if t.isCover {
 			c.Assert(f, NotNil)
@@ -141,12 +142,12 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	r, err := NewRegionFrameRange(region)
+	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(r.first.IsRecord, IsTrue)
-	c.Assert(r.last.IsRecord, IsTrue)
-	c.Assert(r.getRecordFrame(300, "", ""), NotNil)
-	c.Assert(r.getIndexFrame(200, 100, "", "", ""), NotNil)
+	c.Assert(r.First.IsRecord, IsTrue)
+	c.Assert(r.Last.IsRecord, IsTrue)
+	c.Assert(r.GetRecordFrame(300, "", ""), NotNil)
+	c.Assert(r.GetIndexFrame(200, 100, "", "", ""), NotNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
@@ -158,12 +159,12 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	r, err := NewRegionFrameRange(region)
+	r, err := helper.NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(r.first.IsRecord, IsFalse)
-	c.Assert(r.last.IsRecord, IsTrue)
-	c.Assert(r.getRecordFrame(3, "", ""), NotNil)
-	c.Assert(r.getIndexFrame(8, 1, "", "", ""), NotNil)
+	c.Assert(r.First.IsRecord, IsFalse)
+	c.Assert(r.Last.IsRecord, IsTrue)
+	c.Assert(r.GetRecordFrame(3, "", ""), NotNil)
+	c.Assert(r.GetIndexFrame(8, 1, "", "", ""), NotNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
@@ -237,6 +238,13 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	for _, meta := range metas {
 		c.Assert(meta.ID != 0, IsTrue)
 	}
+
+	// test no panic
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/errGetRegionByIDEmpty", `return(true)`), IsNil)
+	resp1, err := http.Get("http://127.0.0.1:10090/regions/meta")
+	c.Assert(err, IsNil)
+	defer resp1.Body.Close()
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/errGetRegionByIDEmpty"), IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {

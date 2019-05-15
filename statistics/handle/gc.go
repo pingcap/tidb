@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics
+package handle
 
 import (
 	"context"
@@ -119,6 +119,11 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	}
 	// delete histogram meta
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and hist_id = %d and is_index = %d", physicalID, histID, isIndex))
+	if err != nil {
+		return
+	}
+	// delete top n data
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and hist_id = %d and is_index = %d", physicalID, histID, isIndex))
 	if err != nil {
 		return
 	}

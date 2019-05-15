@@ -171,6 +171,7 @@ const (
 		stats_ver bigint(64) NOT NULL DEFAULT 0,
 		flag bigint(64) NOT NULL DEFAULT 0,
 		correlation double NOT NULL DEFAULT 0,
+		last_analyze_pos blob DEFAULT NULL,
 		unique index tbl(table_id, is_index, hist_id)
 	);`
 
@@ -222,10 +223,11 @@ const (
       	bind_sql text NOT NULL ,
       	default_db text  NOT NULL,
 		status text NOT NULL,
-		create_time timestamp NOT NULL,
-		update_time timestamp NOT NULL,
+		create_time timestamp(3) NOT NULL,
+		update_time timestamp(3) NOT NULL,
 		charset text NOT NULL,
 		collation text NOT NULL,
+		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -247,6 +249,16 @@ const (
 		DEFAULT_ROLE_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
 		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER)
 	)`
+
+	// CreateStatsTopNTable stores topn data of a cmsketch with top n.
+	CreateStatsTopNTable = `CREATE TABLE if not exists mysql.stats_top_n (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
+		value longblob,
+		count bigint(64) UNSIGNED NOT NULL,
+		index tbl(table_id, is_index, hist_id)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -315,6 +327,9 @@ const (
 	version26 = 26
 	version27 = 27
 	version28 = 28
+	version29 = 29
+	version30 = 30
+	version31 = 31
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -484,6 +499,18 @@ func upgrade(s Session) {
 
 	if ver < version28 {
 		upgradeToVer28(s)
+	}
+
+	if ver == version28 {
+		upgradeToVer29(s)
+	}
+
+	if ver < version30 {
+		upgradeToVer30(s)
+	}
+
+	if ver < version31 {
+		upgradeToVer31(s)
 	}
 
 	updateBootstrapVer(s)
@@ -768,6 +795,20 @@ func upgradeToVer28(s Session) {
 	doReentrantDDL(s, CreateBindInfoTable)
 }
 
+func upgradeToVer29(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change create_time create_time timestamp(3)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change update_time update_time timestamp(3)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info add index sql_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
+}
+
+func upgradeToVer30(s Session) {
+	mustExecute(s, CreateStatsTopNTable)
+}
+
+func upgradeToVer31(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `last_analyze_pos` blob default null", infoschema.ErrColumnExists)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -824,6 +865,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateDefaultRolesTable)
 	// Create bind_info table.
 	mustExecute(s, CreateBindInfoTable)
+	// Create stats_topn_store table.
+	mustExecute(s, CreateStatsTopNTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

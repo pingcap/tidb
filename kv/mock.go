@@ -39,7 +39,7 @@ func (t *mockTxn) String() string {
 	return ""
 }
 
-func (t *mockTxn) LockKeys(keys ...Key) error {
+func (t *mockTxn) LockKeys(_ context.Context, _ uint64, _ ...Key) error {
 	return nil
 }
 
@@ -135,6 +135,10 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return tx, nil
 }
 
+func (*mockTxn) IsPessimistic() bool {
+	return false
+}
+
 // BeginWithStartTS begins a transaction with startTS.
 func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 	return s.Begin()
@@ -169,6 +173,18 @@ func (s *mockStorage) GetOracle() oracle.Oracle {
 
 func (s *mockStorage) SupportDeleteRange() (supported bool) {
 	return false
+}
+
+func (s *mockStorage) Name() string {
+	return "KVMockStorage"
+}
+
+func (s *mockStorage) Describe() string {
+	return "KVMockStorage is a mock Store implementation, only for unittests in KV package"
+}
+
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+	return nil, nil
 }
 
 // MockTxn is used for test cases that need more interfaces than Transaction.
