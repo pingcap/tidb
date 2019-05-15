@@ -16,13 +16,13 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/metrics"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
