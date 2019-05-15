@@ -474,7 +474,7 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
 	// Returns directly if there is no constraint in the partition table.
 	// TODO: Remove the test 's.Partition.Expr == nil' when we support 'PARTITION BY RANGE COLUMNS'
-	if len(constraints) == 0 || s.Partition.Expr == nil {
+	if s.Partition.Expr == nil {
 		return nil
 	}
 
@@ -484,6 +484,12 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	partCols, err := extractPartitionColumns(sctx, buf.String(), tblInfo)
 	if err != nil {
 		return err
+	}
+
+	for _, col := range partCols {
+		if col.TblName.L != "" && col.TblName.L != tblInfo.Name.L {
+			return errBadField.GenWithStackByArgs(col.TblName, col.ColName)
+		}
 	}
 
 	// Checks that the partitioning key is included in the constraint.
