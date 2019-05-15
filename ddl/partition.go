@@ -486,12 +486,6 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 		return err
 	}
 
-	for _, col := range partCols {
-		if col.TblName.L != "" && col.TblName.L != tblInfo.Name.L {
-			return errBadField.GenWithStackByArgs(col.TblName, col.ColName)
-		}
-	}
-
 	// Checks that the partitioning key is included in the constraint.
 	// Every unique key on the table must use every column in the table's partitioning expression.
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
