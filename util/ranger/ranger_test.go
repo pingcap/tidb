@@ -667,6 +667,13 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 			filterConds: "[]",
 			resultStr:   `[[0,+inf]]`,
 		},
+		{
+			indexPos:    0,
+			exprStr:     `a = -2`,
+			accessConds: "[eq(test.t.a, -2)]",
+			filterConds: "[]",
+			resultStr:   `[[0,0]]`,
+		},
 	}
 
 	for _, tt := range tests {
