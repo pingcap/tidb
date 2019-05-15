@@ -189,8 +189,8 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.Binary("endKey", endKey),
 				zap.Duration("cost time", time.Since(startTime)),
 				zap.Error(w.err))
+			return errors.Trace(w.err)
 		}
-		return errors.Trace(w.err)
 	}
 
 	logutil.Logger(ctx).Info("range task finished",
