@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"github.com/pingcap/errors"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -261,4 +262,21 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	}
 	testRunInterruptedJob(c, d1, job)
 	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
+}
+
+func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {
+	var dbInfo *model.DBInfo
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		dbInfo, err1 = t.GetDatabase(schemaID)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return dbInfo, nil
 }
