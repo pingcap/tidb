@@ -143,6 +143,99 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 	return uint64(val), nil
 }
 
+// convertScientificNotation converts a decimal string with scientific notation to a normal decimal string.
+// 1E6 => 1000000, .12345E+5 => 12345
+func convertScientificNotation(str string) (string, error) {
+	// https://golang.org/ref/spec#Floating-point_literals
+	eIdx := -1
+	point := -1
+	for i := 0; i < len(str); i++ {
+		if str[i] == '.' {
+			point = i
+		}
+		if str[i] == 'e' || str[i] == 'E' {
+			eIdx = i
+			if point == -1 {
+				point = i
+			}
+			break
+		}
+	}
+	if eIdx == -1 {
+		return str, nil
+	}
+	exp, err := strconv.ParseInt(str[eIdx+1:], 10, 64)
+	if err != nil {
+		return "", errors.WithStack(err)
+	}
+
+	f := str[:eIdx]
+	if exp == 0 {
+		return f, nil
+	} else if exp > 0 { // move point right
+		if point+int(exp) == len(f)-1 { // 123.456 >> 3 = 123456. = 123456
+			return f[:point] + f[point+1:], nil
+		} else if point+int(exp) < len(f)-1 { // 123.456 >> 2 = 12345.6
+			return f[:point] + f[point+1:point+1+int(exp)] + "." + f[point+1+int(exp):], nil
+		}
+		// 123.456 >> 5 = 12345600
+		return f[:point] + f[point+1:] + strings.Repeat("0", point+int(exp)-len(f)+1), nil
+	} else { // move point left
+		exp = -exp
+		if int(exp) < point { // 123.456 << 2 = 1.23456
+			return f[:point-int(exp)] + "." + f[point-int(exp):point] + f[point+1:], nil
+		}
+		// 123.456 << 5 = 0.00123456
+		return "0." + strings.Repeat("0", int(exp)-point) + f[:point] + f[point+1:], nil
+	}
+}
+
+func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBound uint64, tp byte) (uint64, error) {
+	str, err := convertScientificNotation(str)
+	if err != nil {
+		return 0, err
+	}
+
+	var intStr, fracStr string
+	p := strings.Index(str, ".")
+	if p == -1 {
+		intStr = str
+	} else {
+		intStr = str[:p]
+		fracStr = str[p+1:]
+	}
+	intStr = strings.TrimLeft(intStr, "0")
+	if intStr == "" {
+		intStr = "0"
+	}
+	if sc.ShouldClipToZero() && intStr[0] == '-' {
+		return 0, overflow(str, tp)
+	}
+
+	var round uint64
+	if fracStr != "" && fracStr[0] >= '5' {
+		round++
+	}
+
+	upperBound -= round
+	upperStr := strconv.FormatUint(upperBound, 10)
+	if len(intStr) > len(upperStr) ||
+		(len(intStr) == len(upperStr) && intStr > upperStr) {
+		return upperBound, overflow(str, tp)
+	}
+
+	val, err := strconv.ParseUint(intStr, 10, 64)
+	if err != nil {
+		return val, err
+	}
+	return val + round, nil
+}
+
+// ConvertDecimalToUint converts a decimal to a uint by converting it to a string first to avoid float overflow (#10181).
+func ConvertDecimalToUint(sc *stmtctx.StatementContext, d *MyDecimal, upperBound uint64, tp byte) (uint64, error) {
+	return convertDecimalStrToUint(sc, string(d.ToString()), upperBound, tp)
+}
+
 // StrToInt converts a string to an integer at the best-effort.
 func StrToInt(sc *stmtctx.StatementContext, str string) (int64, error) {
 	str = strings.TrimSpace(str)
