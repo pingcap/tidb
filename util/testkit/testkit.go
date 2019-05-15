@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/check"
@@ -168,6 +169,28 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	if res != nil {
 		tk.c.Assert(res.Close(), check.IsNil)
 	}
+}
+
+// MustIndexLookup checks whether the plan for the sql is Point_Get.
+func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	hasIndexLookup := false
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], "IndexLookUp") {
+			hasIndexLookup = true
+			break
+		}
+	}
+	tk.c.Assert(hasIndexLookup, check.IsTrue)
+	return tk.MustQuery(sql, args...)
+}
+
+// MustPointGet checks whether the plan for the sql is Point_Get.
+func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	tk.c.Assert(len(rs.rows), check.Equals, 1)
+	tk.c.Assert(strings.Contains(rs.rows[0][0], "Point_Get"), check.IsTrue)
+	return tk.MustQuery(sql, args...)
 }
 
 // MustQuery query the statements and returns result rows.

@@ -1482,6 +1482,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%r');")
+	result.Check(testkit.Rows("12:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('25:00:00', '%r');")
+	result.Check(testkit.Rows("01:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%l %p');")
+	result.Check(testkit.Rows("12 AM"))
 
 	// for date_format
 	result = tk.MustQuery(`SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');`)

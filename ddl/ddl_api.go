@@ -1166,6 +1166,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if tbInfo.ShardRowIDBits > shardRowIDBitsMax {
 				tbInfo.ShardRowIDBits = shardRowIDBitsMax
 			}
+			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		}
 	}
 
@@ -1355,6 +1356,14 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	}
 	if hasAutoIncrementColumn(t.Meta()) && uVal != 0 {
 		return errUnsupportedShardRowIDBits
+	}
+	if uVal == t.Meta().ShardRowIDBits {
+		// Nothing need to do.
+		return nil
+	}
+	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
+	if err != nil {
+		return err
 	}
 	job := &model.Job{
 		Type:       model.ActionShardRowID,
@@ -1661,6 +1670,10 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
 func modifiable(origin *types.FieldType, to *types.FieldType) error {
+	// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
+	if origin.Tp == mysql.TypeNewDecimal && (to.Flen != origin.Flen || to.Decimal != origin.Decimal) {
+		return errUnsupportedModifyColumn.GenWithStack("unsupported modify decimal column precision")
+	}
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
