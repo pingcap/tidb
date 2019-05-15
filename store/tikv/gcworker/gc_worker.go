@@ -113,8 +113,8 @@ const (
 	gcDefaultLifeTime    = time.Minute * 10
 	gcSafePointKey       = "tikv_gc_safe_point"
 	gcConcurrencyKey     = "tikv_gc_concurrency"
-	gcDefaultConcurrency = 0
-	gcMinConcurrency     = 0
+	gcDefaultConcurrency = 2
+	gcMinConcurrency     = 1
 	gcMaxConcurrency     = 128
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = tikv.ResolvedCacheSize / 2
@@ -140,7 +140,7 @@ var gcVariableComments = map[string]string{
 	gcRunIntervalKey: "GC run interval, at least 10m, in Go format.",
 	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
-	gcConcurrencyKey: "How many goroutines used to do GC parallel, [1, 128], or 0 for auto. default 0.",
+	gcConcurrencyKey: "[DEPRECATED] How many goroutines used to do GC parallel, [1, 128], default 2",
 	gcEnableKey:      "Current GC enable status",
 	gcModeKey:        "Mode of GC, \"central\" or \"distributed\"",
 }
@@ -258,9 +258,19 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return nil
 	}
 
-	concurrency, err := w.getGCConcurrency(ctx)
+	stores, err := w.getUpStores(ctx)
+	concurrency := len(stores)
 	if err != nil {
-		return errors.Trace(err)
+		logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		concurrency = gcDefaultConcurrency
+	}
+
+	if concurrency == 0 {
+		logutil.Logger(ctx).Error("[gc worker] no store is up",
+			zap.String("uuid", w.uuid))
+		return errors.New("[gc worker] no store is up")
 	}
 
 	w.gcIsRunning = true
@@ -631,34 +641,6 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	}
 
 	return jobConcurrency, nil
-}
-
-func (w *GCWorker) getGCConcurrency(ctx context.Context) (int, error) {
-	concurrency, err := w.loadGCConcurrencyWithDefault()
-	if err != nil {
-		logutil.Logger(ctx).Warn("[gc worker] failed to load gcConcurrency, use default instead",
-			zap.String("uuid", w.uuid),
-			zap.Int("default", concurrency),
-			zap.Error(err))
-	}
-
-	if concurrency == 0 {
-		// Automatically set concurrency to count of up stores.
-		stores, err := w.getUpStores(ctx)
-		concurrency = len(stores)
-		if err != nil {
-			logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency",
-				zap.String("uuid", w.uuid),
-				zap.Error(err))
-			return 0, errors.Trace(err)
-		} else if concurrency == 0 {
-			logutil.Logger(ctx).Error("[gc worker] no store is up",
-				zap.String("uuid", w.uuid))
-			return 0, errors.New("[gc worker] no store is up")
-		}
-	}
-
-	return concurrency, nil
 }
 
 func (w *GCWorker) checkUseDistributedGC() (bool, error) {
