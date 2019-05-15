@@ -1200,7 +1200,7 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 		for !finish {
 			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
 			if p == nil {
-				return errors.Errorf("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+				return errCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
 			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
 			if err != nil {
