@@ -1280,7 +1280,7 @@ func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
 	) partition by hash( year(hired) ) partitions 4;`)
 	testPartitionAddIndex(tk, c)
 
-	// Test for pr 10475.
+	// Test hash partition for pr 10475.
 	tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
@@ -1288,6 +1288,14 @@ func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
 	tk.MustExec("insert into t1 values (0,0),(1,1),(2,2),(3,3);")
 	tk.MustExec("alter table t1 add index idx(a)")
 	tk.MustExec("admin check table t1;")
+
+	// Test range partition for pr 10475.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
+	tk.MustExec("insert into t1 values (0,0);")
+	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec("admin check table t1;")
+
 }
 
 func testPartitionAddIndex(tk *testkit.TestKit, c *C) {
