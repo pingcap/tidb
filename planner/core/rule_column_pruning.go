@@ -149,7 +149,6 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
 		} else {
 			parentUsedCols = append(parentUsedCols, cols...)
-
 		}
 	}
 	return child.PruneColumns(parentUsedCols)

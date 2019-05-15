@@ -56,8 +56,6 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "set @@session.tidb_enable_window_function=true")
-	c.Assert(err, IsNil)
 	tests := []struct {
 		sql  string
 		best string
