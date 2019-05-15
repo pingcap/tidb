@@ -239,7 +239,15 @@ func (e *Error) FastGen(format string, args ...interface{}) error {
 	err := *e
 	err.message = format
 	err.args = args
-	return &err
+	return errors.SuspendStack(&err)
+}
+
+// FastGen generates a new *Error with the same class and code, and a new arguments.
+// This will not call runtime.Caller to get file and line.
+func (e *Error) FastGenByArgs(args ...interface{}) error {
+	err := *e
+	err.args = args
+	return errors.SuspendStack(&err)
 }
 
 // Equal checks if err is equal to e.
