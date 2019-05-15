@@ -312,7 +312,16 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 			return ver, errors.Trace(err)
 		}
 
-		err = w.runReorgJob(t, reorgInfo, d.lease, func() error {
+		err = w.runReorgJob(t, reorgInfo, d.lease, func() (addIndexErr error) {
+			defer func() {
+				r := recover()
+				if r != nil {
+					buf := util.GetStack()
+					logutil.Logger(ddlLogCtx).Error("[ddl] add table index panic", zap.Any("panic", r), zap.String("stack", string(buf)))
+					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
+				}
+			}()
 			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
