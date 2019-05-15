@@ -42,7 +42,7 @@ var (
 	ErrNotExist = terror.ClassKV.New(codeNotExist, "Error: key not exist")
 	// ErrTxnRetryable is used when KV store occurs retryable error which SQL layer can safely retry the transaction.
 	// When using TiKV as the storage node, the error is returned ONLY when lock not found (txnLockNotFound) in Commit,
-	// subjective to change it in the future.
+	// subject to change it in the future.
 	ErrTxnRetryable = terror.ClassKV.New(codeRetryable, "Error: KV error safe to retry %s "+TxnRetryableMark)
 	// ErrCannotSetNilValue is the error when sets an empty value.
 	ErrCannotSetNilValue = terror.ClassKV.New(codeCantSetNilValue, "can not set nil value")
