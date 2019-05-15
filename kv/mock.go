@@ -39,7 +39,7 @@ func (t *mockTxn) String() string {
 	return ""
 }
 
-func (t *mockTxn) LockKeys(keys ...Key) error {
+func (t *mockTxn) LockKeys(_ context.Context, _ uint64, _ ...Key) error {
 	return nil
 }
 
@@ -133,6 +133,10 @@ func (s *mockStorage) Begin() (Transaction, error) {
 		valid: true,
 	}
 	return tx, nil
+}
+
+func (*mockTxn) IsPessimistic() bool {
+	return false
 }
 
 // BeginWithStartTS begins a transaction with startTS.
