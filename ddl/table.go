@@ -735,6 +735,9 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	tblInfo.Collate = toCollate
 	// update column charset.
 	for _, col := range tblInfo.Columns {
+		if col.Charset == charset.CharsetBin {
+			continue
+		}
 		if typesNeedCharset(col.Tp) {
 			col.Charset = toCharset
 			col.Collate = toCollate

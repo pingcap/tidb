@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testIntegrationSuite1{&testIntegrationSuite{}})
@@ -738,6 +739,16 @@ func (s *testIntegrationSuite10) TestChangingTableCharset(c *C) {
 	c.Assert(tbl.Meta().Columns[0].Collate, Equals, "")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
 	checkCharset()
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a blob) character set utf8;")
+	tk.MustExec("alter table t charset=utf8mb4 collate=utf8mb4_bin;")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` blob DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
 }
 
 func (s *testIntegrationSuite7) TestCaseInsensitiveCharsetAndCollate(c *C) {
