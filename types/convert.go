@@ -256,9 +256,9 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 
 	val, err := strconv.ParseUint(intStr, 10, 64)
 	if err != nil {
-		return 0, err
+		return val, err
 	}
-	return val+round, nil
+	return val + round, nil
 }
 
 // ConvertDecimalToUint converts a decimal to an uint by string instead of float to avoid float overflow (#10181).
