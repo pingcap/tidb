@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -424,7 +423,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	if err == nil {
 		return nil, nil
 	}
-	if !terror.ErrorEqual(tikv.ErrWriteConflict, err) {
+	if !terror.ErrorEqual(kv.ErrWriteConflict, err) {
 		return nil, err
 	}
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {

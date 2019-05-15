@@ -862,17 +862,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// mockGetTSErrorInRetry should wait MockCommitErrorOnce first, then will run into retry() logic.
-	// Then mockGetTSErrorInRetry will return retryable error when first retry.
-	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
-	// This may cause duplicate data to be written.
-	failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
-		if val.(bool) && !kv.IsMockCommitErrorEnable() && mockGetTSErrorInRetryOnce {
-			mockGetTSErrorInRetryOnce = false
-			failpoint.Return(errors.Errorf("PD server timeout[try again later]"))
-		}
-	})
-
 	start = time.Now()
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
 	if err != nil {
