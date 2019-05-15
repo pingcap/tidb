@@ -250,6 +250,37 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
+	if mysql.HasUnsignedFlag(ft.Flag) {
+		needFix := false
+		zeroValue := new(types.Datum)
+		if mysql.IsIntegerType(ft.Tp) && value.Kind() == types.KindInt64 {
+			needFix = true
+			zeroValue.SetInt64(int64(0))
+		} else if (ft.Tp == mysql.TypeDecimal || ft.Tp == mysql.TypeNewDecimal) &&
+			value.Kind() == types.KindMysqlDecimal {
+			needFix = true
+			zeroValue.SetMysqlDecimal(new(types.MyDecimal))
+		}
+		if needFix {
+			cmp, err := value.CompareDatum(r.sc, zeroValue)
+			if err != nil {
+				return nil
+			}
+			if cmp == -1 {
+				if op == ast.GT || op == ast.GE {
+					op = ast.GE
+					value = *zeroValue
+				} else if op == ast.NE {
+					startPoint := point{value: types.MinNotNullDatum(), start: true}
+					endPoint := point{value: types.MaxValueDatum()}
+					return []point{startPoint, endPoint}
+				} else {
+					return nil
+				}
+			}
+		}
+	}
+
 	switch op {
 	case ast.EQ:
 		startPoint := point{value: value, start: true}
