@@ -22,7 +22,7 @@ import (
 const (
 	codeClosed          terror.ErrCode = 1
 	codeNotExist                       = 2
-	codeRetryable                      = 6
+	codeTxnRetryable                   = 6
 	codeCantSetNilValue                = 7
 	codeInvalidTxn                     = 8
 	codeNotImplemented                 = 10
@@ -43,7 +43,7 @@ var (
 	// ErrTxnRetryable is used when KV store occurs retryable error which SQL layer can safely retry the transaction.
 	// When using TiKV as the storage node, the error is returned ONLY when lock not found (txnLockNotFound) in Commit,
 	// subject to change it in the future.
-	ErrTxnRetryable = terror.ClassKV.New(codeRetryable, "Error: KV error safe to retry %s "+TxnRetryableMark)
+	ErrTxnRetryable = terror.ClassKV.New(codeTxnRetryable, "Error: KV error safe to retry %s "+TxnRetryableMark)
 	// ErrCannotSetNilValue is the error when sets an empty value.
 	ErrCannotSetNilValue = terror.ClassKV.New(codeCantSetNilValue, "can not set nil value")
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.

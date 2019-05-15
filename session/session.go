@@ -414,7 +414,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
+		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -541,7 +541,7 @@ func (s *session) isInternal() bool {
 	return s.sessionVars.InRestrictedSQL
 }
 
-func (s *session) isRetryableError(err error) bool {
+func (s *session) isTxnRetryableError(err error) bool {
 	if SchemaChangedWithoutRetry {
 		return kv.IsTxnRetryableError(err)
 	}
@@ -638,7 +638,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				break
 			}
 		}
-		if !s.isRetryableError(err) {
+		if !s.isTxnRetryableError(err) {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", label),
 				zap.Stringer("session", s),
