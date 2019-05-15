@@ -15,13 +15,12 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
 	"github.com/cznic/mathutil"
 )
-
-var defaultStep int64 = 1
 
 type datum struct {
 	sync.Mutex
@@ -32,6 +31,7 @@ type datum struct {
 	timeValue   time.Time
 	remains     uint64
 	repeats     uint64
+	probability uint32
 	step        int64
 
 	init     bool
@@ -39,10 +39,10 @@ type datum struct {
 }
 
 func newDatum() *datum {
-	return &datum{intValue: -1, step: 1, repeats: 1, remains: 1}
+	return &datum{step: 1, repeats: 1, remains: 1, probability: 100}
 }
 
-func (d *datum) setInitInt64Value(step int64, min int64, max int64) {
+func (d *datum) setInitInt64Value(min int64, max int64) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -50,19 +50,22 @@ func (d *datum) setInitInt64Value(step int64, min int64, max int64) {
 		return
 	}
 
-	d.step = step
-
-	if min != -1 {
-		d.minIntValue = min
-		d.intValue = min
-	}
-
-	if min < max {
-		d.maxIntValue = max
-		d.useRange = true
+	d.minIntValue = min
+	d.maxIntValue = max
+	d.useRange = true
+	if d.step < 0 {
+		d.intValue = (min + max) / 2
 	}
 
 	d.init = true
+}
+
+func (d *datum) updateRemains() {
+	if uint32(rand.Int31n(100))+1 <= 100-d.probability {
+		d.remains -= uint64(rand.Int63n(int64(d.remains))) + 1
+	} else {
+		d.remains--
+	}
 }
 
 func (d *datum) nextInt64() int64 {
@@ -75,8 +78,9 @@ func (d *datum) nextInt64() int64 {
 	}
 	if d.useRange {
 		d.intValue = mathutil.MinInt64(d.intValue, d.maxIntValue)
+		d.intValue = mathutil.MaxInt64(d.intValue, d.minIntValue)
 	}
-	d.remains--
+	d.updateRemains()
 	return d.intValue
 }
 
@@ -117,11 +121,12 @@ func (d *datum) nextTime() string {
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else if d.remains <= 0 {
+	}
+	if d.remains <= 0 {
 		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 		d.remains = d.repeats
 	}
-	d.remains--
+	d.updateRemains()
 	return fmt.Sprintf("%02d:%02d:%02d", d.timeValue.Hour(), d.timeValue.Minute(), d.timeValue.Second())
 }
 
@@ -131,11 +136,12 @@ func (d *datum) nextDate() string {
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else if d.remains <= 0 {
+	}
+	if d.remains <= 0 {
 		d.timeValue = d.timeValue.AddDate(0, 0, int(d.step))
 		d.remains = d.repeats
 	}
-	d.remains--
+	d.updateRemains()
 	return fmt.Sprintf("%04d-%02d-%02d", d.timeValue.Year(), d.timeValue.Month(), d.timeValue.Day())
 }
 
@@ -145,10 +151,12 @@ func (d *datum) nextTimestamp() string {
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else if d.remains <= 0 {
-		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 	}
-	d.remains--
+	if d.remains <= 0 {
+		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
+		d.remains = d.repeats
+	}
+	d.updateRemains()
 	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d",
 		d.timeValue.Year(), d.timeValue.Month(), d.timeValue.Day(),
 		d.timeValue.Hour(), d.timeValue.Minute(), d.timeValue.Second())
@@ -160,10 +168,11 @@ func (d *datum) nextYear() string {
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else if d.remains <= 0 {
+	}
+	if d.remains <= 0 {
 		d.timeValue = d.timeValue.AddDate(int(d.step), 0, 0)
 		d.remains = d.repeats
 	}
-	d.remains--
+	d.updateRemains()
 	return fmt.Sprintf("%04d", d.timeValue.Year())
 }
