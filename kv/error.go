@@ -32,15 +32,18 @@ const (
 )
 
 // TxnRetryableMark is used to uniform the commit error messages which could retry the transaction.
-const TxnRetryableMark = " [try again later]"
+// *WARNING*: changing this string will affect the backward compatibility.
+const TxnRetryableMark = "[try again later]"
 
 var (
 	// ErrClosed is used when close an already closed txn.
 	ErrClosed = terror.ClassKV.New(codeClosed, "Error: Transaction already closed")
 	// ErrNotExist is used when try to get an entry with an unexist key from KV store.
 	ErrNotExist = terror.ClassKV.New(codeNotExist, "Error: key not exist")
-	// ErrRetryable is used when KV store occurs RPC error or some other errors which SQL layer can safely retry.
-	ErrRetryable = terror.ClassKV.New(codeRetryable, "Error: KV error safe to retry %s"+TxnRetryableMark)
+	// ErrTxnRetryable is used when KV store occurs retryable error which SQL layer can safely retry the transaction.
+	// When using TiKV as the storage node, the error is returned ONLY when lock not found (txnLockNotFound) in Commit,
+	// subjective to change it in the future.
+	ErrTxnRetryable = terror.ClassKV.New(codeRetryable, "Error: KV error safe to retry %s "+TxnRetryableMark)
 	// ErrCannotSetNilValue is the error when sets an empty value.
 	ErrCannotSetNilValue = terror.ClassKV.New(codeCantSetNilValue, "can not set nil value")
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
@@ -54,7 +57,8 @@ var (
 	// ErrNotImplemented returns when a function is not implemented yet.
 	ErrNotImplemented = terror.ClassKV.New(codeNotImplemented, "not implemented")
 	// ErrWriteConflict is the error when the commit meets an write conflict error.
-	ErrWriteConflict = terror.ClassKV.New(mysql.ErrWriteConflict, mysql.MySQLErrName[mysql.ErrWriteConflict]+TxnRetryableMark)
+	ErrWriteConflict = terror.ClassKV.New(mysql.ErrWriteConflict,
+		mysql.MySQLErrName[mysql.ErrWriteConflict]+" "+TxnRetryableMark)
 )
 
 func init() {
@@ -67,13 +71,13 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassKV] = kvMySQLErrCodes
 }
 
-// IsRetryableError checks if the err is a fatal error and the under going operation is worth to retry.
-func IsRetryableError(err error) bool {
+// IsTxnRetryableError checks if the error could safely retry the transaction.
+func IsTxnRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
 
-	if ErrRetryable.Equal(err) || ErrWriteConflict.Equal(err) {
+	if ErrTxnRetryable.Equal(err) || ErrWriteConflict.Equal(err) {
 		return true
 	}
 

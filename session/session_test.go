@@ -2404,7 +2404,7 @@ func (s *testSessionSuite) TestTxnRetryErrMsg(c *C) {
 	_, err := tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly"), IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(kv.ErrRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 }

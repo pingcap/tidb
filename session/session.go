@@ -358,7 +358,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
 		if val.(bool) && kv.IsMockCommitErrorEnable() {
 			kv.MockCommitErrorDisable()
-			failpoint.Return(kv.ErrRetryable)
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
 
@@ -543,9 +543,9 @@ func (s *session) isInternal() bool {
 
 func (s *session) isRetryableError(err error) bool {
 	if SchemaChangedWithoutRetry {
-		return kv.IsRetryableError(err)
+		return kv.IsTxnRetryableError(err)
 	}
-	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
+	return kv.IsTxnRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
