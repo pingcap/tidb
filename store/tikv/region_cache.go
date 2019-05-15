@@ -42,6 +42,8 @@ var (
 	tikvRegionCacheCounterWithGetRegionByIDError    = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region_by_id", "err")
 	tikvRegionCacheCounterWithGetRegionOK           = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", "ok")
 	tikvRegionCacheCounterWithGetRegionError        = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", "err")
+	tikvRegionCacheCounterWithScanRegionsOK         = metrics.TiKVRegionCacheCounter.WithLabelValues("scan_regions", "ok")
+	tikvRegionCacheCounterWithScanRegionsError      = metrics.TiKVRegionCacheCounter.WithLabelValues("scan_regions", "err")
 	tikvRegionCacheCounterWithGetStoreOK            = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "ok")
 	tikvRegionCacheCounterWithGetStoreError         = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "err")
 )
@@ -284,6 +286,27 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 	return regionIDs, nil
 }
 
+// BatchLoadRegionsFromKey loads at most given numbers of regions to the RegionCache, from the given startKey. Returns
+// the endKey of the last loaded region.
+func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, count int) ([]byte, error) {
+	regions, err := c.scanRegions(bo, startKey, count)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(regions) == 0 {
+		return startKey, nil
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, region := range regions {
+		c.insertRegionToCache(region)
+	}
+
+	return regions[len(regions)-1].EndKey(), nil
+}
+
 // DropRegion removes a cached Region.
 func (c *RegionCache) DropRegion(id RegionVerID) {
 	c.mu.Lock()
@@ -469,6 +492,64 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 			region.SwitchPeer(leader.GetStoreId())
 		}
 		return region, nil
+	}
+}
+
+func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]*Region, error) {
+	if limit == 0 {
+		return nil, nil
+	}
+
+	var backoffErr error
+	for {
+		if backoffErr != nil {
+			err := bo.Backoff(BoPDRPC, backoffErr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, limit)
+		if err != nil {
+			tikvRegionCacheCounterWithScanRegionsError.Inc()
+		} else {
+			tikvRegionCacheCounterWithScanRegionsOK.Inc()
+		}
+		if err != nil {
+			backoffErr = errors.Errorf(
+				"scanRegion from PD failed, startKey: %q, limit: %q, err: %v",
+				startKey,
+				limit,
+				err)
+			continue
+		}
+		if len(metas) == 0 {
+			return nil, errors.New("PD returned no region")
+		}
+		if len(metas) != len(leaders) {
+			return nil, errors.New("PD returned mismatching region metas and leaders")
+		}
+		regions := make([]*Region, 0, len(metas))
+		for i, meta := range metas {
+			if len(meta.GetPeers()) != 0 {
+				region := &Region{
+					meta: meta,
+					peer: meta.Peers[0],
+				}
+				leader := leaders[i]
+				if leader != nil {
+					region.SwitchPeer(leader.GetStoreId())
+				}
+				regions = append(regions, region)
+			}
+		}
+		if len(regions) == 0 {
+			return nil, errors.New("receive Regions with no peer")
+		}
+		if len(regions) < len(metas) {
+			logutil.Logger(context.Background()).Debug(
+				"regionCache: scanRegion finished but some regions has no peer.")
+		}
+		return regions, nil
 	}
 }
 
