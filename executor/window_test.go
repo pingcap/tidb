@@ -145,4 +145,6 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 
 	result = tk.MustQuery("SELECT CUME_DIST() OVER (ORDER BY null);")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustQuery("select lead(a) over(partition by null) from t").Check(testkit.Rows("1", "2", "2", "<nil>"))
 }
