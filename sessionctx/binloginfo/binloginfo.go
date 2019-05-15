@@ -42,6 +42,7 @@ func init() {
 // shared by all sessions.
 var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
+var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+`)
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
@@ -154,11 +155,8 @@ func addSpecialComment(ddlQuery string) string {
 	if strings.Contains(ddlQuery, specialPrefix) {
 		return ddlQuery
 	}
-	upperQuery := strings.ToUpper(ddlQuery)
-	reg, err := regexp.Compile(`SHARD_ROW_ID_BITS\s*=\s*\d+`)
-	terror.Log(err)
-	loc := reg.FindStringIndex(upperQuery)
-	if len(loc) < 2 {
+	loc := shardPat.FindStringIndex(strings.ToUpper(ddlQuery))
+	if loc == nil {
 		return ddlQuery
 	}
 	return ddlQuery[:loc[0]] + specialPrefix + ddlQuery[loc[0]:loc[1]] + ` */` + ddlQuery[loc[1]:]
