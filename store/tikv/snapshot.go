@@ -323,7 +323,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 		return newWriteConflictError(keyErr.Conflict)
 	}
 	if keyErr.Retryable != "" {
-		return kv.ErrTxnRetryable.GenWithStackByArgs("tikv restarts txn: " + keyErr.GetRetryable())
+		return kv.ErrTxnRetryable.FastGenByArgs("tikv restarts txn: " + keyErr.GetRetryable())
 	}
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
@@ -338,7 +338,7 @@ func newWriteConflictError(conflict *pb.WriteConflict) error {
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return kv.ErrWriteConflict.GenWithStackByArgs(conflict.StartTs, conflict.ConflictTs, buf.String())
+	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, buf.String())
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {
