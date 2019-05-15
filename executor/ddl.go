@@ -81,24 +81,27 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {
-	case *ast.TruncateTableStmt:
-		err = e.executeTruncateTable(x)
-	case *ast.CreateDatabaseStmt:
-		err = e.executeCreateDatabase(x)
-	case *ast.CreateTableStmt:
-		err = e.executeCreateTable(x)
-	case *ast.CreateIndexStmt:
-		err = e.executeCreateIndex(x)
-	case *ast.DropDatabaseStmt:
-		err = e.executeDropDatabase(x)
-	case *ast.DropTableStmt:
-		err = e.executeDropTable(x)
-	case *ast.DropIndexStmt:
-		err = e.executeDropIndex(x)
+	case *ast.AlterDatabaseStmt:
+		err = e.executeAlterDatabase(x)
 	case *ast.AlterTableStmt:
 		err = e.executeAlterTable(x)
+	case *ast.CreateDatabaseStmt:
+		err = e.executeCreateDatabase(x)
+	case *ast.CreateIndexStmt:
+		err = e.executeCreateIndex(x)
+	case *ast.CreateTableStmt:
+		err = e.executeCreateTable(x)
+	case *ast.DropDatabaseStmt:
+		err = e.executeDropDatabase(x)
+	case *ast.DropIndexStmt:
+		err = e.executeDropIndex(x)
+	case *ast.DropTableStmt:
+		err = e.executeDropTable(x)
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
+	case *ast.TruncateTableStmt:
+		err = e.executeTruncateTable(x)
+
 	}
 	if err != nil {
 		return errors.Trace(e.toErr(err))
@@ -153,6 +156,11 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 		}
 	}
 	return errors.Trace(err)
+}
+
+func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().AlterSchema(e.ctx, s)
+	return err
 }
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
