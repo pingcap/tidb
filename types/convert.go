@@ -196,7 +196,7 @@ func convertScientificNotation(str string) (string, error) {
 	}
 	exp, err := strconv.ParseInt(str[eIdx+1:], 10, 64)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 
 	f := str[:eIdx]
