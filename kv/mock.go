@@ -27,7 +27,7 @@ type mockTxn struct {
 
 // Commit always returns a retryable error.
 func (t *mockTxn) Commit(ctx context.Context) error {
-	return ErrRetryable
+	return ErrTxnRetryable
 }
 
 func (t *mockTxn) Rollback() error {
