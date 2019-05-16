@@ -31,7 +31,7 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
-// A flag indicates that tidb-server is exiting (Ctrl+C signal receved for example). If this flag is set, tikv client
+// Morbid is a flag to indicate tidb-server is exiting (Ctrl+C signal receved for example). If this flag is set, tikv client
 // should not retry on network error because tidb-server expect tikv client to exit as soon as possible.
 var Morbid uint32
 
