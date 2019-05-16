@@ -1,0 +1,27 @@
+drop table if exists t1, t2;
+create table t1(a bigint, b bigint, index idx(a));
+create table t2(a bigint, b bigint, index idx(a));
+insert into t1 values(1, 1), (1, 1), (1, 1), (1, 1), (1, 1);
+insert into t2 values(1, 1);
+analyze table t1, t2;
+explain select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
+id	count	task	operator info
+IndexJoin_16	5.00	root	inner join, inner:IndexLookUp_15, outer key:test.t2.a, inner key:test.t1.a
+├─IndexLookUp_15	0.00	root	
+│ ├─Selection_14	0.00	cop	not(isnull(test.t1.a))
+│ │ └─IndexScan_12	5.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
+│ └─TableScan_13	0.00	cop	table:t1, keep order:false, stats:pseudo
+└─TableReader_19	1.00	root	data:Selection_18
+  └─Selection_18	1.00	cop	not(isnull(test.t2.a))
+    └─TableScan_17	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
+explain select * from t1 join t2 on t1.a=t2.a;
+id	count	task	operator info
+Projection_6	5.00	root	test.t1.a, test.t1.b, test.t2.a, test.t2.b
+└─IndexJoin_12	5.00	root	inner join, inner:IndexLookUp_11, outer key:test.t2.a, inner key:test.t1.a
+  ├─TableReader_30	1.00	root	data:Selection_29
+  │ └─Selection_29	1.00	cop	not(isnull(test.t2.a))
+  │   └─TableScan_28	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
+  └─IndexLookUp_11	0.00	root	
+    ├─Selection_10	0.00	cop	not(isnull(test.t1.a))
+    │ └─IndexScan_8	5.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
+    └─TableScan_9	0.00	cop	table:t1, keep order:false, stats:pseudo

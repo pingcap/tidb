@@ -18,10 +18,11 @@ import (
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -64,7 +65,8 @@ func (e *baseGroupConcat4String) truncatePartialResultIfNeed(sctx sessionctx.Con
 }
 
 type basePartialResult4GroupConcat struct {
-	buffer *bytes.Buffer
+	valsBuf *bytes.Buffer
+	buffer  *bytes.Buffer
 }
 
 type partialResult4GroupConcat struct {
@@ -76,7 +78,9 @@ type groupConcat struct {
 }
 
 func (e *groupConcat) AllocPartialResult() PartialResult {
-	return PartialResult(new(partialResult4GroupConcat))
+	p := new(partialResult4GroupConcat)
+	p.valsBuf = &bytes.Buffer{}
+	return PartialResult(p)
 }
 
 func (e *groupConcat) ResetPartialResult(pr PartialResult) {
@@ -86,31 +90,28 @@ func (e *groupConcat) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4GroupConcat)(pr)
-	v, isNull, preLen := "", false, 0
+	v, isNull := "", false
 	for _, row := range rowsInGroup {
-		if p.buffer != nil && p.buffer.Len() != 0 {
-			preLen = p.buffer.Len()
-			p.buffer.WriteString(e.sep)
-		}
+		p.valsBuf.Reset()
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			if isNull {
 				break
 			}
-			if p.buffer == nil {
-				p.buffer = &bytes.Buffer{}
-			}
-			p.buffer.WriteString(v)
+			p.valsBuf.WriteString(v)
 		}
 		if isNull {
-			if p.buffer != nil {
-				p.buffer.Truncate(preLen)
-			}
 			continue
 		}
+		if p.buffer == nil {
+			p.buffer = &bytes.Buffer{}
+		} else {
+			p.buffer.WriteString(e.sep)
+		}
+		p.buffer.WriteString(p.valsBuf.String())
 	}
 	if p.buffer != nil {
 		return e.truncatePartialResultIfNeed(sctx, p.buffer)
@@ -144,8 +145,8 @@ func (e *groupConcat) GetTruncated() *int32 {
 
 type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
-	valsBuf *bytes.Buffer
-	valSet  set.StringSet
+	valSet            set.StringSet
+	encodeBytesBuffer []byte
 }
 
 type groupConcatDistinct struct {
@@ -169,24 +170,26 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	v, isNull := "", false
 	for _, row := range rowsInGroup {
 		p.valsBuf.Reset()
+		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			if isNull {
 				break
 			}
+			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, hack.Slice(v))
 			p.valsBuf.WriteString(v)
 		}
 		if isNull {
 			continue
 		}
-		joinedVals := p.valsBuf.String()
-		if p.valSet.Exist(joinedVals) {
+		joinedVal := string(p.encodeBytesBuffer)
+		if p.valSet.Exist(joinedVal) {
 			continue
 		}
-		p.valSet.Insert(joinedVals)
+		p.valSet.Insert(joinedVal)
 		// write separator
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
@@ -194,7 +197,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			p.buffer.WriteString(e.sep)
 		}
 		// write values
-		p.buffer.WriteString(joinedVals)
+		p.buffer.WriteString(p.valsBuf.String())
 	}
 	if p.buffer != nil {
 		return e.truncatePartialResultIfNeed(sctx, p.buffer)

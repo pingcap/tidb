@@ -22,18 +22,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	tidbutil "github.com/pingcap/tidb/util"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	gcodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -72,6 +71,9 @@ type Client interface {
 }
 
 type connArray struct {
+	// The target host.
+	target string
+
 	index uint32
 	v     []*grpc.ClientConn
 	// streamTimeout binds with a background goroutine to process coprocessor streaming timeout.
@@ -84,6 +86,9 @@ type connArray struct {
 }
 
 type batchCommandsClient struct {
+	// The target host.
+	target string
+
 	conn                   *grpc.ClientConn
 	client                 tikvpb.Tikv_BatchCommandsClient
 	batched                sync.Map
@@ -114,10 +119,11 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
-			buf := tidbutil.GetStack()
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
-			log.Errorf("batchRecvLoop %v %s", r, buf)
-			log.Infof("Restart batchRecvLoop")
+			logutil.Logger(context.Background()).Error("batchRecvLoop",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+			logutil.Logger(context.Background()).Info("restart batchRecvLoop")
 			go c.batchRecvLoop(cfg)
 		}
 	}()
@@ -126,28 +132,44 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 		// When `conn.Close()` is called, `client.Recv()` will return an error.
 		resp, err := c.client.Recv()
 		if err != nil {
-			if c.isStopped() {
-				return
-			}
-			log.Errorf("batchRecvLoop error when receive: %v", err)
 
-			// Hold the lock to forbid batchSendLoop using the old client.
-			c.clientLock.Lock()
-			c.failPendingRequests(err) // fail all pending requests.
-			for {                      // try to re-create the streaming in the loop.
+			now := time.Now()
+			for { // try to re-create the streaming in the loop.
+				if c.isStopped() {
+					return
+				}
+				logutil.Logger(context.Background()).Error(
+					"batchRecvLoop error when receive",
+					zap.String("target", c.target),
+					zap.Error(err),
+				)
+
+				// Hold the lock to forbid batchSendLoop using the old client.
+				c.clientLock.Lock()
+				c.failPendingRequests(err) // fail all pending requests.
+
 				// Re-establish a application layer stream. TCP layer is handled by gRPC.
 				tikvClient := tikvpb.NewTikvClient(c.conn)
 				streamClient, err := tikvClient.BatchCommands(context.TODO())
+				c.clientLock.Unlock()
+
 				if err == nil {
-					log.Infof("batchRecvLoop re-create streaming success")
+					logutil.Logger(context.Background()).Info(
+						"batchRecvLoop re-create streaming success",
+						zap.String("target", c.target),
+					)
 					c.client = streamClient
 					break
 				}
-				log.Errorf("batchRecvLoop re-create streaming fail: %v", err)
+				logutil.Logger(context.Background()).Error(
+					"batchRecvLoop re-create streaming fail",
+					zap.String("target", c.target),
+					zap.Error(err),
+				)
 				// TODO: Use a more smart backoff strategy.
 				time.Sleep(time.Second)
 			}
-			c.clientLock.Unlock()
+			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
 			continue
 		}
 
@@ -194,6 +216,8 @@ func newConnArray(maxSize uint, addr string, security config.Security) (*connArr
 }
 
 func (a *connArray) Init(addr string, security config.Security) error {
+	a.target = addr
+
 	opt := grpc.WithInsecure()
 	if len(security.ClusterSSLCA) != 0 {
 		tlsConfig, err := security.ToTLSConfig()
@@ -203,18 +227,14 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
-	unaryInterceptor := grpc_prometheus.UnaryClientInterceptor
-	streamInterceptor := grpc_prometheus.StreamClientInterceptor
 	cfg := config.GetGlobalConfig()
+	var (
+		unaryInterceptor  grpc.UnaryClientInterceptor
+		streamInterceptor grpc.StreamClientInterceptor
+	)
 	if cfg.OpenTracing.Enable {
-		unaryInterceptor = grpc_middleware.ChainUnaryClient(
-			unaryInterceptor,
-			grpc_opentracing.UnaryClientInterceptor(),
-		)
-		streamInterceptor = grpc_middleware.ChainStreamClient(
-			streamInterceptor,
-			grpc_opentracing.StreamClientInterceptor(),
-		)
+		unaryInterceptor = grpc_opentracing.UnaryClientInterceptor()
+		streamInterceptor = grpc_opentracing.StreamClientInterceptor()
 	}
 
 	allowBatch := cfg.TiKVClient.MaxBatchSize > 0
@@ -256,6 +276,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				return errors.Trace(err)
 			}
 			batchClient := &batchCommandsClient{
+				target:                 a.target,
 				conn:                   conn,
 				client:                 streamClient,
 				batched:                sync.Map{},
@@ -365,7 +386,9 @@ func fetchMorePendingRequests(
 	}
 	after.Stop()
 
-	// Do an additional non-block try.
+	// Do an additional non-block try. Here we test the lengh with `maxBatchSize` instead
+	// of `batchWaitSize` because trying best to fetch more requests is necessary so that
+	// we can adjust the `batchWaitSize` dynamically.
 	for len(*entries) < maxBatchSize {
 		select {
 		case entry := <-ch:
@@ -384,10 +407,11 @@ func fetchMorePendingRequests(
 func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
-			buf := tidbutil.GetStack()
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
-			log.Errorf("batchSendLoop %v %s", r, buf)
-			log.Infof("Restart batchSendLoop")
+			logutil.Logger(context.Background()).Error("batchSendLoop",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+			logutil.Logger(context.Background()).Info("restart batchSendLoop")
 			go a.batchSendLoop(cfg)
 		}
 	}()
@@ -396,6 +420,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	requests := make([]*tikvpb.BatchCommandsRequest_Request, 0, cfg.MaxBatchSize)
 	requestIDs := make([]uint64, 0, cfg.MaxBatchSize)
 
+	var bestBatchWaitSize = cfg.BatchWaitSize
 	for {
 		// Choose a connection by round-robbin.
 		next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
@@ -413,13 +438,22 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			// If the target TiKV is overload, wait a while to collect more requests.
 			if uint(tikvTransportLayerLoad) >= cfg.OverloadThreshold {
 				fetchMorePendingRequests(
-					a.batchCommandsCh, int(cfg.MaxBatchSize), int(cfg.BatchWaitSize),
+					a.batchCommandsCh, int(cfg.MaxBatchSize), int(bestBatchWaitSize),
 					cfg.MaxBatchWaitTime, &entries, &requests,
 				)
 			}
 		}
-
 		length := len(requests)
+		if uint(length) == 0 {
+			// The batch command channel is closed.
+			return
+		} else if uint(length) < bestBatchWaitSize && bestBatchWaitSize > 1 {
+			// Waits too long to collect requests, reduce the target batch size.
+			bestBatchWaitSize -= 1
+		} else if uint(length) > bestBatchWaitSize+4 && bestBatchWaitSize < cfg.MaxBatchSize {
+			bestBatchWaitSize += 1
+		}
+
 		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
 		for i := 0; i < length; i++ {
 			requestID := uint64(i) + maxBatchID - uint64(length)
@@ -440,7 +474,11 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		err := batchCommandsClient.client.Send(request)
 		batchCommandsClient.clientLock.Unlock()
 		if err != nil {
-			log.Errorf("batch commands send error: %v", err)
+			logutil.Logger(context.Background()).Error(
+				"batch commands send error",
+				zap.String("target", a.target),
+				zap.Error(err),
+			)
 			batchCommandsClient.failPendingRequests(err)
 		}
 	}
@@ -527,11 +565,10 @@ func sendBatchRequest(
 	}
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
 	select {
 	case connArray.batchCommandsCh <- entry:
 	case <-ctx1.Done():
-		log.Warnf("SendRequest to %s is timeout", addr)
+		logutil.Logger(context.Background()).Warn("send request is timeout", zap.String("to", addr))
 		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
 	}
 
@@ -543,7 +580,7 @@ func sendBatchRequest(
 		return tikvrpc.FromBatchCommandsResponse(res), nil
 	case <-ctx1.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
-		log.Warnf("SendRequest to %s is canceled", addr)
+		logutil.Logger(context.Background()).Warn("send request is canceled", zap.String("to", addr))
 		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
 	}
 }
@@ -566,6 +603,13 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			return sendBatchRequest(ctx, addr, connArray, batchReq, timeout)
 		}
+	}
+
+	if req.IsDebugReq() {
+		client := debugpb.NewDebugClient(connArray.Get())
+		ctx1, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return tikvrpc.CallDebugRPC(ctx1, client, req)
 	}
 
 	client := tikvpb.NewTikvClient(connArray.Get())
@@ -600,7 +644,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		if errors.Cause(err) != io.EOF {
 			return nil, errors.Trace(err)
 		}
-		log.Debug("copstream returns nothing for the request.")
+		logutil.Logger(context.Background()).Debug("copstream returns nothing for the request.")
 	}
 	copStream.Response = first
 	return resp, nil

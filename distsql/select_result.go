@@ -15,6 +15,7 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,7 +27,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var (
@@ -68,6 +72,12 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+
+	// copPlanIDs contains all copTasks' planIDs,
+	// which help to collect copTasks' runtime stats.
+	copPlanIDs []fmt.Stringer
+
+	memTracker *memory.Tracker
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -84,11 +94,15 @@ func (r *selectResult) fetch(ctx context.Context) {
 	for {
 		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
-			r.results <- resultWithErr{err: errors.Trace(err)}
+			r.results <- resultWithErr{err: err}
 			return
 		}
 		if resultSubset == nil {
 			return
+		}
+
+		if r.memTracker != nil {
+			r.memTracker.Consume(int64(resultSubset.MemSize()))
 		}
 
 		select {
@@ -116,16 +130,16 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
+	for !chk.IsFull() {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		err := r.readRowsData(chk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
 			r.respChkIdx++
@@ -141,14 +155,23 @@ func (r *selectResult) getSelectResp() error {
 		if re.err != nil {
 			return errors.Trace(re.err)
 		}
+		if r.memTracker != nil && r.selectResp != nil {
+			r.memTracker.Consume(-int64(r.selectResp.Size()))
+		}
 		if re.result == nil {
 			r.selectResp = nil
 			return nil
+		}
+		if r.memTracker != nil {
+			r.memTracker.Consume(-int64(re.result.MemSize()))
 		}
 		r.selectResp = new(tipb.SelectResponse)
 		err := r.selectResp.Unmarshal(re.result.GetData())
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if r.memTracker != nil && r.selectResp != nil {
+			r.memTracker.Consume(int64(r.selectResp.Size()))
 		}
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
@@ -157,6 +180,7 @@ func (r *selectResult) getSelectResp() error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
+		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress)
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
@@ -167,15 +191,36 @@ func (r *selectResult) getSelectResp() error {
 	}
 }
 
+func (r *selectResult) updateCopRuntimeStats(callee string) {
+	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+		return
+	}
+	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+		logutil.Logger(context.Background()).Error("invalid cop task execution summaries length",
+			zap.Int("expected", len(r.copPlanIDs)),
+			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+
+		return
+	}
+
+	for i, detail := range r.selectResp.GetExecutionSummaries() {
+		if detail != nil && detail.TimeProcessedNs != nil &&
+			detail.NumProducedRows != nil && detail.NumIterations != nil {
+			planID := r.copPlanIDs[i]
+			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+				RecordOneCopTask(planID.String(), callee, detail)
+		}
+	}
+}
+
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
-	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
+	for !chk.IsFull() && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}

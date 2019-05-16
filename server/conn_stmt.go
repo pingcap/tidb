@@ -51,7 +51,7 @@ import (
 func (cc *clientConn) handleStmtPrepare(sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	data := make([]byte, 4, 128)
 
@@ -69,7 +69,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	data = append(data, 0, 0) //TODO support warning count
 
 	if err := cc.writePacket(data); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if len(params) > 0 {
@@ -78,12 +78,12 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			data = params[i].Dump(data)
 
 			if err := cc.writePacket(data); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 
 		if err := cc.writeEOF(0); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
@@ -93,16 +93,16 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			data = columns[i].Dump(data)
 
 			if err := cc.writePacket(data); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 
 		if err := cc.writeEOF(0); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 	}
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
@@ -184,7 +184,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return errors.Annotatef(err, "%s", cc.preparedStmt2String(stmtID))
 	}
 	if rs == nil {
-		return errors.Trace(cc.writeOK())
+		return cc.writeOK()
 	}
 
 	// if the client wants to use cursor
@@ -194,12 +194,12 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		stmt.StoreResultSet(rs)
 		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		// explicitly flush columnInfo to client.
-		return errors.Trace(cc.flush())
+		return cc.flush()
 	}
-	return errors.Trace(cc.writeResultset(ctx, rs, true, 0, 0))
+	return cc.writeResultset(ctx, rs, true, 0, 0)
 }
 
 // maxFetchSize constants
@@ -230,7 +230,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs")
 	}
 
-	return errors.Trace(cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize)))
+	return cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
 }
 
 func parseStmtFetchCmd(data []byte) (uint32, uint32, error) {
@@ -433,7 +433,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 
 			if !isNull {
-				args[i] = hack.String(v)
+				args[i] = string(hack.String(v))
 			} else {
 				args[i] = nil
 			}
@@ -506,7 +506,7 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt != nil {
-		return errors.Trace(stmt.Close())
+		return stmt.Close()
 	}
 	return
 }
@@ -560,10 +560,10 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 		return mysql.ErrMalformPacket
 	}
 	if err = cc.writeEOF(0); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
-	return errors.Trace(cc.flush())
+	return cc.flush()
 }
 
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {

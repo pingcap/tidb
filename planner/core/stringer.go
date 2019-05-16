@@ -223,7 +223,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *LogicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.WindowFuncDesc.String())
 	case *PhysicalWindow:
-		str = fmt.Sprintf("Window(%s)", x.WindowFuncDesc.String())
+		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

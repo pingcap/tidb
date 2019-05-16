@@ -123,6 +123,11 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 	return true
 }
 
+// ConstItem implements Expression interface.
+func (col *CorrelatedColumn) ConstItem() bool {
+	return true
+}
+
 // Decorrelate implements Expression interface.
 func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 	if !schema.Contains(&col.Column) {
@@ -162,6 +167,10 @@ type Column struct {
 	Index int
 
 	hashcode []byte
+
+	// InOperand indicates whether this column is the inner operand of column equal condition converted
+	// from `[not] in (subq)`.
+	InOperand bool
 }
 
 // Equal implements Expression interface.
@@ -231,18 +240,14 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 	if row.IsNull(col.Index) {
 		return "", true, nil
 	}
+
+	// Specially handle the ENUM/SET/BIT input value.
 	if col.GetType().Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
-		if val.IsNull() {
-			return "", true, nil
-		}
 		res, err := val.ToString()
-		resLen := len([]rune(res))
-		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
-			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
-		}
 		return res, err != nil, err
 	}
+
 	val := row.GetString(col.Index)
 	if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
 		valLen := len([]rune(val))
@@ -294,6 +299,11 @@ func (col *Column) Clone() Expression {
 
 // IsCorrelated implements Expression interface.
 func (col *Column) IsCorrelated() bool {
+	return false
+}
+
+// ConstItem implements Expression interface.
+func (col *Column) ConstItem() bool {
 	return false
 }
 

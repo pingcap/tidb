@@ -16,6 +16,8 @@ package ddl
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -103,6 +105,7 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 // old and new is valid or not by such rules:
 //  1. the modification can't change stored status;
 //  2. if the new is generated, check its refer rules.
+//  3. check if the modified expr contains non-deterministic functions
 func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *table.Column) error {
 	// rule 1.
 	var stored = [2]bool{false, false}
@@ -149,6 +152,56 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 		}
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
 			return errors.Trace(err)
+		}
+	}
+
+	// rule 3
+	if newCol.IsGenerated() {
+		if err := checkIllegalFn4GeneratedColumn(newCol.Name.L, newCol.GeneratedExpr); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+type illegalFunctionChecker struct {
+	found bool
+}
+
+func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+	switch node := inNode.(type) {
+	case *ast.FuncCallExpr:
+		if _, found := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]; found {
+			c.found = true
+			return inNode, true
+		}
+	}
+	return inNode, false
+}
+
+func (c *illegalFunctionChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	return inNode, true
+}
+
+func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
+	if expr == nil {
+		return nil
+	}
+	var c illegalFunctionChecker
+	expr.Accept(&c)
+	if c.found {
+		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(colName)
+	}
+	return nil
+}
+
+// checkAutoIncrementRef checks if an generated column depends on an auto-increment column and raises an error if so.
+// See https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
+func checkAutoIncrementRef(name string, dependencies map[string]struct{}, tbInfo *model.TableInfo) error {
+	exists, autoIncrementColumn := hasAutoIncrementColumn(tbInfo)
+	if exists {
+		if _, found := dependencies[autoIncrementColumn]; found {
+			return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(name)
 		}
 	}
 	return nil

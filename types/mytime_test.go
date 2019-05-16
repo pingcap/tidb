@@ -14,6 +14,8 @@
 package types
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 )
 
@@ -208,5 +210,64 @@ func (s *testMyTimeSuite) TestIsLeapYear(c *C) {
 
 	for _, tt := range tests {
 		c.Assert(tt.T.IsLeapYear(), Equals, tt.Expect)
+	}
+}
+func (s *testMyTimeSuite) TestGetLastDay(c *C) {
+	tests := []struct {
+		year        int
+		month       int
+		expectedDay int
+	}{
+		{2000, 1, 31},
+		{2000, 2, 29},
+		{2000, 4, 30},
+		{1900, 2, 28},
+		{1996, 2, 29},
+	}
+
+	for _, t := range tests {
+		day := GetLastDay(t.year, t.month)
+		c.Assert(day, Equals, t.expectedDay)
+	}
+}
+
+func (s *testMyTimeSuite) TestgetFixDays(c *C) {
+	tests := []struct {
+		year        int
+		month       int
+		day         int
+		ot          time.Time
+		expectedDay int
+	}{
+		{2000, 1, 0, time.Date(2000, 1, 31, 0, 0, 0, 0, time.UTC), -2},
+		{2000, 1, 12, time.Date(2000, 1, 31, 0, 0, 0, 0, time.UTC), 0},
+		{2000, 1, 12, time.Date(2000, 1, 0, 0, 0, 0, 0, time.UTC), 0},
+		{2000, 2, 24, time.Date(2000, 2, 10, 0, 0, 0, 0, time.UTC), 0},
+		{2019, 04, 05, time.Date(2019, 04, 01, 1, 2, 3, 4, time.UTC), 0},
+	}
+
+	for _, t := range tests {
+		res := getFixDays(t.year, t.month, t.day, t.ot)
+		c.Assert(res, Equals, t.expectedDay)
+	}
+}
+
+func (s *testMyTimeSuite) TestAddDate(c *C) {
+	tests := []struct {
+		year  int
+		month int
+		day   int
+		ot    time.Time
+	}{
+		{01, 1, 0, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC)},
+		{02, 1, 12, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC)},
+		{03, 1, 12, time.Date(2000, 1, 01, 0, 0, 0, 0, time.UTC)},
+		{04, 2, 24, time.Date(2000, 2, 10, 0, 0, 0, 0, time.UTC)},
+		{01, 04, 05, time.Date(2019, 04, 01, 1, 2, 3, 4, time.UTC)},
+	}
+
+	for _, t := range tests {
+		res := AddDate(int64(t.year), int64(t.month), int64(t.day), t.ot)
+		c.Assert(res.Year(), Equals, t.year+t.ot.Year())
 	}
 }

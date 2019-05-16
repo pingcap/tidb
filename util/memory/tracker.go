@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -37,25 +38,27 @@ import (
 // 1. Only "BytesConsumed()", "Consume()", "AttachTo()" and "Detach" are thread-safe.
 // 2. Other operations of a Tracker tree is not thread-safe.
 type Tracker struct {
-	sync.Mutex // For synchronization.
+	mu struct {
+		sync.Mutex
+		children []*Tracker // The children memory trackers
+	}
 
-	label          string // Label of this "Tracker".
-	bytesConsumed  int64  // Consumed bytes.
-	bytesLimit     int64  // Negative value means no limit.
+	label          fmt.Stringer // Label of this "Tracker".
+	bytesConsumed  int64        // Consumed bytes.
+	bytesLimit     int64        // Negative value means no limit.
+	maxConsumed    int64        // max number of bytes consumed during execution.
 	actionOnExceed ActionOnExceed
-	parent         *Tracker   // The parent memory tracker.
-	children       []*Tracker // The children memory trackers.
+	parent         *Tracker // The parent memory tracker.
 }
 
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit < 0" means no limit.
-func NewTracker(label string, bytesLimit int64) *Tracker {
+func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 	return &Tracker{
 		label:          label,
 		bytesLimit:     bytesLimit,
 		actionOnExceed: &LogOnExceed{},
-		parent:         nil,
 	}
 }
 
@@ -65,7 +68,7 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 }
 
 // SetLabel sets the label of a Tracker.
-func (t *Tracker) SetLabel(label string) {
+func (t *Tracker) SetLabel(label fmt.Stringer) {
 	t.label = label
 }
 
@@ -76,9 +79,9 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 	if t.parent != nil {
 		t.parent.remove(t)
 	}
-	parent.Lock()
-	parent.children = append(parent.children, t)
-	parent.Unlock()
+	parent.mu.Lock()
+	parent.mu.children = append(parent.mu.children, t)
+	parent.mu.Unlock()
 
 	t.parent = parent
 	t.parent.Consume(t.BytesConsumed())
@@ -90,16 +93,16 @@ func (t *Tracker) Detach() {
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
-	t.Lock()
-	defer t.Unlock()
-	for i, child := range t.children {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i, child := range t.mu.children {
 		if child != oldChild {
 			continue
 		}
 
-		t.bytesConsumed -= oldChild.BytesConsumed()
+		atomic.AddInt64(&t.bytesConsumed, -oldChild.BytesConsumed())
 		oldChild.parent = nil
-		t.children = append(t.children[:i], t.children[i+1:]...)
+		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
 		break
 	}
 }
@@ -116,18 +119,18 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	newConsumed := newChild.BytesConsumed()
 	newChild.parent = t
 
-	t.Lock()
-	for i, child := range t.children {
+	t.mu.Lock()
+	for i, child := range t.mu.children {
 		if child != oldChild {
 			continue
 		}
 
 		newConsumed -= oldChild.BytesConsumed()
 		oldChild.parent = nil
-		t.children[i] = newChild
+		t.mu.children[i] = newChild
 		break
 	}
-	t.Unlock()
+	t.mu.Unlock()
 
 	t.Consume(newConsumed)
 }
@@ -137,12 +140,22 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 func (t *Tracker) Consume(bytes int64) {
 	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
-		tracker.Lock()
-		tracker.bytesConsumed += bytes
-		if tracker.bytesLimit > 0 && tracker.bytesConsumed >= tracker.bytesLimit {
+		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
 			rootExceed = tracker
 		}
-		tracker.Unlock()
+
+		if tracker.parent == nil {
+			// since we only need a total memory usage during execution,
+			// we only record max consumed bytes in root(statement-level) for performance.
+			for {
+				maxNow := atomic.LoadInt64(&tracker.maxConsumed)
+				consumed := atomic.LoadInt64(&tracker.bytesConsumed)
+				if consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed) {
+					continue
+				}
+				break
+			}
+		}
 	}
 	if rootExceed != nil {
 		rootExceed.actionOnExceed.Action(rootExceed)
@@ -151,9 +164,12 @@ func (t *Tracker) Consume(bytes int64) {
 
 // BytesConsumed returns the consumed memory usage value in bytes.
 func (t *Tracker) BytesConsumed() int64 {
-	t.Lock()
-	defer t.Unlock()
-	return t.bytesConsumed
+	return atomic.LoadInt64(&t.bytesConsumed)
+}
+
+// MaxConsumed returns max number of bytes consumed during execution.
+func (t *Tracker) MaxConsumed() int64 {
+	return atomic.LoadInt64(&t.maxConsumed)
 }
 
 // String returns the string representation of this Tracker tree.
@@ -170,13 +186,13 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.bytesToString(t.BytesConsumed()))
 
-	t.Lock()
-	for i := range t.children {
-		if t.children[i] != nil {
-			t.children[i].toString(indent+"  ", buffer)
+	t.mu.Lock()
+	for i := range t.mu.children {
+		if t.mu.children[i] != nil {
+			t.mu.children[i].toString(indent+"  ", buffer)
 		}
 	}
-	t.Unlock()
+	t.mu.Unlock()
 	buffer.WriteString(indent + "}\n")
 }
 
