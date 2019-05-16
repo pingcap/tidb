@@ -261,10 +261,17 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	stores, err := w.getUpStores(ctx)
 	concurrency := len(stores)
 	if err != nil {
-		logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency",
+		logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency.",
 			zap.String("uuid", w.uuid),
 			zap.Error(err))
-		concurrency = gcDefaultConcurrency
+
+		concurrency, err = w.loadGCConcurrencyWithDefault()
+		if err != nil {
+			logutil.Logger(ctx).Error("[gc worker] failed to load gc concurrency. use default value.",
+				zap.String("uuid", w.uuid),
+				zap.Error(err))
+			concurrency = gcDefaultConcurrency
+		}
 	}
 
 	if concurrency == 0 {
@@ -276,7 +283,8 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	w.gcIsRunning = true
 	logutil.Logger(ctx).Info("[gc worker] starts the whole job",
 		zap.String("uuid", w.uuid),
-		zap.Uint64("safePoint", safePoint))
+		zap.Uint64("safePoint", safePoint),
+		zap.Int("concurrency", concurrency))
 	go w.runGCJob(ctx, safePoint, concurrency)
 	return nil
 }
