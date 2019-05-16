@@ -199,6 +199,9 @@ func TestLoadPluginSkipError(t *testing.T) {
 		readyCount++
 		return nil
 	})
+	if err != nil {
+		t.Errorf("foreach meet error %v", err)
+	}
 	if readyCount != 0 {
 		t.Errorf("validate fail can be load but no ready")
 	}
