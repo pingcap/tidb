@@ -304,8 +304,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		err = errors.Errorf("txnStartTS %d is stale", txn.startTS)
-		return errors.Annotate(err, txnRetryableMark)
+		return kv.ErrWriteConflict.FastGenByArgs(txn.startTS, 0, "is stale")
 	}
 	err = committer.executeAndWriteFinishBinlog(ctx)
 	if err == nil {
