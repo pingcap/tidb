@@ -566,6 +566,7 @@ func runServer() {
 }
 
 func closeDomainAndStorage() {
+	atomic.StoreUint32(&tikv.Morbid, 1)
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))

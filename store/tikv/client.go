@@ -166,6 +166,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 					zap.String("target", c.target),
 					zap.Error(err),
 				)
+
 				// TODO: Use a more smart backoff strategy.
 				time.Sleep(time.Second)
 			}

@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,6 +30,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )
+
+// A flag indicates that tidb-server is exiting (Ctrl+C signal receved for example). If this flag is set, tikv client
+// should not retry on network error because tidb-server expect tikv client to exit as soon as possible.
+var Morbid uint32
 
 // RegionRequestSender sends KV/Cop requests to tikv server. It handles network
 // errors and some region errors internally.
@@ -150,6 +155,9 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
+	} else if atomic.LoadUint32(&Morbid) > 0 {
+		// TiDB server is closing.
+		return errTiDBMoribid
 	}
 	if grpc.Code(errors.Cause(err)) == codes.Canceled {
 		select {
