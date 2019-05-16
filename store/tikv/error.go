@@ -27,14 +27,6 @@ var (
 // mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
 const mismatchClusterID = "mismatch cluster id"
 
-// TiDB decides whether to retry transaction by checking if error message contains
-// string "try again later" literally.
-// In TiClient we use `errors.Annotate(err, txnRetryableMark)` to direct TiDB to
-// restart a transaction.
-// Note that it should be only used if i) the error occurs inside a transaction
-// and ii) the error is not totally unexpected and hopefully will recover soon.
-const txnRetryableMark = "[try again later]"
-
 // MySQL error instances.
 var (
 	ErrTiKVServerTimeout  = terror.ClassTiKV.New(mysql.ErrTiKVServerTimeout, mysql.MySQLErrName[mysql.ErrTiKVServerTimeout])

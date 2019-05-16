@@ -213,6 +213,7 @@ const (
 	splitRegionBackoff             = 20000
 	scatterRegionBackoff           = 20000
 	waitScatterRegionFinishBackoff = 120000
+	locateRegionMaxBackoff         = 20000
 )
 
 // CommitMaxBackoff is max sleep time of the 'commit' command

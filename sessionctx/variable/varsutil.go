@@ -336,7 +336,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TmpTableSize:
 		return checkUInt64SystemVar(name, value, 1024, math.MaxUint64, vars)
 	case WaitTimeout:
-		return checkUInt64SystemVar(name, value, 1, 31536000, vars)
+		return checkUInt64SystemVar(name, value, 0, 31536000, vars)
 	case MaxPreparedStmtCount:
 		return checkInt64SystemVar(name, value, -1, 1048576, vars)
 	case TimeZone:
