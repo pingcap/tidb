@@ -124,7 +124,7 @@ type PhysicalIndexMergeLookUpReader struct {
   - 1: intersection operation on result sets, with a table scan;
   - 2: intersection operation on result sets, without the table scan;
   - 3: union operation on result sets; must have a table scan;
- 
+
 In the first version, `PhysicalIndexMergeLookUpReader` and `PhysicalIndexMergeReader` will be implemented as one operator.
 
 
@@ -134,9 +134,9 @@ For table paths, we first generate all possible IndexMergeOr paths, then possibl
 
 ```
 type IndexMergePath struct {
-		IndexPath[]
-		tableFilters
-		IndexMergeType
+	IndexPath[]
+	tableFilters
+	IndexMergeType
 }
 ```
 
@@ -265,7 +265,7 @@ Every index plan in `PhysicalIndexMergeLookUpReader` will start an `IndexWorker`
 Here are some designs for index plans in pipeline mode to be executed without considering the order.
 
 (1) IndexMergeIntersection
-  
+
  <img alt="IndexMergeIntersection" src="./imgs/and.jpeg" width="500pt"/>
 
 Take this example: Use set1 to record row IDs returned by ix1 but not sent to tableWorker. Use set2 to record the same thing for ix2.
