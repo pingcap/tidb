@@ -166,7 +166,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		}
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
-			var indexAccessPaths []*accessPath = nil
+			var indexAccessPaths []*accessPath
 			if itemF, ok := item.(*expression.ScalarFunction); ok && itemF.FuncName.L == ast.LogicAnd {
 				cnfItems := expression.FlattenCNFConditions(itemF)
 				indexAccessPaths = ds.buildAccessPath(cnfItems, usedIndexCount)
