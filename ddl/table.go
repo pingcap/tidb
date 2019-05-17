@@ -811,7 +811,7 @@ func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string
 	return nil
 }
 
-// updateVersionAndTableInfo updates the schema version and the table information.
+// updateVersionAndTableInfoWithCheck checks table info validate and updates the schema version and the table information
 func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
 	ver int64, err error) {
 	err = checkTableInfoValid(tblInfo)
