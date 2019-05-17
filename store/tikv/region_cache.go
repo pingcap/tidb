@@ -36,6 +36,7 @@ const (
 	btreeDegree                = 32
 	rcDefaultRegionCacheTTLSec = 600
 	invalidatedLastAccessTime  = -1
+	reloadRegionThreshold      = 5
 )
 
 var (
@@ -64,17 +65,17 @@ type Region struct {
 // RegionStore represents region stores info
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
-	workStoreIdx    int32    // point to current work peer in meta.Peers and work store in stores(same idx)
-	startingLineIdx int32    // mark starting using idx, when meet starting line again will try sync region from pd
-	stores          []*Store // stores in this region
+	workStoreIdx     int32    // point to current work peer in meta.Peers and work store in stores(same idx)
+	stores           []*Store // stores in this region
+	attemptAfterLoad uint8    // indicate switch peer attempts after load region info
 }
 
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
 	return &RegionStore{
-		workStoreIdx:    r.workStoreIdx,
-		startingLineIdx: r.startingLineIdx,
-		stores:          r.stores,
+		workStoreIdx:     r.workStoreIdx,
+		stores:           r.stores,
+		attemptAfterLoad: r.attemptAfterLoad,
 	}
 }
 
@@ -630,12 +631,17 @@ retry:
 	}
 	newRegionStore := regionStore.clone()
 	newRegionStore.workStoreIdx = int32(newIdx)
+	newRegionStore.attemptAfterLoad++
+	attemptOverThreshold := newRegionStore.attemptAfterLoad == reloadRegionThreshold
+	if attemptOverThreshold {
+		newRegionStore.attemptAfterLoad = 0
+	}
 	if !region.compareAndSwapStore(regionStore, newRegionStore) {
 		goto retry
 	}
 
-	// try all peers and fetch region info from pd again, before start next round.
-	if int32(newIdx) == regionStore.startingLineIdx {
+	//  reload region info after attempts more than reloadRegionThreshold
+	if attemptOverThreshold {
 		region.scheduleReload()
 	}
 
@@ -854,12 +860,11 @@ func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) (switchTo
 retry:
 	// switch to new leader.
 	oldRegionStore := r.getStore()
-	if oldRegionStore.workStoreIdx == int32(leaderIdx) && oldRegionStore.startingLineIdx == int32(leaderIdx) {
+	if oldRegionStore.workStoreIdx == int32(leaderIdx) {
 		return
 	}
 	newRegionStore := oldRegionStore.clone()
 	newRegionStore.workStoreIdx = int32(leaderIdx)
-	newRegionStore.startingLineIdx = int32(leaderIdx)
 	if !r.compareAndSwapStore(oldRegionStore, newRegionStore) {
 		goto retry
 	}
