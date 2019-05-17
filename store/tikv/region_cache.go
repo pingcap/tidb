@@ -64,17 +64,17 @@ type Region struct {
 // RegionStore represents region stores info
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
-	workStoreIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx)
-	syncStoreIdx int32    // need trigger reload if meet syncStoreIdx again
-	stores       []*Store // stores in this region
+	workStoreIdx    int32    // point to current work peer in meta.Peers and work store in stores(same idx)
+	startingLineIdx int32    // mark starting using idx, when meet starting line again will try sync region from pd
+	stores          []*Store // stores in this region
 }
 
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
 	return &RegionStore{
-		workStoreIdx: r.workStoreIdx,
-		syncStoreIdx: r.syncStoreIdx,
-		stores:       r.stores,
+		workStoreIdx:    r.workStoreIdx,
+		startingLineIdx: r.startingLineIdx,
+		stores:          r.stores,
 	}
 }
 
@@ -446,12 +446,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		return
 	}
-	if !c.switchWorkStore(r, leaderStoreID) {
-		logutil.Logger(context.Background()).Debug("regionCache: cannot find peer when updating leader",
-			zap.Uint64("regionID", regionID.GetID()),
-			zap.Uint64("leaderStoreID", leaderStoreID))
-		r.invalidate()
-	}
+	c.switchWorkStore(r, leaderStoreID)
 }
 
 // insertRegionToCache tries to insert the Region to cache.
@@ -638,7 +633,9 @@ retry:
 	if !region.compareAndSwapStore(regionStore, newRegionStore) {
 		goto retry
 	}
-	if int32(newIdx) == regionStore.syncStoreIdx {
+
+	// try all peers and fetch region info from pd again, before start next round.
+	if int32(newIdx) == regionStore.startingLineIdx {
 		region.scheduleReload()
 	}
 
@@ -859,7 +856,7 @@ retry:
 	oldRegionStore := r.getStore()
 	newRegionStore := oldRegionStore.clone()
 	newRegionStore.workStoreIdx = int32(leaderIdx)
-	newRegionStore.syncStoreIdx = int32(leaderIdx)
+	newRegionStore.startingLineIdx = int32(leaderIdx)
 	if !r.compareAndSwapStore(oldRegionStore, newRegionStore) {
 		goto retry
 	}
