@@ -44,6 +44,7 @@ const (
 	CmdResolveLock
 	CmdGC
 	CmdDeleteRange
+	CmdPessimisticLock
 
 	CmdRawGet CmdType = 256 + iota
 	CmdRawBatchGet
@@ -74,6 +75,8 @@ func (t CmdType) String() string {
 		return "Scan"
 	case CmdPrewrite:
 		return "Prewrite"
+	case CmdPessimisticLock:
+		return "PessimisticLock"
 	case CmdCommit:
 		return "Commit"
 	case CmdCleanup:
@@ -131,6 +134,7 @@ type Request struct {
 	Get                *kvrpcpb.GetRequest
 	Scan               *kvrpcpb.ScanRequest
 	Prewrite           *kvrpcpb.PrewriteRequest
+	PessimisticLock    *kvrpcpb.PessimisticLockRequest
 	Commit             *kvrpcpb.CommitRequest
 	Cleanup            *kvrpcpb.CleanupRequest
 	BatchGet           *kvrpcpb.BatchGetRequest
@@ -199,6 +203,8 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawScan{RawScan: req.RawScan}}
 	case CmdCop:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Coprocessor{Coprocessor: req.Cop}}
+	case CmdPessimisticLock:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticLock{PessimisticLock: req.PessimisticLock}}
 	}
 	return nil
 }
@@ -218,6 +224,7 @@ type Response struct {
 	Get                *kvrpcpb.GetResponse
 	Scan               *kvrpcpb.ScanResponse
 	Prewrite           *kvrpcpb.PrewriteResponse
+	PessimisticLock    *kvrpcpb.PessimisticLockResponse
 	Commit             *kvrpcpb.CommitResponse
 	Cleanup            *kvrpcpb.CleanupResponse
 	BatchGet           *kvrpcpb.BatchGetResponse
@@ -287,6 +294,8 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 		return &Response{Type: CmdRawScan, RawScan: res.RawScan}
 	case *tikvpb.BatchCommandsResponse_Response_Coprocessor:
 		return &Response{Type: CmdCop, Cop: res.Coprocessor}
+	case *tikvpb.BatchCommandsResponse_Response_PessimisticLock:
+		return &Response{Type: CmdPessimisticLock, PessimisticLock: res.PessimisticLock}
 	}
 	return nil
 }
@@ -315,6 +324,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.Scan.Context = ctx
 	case CmdPrewrite:
 		req.Prewrite.Context = ctx
+	case CmdPessimisticLock:
+		req.PessimisticLock.Context = ctx
 	case CmdCommit:
 		req.Commit.Context = ctx
 	case CmdCleanup:
@@ -381,6 +392,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		}
 	case CmdPrewrite:
 		resp.Prewrite = &kvrpcpb.PrewriteResponse{
+			RegionError: e,
+		}
+	case CmdPessimisticLock:
+		resp.PessimisticLock = &kvrpcpb.PessimisticLockResponse{
 			RegionError: e,
 		}
 	case CmdCommit:
@@ -487,6 +502,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.Get.GetRegionError()
 	case CmdScan:
 		e = resp.Scan.GetRegionError()
+	case CmdPessimisticLock:
+		e = resp.PessimisticLock.GetRegionError()
 	case CmdPrewrite:
 		e = resp.Prewrite.GetRegionError()
 	case CmdCommit:
@@ -553,6 +570,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Scan, err = client.KvScan(ctx, req.Scan)
 	case CmdPrewrite:
 		resp.Prewrite, err = client.KvPrewrite(ctx, req.Prewrite)
+	case CmdPessimisticLock:
+		resp.PessimisticLock, err = client.KvPessimisticLock(ctx, req.PessimisticLock)
 	case CmdCommit:
 		resp.Commit, err = client.KvCommit(ctx, req.Commit)
 	case CmdCleanup:

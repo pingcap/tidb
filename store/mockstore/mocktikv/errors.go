@@ -60,3 +60,14 @@ type ErrAlreadyCommitted uint64
 func (e ErrAlreadyCommitted) Error() string {
 	return "txn already committed"
 }
+
+// ErrConflict is turned when the commitTS of key in the DB is greater than startTS.
+type ErrConflict struct {
+	StartTS    uint64
+	ConflictTS uint64
+	Key        []byte
+}
+
+func (e *ErrConflict) Error() string {
+	return "write conflict"
+}

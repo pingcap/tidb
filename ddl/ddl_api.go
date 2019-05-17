@@ -90,6 +90,63 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
+func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
+	// Resolve target charset and collation from options.
+	var toCharset, toCollate string
+	for _, val := range stmt.Options {
+		switch val.Tp {
+		case ast.DatabaseOptionCharset:
+			if toCharset == "" {
+				toCharset = val.Value
+			} else if toCharset != val.Value {
+				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, val.Value)
+			}
+		case ast.DatabaseOptionCollate:
+			info, err := charset.GetCollationByName(val.Value)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if toCharset == "" {
+				toCharset = info.CharsetName
+			} else if toCharset != info.CharsetName {
+				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, info.CharsetName)
+			}
+			toCollate = info.Name
+		}
+	}
+	if toCollate == "" {
+		if toCollate, err = charset.GetDefaultCollation(toCharset); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// Check if need to change charset/collation.
+	dbName := model.NewCIStr(stmt.Name)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	dbInfo, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+	if dbInfo.Charset == toCharset && dbInfo.Charset == toCollate {
+		return nil
+	}
+
+	// Check the current TiDB limitations.
+	if err = modifiableCharsetAndCollation(toCharset, toCollate, dbInfo.Charset, dbInfo.Collate); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Do the DDL job.
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionModifySchemaCharsetAndCollate,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{toCharset, toCollate},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
 
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
@@ -1141,7 +1198,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 				err = checkPartitionByRangeColumn(ctx, tbInfo, pi, s)
 			}
 		case model.PartitionTypeHash:
-			err = checkPartitionByHash(pi)
+			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1365,41 +1422,41 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 	return viewInfo, tableColumns
 }
 
-func checkPartitionByHash(pi *model.PartitionInfo) error {
+func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, tbInfo *model.TableInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	if err := checkNoHashPartitions(pi.Num); err != nil {
-		return errors.Trace(err)
+	if err := checkNoHashPartitions(ctx, pi.Num); err != nil {
+		return err
 	}
-	return nil
+	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+		return err
+	}
+	return checkPartitionFuncType(ctx, s, cols, tbInfo)
 }
 
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
 	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
-	if err := checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return checkPartitionFuncType(ctx, s, cols, tbInfo)
 }
 
 func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt) error {
@@ -2192,6 +2249,10 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
 func modifiable(origin *types.FieldType, to *types.FieldType) error {
+	// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
+	if origin.Tp == mysql.TypeNewDecimal && (to.Flen != origin.Flen || to.Decimal != origin.Decimal) {
+		return errUnsupportedModifyColumn.GenWithStack("unsupported modify decimal column precision")
+	}
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)

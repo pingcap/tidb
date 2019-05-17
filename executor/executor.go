@@ -656,6 +656,11 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *SelectLockExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("selectLock.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	req.GrowAndReset(e.maxChunkSize)
 	err := e.children[0].Next(ctx, req)
 	if err != nil {
@@ -671,13 +676,17 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	}
 	keys := make([]kv.Key, 0, req.NumRows())
 	iter := chunk.NewIterator4Chunk(req.Chunk)
+	forUpdateTS := e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	for id, cols := range e.Schema().TblID2Handle {
 		for _, col := range cols {
 			keys = keys[:0]
 			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 				keys = append(keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
 			}
-			err = txn.LockKeys(keys...)
+			if len(keys) == 0 {
+				continue
+			}
+			err = txn.LockKeys(ctx, forUpdateTS, keys...)
 			if err != nil {
 				return err
 			}
