@@ -532,13 +532,13 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
+		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		atomic.AddInt64(&c.detail.ResolveLockTime, int64(time.Since(start)))
-		if !ok {
-			err = bo.Backoff(BoTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
+		if msBeforeExpired > 0 {
+			err = bo.BackoffWithMaxSleep(BoTxnLock, int(msBeforeExpired), errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -619,12 +619,12 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			}
 			locks = append(locks, lock)
 		}
-		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
+		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !ok {
-			err = bo.Backoff(BoTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
+		if msBeforeExpired > 0 {
+			err = bo.BackoffWithMaxSleep(BoTxnLock, int(msBeforeExpired), errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
 				return errors.Trace(err)
 			}
