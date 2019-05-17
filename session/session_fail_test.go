@@ -102,6 +102,8 @@ func (s *testSessionSuite) TestGetTSFailDirtyStateInretry(c *C) {
 	tk.MustExec("create table t (id int)")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`), IsNil)
+	// This test will mock a PD timeout error, and recover then.
+	// Just make mockGetTSErrorInRetry return true once, and then return false.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockGetTSErrorInRetry",
 		`1*return(true)->return(false)`), IsNil)
 	tk.MustExec("insert into t values (2)")
