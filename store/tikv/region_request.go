@@ -90,7 +90,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 	})
 
 	for {
-		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
+		ctx, err := s.regionCache.GetRPCContext(bo, regionID, req.ToSlave)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

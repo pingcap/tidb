@@ -158,6 +158,8 @@ github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e/go.mod h1:O17Xtb
 github.com/pingcap/kvproto v0.0.0-20190327032727-3d8cb3a30d5d/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
 github.com/pingcap/kvproto v0.0.0-20190425131531-4ed0aa16f7ea h1:70nTOXpmTdRTrlEvVP+ZYexYe8RIgqyGibHmg0VLuoI=
 github.com/pingcap/kvproto v0.0.0-20190425131531-4ed0aa16f7ea/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
+github.com/pingcap/kvproto v0.0.0-20190517030054-ff2e03f6fdfe h1:hs1Y4RTsPg0DOEGanGxaXG/2iqewWNY6/GVLkFnZMaU=
+github.com/pingcap/kvproto v0.0.0-20190517030054-ff2e03f6fdfe/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
 github.com/pingcap/log v0.0.0-20190214045112-b37da76f67a7/go.mod h1:xsfkWVaFVV5B8e1K9seWfyJWFrIhbtUTAD8NV1Pq3+w=
 github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596 h1:t2OQTpPJnrPDGlvA+3FwJptMTt6MEPdzK1Wt99oaefQ=
 github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596/go.mod h1:WpHUKhNZ18v116SvGrmjkA9CBhYmuUTKL+p8JC9ANEw=

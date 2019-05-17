@@ -107,7 +107,7 @@ func (c *RPCContext) String() string {
 
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
+func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID, toSlave bool) (*RPCContext, error) {
 	c.mu.RLock()
 	region := c.getCachedRegion(id)
 	if region == nil {
@@ -121,6 +121,19 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 	meta, peer := region.meta, region.peer
 	c.mu.RUnlock()
 
+	if toSlave {
+		for _, p := range region.meta.GetPeers() {
+			ok, err := c.IsStoreSlave(bo, p.GetStoreId())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if ok {
+				peer = p
+				break
+			}
+		}
+		return nil, errors.New("not found slave store")
+	}
 	addr, err := c.GetStoreAddr(bo, peer.GetStoreId())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -472,6 +485,20 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 	}
 }
 
+func (c *RegionCache) IsStoreSlave(bo *Backoffer, id uint64) (bool, error) {
+	c.storeMu.RLock()
+	if store, ok := c.storeMu.stores[id]; ok {
+		c.storeMu.RUnlock()
+		return store.IsSlave, nil
+	}
+	c.storeMu.RUnlock()
+	info, err := c.ReloadStoreInfo(bo, id)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return info.IsSlave, nil
+}
+
 // GetStoreAddr returns a tikv server's address by its storeID. It checks cache
 // first, sends request to pd server when necessary.
 func (c *RegionCache) GetStoreAddr(bo *Backoffer, id uint64) (string, error) {
@@ -481,23 +508,37 @@ func (c *RegionCache) GetStoreAddr(bo *Backoffer, id uint64) (string, error) {
 		return store.Addr, nil
 	}
 	c.storeMu.RUnlock()
-	return c.ReloadStoreAddr(bo, id)
+	info, err := c.ReloadStoreInfo(bo, id)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return info.Addr, nil
 }
 
-// ReloadStoreAddr reloads store's address.
-func (c *RegionCache) ReloadStoreAddr(bo *Backoffer, id uint64) (string, error) {
-	addr, err := c.loadStoreAddr(bo, id)
+// ReloadStoreInfo reloads store's info.
+func (c *RegionCache) ReloadStoreInfo(bo *Backoffer, id uint64) (*Store, error) {
+	addr, labels, err := c.loadStoreInfo(bo, id)
 	if err != nil || addr == "" {
-		return "", errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	c.storeMu.Lock()
 	defer c.storeMu.Unlock()
-	c.storeMu.stores[id] = &Store{
-		ID:   id,
-		Addr: addr,
+	isSlave := false
+	for _, label := range labels {
+		// how to regard as slave?
+		if label.Key == "" && label.Value == "" {
+			isSlave = true
+			break
+		}
 	}
-	return addr, nil
+	store := &Store{
+		ID:      id,
+		Addr:    addr,
+		IsSlave: isSlave,
+	}
+	c.storeMu.stores[id] = store
+	return store, nil
 }
 
 // ClearStoreByID clears store from cache with storeID.
@@ -507,7 +548,7 @@ func (c *RegionCache) ClearStoreByID(id uint64) {
 	delete(c.storeMu.stores, id)
 }
 
-func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
+func (c *RegionCache) loadStoreInfo(bo *Backoffer, id uint64) (string, []*metapb.StoreLabel, error) {
 	for {
 		store, err := c.pdClient.GetStore(bo.ctx, id)
 		if err != nil {
@@ -517,18 +558,18 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 		}
 		if err != nil {
 			if errors.Cause(err) == context.Canceled {
-				return "", errors.Trace(err)
+				return "", nil, errors.Trace(err)
 			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", id, err)
 			if err = bo.Backoff(BoPDRPC, err); err != nil {
-				return "", errors.Trace(err)
+				return "", nil, errors.Trace(err)
 			}
 			continue
 		}
 		if store == nil {
-			return "", nil
+			return "", nil, nil
 		}
-		return store.GetAddress(), nil
+		return store.GetAddress(), store.GetLabels(), nil
 	}
 }
 
@@ -711,6 +752,7 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a tikv server's address.
 type Store struct {
-	ID   uint64
-	Addr string
+	ID      uint64
+	Addr    string
+	IsSlave bool
 }

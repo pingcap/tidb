@@ -63,6 +63,7 @@ const (
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
 	CmdSplitRegion
+	CmdReadIndex
 
 	CmdDebugGetRegionProperties CmdType = 2048 + iota
 )
@@ -121,6 +122,8 @@ func (t CmdType) String() string {
 		return "MvccGetByStartTS"
 	case CmdSplitRegion:
 		return "SplitRegion"
+	case CmdReadIndex:
+		return "ReadIndex"
 	case CmdDebugGetRegionProperties:
 		return "DebugGetRegionProperties"
 	}
@@ -130,6 +133,7 @@ func (t CmdType) String() string {
 // Request wraps all kv/coprocessor requests.
 type Request struct {
 	kvrpcpb.Context
+	ToSlave          bool
 	Type               CmdType
 	Get                *kvrpcpb.GetRequest
 	Scan               *kvrpcpb.ScanRequest
@@ -156,6 +160,7 @@ type Request struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyRequest
 	MvccGetByStartTs   *kvrpcpb.MvccGetByStartTsRequest
 	SplitRegion        *kvrpcpb.SplitRegionRequest
+	ReadIndex          *kvrpcpb.ReadIndexRequest
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
 }
@@ -247,6 +252,7 @@ type Response struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS   *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion        *kvrpcpb.SplitRegionResponse
+	ReadIndex          *kvrpcpb.ReadIndexResponse
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesResponse
 }
@@ -370,6 +376,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.MvccGetByStartTs.Context = ctx
 	case CmdSplitRegion:
 		req.SplitRegion.Context = ctx
+	case CmdReadIndex:
+		req.ReadIndex.Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -488,6 +496,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.SplitRegion = &kvrpcpb.SplitRegionResponse{
 			RegionError: e,
 		}
+	case CmdReadIndex:
+		resp.ReadIndex = &kvrpcpb.ReadIndexResponse{
+			RegionError: e,
+		}
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -550,6 +562,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.MvccGetByStartTS.GetRegionError()
 	case CmdSplitRegion:
 		e = resp.SplitRegion.GetRegionError()
+	case CmdReadIndex:
+		e = resp.ReadIndex.GetRegionError()
 	default:
 		return nil, fmt.Errorf("invalid response type %v", resp.Type)
 	}
@@ -620,6 +634,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.MvccGetByStartTS, err = client.MvccGetByStartTs(ctx, req.MvccGetByStartTs)
 	case CmdSplitRegion:
 		resp.SplitRegion, err = client.SplitRegion(ctx, req.SplitRegion)
+	case CmdReadIndex:
+		resp.ReadIndex, err = client.ReadIndex(ctx, req.ReadIndex)
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
