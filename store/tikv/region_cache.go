@@ -189,14 +189,15 @@ func (c *RegionCache) asyncCheckAndResolveLoop() {
 		case <-c.closeCh:
 			return
 		case <-c.notifyCheckCh:
-			needCheckStores = c.checkAndResolve(needCheckStores)
+			needCheckStores = needCheckStores[:0]
+			c.checkAndResolve(needCheckStores)
 		}
 	}
 }
 
 // checkAndResolve checks and resolve addr of failed stores.
 // this method isn't thread-safe and only be used by one goroutine.
-func (c *RegionCache) checkAndResolve(needCheckStores []*Store) []*Store {
+func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -206,7 +207,6 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) []*Store {
 		}
 	}()
 
-	needCheckStores = needCheckStores[0:]
 	c.storeMu.RLock()
 	for _, store := range c.storeMu.stores {
 		state := store.getState()
@@ -219,7 +219,6 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) []*Store {
 	for _, store := range needCheckStores {
 		store.reResolve(c)
 	}
-	return needCheckStores
 }
 
 // RPCContext contains data that is needed to send RPC to a region.
