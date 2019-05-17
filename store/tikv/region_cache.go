@@ -977,10 +977,6 @@ func (s *Store) reResolve(c *RegionCache) {
 		tikvRegionCacheCounterWithGetStoreOK.Inc()
 	}
 	if err != nil {
-		// TODO: more refine PD error status handle.
-		if errors.Cause(err) == context.Canceled {
-			return
-		}
 		logutil.Logger(context.Background()).Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return
