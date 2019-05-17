@@ -2221,19 +2221,6 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 		return errUnsupportedPKHandle
 	}
 
-	// Clone table info to avoid change memory schema.
-	checkTblInfo := tblInfo.Clone()
-	adjustColumnInfoInDropColumn(checkTblInfo, col.Offset)
-	checkCol := model.FindColumnInfo(checkTblInfo.Columns, colName.L)
-	if checkCol == nil {
-		return ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
-	}
-	checkCol.State = model.StateWriteOnly
-	err = checkTableInfoValid(checkTblInfo)
-	if err != nil {
-		return err
-	}
-
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
