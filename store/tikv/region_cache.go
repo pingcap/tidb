@@ -854,6 +854,9 @@ func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) (switchTo
 retry:
 	// switch to new leader.
 	oldRegionStore := r.getStore()
+	if oldRegionStore.workStoreIdx == int32(leaderIdx) && oldRegionStore.startingLineIdx == int32(leaderIdx) {
+		return
+	}
 	newRegionStore := oldRegionStore.clone()
 	newRegionStore.workStoreIdx = int32(leaderIdx)
 	newRegionStore.startingLineIdx = int32(leaderIdx)
