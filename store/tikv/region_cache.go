@@ -841,16 +841,16 @@ func (r *Region) EndKey() []byte {
 
 // switchWorkStore switches current store to the one on specific store. It returns
 // false if no peer matches the storeID.
-func (c *RegionCache) switchWorkStore(r *Region, storeID uint64) (foundLeader bool) {
+func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) (switchToTarget bool) {
 	if len(r.meta.Peers) == 0 {
 		return
 	}
 
 	leaderIdx := 0
 	for i, p := range r.meta.Peers {
-		if p.GetStoreId() == storeID {
+		if p.GetStoreId() == targetStoreID {
 			leaderIdx = i
-			foundLeader = true
+			switchToTarget = true
 		}
 	}
 
@@ -880,9 +880,6 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 	return bytes.Compare(r.meta.GetStartKey(), key) < 0 &&
 		(bytes.Compare(key, r.meta.GetEndKey()) <= 0 || len(r.meta.GetEndKey()) == 0)
 }
-
-// fn loads the Store info given by storeId.
-type resolveFunc func(ctx context.Context, id uint64) (*metapb.Store, error)
 
 // Store contains a kv process's address.
 type Store struct {
