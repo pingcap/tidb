@@ -723,7 +723,7 @@ func (c *RegionCache) OnSendRequestFail(ctx *RPCContext, err error) {
 	if !exists {
 		return
 	}
-	store.markAccess(c, false)
+	store.markAccess(c.notifyCheckCh, false)
 }
 
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
@@ -1057,7 +1057,7 @@ func (state storeState) Available(ts int64) bool {
 }
 
 // markAccess marks the processing result.
-func (s *Store) markAccess(c *RegionCache, success bool) {
+func (s *Store) markAccess(notifyCheckCh chan struct{}, success bool) {
 retry:
 	var triggerCheck bool
 	oldState := s.getState()
@@ -1084,14 +1084,14 @@ retry:
 	}
 	if triggerCheck {
 		select {
-		case c.notifyCheckCh <- struct{}{}:
+		case notifyCheckCh <- struct{}{}:
 		default:
 		}
 	}
 }
 
 // markNeedCheck marks resolved store to be async resolve to check store addr change.
-func (s *Store) markNeedCheck(c *RegionCache) {
+func (s *Store) markNeedCheck(notifyCheckCh chan struct{}) {
 retry:
 	oldState := s.getState()
 	if oldState.resolveState != resolved {
@@ -1103,7 +1103,7 @@ retry:
 		goto retry
 	}
 	select {
-	case c.notifyCheckCh <- struct{}{}:
+	case notifyCheckCh <- struct{}{}:
 	default:
 	}
 
