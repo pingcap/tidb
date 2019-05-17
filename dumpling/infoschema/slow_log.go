@@ -130,6 +130,8 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 				}
 				rows = append(rows, st.convertToDatumRow())
 				startFlag = false
+			} else {
+				startFlag = false
 			}
 		}
 	}
