@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
-	"log"
 )
 
 var _ = Suite(&testIndexMergeSuite{})
@@ -63,7 +62,6 @@ func getIndexMergePathDigest(paths []*accessPath, startIndex int) string {
 			}
 			ixMergeDisgest += path.tableFilters[j].String()
 		}
-		log.Print(path.tableFilters)
 		ixMergeDisgest += "]}"
 	}
 	ixMergeDisgest += "]"
