@@ -654,7 +654,7 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 		addr = store.addr
 		return
 	case unresolved:
-		addr, err = store.initResolve(bo)
+		addr, err = store.initResolve(bo, c)
 		return
 	case deleted:
 		addr = c.changeToActiveStore(region, store, storeIdx)
@@ -709,7 +709,6 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 		return
 	}
 	store = &Store{storeID: storeID}
-	store.resolve.fn = c.pdClient.GetStore
 	c.storeMu.stores[storeID] = store
 	c.storeMu.Unlock()
 	return
@@ -887,14 +886,10 @@ type resolveFunc func(ctx context.Context, id uint64) (*metapb.Store, error)
 
 // Store contains a kv process's address.
 type Store struct {
-	addr    string // loaded store address
-	storeID uint64 // store's id
-	state   uint64 // unsafe store storeState
-
-	resolve struct {
-		sync.Mutex             // protect pd from concurrent init requests
-		fn         resolveFunc // func to get store address from PD
-	}
+	addr         string     // loaded store address
+	storeID      uint64     // store's id
+	state        uint64     // unsafe store storeState
+	resolveMutex sync.Mutex // protect pd from concurrent init requests
 }
 
 // storeState contains store's access info.
@@ -915,17 +910,17 @@ const (
 )
 
 // initResolve resolves addr for store that never resolved.
-func (s *Store) initResolve(bo *Backoffer) (addr string, err error) {
-	s.resolve.Lock()
+func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err error) {
+	s.resolveMutex.Lock()
 	state := s.getState()
 	if state.resolveState != unresolved {
-		s.resolve.Unlock()
+		s.resolveMutex.Unlock()
 		addr = s.addr
 		return
 	}
 	var store *metapb.Store
 	for {
-		store, err = s.resolve.fn(bo.ctx, s.storeID)
+		store, err = c.pdClient.GetStore(bo.ctx, s.storeID)
 		if err != nil {
 			tikvRegionCacheCounterWithGetStoreError.Inc()
 		} else {
@@ -934,18 +929,18 @@ func (s *Store) initResolve(bo *Backoffer) (addr string, err error) {
 		if err != nil {
 			// TODO: more refine PD error status handle.
 			if errors.Cause(err) == context.Canceled {
-				s.resolve.Unlock()
+				s.resolveMutex.Unlock()
 				return
 			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", s.storeID, err)
 			if err = bo.Backoff(BoPDRPC, err); err != nil {
-				s.resolve.Unlock()
+				s.resolveMutex.Unlock()
 				return
 			}
 			continue
 		}
 		if store == nil {
-			s.resolve.Unlock()
+			s.resolveMutex.Unlock()
 			return
 		}
 		addr = store.GetAddress()
@@ -953,7 +948,7 @@ func (s *Store) initResolve(bo *Backoffer) (addr string, err error) {
 	retry:
 		state = s.getState()
 		if state.resolveState != unresolved {
-			s.resolve.Unlock()
+			s.resolveMutex.Unlock()
 			addr = s.addr
 			return
 		}
@@ -962,7 +957,7 @@ func (s *Store) initResolve(bo *Backoffer) (addr string, err error) {
 		if !s.compareAndSwapState(state, newState) {
 			goto retry
 		}
-		s.resolve.Unlock()
+		s.resolveMutex.Unlock()
 		return
 	}
 }
@@ -970,7 +965,7 @@ func (s *Store) initResolve(bo *Backoffer) (addr string, err error) {
 // reResolve try to resolve addr for store that need check.
 func (s *Store) reResolve(c *RegionCache) {
 	var addr string
-	store, err := s.resolve.fn(context.Background(), s.storeID)
+	store, err := c.pdClient.GetStore(context.Background(), s.storeID)
 	if err != nil {
 		tikvRegionCacheCounterWithGetStoreError.Inc()
 	} else {
@@ -990,7 +985,6 @@ func (s *Store) reResolve(c *RegionCache) {
 		var state storeState
 		state.resolveState = resolved
 		newStore := &Store{storeID: s.storeID, addr: addr}
-		newStore.resolve.fn = c.pdClient.GetStore
 		newStore.state = *(*uint64)(unsafe.Pointer(&state))
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
