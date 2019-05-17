@@ -913,8 +913,8 @@ const (
 func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err error) {
 	s.resolveMutex.Lock()
 	state := s.getState()
+	defer s.resolveMutex.Unlock()
 	if state.resolveState != unresolved {
-		s.resolveMutex.Unlock()
 		addr = s.addr
 		return
 	}
@@ -929,18 +929,15 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		if err != nil {
 			// TODO: more refine PD error status handle.
 			if errors.Cause(err) == context.Canceled {
-				s.resolveMutex.Unlock()
 				return
 			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", s.storeID, err)
 			if err = bo.Backoff(BoPDRPC, err); err != nil {
-				s.resolveMutex.Unlock()
 				return
 			}
 			continue
 		}
 		if store == nil {
-			s.resolveMutex.Unlock()
 			return
 		}
 		addr = store.GetAddress()
@@ -948,7 +945,6 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 	retry:
 		state = s.getState()
 		if state.resolveState != unresolved {
-			s.resolveMutex.Unlock()
 			addr = s.addr
 			return
 		}
@@ -957,7 +953,6 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		if !s.compareAndSwapState(state, newState) {
 			goto retry
 		}
-		s.resolveMutex.Unlock()
 		return
 	}
 }
