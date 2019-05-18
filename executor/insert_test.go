@@ -172,7 +172,7 @@ func (s *testSuite) TestInsertZeroYear(c *C) {
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(
 		`0`,
 		`0`,
-		`2000`,
+		`0`,
 		`2000`,
 	))
 }
