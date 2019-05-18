@@ -410,7 +410,7 @@ func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
 	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
 }
 
-func (s *testRegionCacheSuite) TestBatchLoadRegions(c *C) {
+func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	// Split at "a", "b", "c", "d"
 	regions := s.cluster.AllocIDs(4)
 	regions = append([]uint64{s.region1}, regions...)
@@ -423,8 +423,6 @@ func (s *testRegionCacheSuite) TestBatchLoadRegions(c *C) {
 	for i := 0; i < 4; i++ {
 		s.cluster.Split(regions[i], regions[i+1], []byte{'a' + byte(i)}, peers[i+1], peers[i+1][0])
 	}
-
-	// Test ScanRegion
 
 	scannedRegions, err := s.cache.scanRegions(s.bo, []byte(""), 100)
 	c.Assert(err, IsNil)
@@ -448,7 +446,34 @@ func (s *testRegionCacheSuite) TestBatchLoadRegions(c *C) {
 	c.Assert(scannedRegions[0].meta.Id, Equals, regions[1])
 	c.Assert(scannedRegions[0].peer.Id, Equals, peers[1][0])
 
-	// Test BatchLoadRegions
+	// Test region with no leader
+	s.cluster.GiveUpLeader(regions[2])
+	s.cluster.GiveUpLeader(regions[4])
+	scannedRegions, err = s.cache.scanRegions(s.bo, []byte(""), 5)
+	c.Assert(err, IsNil)
+	for i := 0; i < 5; i++ {
+		c.Assert(scannedRegions[i].meta.Id, Equals, regions[i])
+		if i == 2 || i == 4 {
+			c.Assert(scannedRegions[i].peer, IsNil)
+		} else {
+			c.Assert(scannedRegions[i].peer.Id, Equals, peers[i][0])
+		}
+	}
+}
+
+func (s *testRegionCacheSuite) TestBatchLoadRegions(c *C) {
+	// Split at "a", "b", "c", "d"
+	regions := s.cluster.AllocIDs(4)
+	regions = append([]uint64{s.region1}, regions...)
+
+	peers := [][]uint64{{s.peer1, s.peer2}}
+	for i := 0; i < 4; i++ {
+		peers = append(peers, s.cluster.AllocIDs(2))
+	}
+
+	for i := 0; i < 4; i++ {
+		s.cluster.Split(regions[i], regions[i+1], []byte{'a' + byte(i)}, peers[i+1], peers[i+1][0])
+	}
 
 	key, err := s.cache.BatchLoadRegionsFromKey(s.bo, []byte(""), 1)
 	c.Assert(err, IsNil)

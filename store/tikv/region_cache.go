@@ -287,7 +287,8 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 }
 
 // BatchLoadRegionsFromKey loads at most given numbers of regions to the RegionCache, from the given startKey. Returns
-// the endKey of the last loaded region.
+// the endKey of the last loaded region. If some of the regions has no leader, their entries in RegionCache will not be
+// updated.
 func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, count int) ([]byte, error) {
 	regions, err := c.scanRegions(bo, startKey, count)
 	if err != nil {
@@ -301,7 +302,9 @@ func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, co
 	defer c.mu.Unlock()
 
 	for _, region := range regions {
-		c.insertRegionToCache(region)
+		if region.peer != nil {
+			c.insertRegionToCache(region)
+		}
 	}
 
 	return regions[len(regions)-1].EndKey(), nil
@@ -367,7 +370,8 @@ func (c *RegionCache) getCachedRegion(id RegionVerID) *Region {
 // searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
 // it should be called with c.mu.RLock(), and the returned Region should not be
 // used after c.mu is RUnlock().
-// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful when processing in reverse order.
+// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful
+// when processing in reverse order.
 func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 	var r *Region
 	c.mu.sorted.DescendLessOrEqual(newBtreeSearchItem(key), func(item btree.Item) bool {
@@ -407,7 +411,8 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
-// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful when processing in reverse order.
+// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful
+// when processing in reverse order.
 func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Region, error) {
 	var backoffErr error
 	searchPrev := false
@@ -495,6 +500,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 	}
 }
 
+// scanRegions scans at most `limit` regions from PD, starts from the region containing `startKey` and in key order.
 func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]*Region, error) {
 	if limit == 0 {
 		return nil, nil
@@ -530,17 +536,15 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]
 		}
 		regions := make([]*Region, 0, len(metas))
 		for i, meta := range metas {
-			if len(meta.GetPeers()) != 0 {
-				region := &Region{
-					meta: meta,
-					peer: meta.Peers[0],
-				}
-				leader := leaders[i]
-				if leader != nil {
-					region.SwitchPeer(leader.GetStoreId())
-				}
-				regions = append(regions, region)
+			region := &Region{
+				meta: meta,
+				peer: nil,
 			}
+			leader := leaders[i]
+			if leader.GetId() != 0 {
+				region.SwitchPeer(leader.GetStoreId())
+			}
+			regions = append(regions, region)
 		}
 		if len(regions) == 0 {
 			return nil, errors.New("receive Regions with no peer")

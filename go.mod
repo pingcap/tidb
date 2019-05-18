@@ -35,12 +35,12 @@ require (
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
-	github.com/pingcap/failpoint v0.0.0-20190422094118-d8535965f59b
+	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190425131531-4ed0aa16f7ea
+	github.com/pingcap/kvproto v0.0.0-20190516013202-4cf58ad90b6c
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
 	github.com/pingcap/parser v0.0.0-20190515092550-ea671bdadc9d
-	github.com/pingcap/pd v0.0.0-20190424024702-bd1e2496a669
+	github.com/pingcap/pd v0.0.0-20190517040214-65eb45afb618
 	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
 	github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330
 	github.com/prometheus/client_golang v0.9.0
@@ -73,7 +73,3 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/pingcap/kvproto => github.com/disksing/kvproto v0.0.0-20190514114334-b2b577c112df
-
-replace github.com/pingcap/pd => github.com/disksing/pd v0.0.0-20190514113746-d2ff892ddf25

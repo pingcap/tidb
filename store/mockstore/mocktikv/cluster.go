@@ -287,8 +287,15 @@ func (c *Cluster) ScanRegions(key []byte, limit int) ([]*metapb.Region, []*metap
 	metas := make([]*metapb.Region, 0, len(regions))
 	leaders := make([]*metapb.Peer, 0, len(regions))
 	for _, region := range regions {
+		leader := region.leaderPeer()
+		if leader == nil {
+			leader = &metapb.Peer{}
+		} else {
+			leader = proto.Clone(leader).(*metapb.Peer)
+		}
+
 		metas = append(metas, proto.Clone(region.Meta).(*metapb.Region))
-		leaders = append(leaders, proto.Clone(region.leaderPeer()).(*metapb.Peer))
+		leaders = append(leaders, leader)
 	}
 
 	return metas, leaders
