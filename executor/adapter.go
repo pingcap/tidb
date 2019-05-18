@@ -430,9 +430,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
-	conflictTS := extractConflictTS(err.Error())
-	if conflictTS == 0 {
-		logutil.Logger(ctx).Warn("failed to extract conflictTS from a conflict error")
+	conflictCommitTS := extractConflictCommitTS(err.Error())
+	if conflictCommitTS == 0 {
+		logutil.Logger(ctx).Warn("failed to extract conflictCommitTS from a conflict error")
 	}
 	sctx := a.Ctx
 	txnCtx := sctx.GetSessionVars().TxnCtx
@@ -440,9 +440,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
 		zap.Uint64("txn", txnCtx.StartTS),
 		zap.Uint64("forUpdateTS", forUpdateTS),
-		zap.Uint64("conflictTS", conflictTS))
-	if conflictTS > txnCtx.GetForUpdateTS() {
-		txnCtx.SetForUpdateTS(conflictTS)
+		zap.Uint64("conflictCommitTS", conflictCommitTS))
+	if conflictCommitTS > txnCtx.GetForUpdateTS() {
+		txnCtx.SetForUpdateTS(conflictCommitTS)
 	} else {
 		ts, err1 := sctx.GetStore().GetOracle().GetTimestamp(ctx)
 		if err1 != nil {
@@ -464,8 +464,8 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	return e, nil
 }
 
-func extractConflictTS(errStr string) uint64 {
-	strs := strings.Split(errStr, "conflictTS=")
+func extractConflictCommitTS(errStr string) uint64 {
+	strs := strings.Split(errStr, "conflictCommitTS=")
 	if len(strs) != 2 {
 		return 0
 	}
