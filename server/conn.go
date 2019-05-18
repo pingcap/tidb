@@ -1032,7 +1032,9 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return cc.flush()
 }
 
-var defaultLoadDataBatchCnt uint64 = 20000
+const initialDefaultLoadDataBatchCnt uint64 = 20000
+
+var defaultLoadDataBatchCnt = initialDefaultLoadDataBatchCnt
 
 func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
@@ -1076,8 +1078,12 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 
 	var shouldBreak bool
 	var prevData, curData []byte
-	// TODO: Make the loadDataRowCnt settable.
-	loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
+
+	if defaultLoadDataBatchCnt != initialDefaultLoadDataBatchCnt {
+		loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
+	} else {
+		loadDataInfo.SetMaxRowsInBatch(uint64(cc.ctx.GetSessionVars().DMLBatchSize))
+	}
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err
