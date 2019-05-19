@@ -176,7 +176,7 @@ func (s *testTiclientSuite) TestLargeRequest(c *C) {
 	c.Assert(err, NotNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	c.Assert(kv.IsRetryableError(err), IsFalse)
+	c.Assert(kv.IsTxnRetryableError(err), IsFalse)
 }
 
 func encodeKey(prefix, s string) []byte {

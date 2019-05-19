@@ -182,7 +182,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	// mockCommitError8942 is used for PR #8942.
 	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(kv.ErrRetryable)
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
 
@@ -190,7 +190,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	failpoint.Inject("mockCommitRetryForAutoID", func(val failpoint.Value) {
 		if val.(bool) && !mockAutoIDRetry() {
 			enableMockAutoIDRetry()
-			failpoint.Return(kv.ErrRetryable)
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
 

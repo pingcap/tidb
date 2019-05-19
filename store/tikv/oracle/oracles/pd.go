@@ -137,6 +137,12 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 	}
 }
 
+// UntilExpired implement oracle.Oracle interface.
+func (o *pdOracle) UntilExpired(lockTS uint64, TTL uint64) int64 {
+	lastTS := atomic.LoadUint64(&o.lastTS)
+	return oracle.ExtractPhysical(lockTS) + int64(TTL) - oracle.ExtractPhysical(lastTS)
+}
+
 func (o *pdOracle) Close() {
 	close(o.quit)
 }
