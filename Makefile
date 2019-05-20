@@ -117,7 +117,7 @@ explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 ddltest:
-	@cd cmd/ddltest && $(GO) test -o ddltest -c
+	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
 
 upload-coverage: SHELL:=/bin/bash
 upload-coverage:
