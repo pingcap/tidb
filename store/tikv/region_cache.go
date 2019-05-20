@@ -447,7 +447,12 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		return
 	}
-	c.switchWorkStore(r, leaderStoreID)
+	if !c.switchWorkStore(r, leaderStoreID) {
+		logutil.Logger(context.Background()).Debug("regionCache: cannot find peer when updating leader",
+			zap.Uint64("regionID", regionID.GetID()),
+			zap.Uint64("leaderStoreID", leaderStoreID))
+		r.invalidate()
+	}
 }
 
 // insertRegionToCache tries to insert the Region to cache.
@@ -844,7 +849,7 @@ func (r *Region) EndKey() []byte {
 
 // switchWorkStore switches current store to the one on specific store. It returns
 // false if no peer matches the storeID.
-func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) {
+func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) (switchToTarget bool) {
 	if len(r.meta.Peers) == 0 {
 		return
 	}
@@ -853,6 +858,7 @@ func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) {
 	for i, p := range r.meta.Peers {
 		if p.GetStoreId() == targetStoreID {
 			leaderIdx = i
+			switchToTarget = true
 			break
 		}
 	}

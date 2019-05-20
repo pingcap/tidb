@@ -195,6 +195,33 @@ func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {
 	c.Assert(s.getAddr(c, []byte("z")), Equals, s.storeAddr(s.store2))
 }
 
+func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	// new store3 becomes leader
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	// tikv-server reports `NotLeader`
+	s.cache.UpdateLeader(loc.Region, store3)
+
+	// Store3 does not exist in cache, causes a reload from PD.
+	r := s.getRegion(c, []byte("a"))
+	c.Assert(r, NotNil)
+	c.Assert(r.GetID(), Equals, s.region1)
+	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
+
+	// tikv-server notifies new leader to pd-server.
+	s.cluster.ChangeLeader(s.region1, peer3)
+	// tikv-server reports `NotLeader` again.
+	s.cache.UpdateLeader(r.VerID(), store3)
+	r = s.getRegion(c, []byte("a"))
+	c.Assert(r, NotNil)
+	c.Assert(r.GetID(), Equals, s.region1)
+	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(store3))
+}
+
 func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
