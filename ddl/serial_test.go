@@ -380,7 +380,7 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`), IsNil)
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`), IsNil)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `1*return(true)->return(false)`), IsNil)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()
@@ -440,7 +440,7 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`), IsNil)
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`), IsNil)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `1*return(true)->return(false)`), IsNil)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()

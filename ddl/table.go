@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -268,7 +267,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 
 		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
-			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
+			if val.(bool) {
 				kv.MockCommitErrorEnable()
 			}
 		})
@@ -285,9 +284,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 	return ver, nil
 }
-
-// mockRecoverTableCommitErrOnce uses to make sure `mockRecoverTableCommitErr` only mock error once.
-var mockRecoverTableCommitErrOnce uint32 = 0
 
 func enableGC(w *worker) error {
 	ctx, err := w.sessPool.get()
