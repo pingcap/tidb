@@ -127,7 +127,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
-	if dbInfo.Charset == toCharset && dbInfo.Charset == toCollate {
+	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
 		return nil
 	}
 
