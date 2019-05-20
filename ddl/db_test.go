@@ -1696,6 +1696,14 @@ func (s *testDBSuite) TestDropColumn(c *C) {
 		}
 	}
 
+	// Test for drop partition table column.
+	s.tk.MustExec("drop table if exists t1")
+	s.tk.MustExec("set @@tidb_enable_table_partition = 1")
+	s.tk.MustExec("create table t1 (a bigint, b int, c int generated always as (b+1)) partition by range(a) (partition p0 values less than (10));")
+	_, err := s.tk.Exec("alter table t1 drop column a")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+
 	s.tk.MustExec("drop database drop_col_db")
 }
 
@@ -4683,4 +4691,36 @@ func (s *testDBSuite) TestAlterShardRowIDBits(c *C) {
 	_, err = tk.Exec("insert into t1 set a=1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
+}
+
+func (s *testDBSuite) TestDDLWithInvalidTableInfo(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_table_partition = 1")
+	// Test create with invalid expression.
+	_, err := s.tk.Exec(`CREATE TABLE t (
+		c0 int(11) ,
+  		c1 int(11),
+    	c2 decimal(16,4) GENERATED ALWAYS AS ((case when (c0 = 0) then 0 when (c0 > 0) then (c1 / c0) end))
+	);`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "line 1 column 26 near \" 0) THEN 0WHEN (`c0` > 0) THEN (`c1` / `c0`) END)\" (total length 75)")
+
+	tk.MustExec("create table t (a bigint, b int, c int generated always as (b+1)) partition by range(a) (partition p0 values less than (10));")
+	// Test drop partition column.
+	_, err = tk.Exec("alter table t drop column a;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+	// Test modify column with invalid expression.
+	_, err = tk.Exec("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0 when (a > 0) then (b / a) end));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]line 1 column 25 near \" 0) THEN 0WHEN (`a` > 0) THEN (`b` / `a`) END)\" (total length 71)")
+	// Test add column with invalid expression.
+	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0 when (a > 0) then (b / a) end));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]line 1 column 25 near \" 0) THEN 0WHEN (`a` > 0) THEN (`b` / `a`) END)\" (total length 71)")
 }

@@ -20,6 +20,7 @@ package ddl
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/table/tables"
 	"strings"
 	"time"
 
@@ -994,6 +995,12 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	return errors.Trace(err)
 }
 
+// checkTableInfoValid uses to check table info valid. This is used to validate table info.
+func checkTableInfoValid(tblInfo *model.TableInfo) error {
+	_, err := tables.TableFromMeta(nil, tblInfo)
+	return err
+}
+
 func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) model.TableInfo {
 	tblInfo := *referTblInfo
 	// Check non-public column and adjust column offset.
@@ -1121,6 +1128,13 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		}
 		tbInfo.Partition = pi
 	}
+
+	tbInfo.State = model.StatePublic
+	err = checkTableInfoValid(tbInfo)
+	if err != nil {
+		return err
+	}
+	tbInfo.State = model.StateNone
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
