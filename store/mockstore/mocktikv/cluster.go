@@ -97,6 +97,18 @@ func (c *Cluster) GetStore(storeID uint64) *metapb.Store {
 	return nil
 }
 
+// GetAllStores returns all Stores' meta.
+func (c *Cluster) GetAllStores() []*metapb.Store {
+	c.RLock()
+	defer c.RUnlock()
+
+	stores := make([]*metapb.Store, 0, len(c.stores))
+	for _, store := range c.stores {
+		stores = append(stores, proto.Clone(store.meta).(*metapb.Store))
+	}
+	return stores
+}
+
 // StopStore stops a store with storeID.
 func (c *Cluster) StopStore(storeID uint64) {
 	c.Lock()
