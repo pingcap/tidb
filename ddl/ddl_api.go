@@ -20,7 +20,6 @@ package ddl
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/table/tables"
 	"strings"
 	"time"
 
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/schemautil"
