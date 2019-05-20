@@ -242,11 +242,6 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		colInfo.State = model.StateWriteOnly
 		// Set this column's offset to the last and reset all following columns' offsets.
 		adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
-		err = checkTableInfoValid(tblInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 		// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
 		// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
 		// And we need consider the column without not-null flag.
