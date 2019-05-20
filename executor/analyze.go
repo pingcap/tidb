@@ -678,11 +678,7 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 			break
 		}
 	}
-	if prefixLen < 0 {
-		e.sampTasks = e.sampTasks[:0]
-	} else {
-		e.sampTasks = e.sampTasks[:prefixLen]
-	}
+	e.sampTasks = e.sampTasks[:prefixLen+1]
 	for i := len(e.scanTasks) - 1; i >= 0; i-- {
 		if bytes.Compare(startKey, e.scanTasks[i].EndKey) < 0 {
 			e.scanTasks = e.scanTasks[:i]
@@ -691,7 +687,7 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 	return startKey, nil
 }
 
-// buildSampTask returns tow variables, the first bool is whether the task meets region error
+// buildSampTask returns two variables, the first bool is whether the task meets region error
 // and need to rebuild.
 func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
