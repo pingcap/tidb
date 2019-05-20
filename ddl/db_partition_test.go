@@ -106,12 +106,12 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 
 	sql4 := `create table t4 (
 	a int not null,
-  	b int not null
+	b int not null
 	)
 	partition by range( id ) (
 		partition p1 values less than maxvalue,
-  		partition p2 values less than (1991),
-  		partition p3 values less than (1995)
+		partition p2 values less than (1991),
+		partition p3 values less than (1995)
 	);`
 	assertErrorCode(c, tk, sql4, tmysql.ErrPartitionMaxvalue)
 
@@ -121,10 +121,10 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		c INT NOT NULL
 	)
 	partition by range columns(a,b,c) (
-    	partition p0 values less than (10,5,1),
-    	partition p2 values less than (50,maxvalue,10),
-    	partition p3 values less than (65,30,13),
-    	partition p4 values less than (maxvalue,30,40)
+	partition p0 values less than (10,5,1),
+	partition p2 values less than (50,maxvalue,10),
+	partition p3 values less than (65,30,13),
+	partition p4 values less than (maxvalue,30,40)
 	);`)
 	c.Assert(err, IsNil)
 
@@ -139,13 +139,13 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 
 	sql7 := `create table t7 (
 	a int not null,
-  	b int not null
+	b int not null
 	)
 	partition by range( id ) (
 		partition p1 values less than (1991),
 		partition p2 values less than maxvalue,
-  		partition p3 values less than maxvalue,
-  		partition p4 values less than (1995),
+		partition p3 values less than maxvalue,
+		partition p4 values less than (1995),
 		partition p5 values less than maxvalue
 	);`
 	assertErrorCode(c, tk, sql7, tmysql.ErrPartitionMaxvalue)
@@ -230,6 +230,9 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	assertErrorCode(c, tk, `create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
 	assertErrorCode(c, tk, `create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
 	assertErrorCode(c, tk, `create table t33 (a int, b int) partition by hash(a) partitions 0;`, tmysql.ErrNoParts)
+	assertErrorCode(c, tk, `create table t33 (a timestamp, b int) partition by hash(a) partitions 30;`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
+	// TODO: fix this one
+	// assertErrorCode(c, tk, `create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`, tmysql.ErrPartitionFuncNotAllowed)
 }
 
 func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
@@ -1276,6 +1279,23 @@ func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
 	hired date not null
 	) partition by hash( year(hired) ) partitions 4;`)
 	testPartitionAddIndex(tk, c)
+
+	// Test hash partition for pr 10475.
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by hash(a) partitions 5;")
+	tk.MustExec("insert into t1 values (0,0),(1,1),(2,2),(3,3);")
+	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec("admin check table t1;")
+
+	// Test range partition for pr 10475.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
+	tk.MustExec("insert into t1 values (0,0);")
+	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec("admin check table t1;")
+
 }
 
 func testPartitionAddIndex(tk *testkit.TestKit, c *C) {

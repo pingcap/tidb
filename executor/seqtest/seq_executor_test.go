@@ -586,7 +586,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c5|varchar(6)|YES||'C6'|",
 		"c6|enum('s','m','l','xl')|YES||xl|",
 		"c7|set('a','b','c','d')|YES||a,c,c|",
-		"c8|datetime|YES||CURRENT_TIMESTAMP|on update CURRENT_TIMESTAMP",
+		"c8|datetime|YES||CURRENT_TIMESTAMP|DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
 		"c9|year(4)|YES||2014|",
 	))
 }
@@ -777,14 +777,14 @@ func (s *seqTestSuite) TestCartesianProduct(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int)")
-	plannercore.AllowCartesianProduct = false
+	plannercore.AllowCartesianProduct.Store(false)
 	err := tk.ExecToErr("select * from t t1, t t2")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	err = tk.ExecToErr("select * from t t1 left join t t2 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	err = tk.ExecToErr("select * from t t1 right join t t2 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	plannercore.AllowCartesianProduct = true
+	plannercore.AllowCartesianProduct.Store(true)
 }
 
 type checkPrioClient struct {

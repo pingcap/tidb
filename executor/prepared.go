@@ -133,15 +133,17 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		return ErrPrepareMulti
 	}
 	stmt := stmts[0]
-	if _, ok := stmt.(ast.DDLNode); ok {
-		return ErrPrepareDDL
-	}
 	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {
 		return err
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
+
+	// DDL Statements can not accept parameters
+	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
+		return ErrPrepareDDL
+	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
 	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
@@ -215,7 +217,7 @@ func (e *ExecuteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
-func (e *ExecuteExec) Build() error {
+func (e *ExecuteExec) Build(b *executorBuilder) error {
 	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
 	if err != nil {
 		return err
@@ -226,7 +228,6 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return err
 	}
-	b := newExecutorBuilder(e.ctx, e.is)
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))

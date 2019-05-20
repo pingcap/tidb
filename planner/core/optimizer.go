@@ -24,13 +24,14 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"go.uber.org/atomic"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
 var OptimizeAstNode func(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error)
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
-var AllowCartesianProduct = true
+var AllowCartesianProduct = atomic.NewBool(true)
 
 const (
 	flagPrunColumns uint64 = 1 << iota
@@ -44,7 +45,7 @@ const (
 	flagPartitionProcessor
 	flagPushDownAgg
 	flagPushDownTopN
-	flagJoinReOrderGreedy
+	flagJoinReOrder
 )
 
 var optRuleList = []logicalOptRule{
@@ -102,7 +103,7 @@ func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !AllowCartesianProduct && existsCartesianProduct(logic) {
+	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	physical, err := physicalOptimize(logic)

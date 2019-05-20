@@ -379,50 +379,54 @@ func (s *testEvaluatorSuite) TestJSONContains(c *C) {
 	tbl := []struct {
 		input    []interface{}
 		expected interface{}
-		success  bool
+		err      error
 	}{
 		// Tests nil arguments
-		{[]interface{}{nil, `1`, "$.c"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, nil, "$.a[3]"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, nil}, nil, true},
+		{[]interface{}{nil, `1`, "$.c"}, nil, nil},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, nil, "$.a[3]"}, nil, nil},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, nil}, nil, nil},
 		// Tests with path expression
-		{[]interface{}{`[1,2,[1,[5,[3]]]]`, `[1,3]`, "$[2]"}, 1, true},
-		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`, "$[2]"}, 1, true},
-		{[]interface{}{`[{"a":1}]`, `{"a":1}`, "$"}, 1, true},
-		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1,"b":2}`, "$"}, 1, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`, "$.a"}, 0, true},
+		{[]interface{}{`[1,2,[1,[5,[3]]]]`, `[1,3]`, "$[2]"}, 1, nil},
+		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`, "$[2]"}, 1, nil},
+		{[]interface{}{`[{"a":1}]`, `{"a":1}`, "$"}, 1, nil},
+		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1,"b":2}`, "$"}, 1, nil},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`, "$.a"}, 0, nil},
 		// Tests without path expression
-		{[]interface{}{`{}`, `{}`}, 1, true},
-		{[]interface{}{`{"a":1}`, `{}`}, 1, true},
-		{[]interface{}{`{"a":1}`, `1`}, 0, true},
-		{[]interface{}{`{"a":[1]}`, `[1]`}, 0, true},
-		{[]interface{}{`{"b":2, "c":3}`, `{"c":3}`}, 1, true},
-		{[]interface{}{`1`, `1`}, 1, true},
-		{[]interface{}{`[1]`, `1`}, 1, true},
-		{[]interface{}{`[1,2]`, `[1]`}, 1, true},
-		{[]interface{}{`[1,2]`, `[1,3]`}, 0, true},
-		{[]interface{}{`[1,2]`, `["1"]`}, 0, true},
-		{[]interface{}{`[1,2,[1,3]]`, `[1,3]`}, 1, true},
-		{[]interface{}{`[1,2,[1,[5,[3]]]]`, `[1,3]`}, 1, true},
-		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`}, 1, true},
-		{[]interface{}{`[{"a":1}]`, `{"a":1}`}, 1, true},
-		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1}`}, 1, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`}, 0, true},
+		{[]interface{}{`{}`, `{}`}, 1, nil},
+		{[]interface{}{`{"a":1}`, `{}`}, 1, nil},
+		{[]interface{}{`{"a":1}`, `1`}, 0, nil},
+		{[]interface{}{`{"a":[1]}`, `[1]`}, 0, nil},
+		{[]interface{}{`{"b":2, "c":3}`, `{"c":3}`}, 1, nil},
+		{[]interface{}{`1`, `1`}, 1, nil},
+		{[]interface{}{`[1]`, `1`}, 1, nil},
+		{[]interface{}{`[1,2]`, `[1]`}, 1, nil},
+		{[]interface{}{`[1,2]`, `[1,3]`}, 0, nil},
+		{[]interface{}{`[1,2]`, `["1"]`}, 0, nil},
+		{[]interface{}{`[1,2,[1,3]]`, `[1,3]`}, 1, nil},
+		{[]interface{}{`[1,2,[1,3]]`, `[1,      3]`}, 1, nil},
+		{[]interface{}{`[1,2,[1,[5,[3]]]]`, `[1,3]`}, 1, nil},
+		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`}, 1, nil},
+		{[]interface{}{`[{"a":1}]`, `{"a":1}`}, 1, nil},
+		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1}`}, 1, nil},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`}, 0, nil},
 		// Tests path expression contains any asterisk
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, false},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, false},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, false},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, json.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, json.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, json.ErrInvalidJSONPathWildcard},
 		// Tests path expression does not identify a section of the target document
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.c"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[3]"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[2].b"}, nil, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.c"}, nil, nil},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[3]"}, nil, nil},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[2].b"}, nil, nil},
+		// For issue 9957: test 'argument 1 and 2 as valid json object'
+		{[]interface{}{`[1,2,[1,3]]`, `a:1`}, 1, json.ErrInvalidJSONText},
+		{[]interface{}{`a:1`, `1`}, 1, json.ErrInvalidJSONText},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.input...)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if t.success {
+		if t.err == nil {
 			c.Assert(err, IsNil)
 			if t.expected == nil {
 				c.Assert(d.IsNull(), IsTrue)
@@ -430,8 +434,22 @@ func (s *testEvaluatorSuite) TestJSONContains(c *C) {
 				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
 			}
 		} else {
-			c.Assert(err, NotNil)
+			c.Assert(t.err.(*terror.Error).Equal(err), IsTrue)
 		}
+	}
+	// For issue 9957: test 'argument 1 and 2 as valid json object'
+	cases := []struct {
+		arg1 interface{}
+		arg2 interface{}
+	}{
+		{1, ""},
+		{0.05, ""},
+		{"", 1},
+		{"", 0.05},
+	}
+	for _, cs := range cases {
+		_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(cs.arg1, cs.arg2)))
+		c.Assert(json.ErrInvalidJSONData.Equal(err), IsTrue)
 	}
 }
 

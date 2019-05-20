@@ -279,6 +279,8 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildDropBindPlan(x)
 	case *ast.ChangeStmt:
 		return b.buildChange(x)
+	case *ast.SplitIndexRegionStmt:
+		return b.buildSplitIndexRegion(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -436,13 +438,13 @@ func getPathByIndexName(paths []*accessPath, idxName model.CIStr, tblInfo *model
 			return path
 		}
 	}
-	if isPrimaryIndexHint(idxName) && tblInfo.PKIsHandle {
+	if isPrimaryIndex(idxName) && tblInfo.PKIsHandle {
 		return tablePath
 	}
 	return nil
 }
 
-func isPrimaryIndexHint(indexName model.CIStr) bool {
+func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
@@ -808,20 +810,22 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) 
 		}
 		for _, idx := range idxInfo {
 			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id}
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 					IndexInfo:   idx,
 					analyzeInfo: info,
+					TblInfo:     tbl.TableInfo,
 				})
 			}
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
 			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id}
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
 					PKInfo:      pkInfo,
 					ColsInfo:    colInfo,
 					analyzeInfo: info,
+					TblInfo:     tbl.TableInfo,
 				})
 			}
 		}
@@ -837,13 +841,21 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
+		if isPrimaryIndex(idxName) && tblInfo.PKIsHandle {
+			pkCol := tblInfo.GetPkColInfo()
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PKInfo: pkCol, analyzeInfo: info})
+			}
+			continue
+		}
 		idx := tblInfo.FindIndexByName(idxName.L)
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
 		for i, id := range physicalIDs {
-			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info})
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
@@ -859,9 +871,16 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, erro
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info})
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 			}
+		}
+	}
+	if tblInfo.PKIsHandle {
+		pkCol := tblInfo.GetPkColInfo()
+		for i, id := range physicalIDs {
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PKInfo: pkCol, analyzeInfo: info})
 		}
 	}
 	return p, nil
@@ -1588,9 +1607,61 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
+func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitIndexRegionStmt) (Plan, error) {
+	tblInfo := node.Table.TableInfo
+	indexInfo := tblInfo.FindIndexByName(strings.ToLower(node.IndexName))
+	if indexInfo == nil {
+		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
+	}
+
+	indexValues := make([][]types.Datum, 0, len(node.ValueLists))
+	for i, valuesItem := range node.ValueLists {
+		if len(valuesItem) > len(indexInfo.Columns) {
+			return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
+		}
+		valueList := make([]types.Datum, 0, len(valuesItem))
+		for j, valueItem := range valuesItem {
+			x, ok := valueItem.(*driver.ValueExpr)
+			if !ok {
+				return nil, errors.New("expect constant values")
+			}
+			colOffset := indexInfo.Columns[j].Offset
+			value, err := x.Datum.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[colOffset].FieldType)
+			if err != nil {
+				return nil, err
+			}
+
+			valueList = append(valueList, value)
+		}
+		indexValues = append(indexValues, valueList)
+	}
+	tableInPlan, ok := b.is.TableByID(tblInfo.ID)
+	if !ok {
+		return nil, errors.Errorf("Can't get table %s.", tblInfo.Name.O)
+	}
+	return &SplitIndexRegion{
+		Table:      tableInPlan,
+		IndexInfo:  indexInfo,
+		ValueLists: indexValues,
+	}, nil
+
+}
+
 func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	var authErr error
 	switch v := node.(type) {
+	case *ast.AlterDatabaseStmt:
+		if v.AlterDefaultDatabase {
+			v.Name = b.ctx.GetSessionVars().CurrentDB
+		}
+		if v.Name == "" {
+			return nil, ErrNoDB
+		}
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrDBaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.Name)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Name, "", "", authErr)
 	case *ast.AlterTableStmt:
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.Hostname,
