@@ -349,7 +349,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	c.Assert(err, IsNil)
 	err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
 	c.Assert(err, NotNil)
-	errMsgMustContain(c, err, "conflictTS")
+	errMsgMustContain(c, err, "conflictCommitTS")
 }
 
 func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
