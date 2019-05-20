@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"io"
 	"math"
 	"math/rand"
@@ -2756,9 +2757,19 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk := s.tk
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
-	defer tk.MustExec("unlock tables; drop table if exists t1,t2")
+	defer tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
+
+	// recover table lock config.
+	originValue := config.GetGlobalConfig().EnableTableLock
+	defer tk.MustExec(fmt.Sprintf("set @@tidb_enable_table_lock=%v", originValue))
+
+	// Test for enable table lock config.
+	tk.MustExec("set @@tidb_enable_table_lock=0")
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	tk.MustExec("set @@tidb_enable_table_lock=1")
 
 	// Test lock 1 table.
 	tk.MustExec("lock tables t1 write")
@@ -2784,7 +2795,6 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
-	defer tk2.MustExec("unlock tables")
 
 	// Test read lock.
 	tk.MustExec("lock tables t1 read")
@@ -2901,6 +2911,9 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
 	_, err = tk2.Exec("lock tables mysql.db write")
 	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
@@ -2910,10 +2923,16 @@ func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
 	tk := s.tk
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("unlock tables; drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
 	tk2.MustExec("use test")
-	defer tk2.MustExec("unlock tables")
+
+	// recover table lock config.
+	originValue := config.GetGlobalConfig().EnableTableLock
+	defer tk.MustExec(fmt.Sprintf("set @@tidb_enable_table_lock=%v", originValue))
+
+	// Test for enable table lock config.
+	tk.MustExec("set @@tidb_enable_table_lock=1")
 
 	// Test concurrent lock tables read.
 	sql1 := "lock tables t1 read"
@@ -2942,6 +2961,9 @@ func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(terror.ErrorEqual(err2, infoschema.ErrTableLocked), IsTrue)
 	})
+
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
 }
 
 func (s *testDBSuite2) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {

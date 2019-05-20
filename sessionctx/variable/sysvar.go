@@ -694,6 +694,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
 	{ScopeGlobal | ScopeSession, TiDBOptJoinReorderThreshold, strconv.Itoa(DefTiDBOptJoinReorderThreshold)},
 	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
+	{ScopeSession, TiDBEnableTableLock, BoolToIntStr(config.GetGlobalConfig().EnableTableLock)},
 	{ScopeSession, TiDBSlowQueryFile, ""},
 	{ScopeSession, TiDBWaitTableSplitFinish, BoolToIntStr(DefTiDBWaitTableSplitFinish)},
 }

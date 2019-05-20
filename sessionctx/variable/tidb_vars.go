@@ -138,6 +138,8 @@ const (
 	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
 	// isolation level.
 	TiDBSkipIsolationLevelCheck = "tidb_skip_isolation_level_check"
+	// tidb_enable_table_lock is used to control table lock feature.
+	TiDBEnableTableLock = "tidb_enable_table_lock"
 )
 
 // TiDB system variable names that both in session and global scope.

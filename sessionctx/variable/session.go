@@ -785,6 +785,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
 	case TiDBCheckMb4ValueInUTF8:
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+	case TiDBEnableTableLock:
+		config.GetGlobalConfig().EnableTableLock = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
 	case TiDBEnableFastAnalyze:

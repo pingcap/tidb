@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/lock"
@@ -100,6 +101,9 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 
 // CheckTableLock checks the table lock.
 func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visitInfo) error {
+	if !config.GetGlobalConfig().EnableTableLock {
+		return nil
+	}
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
 		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege)
