@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite2) TestWindowFunctions(c *C) {
+func (s *testSuite4) TestWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -145,4 +145,16 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 
 	result = tk.MustQuery("SELECT CUME_DIST() OVER (ORDER BY null);")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("create table issue10494(a INT, b CHAR(1), c DATETIME, d BLOB)")
+	tk.MustExec("insert into issue10494 VALUES (1,'x','2010-01-01','blob'), (2, 'y', '2011-01-01', ''), (3, 'y', '2012-01-01', ''), (4, 't', '2012-01-01', 'blob'), (5, null, '2013-01-01', null)")
+	tk.MustQuery("SELECT a, b, c, SUM(a) OVER (RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM issue10494 order by a;").Check(
+		testkit.Rows(
+			"1 x 2010-01-01 00:00:00 15",
+			"2 y 2011-01-01 00:00:00 15",
+			"3 y 2012-01-01 00:00:00 15",
+			"4 t 2012-01-01 00:00:00 15",
+			"5 <nil> 2013-01-01 00:00:00 15",
+		),
+	)
 }

@@ -43,6 +43,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	} else if diff.Type == model.ActionDropSchema {
 		tblIDs := b.applyDropSchema(diff.SchemaID)
 		return tblIDs, nil
+	} else if diff.Type == model.ActionModifySchemaCharsetAndCollate {
+		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	}
 
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
@@ -124,6 +126,23 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 		)
 	}
 	b.is.schemaMap[di.Name.L] = &schemaTables{dbInfo: di, tables: make(map[string]table.Table)}
+	return nil
+}
+
+func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDbInfo := b.copySchemaTables(di.Name.O)
+	newDbInfo.Charset = di.Charset
+	newDbInfo.Collate = di.Collate
 	return nil
 }
 

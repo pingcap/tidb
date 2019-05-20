@@ -616,7 +616,7 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 		return errors.Trace(err)
 	}
 	if tables.OverflowShardBits(autoIncID, shardRowIDBits) {
-		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID overflow", shardRowIDBits)
+		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID %v overflow", shardRowIDBits, autoIncID)
 	}
 	return nil
 }

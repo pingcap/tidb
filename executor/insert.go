@@ -169,7 +169,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 
 // updateDupRow updates a duplicate row to a new row.
 func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
-	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
+	oldRow, err := e.getOldRow(e.ctx, e.Table, handle, e.GenExprs)
 	if err != nil {
 		logutil.Logger(context.Background()).Error("get old row failed when insert on dup", zap.Int64("handle", handle), zap.String("toBeInsertedRow", types.DatumsToStrNoErr(row.row)))
 		return err

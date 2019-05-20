@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -89,6 +90,7 @@ var _ = Suite(&testSuite3{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
+var _ = Suite(&testPointGetSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -2514,6 +2516,7 @@ func (s *testSuite1) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.dom.SetStatsUpdating(true)
 }
 
 func (s *testSuite1) TearDownSuite(c *C) {
@@ -3636,6 +3639,57 @@ func (s *testSuite3) TearDownTest(c *C) {
 	}
 }
 
+type testSuite4 struct {
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	store     kv.Storage
+	domain    *domain.Domain
+	*parser.Parser
+	ctx *mock.Context
+}
+
+func (s *testSuite4) SetUpSuite(c *C) {
+	s.Parser = parser.New()
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
+	if useMockTikv {
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
+	}
+	d, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
+	s.domain = d
+}
+
+func (s *testSuite4) TearDownSuite(c *C) {
+	s.domain.Close()
+	s.store.Close()
+}
+
+func (s *testSuite4) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
+}
+
 func (s *testSuite) TestStrToDateBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select str_to_date('18/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2018-10-22"))
@@ -3691,6 +3745,33 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select b from pt where b = 3").Check(testkit.Rows("3"))
 	// Index lookup
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
+}
+
+func (s *testSuite) TestSplitIndexRegion(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
+	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
+	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
+	c.Assert(err, NotNil)
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
+}
+
+func (s *testSuite) TestUnsignedFeedback(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	oriProbability := statistics.FeedbackProbability.Load()
+	statistics.FeedbackProbability.Store(1.0)
+	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
+	tk.MustExec("insert into t values (1,1),(2,2)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(distinct b) from t").Check(testkit.Rows("2"))
+	result := tk.MustQuery("explain analyze select count(distinct b) from t")
+	c.Assert(result.Rows()[2][3], Equals, "table:t, range:[0,+inf], keep order:false")
 }
 
 type testOOMSuite struct {

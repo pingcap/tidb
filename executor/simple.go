@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -233,7 +234,8 @@ func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) error {
 	return err
 }
 
-func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
+func (e *SimpleExec) setRoleRegular(s *ast.SetRoleStmt) error {
+	// Deal with SQL like `SET ROLE role1, role2;`
 	checkDup := make(map[string]*auth.RoleIdentity, len(s.RoleList))
 	// Check whether RoleNameList contain duplicate role name.
 	for _, r := range s.RoleList {
@@ -254,6 +256,99 @@ func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) setRoleAll(s *ast.SetRoleStmt) error {
+	// Deal with SQL like `SET ROLE ALL;`
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	user, host := e.ctx.GetSessionVars().User.AuthUsername, e.ctx.GetSessionVars().User.AuthHostname
+	roles := checker.GetAllRoles(user, host)
+	ok, roleName := checker.ActiveRoles(e.ctx, roles)
+	if !ok {
+		u := e.ctx.GetSessionVars().User
+		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+	}
+	return nil
+}
+
+func (e *SimpleExec) setRoleAllExcept(s *ast.SetRoleStmt) error {
+	// Deal with SQL like `SET ROLE ALL EXCEPT role1, role2;`
+	for _, r := range s.RoleList {
+		if r.Hostname == "" {
+			r.Hostname = "%"
+		}
+	}
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	user, host := e.ctx.GetSessionVars().User.AuthUsername, e.ctx.GetSessionVars().User.AuthHostname
+	roles := checker.GetAllRoles(user, host)
+
+	filter := func(arr []*auth.RoleIdentity, f func(*auth.RoleIdentity) bool) []*auth.RoleIdentity {
+		i, j := 0, 0
+		for i = 0; i < len(arr); i++ {
+			if f(arr[i]) {
+				arr[j] = arr[i]
+				j++
+			}
+		}
+		return arr[:j]
+	}
+	banned := func(r *auth.RoleIdentity) bool {
+		for _, ban := range s.RoleList {
+			if ban.Hostname == r.Hostname && ban.Username == r.Username {
+				return false
+			}
+		}
+		return true
+	}
+
+	afterExcept := filter(roles, banned)
+	ok, roleName := checker.ActiveRoles(e.ctx, afterExcept)
+	if !ok {
+		u := e.ctx.GetSessionVars().User
+		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+	}
+	return nil
+}
+
+func (e *SimpleExec) setRoleDefault(s *ast.SetRoleStmt) error {
+	// Deal with SQL like `SET ROLE DEFAULT;`
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	user, host := e.ctx.GetSessionVars().User.AuthUsername, e.ctx.GetSessionVars().User.AuthHostname
+	roles := checker.GetDefaultRoles(user, host)
+	ok, roleName := checker.ActiveRoles(e.ctx, roles)
+	if !ok {
+		u := e.ctx.GetSessionVars().User
+		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+	}
+	return nil
+}
+
+func (e *SimpleExec) setRoleNone(s *ast.SetRoleStmt) error {
+	// Deal with SQL like `SET ROLE NONE;`
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	roles := make([]*auth.RoleIdentity, 0)
+	ok, roleName := checker.ActiveRoles(e.ctx, roles)
+	if !ok {
+		u := e.ctx.GetSessionVars().User
+		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+	}
+	return nil
+}
+
+func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
+	switch s.SetRoleOpt {
+	case ast.SetRoleRegular:
+		return e.setRoleRegular(s)
+	case ast.SetRoleAll:
+		return e.setRoleAll(s)
+	case ast.SetRoleAllExcept:
+		return e.setRoleAllExcept(s)
+	case ast.SetRoleNone:
+		return e.setRoleNone(s)
+	case ast.SetRoleDefault:
+		return e.setRoleDefault(s)
+	}
+	return nil
+}
+
 func (e *SimpleExec) dbAccessDenied(dbname string) error {
 	user := e.ctx.GetSessionVars().User
 	u := user.Username
@@ -269,8 +364,10 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	dbname := model.NewCIStr(s.DBName)
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(dbname)) {
-		return e.dbAccessDenied(dbname.O)
+	if checker != nil && e.ctx.GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, dbname.String()) {
+			return e.dbAccessDenied(dbname.O)
+		}
 	}
 
 	dbinfo, exists := e.is.SchemaByName(dbname)
@@ -302,8 +399,16 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
-	if _, err := e.ctx.Txn(true); err != nil {
+	pTxnConf := config.GetGlobalConfig().PessimisticTxn
+	if pTxnConf.Enable && (s.Pessimistic || pTxnConf.Default || e.ctx.GetSessionVars().PessimisticLock) {
+		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	}
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
 		return err
+	}
+	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		txn.SetOption(kv.Pessimistic, true)
 	}
 	return nil
 }
