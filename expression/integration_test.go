@@ -4344,3 +4344,12 @@ func (s *testIntegrationSuite) TestDateTimeAddReal(c *C) {
 		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
 	}
 }
+
+func (s *testIntegrationSuite) TestIssue10181(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint unsigned primary key);`)
+	tk.MustExec(`insert into t values(9223372036854775807), (18446744073709551615)`)
+	tk.MustQuery(`select * from t where a > 9223372036854775807-0.5 order by a`).Check(testkit.Rows(`9223372036854775807`, `18446744073709551615`))
+}
