@@ -30,6 +30,9 @@ func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
 		}
 		if len(path.idxCols) > 0 {
 			result = append(result, path.idxCols)
+			for i := 0; i < path.eqCondCount; i++ {
+				result = append(result, path.idxCols[i+1:])
+			}
 		}
 	}
 	return result
