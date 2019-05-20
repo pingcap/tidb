@@ -17,11 +17,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
@@ -82,7 +82,7 @@ func (s *testRegionCacheSuite) getRegionWithEndKey(c *C, key []byte) *Region {
 func (s *testRegionCacheSuite) getAddr(c *C, key []byte) string {
 	loc, err := s.cache.LocateKey(s.bo, key)
 	c.Assert(err, IsNil)
-	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region)
+	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region, false)
 	c.Assert(err, IsNil)
 	if ctx == nil {
 		return ""
@@ -106,7 +106,7 @@ func (s *testRegionCacheSuite) TestDropStore(c *C) {
 	s.cluster.RemoveStore(s.store1)
 	loc, err := s.cache.LocateKey(bo, []byte("a"))
 	c.Assert(err, IsNil)
-	ctx, err := s.cache.GetRPCContext(bo, loc.Region)
+	ctx, err := s.cache.GetRPCContext(bo, loc.Region, false)
 	c.Assert(err, IsNil)
 	c.Assert(ctx, IsNil)
 	s.checkCache(c, 0)
@@ -262,12 +262,12 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 func (s *testRegionCacheSuite) TestRequestFail(c *C) {
 	region := s.getRegion(c, []byte("a"))
 
-	ctx, _ := s.cache.GetRPCContext(s.bo, region.VerID())
+	ctx, _ := s.cache.GetRPCContext(s.bo, region.VerID(), false)
 	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
 	c.Assert(s.cache.mu.regions, HasLen, 0)
 	region = s.getRegion(c, []byte("a"))
 	c.Assert(s.cache.mu.regions, HasLen, 1)
-	ctx, _ = s.cache.GetRPCContext(s.bo, region.VerID())
+	ctx, _ = s.cache.GetRPCContext(s.bo, region.VerID(), false)
 	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
 	c.Assert(len(s.cache.mu.regions), Equals, 0)
 	s.getRegion(c, []byte("a"))
@@ -289,7 +289,7 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 	c.Assert(loc2.Region.id, Equals, region2)
 
 	// Request should fail on region1.
-	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
+	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region, false)
 	c.Assert(s.cache.storeMu.stores, HasLen, 1)
 	s.checkCache(c, 2)
 	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
@@ -334,7 +334,7 @@ func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
 	c.Assert(err, IsNil)
 
 	// Drop the regions on one store, should drop only 1/3 of the regions.
-	rpcCtx, err := cache.GetRPCContext(bo, loc.Region)
+	rpcCtx, err := cache.GetRPCContext(bo, loc.Region, false)
 	c.Assert(err, IsNil)
 	cache.DropStoreOnSendRequestFail(rpcCtx, errors.New("test error"))
 	c.Assert(len(cache.mu.regions), Equals, regionCnt*2/3)

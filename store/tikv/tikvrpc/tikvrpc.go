@@ -133,7 +133,7 @@ func (t CmdType) String() string {
 // Request wraps all kv/coprocessor requests.
 type Request struct {
 	kvrpcpb.Context
-	ToSlave          bool
+	ToSlave            bool
 	Type               CmdType
 	Get                *kvrpcpb.GetRequest
 	Scan               *kvrpcpb.ScanRequest

@@ -485,6 +485,8 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 	}
 }
 
+// IsStoreSlave returns whether the tikv server is a slave role. It checks cache
+// first, sends request to pd server when necessary.
 func (c *RegionCache) IsStoreSlave(bo *Backoffer, id uint64) (bool, error) {
 	c.storeMu.RLock()
 	if store, ok := c.storeMu.stores[id]; ok {
