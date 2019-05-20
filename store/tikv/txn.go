@@ -62,6 +62,7 @@ type tikvTxn struct {
 	dirty     bool
 	setCnt    int64
 	vars      *kv.Variables
+	committer *twoPhaseCommitter
 
 	// For data consistency check.
 	assertions []assertionPair
@@ -229,6 +230,10 @@ func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
 }
 
+func (txn *tikvTxn) IsPessimistic() bool {
+	return txn.us.GetOption(kv.Pessimistic) != nil
+}
+
 func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
@@ -253,10 +258,23 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if val != nil {
 		connID = val.(uint64)
 	}
-	committer, err := newTwoPhaseCommitter(txn, connID)
-	if err != nil || committer == nil {
+
+	var err error
+	// If the txn use pessimistic lock, committer is initialized.
+	committer := txn.committer
+	if committer == nil {
+		committer, err = newTwoPhaseCommitter(txn, connID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err := committer.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
+	if len(committer.keys) == 0 {
+		return nil
+	}
+
 	defer func() {
 		ctxValue := ctx.Value(execdetails.CommitDetailCtxKey)
 		if ctxValue != nil {
@@ -269,7 +287,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		}
 	}()
 	// latches disabled
-	if txn.store.txnLatches == nil {
+	// pessimistic transaction should also bypass latch.
+	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.executeAndWriteFinishBinlog(ctx)
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
@@ -285,8 +304,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		err = errors.Errorf("txnStartTS %d is stale", txn.startTS)
-		return errors.Annotate(err, txnRetryableMark)
+		return kv.ErrWriteConflict.FastGenByArgs(txn.startTS, 0, "is stale")
 	}
 	err = committer.executeAndWriteFinishBinlog(ctx)
 	if err == nil {
@@ -301,6 +319,14 @@ func (txn *tikvTxn) close() {
 }
 
 func (txn *tikvTxn) Rollback() error {
+	// Clean up pessimistic lock.
+	if txn.IsPessimistic() && txn.committer != nil {
+		err := txn.rollbackPessimisticLock()
+		if err != nil {
+			logutil.Logger(context.Background()).Error(err.Error())
+		}
+	}
+
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
@@ -311,8 +337,53 @@ func (txn *tikvTxn) Rollback() error {
 	return nil
 }
 
-func (txn *tikvTxn) LockKeys(keys ...kv.Key) error {
+func (txn *tikvTxn) rollbackPessimisticLock() error {
+	c := txn.committer
+	if err := c.initKeysAndMutations(); err != nil {
+		return errors.Trace(err)
+	}
+	if len(c.keys) == 0 {
+		return nil
+	}
+
+	return c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), c.keys)
+}
+
+func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keys ...kv.Key) error {
+	if len(keys) == 0 {
+		return nil
+	}
 	tikvTxnCmdHistogramWithLockKeys.Inc()
+	if txn.IsPessimistic() && forUpdateTS > 0 {
+		if txn.committer == nil {
+			// connID is used for log.
+			var connID uint64
+			var err error
+			val := ctx.Value(sessionctx.ConnID)
+			if val != nil {
+				connID = val.(uint64)
+			}
+			txn.committer, err = newTwoPhaseCommitter(txn, connID)
+			if err != nil {
+				return err
+			}
+			txn.committer.primaryKey = keys[0]
+		}
+
+		bo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(txn.vars)
+		keys1 := make([][]byte, len(keys))
+		for i, key := range keys {
+			keys1[i] = key
+		}
+		txn.committer.forUpdateTS = forUpdateTS
+		// If the number of keys1 greater than 1, it can be on different region,
+		// concurrently execute on multiple regions may lead to deadlock.
+		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys1) == 1
+		err := txn.committer.pessimisticLockKeys(bo, keys1)
+		if err != nil {
+			return err
+		}
+	}
 	txn.mu.Lock()
 	for _, key := range keys {
 		txn.lockKeys = append(txn.lockKeys, key)

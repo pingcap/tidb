@@ -119,7 +119,7 @@ func (s *testTiclientSuite) TestSingleKey(c *C) {
 	txn := s.beginTxn(c)
 	err := txn.Set(encodeKey(s.prefix, "key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.LockKeys(encodeKey(s.prefix, "key"))
+	err = txn.LockKeys(context.Background(), 0, encodeKey(s.prefix, "key"))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -176,7 +176,7 @@ func (s *testTiclientSuite) TestLargeRequest(c *C) {
 	c.Assert(err, NotNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	c.Assert(kv.IsRetryableError(err), IsFalse)
+	c.Assert(kv.IsTxnRetryableError(err), IsFalse)
 }
 
 func encodeKey(prefix, s string) []byte {
