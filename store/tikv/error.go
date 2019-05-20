@@ -23,7 +23,7 @@ var (
 	// ErrBodyMissing response body is missing error
 	ErrBodyMissing = errors.New("response body is missing")
 	// When TiDB is closing and send request to tikv fail, do not retry, return this error.
-	errTiDBMoribid = errors.New("tidb server moribid")
+	errTiDBDying = errors.New("tidb server dying")
 )
 
 // mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
