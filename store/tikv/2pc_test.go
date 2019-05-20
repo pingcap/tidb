@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -223,7 +224,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), txnRetryableMark), IsTrue, Commentf("err: %s", err))
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("err: %s", err))
 }
 
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
@@ -348,7 +349,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	c.Assert(err, IsNil)
 	err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
 	c.Assert(err, NotNil)
-	errMsgMustContain(c, err, "write conflict")
+	errMsgMustContain(c, err, "conflictCommitTS")
 }
 
 func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
@@ -439,4 +440,19 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 		txn3.Commit(context.Background())
 	}
 	c.Assert(totalTime, Less, time.Millisecond*200)
+}
+
+func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
+	// This test checks that the isPessimisticLock field is set in the request even when no keys are pessimistic lock.
+	txn := s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	err := txn.Set([]byte("t1"), []byte("v1"))
+	c.Assert(err, IsNil)
+	commiter, err := newTwoPhaseCommitterWithInit(txn, 0)
+	c.Assert(err, IsNil)
+	var batch batchKeys
+	batch.keys = append(batch.keys, []byte("t1"))
+	batch.region = RegionVerID{1, 1, 1}
+	req := commiter.buildPrewriteRequest(batch)
+	c.Assert(len(req.Prewrite.IsPessimisticLock), Greater, 0)
 }

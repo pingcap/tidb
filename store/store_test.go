@@ -39,7 +39,7 @@ const (
 type brokenStore struct{}
 
 func (s *brokenStore) Open(schema string) (kv.Storage, error) {
-	return nil, kv.ErrRetryable
+	return nil, kv.ErrTxnRetryable
 }
 
 func TestT(t *testing.T) {
