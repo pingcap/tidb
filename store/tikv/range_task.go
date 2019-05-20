@@ -241,6 +241,7 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 	for r := range w.taskCh {
 		select {
 		case <-ctx.Done():
+			w.err = ctx.Err()
 			break
 		default:
 		}
