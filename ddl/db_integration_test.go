@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -516,4 +517,109 @@ func (s *testIntegrationSuite) TestIgnoreColumnUTF8Charset(c *C) {
 		"  `a` varchar(20) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
 		"  `b` varchar(50) CHARSET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func (s *testIntegrationSuite) TestChangingDBCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("DROP DATABASE IF EXISTS alterdb1")
+	tk.MustExec("CREATE DATABASE alterdb1 CHARSET=utf8 COLLATE=utf8_unicode_ci")
+
+	// No default DB errors.
+	noDBFailedCases := []struct {
+		stmt   string
+		errMsg string
+	}{
+		{
+			"ALTER DATABASE CHARACTER SET = 'utf8'",
+			"[planner:1046]No database selected",
+		},
+		{
+			"ALTER SCHEMA `` CHARACTER SET = 'utf8'",
+			"[ddl:1102]Incorrect database name ''",
+		},
+	}
+	for _, fc := range noDBFailedCases {
+		_, err := tk.Exec(fc.stmt)
+		c.Assert(err.Error(), Equals, fc.errMsg, Commentf("%v", fc.stmt))
+	}
+
+	verifyDBCharsetAndCollate := func(dbName, chs string, coll string) {
+		// check `SHOW CREATE SCHEMA`.
+		r := tk.MustQuery("SHOW CREATE SCHEMA " + dbName).Rows()[0][1].(string)
+		c.Assert(strings.Contains(r, "CHARACTER SET "+chs), IsTrue)
+
+		template := `SELECT
+					DEFAULT_CHARACTER_SET_NAME,
+					DEFAULT_COLLATION_NAME
+				FROM INFORMATION_SCHEMA.SCHEMATA
+				WHERE SCHEMA_NAME = '%s'`
+		sql := fmt.Sprintf(template, dbName)
+		tk.MustQuery(sql).Check(testkit.Rows(fmt.Sprintf("%s %s", chs, coll)))
+
+		dom := domain.GetDomain(tk.Se.(sessionctx.Context))
+		// Make sure the table schema is the new schema.
+		err := dom.Reload()
+		c.Assert(err, IsNil)
+		dbInfo, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
+		c.Assert(ok, Equals, true)
+		c.Assert(dbInfo.Charset, Equals, chs)
+		c.Assert(dbInfo.Collate, Equals, coll)
+	}
+
+	tk.MustExec("ALTER SCHEMA alterdb1 COLLATE = utf8mb4_general_ci")
+	verifyDBCharsetAndCollate("alterdb1", "utf8mb4", "utf8mb4_general_ci")
+
+	tk.MustExec("DROP DATABASE IF EXISTS alterdb2")
+	tk.MustExec("CREATE DATABASE alterdb2 CHARSET=utf8 COLLATE=utf8_unicode_ci")
+	tk.MustExec("USE alterdb2")
+
+	failedCases := []struct {
+		stmt   string
+		errMsg string
+	}{
+		{
+			"ALTER SCHEMA `` CHARACTER SET = 'utf8'",
+			"[ddl:1102]Incorrect database name ''",
+		},
+		{
+			"ALTER DATABASE CHARACTER SET = ''",
+			"[parser:1115]Unknown character set: ''",
+		},
+		{
+			"ALTER DATABASE CHARACTER SET = 'INVALID_CHARSET'",
+			"[parser:1115]Unknown character set: 'INVALID_CHARSET'",
+		},
+		{
+			"ALTER SCHEMA COLLATE = ''",
+			"[ddl:1273]Unknown collation: ''",
+		},
+		{
+			"ALTER DATABASE COLLATE = 'INVALID_COLLATION'",
+			"[ddl:1273]Unknown collation: 'INVALID_COLLATION'",
+		},
+		{
+			"ALTER DATABASE CHARACTER SET = 'utf8' DEFAULT CHARSET = 'utf8mb4'",
+			"[ddl:1302]Conflicting declarations: 'CHARACTER SET utf8' and 'CHARACTER SET utf8mb4'",
+		},
+		{
+			"ALTER SCHEMA CHARACTER SET = 'utf8' COLLATE = 'utf8mb4_bin'",
+			"[ddl:1302]Conflicting declarations: 'CHARACTER SET utf8' and 'CHARACTER SET utf8mb4'",
+		},
+		{
+			"ALTER DATABASE COLLATE = 'utf8mb4_bin' COLLATE = 'utf8_bin'",
+			"[ddl:1302]Conflicting declarations: 'CHARACTER SET utf8mb4' and 'CHARACTER SET utf8'",
+		},
+	}
+
+	for _, fc := range failedCases {
+		_, err := tk.Exec(fc.stmt)
+		c.Assert(err.Error(), Equals, fc.errMsg, Commentf("%v", fc.stmt))
+	}
+
+	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4'")
+	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_bin")
+
+	_, err := tk.Exec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify collate from utf8mb4_bin to utf8mb4_general_ci")
 }
