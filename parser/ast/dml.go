@@ -1126,6 +1126,7 @@ type LoadDataStmt struct {
 
 	IsLocal           bool
 	Path              string
+	OnDuplicate       OnDuplicateKeyHandlingType
 	Table             *TableName
 	Columns           []*ColumnName
 	FieldsInfo        *FieldsClause
@@ -1144,6 +1145,11 @@ func (n *LoadDataStmt) Restore(ctx *RestoreCtx) error {
 	}
 	ctx.WriteKeyWord("INFILE ")
 	ctx.WriteString(n.Path)
+	if n.OnDuplicate == OnDuplicateKeyHandlingReplace {
+		ctx.WriteKeyWord(" REPLACE")
+	} else if n.OnDuplicate == OnDuplicateKeyHandlingIgnore {
+		ctx.WriteKeyWord(" IGNORE")
+	}
 	ctx.WriteKeyWord(" INTO TABLE ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore LoadDataStmt.Table")
