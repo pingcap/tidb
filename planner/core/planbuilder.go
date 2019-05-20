@@ -281,7 +281,7 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.ChangeStmt:
 		return b.buildChange(x)
 	case *ast.SplitRegionStmt:
-		return b.buildSplitIndexRegion(x)
+		return b.buildSplitRegion(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -1610,7 +1610,7 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 
 const maxSplitRegionNum = 1000
 
-func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, error) {
+func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	tblInfo := node.Table.TableInfo
 	indexInfo := tblInfo.FindIndexByName(node.IndexName.L)
 	if indexInfo == nil {
@@ -1654,7 +1654,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 		}
 		return values, nil
 	}
-	p := &SplitIndexRegion{
+	p := &SplitRegion{
 		TableInfo: tblInfo,
 		IndexInfo: indexInfo,
 	}

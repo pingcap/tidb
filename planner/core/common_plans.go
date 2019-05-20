@@ -478,7 +478,7 @@ type LoadStats struct {
 }
 
 // SplitIndexRegion represents a split index regions plan.
-type SplitIndexRegion struct {
+type SplitRegion struct {
 	baseSchemaProducer
 
 	TableInfo  *model.TableInfo
