@@ -4172,7 +4172,7 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 
 	tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
-	ctx := s.tk.Se.(sessionctx.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
 	c.Assert(err, IsNil)
@@ -4190,6 +4190,22 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 
 	tk.MustExec("admin check table partition_add_idx")
 	tk.MustExec("drop table partition_add_idx")
+
+	// Test hash partition for pr 10475.
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by hash(a) partitions 5;")
+	tk.MustExec("insert into t1 values (0,0),(1,1),(2,2),(3,3);")
+	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec("admin check table t1;")
+
+	// Test range partition for pr 10475.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
+	tk.MustExec("insert into t1 values (0,0);")
+	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec("admin check table t1;")
 }
 
 func (s *testDBSuite) TestAlterTableCharset(c *C) {

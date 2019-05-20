@@ -762,9 +762,9 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physic
 		err = errors.Trace(err)
 		return
 	}
-	// endHandle or physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
+	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
 	// update them to table's in this case.
-	if endHandle == 0 || physicalTableID == 0 {
+	if physicalTableID == 0 {
 		if job.ReorgMeta != nil {
 			endHandle = job.ReorgMeta.EndHandle
 		} else {
