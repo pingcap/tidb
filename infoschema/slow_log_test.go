@@ -125,3 +125,37 @@ func (s *testSuite) TestSlowLogParseTime(c *C) {
 	t1Format := t1.In(loc).Format(logutil.SlowLogTimeFormat)
 	c.Assert(t1Format, Equals, t1Str)
 }
+
+// TestFixParseSlowLogFile bugfix
+// sql select * from INFORMATION_SCHEMA.SLOW_QUERY limit 1;
+// ERROR 1105 (HY000): string "2019-05-12-11:23:29.61474688" doesn't has a prefix that matches format "2006-01-02-15:04:05.999999999 -0700", err: parsing time "2019-05-12-11:23:29.61474688" as "2006-01-02-15:04:05.999999999 -0700": cannot parse "" as "-0700"
+func (s *testSuite) TestFixParseSlowLogFile(c *C) {
+	slowLog := bytes.NewBufferString(
+		`# Time: 2019-05-12-11:23:29.614327491 +0800
+# Txn_start_ts: 405888132465033227
+# Query_time: 0.216905
+# Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
+# Is_internal: true
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Stats: t1:1,t2:2
+# Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03
+# Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8
+# Mem_max: 70724
+select * from t
+# Time: 2019-05-12-11:23:29.614327491 +0800
+# Txn_start_ts: 405888132465033227
+# Query_time: 0.216905
+# Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
+# Is_internal: true
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Stats: t1:1,t2:2
+# Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03
+# Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8
+# Mem_max: 70724
+select * from t;`)
+	scanner := bufio.NewReader(slowLog)
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	c.Assert(err, IsNil)
+	_, err = infoschema.ParseSlowLog(loc, scanner)
+	c.Assert(err, IsNil)
+}
