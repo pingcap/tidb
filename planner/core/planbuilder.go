@@ -223,7 +223,7 @@ func (b *planBuilder) build(node ast.Node) (Plan, error) {
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt:
 		return b.buildSimple(node.(ast.StmtNode)), nil
 	case ast.DDLNode:
-		return b.buildDDL(x), nil
+		return b.buildDDL(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -1422,8 +1422,19 @@ func (b *planBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
+func (b *planBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	switch v := node.(type) {
+	case *ast.AlterDatabaseStmt:
+		if v.AlterDefaultDatabase {
+			v.Name = b.ctx.GetSessionVars().CurrentDB
+		}
+		if v.Name == "" {
+			return nil, ErrNoDB
+		}
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.AlterPriv,
+			db:        v.Name,
+		})
 	case *ast.AlterTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.AlterPriv,
@@ -1493,7 +1504,7 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 	}
 
 	p := &DDL{Statement: node}
-	return p
+	return p, nil
 }
 
 // buildTrace builds a trace plan. Inside this method, it first optimize the
