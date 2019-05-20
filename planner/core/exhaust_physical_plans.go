@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -481,25 +482,30 @@ type indexJoinBuildHelper struct {
 }
 
 func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column, outerJoinKeys []*expression.Column) string {
-	buffer := bytes.NewBufferString("[")
-	isFirst := true
+	var builder strings.Builder
+	builder.WriteString("[")
+	accessConds := make([]string, 0, len(ijHelper.curPossibleUsedKeys)+len(ijHelper.chosenAccess))
 	for idxOff, keyOff := range ijHelper.idxOff2KeyOff {
 		if keyOff == -1 {
 			continue
 		}
-		if !isFirst {
-			buffer.WriteString(" ")
-		} else {
-			isFirst = false
-		}
-		buffer.WriteString(fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
+		accessConds = append(accessConds, fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
 	}
 	for _, access := range ijHelper.chosenAccess {
 		// Since now there must be eq/in condition so here we can just append space directly.
-		buffer.WriteString(fmt.Sprintf(" %v", access))
+		accessConds = append(accessConds, fmt.Sprintf("%v", access))
 	}
-	buffer.WriteString("]")
-	return buffer.String()
+	isFirst := true
+	for _, cond := range accessConds {
+		if !isFirst {
+			builder.WriteString(" ")
+		} else {
+			isFirst = false
+		}
+		builder.WriteString(cond)
+	}
+	builder.WriteString("]")
+	return builder.String()
 }
 
 // constructInnerTableScan is specially used to construct the inner plan for PhysicalIndexJoin.
@@ -678,22 +684,19 @@ func (cwc *ColWithCmpFuncManager) String() string {
 	return buffer.String()
 }
 
-func (ijHelper *indexJoinBuildHelper) checkIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int) bool {
+func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int) {
 	tmpSchema := expression.NewSchema(innerKeys...)
 	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
 	ijHelper.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
 	ijHelper.curNotUsedColLens = make([]int, 0, len(idxCols))
-	keyMatched := false
 	for i, idxCol := range idxCols {
 		ijHelper.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
 		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
-			keyMatched = true
 			continue
 		}
 		ijHelper.curNotUsedIndexCols = append(ijHelper.curNotUsedIndexCols, idxCol)
 		ijHelper.curNotUsedColLens = append(ijHelper.curNotUsedColLens, colLens[i])
 	}
-	return keyMatched
 }
 
 // findUsefulEqAndInFilters analyzes the pushedDownConds held by inner child and split them to three parts.
@@ -791,26 +794,28 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		return nil
 	}
 	accesses := make([]expression.Expression, 0, len(idxCols))
-	// If no index column appears in join key, we just break.
-	// TODO: It may meet this case: There's no join key condition, but have compare filters.
-	//  e.g. select * from t1, t2 on t1.a=t2.a and t2.b > t1.b-10 and t2.b < t1.b where t1.a=1 and t2.a=1.
-	//       After constant propagation. The t1.a=t2.a is removed. And if we have index (t2.a, t2.b). It can apply index join
-	//       to speed up.
-	if !ijHelper.checkIndex(innerJoinKeys, idxCols, colLengths) {
-		return nil
-	}
+	ijHelper.resetContextForIndex(innerJoinKeys, idxCols, colLengths)
 	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
 	var remainedEqAndIn []expression.Expression
 	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(idxCols, notKeyEqAndIn)
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
-	if matchedKeyCnt <= 0 {
+	// If no join key is matched while join keys actually are not empty. We don't choose index join for now.
+	if matchedKeyCnt <= 0 && len(innerJoinKeys) > 0 {
 		return nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
 	remained = append(remained, remainedEqAndIn...)
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
+	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
+	// A more strict check is applied later.
+	if lastColPos <= 0 {
+		return nil
+	}
 	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
 	if lastColPos == len(idxCols) {
+		if matchedKeyCnt <= 0 {
+			return nil
+		}
 		remained = append(remained, rangeFilterCandidates...)
 		ranges, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
 		if err != nil {
