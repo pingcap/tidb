@@ -2846,7 +2846,7 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	// Test lock table by other session in transaction and commit without retry.
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
-	tk.MustExec("set @@session.tidb_retry_limit=0")
+	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=1")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1")
 	tk2.MustExec("lock tables t1 write")
@@ -2859,7 +2859,7 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk2.MustExec("unlock tables")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1")
-	tk.MustExec("set @@session.tidb_retry_limit=10")
+	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
 	tk2.MustExec("lock tables t1 write")
 	_, err = tk.Exec("commit")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue, Commentf("err: %v\n", err))
