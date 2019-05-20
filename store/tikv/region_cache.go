@@ -599,7 +599,7 @@ retry:
 	regionStore := region.getStore()
 	cachedStore, cachedPeer, cachedIdx := region.WorkStorePeer(regionStore)
 
-	// almost time requests be directly routed to stable leader.
+	// Most of the time, requests are directly routed to stable leader.
 	// returns if store is stable leader and no need retry other node.
 	state := cachedStore.getState()
 	if cachedStore != nil && state.failedAttempt == 0 && state.lastFailedTime == 0 {
@@ -844,7 +844,7 @@ func (r *Region) EndKey() []byte {
 
 // switchWorkStore switches current store to the one on specific store. It returns
 // false if no peer matches the storeID.
-func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) (switchToTarget bool) {
+func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) {
 	if len(r.meta.Peers) == 0 {
 		return
 	}
@@ -853,7 +853,7 @@ func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) (switchTo
 	for i, p := range r.meta.Peers {
 		if p.GetStoreId() == targetStoreID {
 			leaderIdx = i
-			switchToTarget = true
+			break
 		}
 	}
 
