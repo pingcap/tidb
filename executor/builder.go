@@ -2135,7 +2135,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		}
 	} else {
 		cmpResult := int64(-1)
-		if v.OrderBy[0].Desc {
+		if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
 			cmpResult = 1
 		}
 		processor = &rangeFrameWindowProcessor{

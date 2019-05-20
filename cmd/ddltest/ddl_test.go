@@ -32,13 +32,14 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/store"
+	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -92,7 +93,7 @@ type TestDDLSuite struct {
 }
 
 func (s *TestDDLSuite) SetUpSuite(c *C) {
-	logutil.InitLogger(&logutil.LogConfig{Level: *logLevel})
+	logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
 
 	s.quit = make(chan struct{})
 
