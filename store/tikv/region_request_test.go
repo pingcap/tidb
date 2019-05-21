@@ -54,6 +54,10 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
+func (s *testRegionRequestSuite) TearDownTest(c *C) {
+	s.cache.Close()
+}
+
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
