@@ -654,12 +654,10 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 		return bytes.Compare(e.sampTasks[i].Location.StartKey, e.sampTasks[j].Location.StartKey) < 0
 	})
 	// The sample task should be consecutive with scan task.
-	if len(e.scanTasks) > 0 && bytes.Equal(e.scanTasks[0].StartKey, startKey) {
-		if !bytes.Equal(e.scanTasks[0].EndKey, e.sampTasks[0].Location.StartKey) {
-			e.scanTasks = e.scanTasks[:0]
-			e.sampTasks = e.sampTasks[:0]
-			return startKey, nil
-		}
+	if len(e.scanTasks) > 0 && bytes.Equal(e.scanTasks[0].StartKey, startKey) && !bytes.Equal(e.scanTasks[0].EndKey, e.sampTasks[0].Location.StartKey) {
+		e.scanTasks = e.scanTasks[:0]
+		e.sampTasks = e.sampTasks[:0]
+		return startKey, nil
 	}
 	prefixLen := 0
 	for ; prefixLen < len(e.sampTasks)-1; prefixLen++ {
