@@ -108,7 +108,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	a int not null,
 	b int not null
 	)
-	partition by range( id ) (
+	partition by range( a ) (
 		partition p1 values less than maxvalue,
 		partition p2 values less than (1991),
 		partition p3 values less than (1995)
@@ -141,7 +141,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	a int not null,
 	b int not null
 	)
-	partition by range( id ) (
+	partition by range( a ) (
 		partition p1 values less than (1991),
 		partition p2 values less than maxvalue,
 		partition p3 values less than maxvalue,
@@ -154,7 +154,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	a int not null,
 	b int not null
 	)
-	partition by range( id ) (
+	partition by range( a ) (
 		partition p1 values less than (19xx91),
 		partition p2 values less than maxvalue
 	);`)
@@ -233,6 +233,19 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	assertErrorCode(c, tk, `create table t33 (a timestamp, b int) partition by hash(a) partitions 30;`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
 	// TODO: fix this one
 	// assertErrorCode(c, tk, `create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`, tmysql.ErrPartitionFuncNotAllowed)
+
+	// Fix issue 8647
+	assertErrorCode(c, tk, `CREATE TABLE trb8 (
+		id int(11) DEFAULT NULL,
+		name varchar(50) DEFAULT NULL,
+		purchased date DEFAULT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin
+	PARTITION BY RANGE ( year(notexist.purchased) - 1 ) (
+		PARTITION p0 VALUES LESS THAN (1990),
+		PARTITION p1 VALUES LESS THAN (1995),
+		PARTITION p2 VALUES LESS THAN (2000),
+		PARTITION p3 VALUES LESS THAN (2005)
+	);`, tmysql.ErrBadField)
 }
 
 func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
