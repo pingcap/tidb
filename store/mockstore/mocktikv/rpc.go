@@ -66,6 +66,15 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			},
 		}
 	}
+	if writeConflict, ok := errors.Cause(err).(*ErrConflict); ok {
+		return &kvrpcpb.KeyError{
+			Conflict: &kvrpcpb.WriteConflict{
+				Key:        writeConflict.Key,
+				ConflictTs: writeConflict.ConflictTS,
+				StartTs:    writeConflict.StartTS,
+			},
+		}
+	}
 	if retryable, ok := errors.Cause(err).(ErrRetryable); ok {
 		return &kvrpcpb.KeyError{
 			Retryable: retryable.Error(),

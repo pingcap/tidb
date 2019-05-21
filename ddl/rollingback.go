@@ -266,7 +266,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionModifyColumn, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
-		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition:
+		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
+		model.ActionModifySchemaCharsetAndCollate:
 		ver, err = cancelOnlyNotHandledJob(job)
 	default:
 		job.State = model.JobStateCancelled
