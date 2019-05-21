@@ -923,6 +923,8 @@ const (
 	ErrMemExceedThreshold         = 8001
 	ErrForUpdateCantRetry         = 8002
 	ErrAdminCheckTable            = 8003
+	ErrTxnTooLarge                = 8004
+	ErrWriteConflictInTiDB        = 8005
 	ErrInvalidPluginID            = 8101
 	ErrInvalidPluginManifest      = 8102
 	ErrInvalidPluginName          = 8103
@@ -941,6 +943,4 @@ const (
 	ErrRegionUnavailable  = 9005
 	ErrGCTooEarly         = 9006
 	ErrWriteConflict      = 9007
-
-	ErrTxnTooLarge = 9500
 )
