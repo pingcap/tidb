@@ -62,6 +62,7 @@ func init() {
 		mysql.WarnOptionIgnored:                    mysql.WarnOptionIgnored,
 		mysql.ErrTruncatedWrongValue:               mysql.ErrTruncatedWrongValue,
 		mysql.ErrUnknownLocale:                     mysql.ErrUnknownLocale,
+		mysql.ErrBadField:                          mysql.ErrBadField,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
