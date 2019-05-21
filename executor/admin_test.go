@@ -466,6 +466,16 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`alter table t1 add column b timestamp not null;`)
 	tk.MustExec(`alter table t1 add index(b);`)
 	tk.MustExec(`admin check table t1;`)
+
+	// Test for index with change decimal precision.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1 (a decimal(2,1), index(a))`)
+	tk.MustExec(`insert into t1 set a='1.9'`)
+	_, err := tk.Exec(`alter table t1 modify column a decimal(3,2);`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify decimal column precision")
+	tk.MustExec(`delete from t1;`)
+	tk.MustExec(`admin check table t1;`)
 }
 
 func (s *testSuite) TestAdminShowNextID(c *C) {
