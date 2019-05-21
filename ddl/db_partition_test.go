@@ -240,7 +240,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		name varchar(50) DEFAULT NULL,
 		purchased date DEFAULT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin
-	PARTITION BY RANGE ( year(fuck.purchased) - 1 ) (
+	PARTITION BY RANGE ( year(notexist.purchased) - 1 ) (
 		PARTITION p0 VALUES LESS THAN (1990),
 		PARTITION p1 VALUES LESS THAN (1995),
 		PARTITION p2 VALUES LESS THAN (2000),
