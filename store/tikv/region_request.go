@@ -143,7 +143,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		}
 		return nil, true, nil
 	}
+	s.onSendSuccess(ctx)
 	return
+}
+
+func (s *RegionRequestSender) onSendSuccess(ctx *RPCContext) {
+	store := s.regionCache.getStoreByStoreID(ctx.Store.storeID)
+	store.markAccess(s.regionCache.notifyCheckCh, true)
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
@@ -163,7 +169,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	s.regionCache.DropStoreOnSendRequestFail(ctx, err)
+	s.regionCache.OnSendRequestFail(ctx, err)
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
@@ -220,7 +226,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.Logger(context.Background()).Warn("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
-		s.regionCache.ClearStoreByID(ctx.GetStoreID())
+		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
 		return true, nil
 	}
 
@@ -254,7 +260,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	logutil.Logger(context.Background()).Debug("tikv reports region error",
 		zap.Stringer("regionErr", regionErr),
 		zap.Stringer("ctx", ctx))
-	s.regionCache.DropRegion(ctx.Region)
+	s.regionCache.InvalidateCachedRegion(ctx.Region)
 	return false, nil
 }
 
