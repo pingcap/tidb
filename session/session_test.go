@@ -2392,6 +2392,23 @@ func (s *testSessionSuite) TestCommitRetryCount(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSessionSuite) TestTxnRetryErrMsg(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("create table no_retry (id int)")
+	tk1.MustExec("insert into no_retry values (1)")
+	tk1.MustExec("begin")
+	tk2.MustExec("update no_retry set id = id + 1")
+	tk1.MustExec("update no_retry set id = id + 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly", `return(true)`), IsNil)
+	_, err := tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly"), IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
+}
+
 func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -2438,9 +2455,10 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 
-	// other errors could retry
 	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
 	tk1.MustExec("begin")
 	tk2.MustExec("alter table no_retry add index idx(id)")
@@ -2448,6 +2466,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("update no_retry set id = 10")
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
+	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 
 	// set autocommit to begin and commit
 	tk1.MustExec("set autocommit = 0")
@@ -2456,6 +2476,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("update no_retry set id = 12")
 	_, err = tk1.Se.Execute(context.Background(), "set autocommit = 1")
 	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("11"))
 
@@ -2465,6 +2487,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("update no_retry set id = 14")
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("13"))
 }
@@ -2611,52 +2635,4 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 
 	tk.MustExec("rollback")
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
-}
-
-func (s *testSessionSuite) TestPessimisticTxn(c *C) {
-	if !config.GetGlobalConfig().PessimisticTxn.Enable {
-		c.Skip("pessimistic transaction is not enabled")
-	}
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	// Make the name has different indent for easier read.
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustExec("drop table if exists pessimistic")
-	tk.MustExec("create table pessimistic (k int, v int)")
-	tk.MustExec("insert into pessimistic values (1, 1)")
-
-	// t1 lock, t2 update, t1 update and retry statement.
-	tk1.MustExec("begin lock")
-
-	tk.MustExec("update pessimistic set v = 2 where v = 1")
-
-	// Update can see the change, so this statement affects 0 roews.
-	tk1.MustExec("update pessimistic set v = 3 where v = 1")
-	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(0))
-	// select for update can see the change of another transaction.
-	tk1.MustQuery("select * from pessimistic for update").Check(testkit.Rows("1 2"))
-	// plain select can not see the change of another transaction.
-	tk1.MustQuery("select * from pessimistic").Check(testkit.Rows("1 1"))
-	tk1.MustExec("update pessimistic set v = 3 where v = 2")
-	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(1))
-
-	// pessimistic lock doesn't block read operation of other transactions.
-	tk.MustQuery("select * from pessimistic").Check(testkit.Rows("1 2"))
-
-	tk1.MustExec("commit")
-	tk1.MustQuery("select * from pessimistic").Check(testkit.Rows("1 3"))
-
-	// t1 lock, t1 select for update, t2 wait t1.
-	tk1.MustExec("begin lock")
-	tk1.MustExec("select * from pessimistic where k = 1 for update")
-	finishCh := make(chan struct{})
-	go func() {
-		tk.MustExec("update pessimistic set v = 5 where k = 1")
-		finishCh <- struct{}{}
-	}()
-	time.Sleep(time.Millisecond * 10)
-	tk1.MustExec("update pessimistic set v = 3 where k = 1")
-	tk1.MustExec("commit")
-	<-finishCh
-	tk.MustQuery("select * from pessimistic").Check(testkit.Rows("1 5"))
 }
