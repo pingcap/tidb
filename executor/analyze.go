@@ -587,12 +587,12 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
 	defer func() {
-		e.wg.Done()
 		if *needRebuild == true {
 			for ok := true; ok; _, ok = <-e.sampLocs {
 				// Do nothing, just clear the channel.
 			}
 		}
+		e.wg.Done()
 	}()
 	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for {
