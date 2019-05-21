@@ -54,6 +54,10 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
+func (s *testRegionRequestSuite) TearDownTest(c *C) {
+	s.cache.Close()
+}
+
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
@@ -206,6 +210,9 @@ func (s *mockTikvGrpcServer) KvResolveLock(context.Context, *kvrpcpb.ResolveLock
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) KvPessimisticLock(context.Context, *kvrpcpb.PessimisticLockRequest) (*kvrpcpb.PessimisticLockResponse, error) {
+	return nil, errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) KVPessimisticRollback(context.Context, *kvrpcpb.PessimisticRollbackRequest) (*kvrpcpb.PessimisticRollbackResponse, error) {
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) KvGC(context.Context, *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
