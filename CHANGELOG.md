@@ -1,6 +1,100 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [3.0.0-rc.1] 2019-05-10
+
+### SQL Optimizer
+* Improve the accuracy of cost estimates by using order correlation between columns; introduce a heuristic parameter `tidb_opt_correlation_exp_factor` to control the preference for index scans for scenarios when correlation cannot be directly used for estimation. [#9839](https://github.com/pingcap/tidb/pull/9839)
+* Match more prefix columns of the indexes when extracting access conditions of composite indexes if there are relevant columns in the filter [#10053](https://github.com/pingcap/tidb/pull/10053)
+* Use the dynamic programming algorithm to specify the execution order of join operations when the number of tables participating in the join is less than the value of `tidb_opt_join_reorder_threshold`. [#8816](https://github.com/pingcap/tidb/pull/8816)
+* Match more prefix columns of the indexes in the inner tables that build the index join when using composite indexes as the access conditions [#8471](https://github.com/pingcap/tidb/pull/8471)
+* Improve the accuracy of row count estimation for single-column indexes with NULL values [#9474](https://github.com/pingcap/tidb/pull/9474)
+* Specially handle `GROUP_CONCAT` when eliminating aggregate functions during the logical optimization phase to prevent incorrect executions [#9967](https://github.com/pingcap/tidb/pull/9967)
+* Properly push the filter down to child nodes of the join operator if the filter is a constant [#9848](https://github.com/pingcap/tidb/pull/9848)
+* Specially handle some functions such as `RAND()` when pruning columns during the logical optimization phase to prevent incompatibilities with MySQL [#10064](https://github.com/pingcap/tidb/pull/10064)
+* Support `FAST ANALYZE`, which speeds up statistics collection by sampling the region instead of scanning the entire region. This feature is controlled by the variable `tidb_enable_fast_analyze`. [#10258](https://github.com/pingcap/tidb/pull/10258)
+* Support SQL Plan Management, which ensures execution stability by performing execution plan binding for SQL statements. This feature is currently in beta and only supports bound execution plans for SELECT statements. It is not recommended to use it in the production environment. [#10284](https://github.com/pingcap/tidb/pull/10284)
+### Execution Engine
+* Support tracking and controlling memory usage in three operators - `TableReader`, `IndexReader` and `IndexLookupReader`
+[#10003](https://github.com/pingcap/tidb/pull/10003)
+* Support showing more information about coprocessor tasks in the slow log such as the number of tasks in coprocessor, the average/longest/90% of execution/waiting time and the addresses of the TiKVs which take the longest execution time or waiting time [#10165](https://github.com/pingcap/tidb/pull/10165)
+* Support the prepared DDL statements with no placeholders [#10144](https://github.com/pingcap/tidb/pull/10144)
+### Server
+* Only allow the DDL owner to execute bootstrap when TiDB is started [#10029](https://github.com/pingcap/tidb/pull/10029)
+* Add the variable `tidb_skip_isolation_level_check` to prevent TiDB from reporting errors when setting the transaction isolation level to SERIALIZABLE [#10065](https://github.com/pingcap/tidb/pull/10065)
+* Merge the implicit commit time and the SQL execution time in the slow log [#10294](https://github.com/pingcap/tidb/pull/10294)
+* Support for SQL Roles (RBAC Privilege Management)
+    - Support `SHOW GRANT` [#10016](https://github.com/pingcap/tidb/pull/10016)
+    - Support `SET DEFAULT ROLE` [#9949](https://github.com/pingcap/tidb/pull/9949)
+    - Support `GRANT ROLE` [#9721](https://github.com/pingcap/tidb/pull/9721)
+* Fix the `ConnectionEvent` error from the `whitelist` plugin that makes TiDB exit [#9889](https://github.com/pingcap/tidb/pull/9889)
+* Fix the issue of mistakenly adding read-only statements to the transaction history [#9723](https://github.com/pingcap/tidb/pull/9723)
+* Improve `kill` statements to stop SQL execution  and release resources more quickly [#9844](https://github.com/pingcap/tidb/pull/9844)
+* Add a startup option `config-check` to check the validity of the configuration file [#9855](https://github.com/pingcap/tidb/pull/9855)
+* Fix the validity check of inserting NULL fields when the strict SQL mode is disabled [#10161](https://github.com/pingcap/tidb/pull/10161)
+### DDL
+* Add the `pre_split_regions` option for `CREATE TABLE` statements; this option supports pre-splitting the Table Region when creating a table to avoid write hot spots caused by lots of writes after the table creation [#10138](https://github.com/pingcap/tidb/pull/10138)
+* Optimize the execution performance of some DDL statements [#10170](https://github.com/pingcap/tidb/pull/10170)
+* Add the warning that full-text indexes are not supported for `FULLTEXT KEY` [#9821](https://github.com/pingcap/tidb/pull/9821)
+* Fix the compatibility issue for the UTF8 and UTF8MB4 charsets in the old versions of TiDB [#9820](https://github.com/pingcap/tidb/pull/9820)
+* Fix the potential bug in `shard_row_id_bits` of a table [#9868](https://github.com/pingcap/tidb/pull/9868)
+* Fix the bug that the column charset is not changed after the table charset is changed [#9790](https://github.com/pingcap/tidb/pull/9790)
+* Fix a potential bug in `SHOW COLUMN` when using `BINARY`/`BIT` as the column default value [#9897](https://github.com/pingcap/tidb/pull/9897)
+* Fix the compatibility issue in displaying `CHARSET`/`COLLATION` descriptions in the `SHOW FULL COLUMNS` statement [#10007](https://github.com/pingcap/tidb/pull/10007)
+* Fix the issue that the `SHOW COLLATIONS` statement only lists collations supported by TiDB [#10186](https://github.com/pingcap/tidb/pull/10186)
+
+## [2.1.9] 2019-05-06
+* Fix compatibility of the `MAKETIME` function when unsigned type overflows [#10089](https://github.com/pingcap/tidb/pull/10089)
+* Fix the stack overflow caused by constant folding in some cases [#10189](https://github.com/pingcap/tidb/pull/10189)
+* Fix the privilege check issue for `Update` when an alias exists in some cases [#10157](https://github.com/pingcap/tidb/pull/10157), [#10326](https://github.com/pingcap/tidb/pull/10326)
+* Track and control memory usage in DistSQL [#10197](https://github.com/pingcap/tidb/pull/10197)
+* Support specifying collation as `utf8mb4_0900_ai_ci` [#10201](https://github.com/pingcap/tidb/pull/10201)
+* Fix the wrong result issue of the `MAX` function when the primary key is of the Unsigned type [#10209](https://github.com/pingcap/tidb/pull/10209)
+* Fix the issue that NULL values can be inserted into NOT NULL columns in the non-strict SQL mode [#10254](https://github.com/pingcap/tidb/pull/10254)
+* Fix the wrong result issue of the `COUNT` function when multiple columns exist in `DISTINCT` [#10270](https://github.com/pingcap/tidb/pull/10270)
+* Fix the panic issue occurred when `LOAD DATA` parses irregular CSV files [#10269](https://github.com/pingcap/tidb/pull/10269)
+* Ignore the overflow error when the outer and inner join key types are inconsistent in `Index Lookup Join` [#10244](https://github.com/pingcap/tidb/pull/10244)
+* Fix the issue that a statement is wrongly judged as point-get in some cases [#10299](https://github.com/pingcap/tidb/pull/10299)
+* Fix the wrong result issue when the time type does not convert the time zone in some cases [#10345](https://github.com/pingcap/tidb/pull/10345)
+* Fix the issue that TiDB character set cases are inconsistent in some cases [#10354](https://github.com/pingcap/tidb/pull/10354)
+* Support controlling the number of rows returned by operator [#9166](https://github.com/pingcap/tidb/issues/9166)
+    - `Selection` & `Projection` [#10110](https://github.com/pingcap/tidb/pull/10110)
+    - `StreamAgg` & `HashAgg` [#10133](https://github.com/pingcap/tidb/pull/10133)
+    - `TableReader` & `IndexReader` & `IndexLookup` [#10169](https://github.com/pingcap/tidb/pull/10169)
+* Improve the slow query log:
+    - Add `SQL Digest` to distinguish similar SQL [#10093](https://github.com/pingcap/tidb/pull/10093)
+    - Add version information of statistics used by slow query statements [#10220](https://github.com/pingcap/tidb/pull/10220)
+    - Show memory consumption of a statement in slow query log [#10246](https://github.com/pingcap/tidb/pull/10246)
+    - Adjust the output format of Coprocessor related information so it can be parsed by pt-query-digest [#10300](https://github.com/pingcap/tidb/pull/10300)
+    - Fix the `#` character issue in slow query statements [#10275](https://github.com/pingcap/tidb/pull/10275)
+    - Add some information columns to the memory table of slow query statements  [#10317](https://github.com/pingcap/tidb/pull/10317)
+    - Add the transaction commit time to slow query log [#10310](https://github.com/pingcap/tidb/pull/10310)
+    - Fix the issue some time formats cannot be parsed by pt-query-digest [#10323](https://github.com/pingcap/tidb/pull/10323) 
+
+## [2.1.8] 2019-04-12
+
+* Fix the issue that the processing logic of `GROUP_CONCAT` function is incompatible with MySQL when there is a NULL-valued parameter [#9930](https://github.com/pingcap/tidb/pull/9930)
+* Fix the equality check issue of decimal values in the `Distinct` mode [#9931](https://github.com/pingcap/tidb/pull/9931)
+* Fix the collation compatibility issue of the date, datetime, and timestamp types for the `SHOW FULL COLUMNS` statement 
+    - [#9938](https://github.com/pingcap/tidb/pull/9938)
+    - [#10114](https://github.com/pingcap/tidb/pull/10114)
+* Fix the issue that the row count estimation is inaccurate when the filtering condition contains correlated columns [#9937](https://github.com/pingcap/tidb/pull/9937)
+* Fix the compatibility issue between the `DATE_ADD` and `DATE_SUB` functions
+    - [#9963](https://github.com/pingcap/tidb/pull/9963)
+    - [#9966](https://github.com/pingcap/tidb/pull/9966)
+* Support the `%H` format for the `STR_TO_DATE` function to improve compatibility [#9964](https://github.com/pingcap/tidb/pull/9964)
+* Fix the issue that the result is wrong when the `GROUP_CONCAT` function groups by a unique index [#9969](https://github.com/pingcap/tidb/pull/9969)
+* Return a warning when the Optimizer Hints contains an unmatched table name [#9970](https://github.com/pingcap/tidb/pull/9970)
+* Unify the log format to facilitate collecting logs using tools for analysis Unified Log Format
+* Fix the issue that a lot of NULL values cause inaccurate statistics estimation [#9979](https://github.com/pingcap/tidb/pull/9979)
+* Fix the issue that an error is reported when the default value of the TIMESTAMP type is the boundary value [#9987](https://github.com/pingcap/tidb/pull/9987)
+* Validate the value of `time_zone` [#10000](https://github.com/pingcap/tidb/pull/10000)  
+* Support the `2019.01.01` time format [#10001](https://github.com/pingcap/tidb/pull/10001)
+* Fix the issue that the row count estimation is displayed incorrectly in the result returned by the `EXPLAIN` statement in some cases [#10044](https://github.com/pingcap/tidb/pull/10044)
+* Fix the issue that `KILL TIDB [session id]` cannot instantly stop the execution of a statement in some cases [#9976](https://github.com/pingcap/tidb/pull/9976)
+* Fix the predicate pushdown issue of constant filtering conditions in some cases [#10049](https://github.com/pingcap/tidb/pull/10049)
+* Fix the issue that a read-only statement is not processed correctly in some cases [#10048](https://github.com/pingcap/tidb/pull/10048)
+
 ## [2.1.7] 2019-03-27
 
 * Fix the issue of longer startup time when upgrading the program caused by canceling DDL operations [#9768](https://github.com/pingcap/tidb/pull/9768)

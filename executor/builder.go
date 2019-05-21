@@ -70,7 +70,8 @@ type executorBuilder struct {
 	is      infoschema.InfoSchema
 	startTS uint64 // cached when the first time getStartTS() is called
 	// err is set when there is error happened during Executor building process.
-	err error
+	err               error
+	isSelectForUpdate bool
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -471,6 +472,10 @@ func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
 }
 
 func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor {
+	b.isSelectForUpdate = true
+	// Build 'select for update' using the 'for update' ts.
+	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+
 	src := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -591,6 +596,7 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
+	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1187,8 +1193,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	}
 }
 
-func (b *executorBuilder) buildApply(apply *plannercore.PhysicalApply) *NestedLoopApplyExec {
-	v := apply.PhysicalJoin
+func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopApplyExec {
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1211,14 +1216,14 @@ func (b *executorBuilder) buildApply(apply *plannercore.PhysicalApply) *NestedLo
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
 	e := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(b.ctx, apply.Schema(), v.ExplainID(), outerExec, innerExec),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec, innerExec),
 		innerExec:    innerExec,
 		outerExec:    outerExec,
 		outerFilter:  outerFilter,
 		innerFilter:  innerFilter,
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
-		outerSchema:  apply.OuterSchema,
+		outerSchema:  v.OuterSchema,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
@@ -1266,6 +1271,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
+	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1347,6 +1353,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	for id := range v.SelectPlan.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
+	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -2128,7 +2135,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		}
 	} else {
 		cmpResult := int64(-1)
-		if v.OrderBy[0].Desc {
+		if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
 			cmpResult = 1
 		}
 		processor = &rangeFrameWindowProcessor{
