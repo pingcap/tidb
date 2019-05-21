@@ -34,12 +34,12 @@ require (
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
-	github.com/pingcap/errors v0.11.1
+	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190422094118-d8535965f59b
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190327032727-3d8cb3a30d5d
+	github.com/pingcap/kvproto v0.0.0-20190517030054-ff2e03f6fdfe
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
-	github.com/pingcap/parser v0.0.0-20190429120706-c378059f7f42
+	github.com/pingcap/parser v0.0.0-20190521133604-4afa585be9a4
 	github.com/pingcap/pd v0.0.0-20190424024702-bd1e2496a669
 	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
 	github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330
@@ -73,5 +73,3 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/pingcap/parser => github.com/sundl123/parser v0.0.0-20190502064211-008dd423c005
