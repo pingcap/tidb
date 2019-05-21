@@ -112,7 +112,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 		}
 
 		select {
-		case r.results <- resultWithErr{result: resultSubset}:
+		case r.results <- result:
 		case <-r.closed:
 			// If selectResult called Close() already, make fetch goroutine exit.
 			return
