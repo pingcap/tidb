@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -143,8 +144,13 @@ type tikvStore struct {
 	kv        SafePointKV
 	safePoint uint64
 	spTime    time.Time
-	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
-	closed    chan struct{} // this is used to nofity when the store is closed
+	spMutex   sync.RWMutex // this is used to update safePoint and spTime
+
+	entrySizeLimit  int
+	bufferLenLimit  uint64
+	bufferSizeLimit int
+
+	closed chan struct{} // this is used to nofity when the store is closed
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -180,16 +186,19 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		return nil, errors.Trace(err)
 	}
 	store := &tikvStore{
-		clusterID:   pdClient.GetClusterID(context.TODO()),
-		uuid:        uuid,
-		oracle:      o,
-		client:      client,
-		pdClient:    pdClient,
-		regionCache: NewRegionCache(pdClient),
-		kv:          spkv,
-		safePoint:   0,
-		spTime:      time.Now(),
-		closed:      make(chan struct{}),
+		clusterID:       pdClient.GetClusterID(context.TODO()),
+		uuid:            uuid,
+		oracle:          o,
+		client:          client,
+		pdClient:        pdClient,
+		regionCache:     NewRegionCache(pdClient),
+		kv:              spkv,
+		safePoint:       0,
+		spTime:          time.Now(),
+		entrySizeLimit:  kv.TxnEntrySizeLimit,
+		bufferLenLimit:  atomic.LoadUint64(&kv.TxnEntryCountLimit),
+		bufferSizeLimit: kv.TxnTotalSizeLimit,
+		closed:          make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC

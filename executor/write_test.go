@@ -253,7 +253,7 @@ func (s *testSuite4) TestInsert(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	tk.MustExec("insert into t select cast(-1 as unsigned);")
 	tk.MustExec("insert into t value (-1.111);")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
 	tk.MustExec("insert into t value ('-1.111');")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
 	r = tk.MustQuery("select * from t;")
@@ -2040,119 +2040,91 @@ func (s *testSuite4) TestLoadDataOverflowBigintUnsigned(c *C) {
 
 func (s *testSuite4) TestBatchInsertDelete(c *C) {
 	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
-	defer func() {
-		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
-	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnEntryCountLimit, 100)
+	var limit4Test uint64 = 2000
+	atomic.StoreUint64(&kv.TxnEntryCountLimit, limit4Test)
+	store, err := mockstore.NewMockTikvStore()
+	atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
+	c.Assert(err, IsNil)
+	defer store.Close()
 
-	tk := testkit.NewTestKit(c, s.store)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists batch_insert")
-	tk.MustExec("create table batch_insert (c int)")
-	tk.MustExec("drop table if exists batch_insert_on_duplicate")
-	tk.MustExec("create table batch_insert_on_duplicate (id int primary key, c int)")
-	// Insert 10 rows.
-	tk.MustExec("insert into batch_insert values (1),(1),(1),(1),(1),(1),(1),(1),(1),(1)")
-	r := tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("10"))
-	// Insert 10 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("20"))
-	// Insert 20 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("40"))
-	// Insert 40 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("80"))
-	// Insert 80 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
-	// for on duplicate key
-	for i := 0; i < 160; i++ {
-		tk.MustExec(fmt.Sprintf("insert into batch_insert_on_duplicate values(%d, %d);", i, i))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int)")
+	tk.MustExec("drop table if exists t_ondup")
+	tk.MustExec("create table t_ondup (id int primary key, c int)")
+	// Prepare data for test.
+	tk.MustExec("set @@session.tidb_batch_insert=1")
+	tk.MustExec(fmt.Sprintf("set @@session.tidb_dml_batch_size=%d", limit4Test/2))
+	rows := make([]string, 0, limit4Test)
+	for i := 0; i < int(limit4Test*2); i++ {
+		rows = append(rows, "(1)")
 	}
-	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
-	r.Check(testkit.Rows("160"))
+	tk.MustExec(fmt.Sprintf("insert into t values %s", strings.Join(rows, ",")))
+	dupRows := make([]string, 0, limit4Test)
+	for i := 0; i < int(limit4Test*2); i++ {
+		dupRows = append(dupRows, fmt.Sprintf("(%d, %d)", i, i))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t_ondup values %s", strings.Join(dupRows, ",")))
+	tk.MustExec("set @@session.tidb_batch_insert=0")
 
 	// This will meet txn too large error.
-	_, err := tk.Exec("insert into batch_insert (c) select * from batch_insert;")
+	_, err = tk.Exec("insert into t (c) select * from t")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4000"))
 
 	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
-		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
+	_, err = tk.Exec(`insert into t_ondup select * from t_ondup on duplicate key update id =-values(id)`)
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue, Commentf("%v", err))
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
+	tk.MustQuery("select count(*) from t_ondup").Check(testkit.Rows("4000"))
 
-	// Change to batch inset mode and batch size to 50.
-	tk.MustExec("set @@session.tidb_batch_insert=1;")
-	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
+	// Change to batch insert mode and the batch size.
+	tk.MustExec("set @@session.tidb_batch_insert=1")
+	tk.MustExec(fmt.Sprintf("set @@session.tidb_dml_batch_size=%d", limit4Test/2))
 
-	// Enlarge the batch size to 150 which is larger than the txn limitation (100).
+	tk.MustExec("insert into t (c) select * from t")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("8000"))
+
+	tk.MustExec(`insert into t_ondup select * from t_ondup on duplicate key update id=-values(id)`)
+	tk.MustQuery("select count(*) from t_ondup").Check(testkit.Rows("4000"))
+
+	// Enlarge the batch size which is larger than the txn limitation.
 	// So the insert will meet error.
-	tk.MustExec("set @@session.tidb_dml_batch_size=150;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
+	tk.MustExec(fmt.Sprintf("set @@session.tidb_dml_batch_size=%d", limit4Test*2))
+	_, err = tk.Exec("insert into t (c) select * from t")
+	c.Assert(err, NotNil)
+	c.Assert(executor.ErrBatchInsertFail.Equal(err), IsTrue, Commentf("%v", err))
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("8000"))
+
+	// Set it back.
+	tk.MustExec(fmt.Sprintf("set @@session.tidb_dml_batch_size=%d", limit4Test/2))
+	// BachInsert mode will not work in transition.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t (c) select * from t")
+	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-	// Set it back to 50.
-	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
-
-	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
-		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	c.Assert(err, IsNil)
-	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
-	r.Check(testkit.Rows("160"))
-
-	// Disable BachInsert mode in transition.
-	tk.MustExec("begin;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	tk.MustExec("rollback;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-
-	tk.MustExec("drop table if exists com_batch_insert")
-	tk.MustExec("create table com_batch_insert (c int)")
-	sql := "insert into com_batch_insert values "
-	values := make([]string, 0, 200)
-	for i := 0; i < 200; i++ {
-		values = append(values, "(1)")
-	}
-	sql = sql + strings.Join(values, ",")
-	tk.MustExec(sql)
-	tk.MustQuery("select count(*) from com_batch_insert;").Check(testkit.Rows("200"))
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("8000"))
 
 	// Test case for batch delete.
 	// This will meet txn too large error.
-	_, err = tk.Exec("delete from batch_insert;")
+	_, err = tk.Exec("delete from t")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-	// Enable batch delete and set batch size to 50.
-	tk.MustExec("set @@session.tidb_batch_delete=on;")
-	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
-	tk.MustExec("delete from batch_insert;")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("8000"))
+	// Enable batch delete and set the batch size.
+	tk.MustExec("set @@session.tidb_batch_delete=1")
+	tk.MustExec(fmt.Sprintf("set @@session.tidb_dml_batch_size=%d", limit4Test/2))
+	tk.MustExec("delete from t")
 	// Make sure that all rows are gone.
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite4) TestNullDefault(c *C) {

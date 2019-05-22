@@ -169,7 +169,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			keys = append(keys, k)
 		}
 		entrySize := len(k) + len(v)
-		if entrySize > kv.TxnEntrySizeLimit {
+		if entrySize > c.store.entrySizeLimit {
 			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
 		}
 		size += entrySize
@@ -220,8 +220,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		mutation.asserted = true
 	}
 
-	entrylimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
-	if len(keys) > int(entrylimit) || size > kv.TxnTotalSizeLimit {
+	if len(keys) > int(c.store.bufferLenLimit) || size > c.store.bufferSizeLimit {
 		return kv.ErrTxnTooLarge
 	}
 	const logEntryCount = 10000
