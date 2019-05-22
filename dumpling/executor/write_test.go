@@ -2220,6 +2220,18 @@ func (s *testBypassSuite) TestLatch(c *C) {
 	tk1.MustExec("truncate table t")
 	fn()
 	tk1.MustExec("commit")
+
+	// Test the error type of latch and it could be retry if TiDB enable the retry.
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set id = id + 1")
+	tk2.MustExec("update t set id = id + 1")
+	_, err = tk1.Exec("commit")
+	c.Assert(kv.ErrWriteConflictInTiDB.Equal(err), IsTrue)
+
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk1.MustExec("update t set id = id + 1")
+	tk2.MustExec("update t set id = id + 1")
+	tk1.MustExec("commit")
 }
 
 // TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
