@@ -1740,8 +1740,14 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	}
 	if !s.sessionVars.IsAutocommit() {
 		txnConf := config.GetGlobalConfig().PessimisticTxn
-		if txnConf.Enable && (txnConf.Default || s.sessionVars.PessimisticLock) {
-			s.sessionVars.TxnCtx.IsPessimistic = true
+		if txnConf.Enable {
+			txnMode := s.sessionVars.TxnMode
+			if txnMode == "" && txnConf.Default {
+				txnMode = ast.Pessimistic
+			}
+			if txnMode == ast.Pessimistic {
+				s.sessionVars.TxnCtx.IsPessimistic = true
+			}
 		}
 	}
 }

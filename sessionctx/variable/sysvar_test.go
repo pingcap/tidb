@@ -45,3 +45,17 @@ func (*testSysVarSuite) TestSysVar(c *C) {
 	c.Assert(f.Value, Equals, "4000")
 
 }
+
+func (*testSysVarSuite) TestTxnMode(c *C) {
+	seVar := NewSessionVars()
+	c.Assert(seVar, NotNil)
+	c.Assert(seVar.TxnMode, Equals, "")
+	err := seVar.setTxnMode("pessimistic")
+	c.Assert(err, IsNil)
+	err = seVar.setTxnMode("optimistic")
+	c.Assert(err, IsNil)
+	err = seVar.setTxnMode("")
+	c.Assert(err, IsNil)
+	err = seVar.setTxnMode("something else")
+	c.Assert(err, NotNil)
+}
