@@ -364,7 +364,6 @@ func NewSessionVars() *SessionVars {
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
 		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
-		LowResolutionTSO:          false,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
