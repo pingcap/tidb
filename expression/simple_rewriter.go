@@ -106,8 +106,8 @@ func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, sche
 }
 
 func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
-	col := sr.schema.FindColumnByName(nodeColName.Name.Name.L)
-	if col != nil {
+	col, err := sr.schema.FindColumn(nodeColName.Name)
+	if col != nil && err == nil {
 		return col, nil
 	}
 	return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")
