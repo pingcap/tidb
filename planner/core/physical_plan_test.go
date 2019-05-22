@@ -41,6 +41,7 @@ type testPlanSuite struct {
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockTable()})
 	s.Parser = parser.New()
+	s.Parser.EnableWindowFunc(true)
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
@@ -200,6 +201,14 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		{
 			sql:  "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
 			best: "UnionAll{Dual->Projection->Dual->Projection->Dual->Projection}->HashAgg->Sort->Sort",
+		},
+		{
+			sql:  "select * from (select *, NULL as xxx from t) t order by xxx",
+			best: "TableReader(Table(t))->Projection",
+		},
+		{
+			sql:  "select lead(a, 1) over (partition by null) as c from t",
+			best: "TableReader(Table(t))->Window(lead(test.t.a, 1) over())->Projection",
 		},
 	}
 	for i, tt := range tests {
