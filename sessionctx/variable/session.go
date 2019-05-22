@@ -429,7 +429,6 @@ func NewSessionVars() *SessionVars {
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
-		LowResolutionTSO:            false,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
