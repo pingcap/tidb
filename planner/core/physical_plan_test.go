@@ -365,12 +365,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		// Test Index Join + DoubleRead.
 		{
-			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
+			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.c",
 			best: "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.c)",
 		},
 		// Test Index Join + SingleRead.
 		{
-			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.a from t t1, t t2 where t1.a = t2.c",
+			sql:  "select /*+ TIDB_INLJ(t2) */ t1.a , t2.a from t t1, t t2 where t1.a = t2.c",
 			best: "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t1.a,test.t2.c)->Projection",
 		},
 		// Test Index Join + Order by.
@@ -432,6 +432,26 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		{
 			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.a=t2.a and t2.a in (1, 2)",
 			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([in(test.t2.a, 1, 2)]))}(test.t1.a,test.t2.a)",
+		},
+		{
+			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.c and t1.b=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
+			best: "IndexJoin{TableReader(Table(t)->Sel([eq(test.t1.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}",
+		},
+		{
+			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.b and t1.c=1 and t2.c=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
+			best: "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(test.t1.b,test.t2.b)",
+		},
+		{
+			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c > t1.d-10 and t2.c < t1.d+10",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}",
+		},
+		{
+			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b = t2.c and t2.c=1 and t2.d=2 and t2.e=4",
+			best: "LeftHashJoin{TableReader(Table(t)->Sel([eq(test.t1.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1 2 4,1 2 4]], Table(t))}",
+		},
+		{
+			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c=1 and t2.d=1 and t2.e > 10 and t2.e < 20",
+			best: "LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[(1 1 10,1 1 20)], Table(t))}",
 		},
 	}
 	for i, tt := range tests {
