@@ -407,12 +407,13 @@ func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originB
 	// Split the bucket.
 	bounds := b.getBoundaries(newNumBkts + 1)
 	bkts := make([]bucket, 0, len(bounds)-1)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	for i := 1; i < len(bounds); i++ {
 		newBkt := bucket{&bounds[i-1], bounds[i].Copy(), 0, 0}
 		// get bucket count
 		_, ratio := getOverlapFraction(Feedback{b.lower, b.upper, int64(originBucketCount), 0}, newBkt)
 		countInNewBkt := originBucketCount * ratio
-		countInNewBkt = b.refineBucketCount(newBkt, countInNewBkt)
+		countInNewBkt = b.refineBucketCount(sc, newBkt, countInNewBkt)
 		// do not split if the count of result bucket is too small.
 		if countInNewBkt < minBucketFraction*totalCount {
 			bounds[i] = bounds[i-1]
@@ -454,11 +455,71 @@ func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
 	return overlap, ratio
 }
 
+// mergeFullyContainedFeedback merges the max fraction of non-overlapped feedbacks that are fully contained in the bucket.
+func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContext, bkt bucket) (float64, float64, bool) {
+	var feedbacks []Feedback
+	// Get all the fully contained feedbacks.
+	for _, fb := range b.feedback {
+		res, err := outOfRange(sc, bkt.Lower, bkt.Upper, fb.Lower)
+		if res != 0 || err != nil {
+			return 0, 0, false
+		}
+		res, err = outOfRange(sc, bkt.Lower, bkt.Upper, fb.Upper)
+		if res != 0 || err != nil {
+			return 0, 0, false
+		}
+		feedbacks = append(feedbacks, fb)
+	}
+	if len(feedbacks) == 0 {
+		return 0, 0, false
+	}
+	// Sort feedbacks by end point and start point incrementally, then pick every feedback that is not overlapped
+	// with the previous chosen feedbacks.
+	var existsErr bool
+	sort.Slice(feedbacks, func(i, j int) bool {
+		res, err := feedbacks[i].Upper.CompareDatum(sc, feedbacks[j].Upper)
+		if err != nil {
+			existsErr = true
+		}
+		if existsErr || res != 0 {
+			return res < 0
+		}
+		res, err = feedbacks[i].Lower.CompareDatum(sc, feedbacks[j].Lower)
+		if err != nil {
+			existsErr = true
+		}
+		return res < 0
+	})
+	if existsErr {
+		return 0, 0, false
+	}
+	previousEnd := &types.Datum{}
+	var sumFraction, sumCount float64
+	for _, fb := range feedbacks {
+		res, err := previousEnd.CompareDatum(sc, fb.Lower)
+		if err != nil {
+			return 0, 0, false
+		}
+		if res <= 0 {
+			fraction, _ := getOverlapFraction(fb, bkt)
+			sumFraction += fraction
+			sumCount += float64(fb.Count)
+			previousEnd = fb.Upper
+		}
+	}
+	return sumFraction, sumCount, true
+}
+
 // refineBucketCount refine the newly split bucket count. It uses the feedback that overlaps most
 // with the bucket to get the bucket count.
-func (b *BucketFeedback) refineBucketCount(bkt bucket, defaultCount float64) float64 {
+func (b *BucketFeedback) refineBucketCount(sc *stmtctx.StatementContext, bkt bucket, defaultCount float64) float64 {
 	bestFraction := minBucketFraction
 	count := defaultCount
+	sumFraction, sumCount, ok := b.mergeFullyContainedFeedback(sc, bkt)
+	if ok && sumFraction > bestFraction {
+		bestFraction = sumFraction
+		count = sumCount / sumFraction
+	}
 	for _, fb := range b.feedback {
 		fraction, ratio := getOverlapFraction(fb, bkt)
 		// choose the max overlap fraction
