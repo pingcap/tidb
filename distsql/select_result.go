@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -80,6 +83,12 @@ func (r *selectResult) Fetch(ctx context.Context) {
 func (r *selectResult) fetch(ctx context.Context) {
 	startTime := time.Now()
 	defer func() {
+		if c := recover(); c != nil {
+			err := fmt.Errorf("%v", c)
+			logutil.Logger(ctx).Error("OOM", zap.Error(err))
+			r.results <- resultWithErr{err: err}
+		}
+
 		close(r.results)
 		duration := time.Since(startTime)
 		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/schemautil"
@@ -78,6 +79,63 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		Args:       []interface{}{dbInfo},
 	}
 
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
+	// Resolve target charset and collation from options.
+	var toCharset, toCollate string
+	for _, val := range stmt.Options {
+		switch val.Tp {
+		case ast.DatabaseOptionCharset:
+			if toCharset == "" {
+				toCharset = val.Value
+			} else if toCharset != val.Value {
+				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, val.Value)
+			}
+		case ast.DatabaseOptionCollate:
+			info, err := charset.GetCollationByName(val.Value)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if toCharset == "" {
+				toCharset = info.CharsetName
+			} else if toCharset != info.CharsetName {
+				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, info.CharsetName)
+			}
+			toCollate = info.Name
+		}
+	}
+	if toCollate == "" {
+		if toCollate, err = charset.GetDefaultCollation(toCharset); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// Check if need to change charset/collation.
+	dbName := model.NewCIStr(stmt.Name)
+	is := d.GetInformationSchema(ctx)
+	dbInfo, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
+		return nil
+	}
+
+	// Check the current TiDB limitations.
+	if err = modifiableCharsetAndCollation(toCharset, toCollate, dbInfo.Charset, dbInfo.Collate); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Do the DDL job.
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionModifySchemaCharsetAndCollate,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{toCharset, toCollate},
+	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -937,6 +995,12 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	return errors.Trace(err)
 }
 
+// checkTableInfoValid uses to check table info valid. This is used to validate table info.
+func checkTableInfoValid(tblInfo *model.TableInfo) error {
+	_, err := tables.TableFromMeta(nil, tblInfo)
+	return err
+}
+
 func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) model.TableInfo {
 	tblInfo := *referTblInfo
 	// Check non-public column and adjust column offset.
@@ -1064,6 +1128,13 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		}
 		tbInfo.Partition = pi
 	}
+
+	tbInfo.State = model.StatePublic
+	err = checkTableInfoValid(tbInfo)
+	if err != nil {
+		return err
+	}
+	tbInfo.State = model.StateNone
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

@@ -71,6 +71,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
 		p.checkCreateDatabaseGrammar(node)
+	case *ast.AlterDatabaseStmt:
+		p.checkAlterDatabaseGrammar(node)
 	case *ast.DropDatabaseStmt:
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
@@ -250,6 +252,13 @@ func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
+		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+	}
+}
+
+func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
+	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
+	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
