@@ -1577,6 +1577,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
 		IsLocal:     ld.IsLocal,
+		OnDuplicate: ld.OnDuplicate,
 		Path:        ld.Path,
 		Table:       ld.Table,
 		Columns:     ld.Columns,
