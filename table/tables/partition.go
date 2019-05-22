@@ -220,7 +220,13 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 
 // GetPartition returns a Table, which is actually a partition.
 func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
-	return t.partitions[pid]
+	// Attention, can't simply use `return t.partitions[pid]` here.
+	// Because A nil of type *partition is a kind of `table.PhysicalTable`
+	p, ok := t.partitions[pid]
+	if !ok {
+		return nil
+	}
+	return p
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.

@@ -545,8 +545,8 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 	return
 }
 
-func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse) (exit bool) {
-	if worker.memTracker != nil {
+func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
+	if worker.memTracker != nil && checkOOM {
 		worker.memTracker.Consume(int64(resp.MemSize()))
 	}
 	select {
@@ -607,12 +607,24 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
 func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh chan<- *copResponse) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(context.Background()).Error("copIteratorWork meet panic",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
+			resp := &copResponse{err: errors.Errorf("%v", r)}
+			// if panic has happened, set checkOOM to false to avoid another panic.
+			worker.sendToRespCh(resp, task.respChan, false)
+		}
+	}()
+
 	remainTasks := []*copTask{task}
 	for len(remainTasks) > 0 {
 		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
-			worker.sendToRespCh(resp, respCh)
+			worker.sendToRespCh(resp, respCh, true)
 			return
 		}
 		if len(tasks) > 0 {
@@ -803,7 +815,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, resp *copRespo
 			}
 		}
 	}
-	worker.sendToRespCh(resp, ch)
+	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
 }
 

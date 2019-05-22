@@ -5021,6 +5021,14 @@ func (b *builtinPeriodDiffSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, errors.Trace(err)
 	}
 
+	if !validPeriod(p1) {
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("period_diff")
+	}
+
+	if !validPeriod(p2) {
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("period_diff")
+	}
+
 	return int64(period2Month(uint64(p1)) - period2Month(uint64(p2))), false, nil
 }
 
