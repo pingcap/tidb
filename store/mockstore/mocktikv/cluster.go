@@ -97,6 +97,18 @@ func (c *Cluster) GetStore(storeID uint64) *metapb.Store {
 	return nil
 }
 
+// GetAllStores returns all Stores' meta.
+func (c *Cluster) GetAllStores() []*metapb.Store {
+	c.RLock()
+	defer c.RUnlock()
+
+	stores := make([]*metapb.Store, 0, len(c.stores))
+	for _, store := range c.stores {
+		stores = append(stores, proto.Clone(store.meta).(*metapb.Store))
+	}
+	return stores
+}
+
 // StopStore stops a store with storeID.
 func (c *Cluster) StopStore(storeID uint64) {
 	c.Lock()
@@ -417,7 +429,7 @@ func (c *Cluster) firstStoreID() uint64 {
 
 // getRegionsCoverRange gets regions in the cluster that has intersection with [start, end).
 func (c *Cluster) getRegionsCoverRange(start, end MvccKey) []*Region {
-	var regions []*Region
+	regions := make([]*Region, 0, len(c.regions))
 	for _, region := range c.regions {
 		onRight := bytes.Compare(end, region.Meta.StartKey) <= 0
 		onLeft := bytes.Compare(region.Meta.EndKey, start) <= 0

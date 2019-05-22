@@ -101,6 +101,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
 		p.checkCreateDatabaseGrammar(node)
+	case *ast.AlterDatabaseStmt:
+		p.checkAlterDatabaseGrammar(node)
 	case *ast.DropDatabaseStmt:
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
@@ -111,15 +113,26 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		return in, true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
-	case *ast.AdminStmt:
-		// The specified table in admin restore syntax maybe already been dropped.
-		// So skip check table name here, otherwise, admin restore table [table_name] syntax will return
-		// table not exists error. But admin restore is use to restore the dropped table. So skip children here.
-		return in, node.Tp == ast.AdminRestoreTable
+	case *ast.CreateBindingStmt:
+		p.checkBindGrammar(node)
+	case *ast.RecoverTableStmt:
+		// The specified table in recover table statement maybe already been dropped.
+		// So skip check table name here, otherwise, recover table [table_name] syntax will return
+		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
+		return in, true
 	default:
 		p.flag &= ^parentIsJoin
 	}
 	return in, p.err != nil
+}
+
+func (p *preprocessor) checkBindGrammar(createBindingStmt *ast.CreateBindingStmt) {
+	originSQL := parser.Normalize(createBindingStmt.OriginSel.(*ast.SelectStmt).Text())
+	hintedSQL := parser.Normalize(createBindingStmt.HintedSel.(*ast.SelectStmt).Text())
+
+	if originSQL != hintedSQL {
+		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
+	}
 }
 
 func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
@@ -313,6 +326,13 @@ func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) 
 	}
 }
 
+func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
+	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
+	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
+		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+	}
+}
+
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
@@ -328,10 +348,15 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
-			p.err = errors.Trace(err)
+			p.err = err
 			return
 		}
-		countPrimaryKey += isPrimary(colDef.Options)
+		isPrimary, err := checkColumnOptions(colDef.Options)
+		if err != nil {
+			p.err = err
+			return
+		}
+		countPrimaryKey += isPrimary
 		if countPrimaryKey > 1 {
 			p.err = infoschema.ErrMultiplePriKey
 			return
@@ -428,13 +453,24 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]inter
 	return nil
 }
 
-func isPrimary(ops []*ast.ColumnOption) int {
+func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
+	isPrimary, isGenerated, isStored := 0, 0, false
+
 	for _, op := range ops {
-		if op.Tp == ast.ColumnOptionPrimaryKey {
-			return 1
+		switch op.Tp {
+		case ast.ColumnOptionPrimaryKey:
+			isPrimary = 1
+		case ast.ColumnOptionGenerated:
+			isGenerated = 1
+			isStored = op.Stored
 		}
 	}
-	return 0
+
+	if isPrimary > 0 && isGenerated > 0 && !isStored {
+		return isPrimary, ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
+	}
+
+	return isPrimary, nil
 }
 
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
@@ -559,7 +595,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		}
 		err := ddl.IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, tp.Charset)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		if tp.Decimal > mysql.MaxFloatingTypeScale {
@@ -666,7 +702,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
-		p.err = errors.Trace(err)
+		p.err = err
 		return
 	}
 	tn.TableInfo = table.Meta()

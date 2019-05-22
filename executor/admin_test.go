@@ -44,15 +44,6 @@ func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
 	result.Check(testkit.Rows("-1 hi 4", "2 cd 2"))
 }
 
-func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
-	for _, idx := range indices {
-		if idx.Name.L == idxName {
-			return idx
-		}
-	}
-	return nil
-}
-
 func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -91,7 +82,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
-	idxInfo := findIndexByName("c2", tblInfo.Indices)
+	idxInfo := tblInfo.FindIndexByName("c2")
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	sc := s.ctx.GetSessionVars().StmtCtx
 	txn, err := s.store.Begin()
@@ -187,7 +178,7 @@ func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
-	idxInfo := findIndexByName("primary", tblInfo.Indices)
+	idxInfo := tblInfo.FindIndexByName("primary")
 	c.Assert(idxInfo, NotNil)
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 
@@ -244,9 +235,9 @@ func (s *testSuite2) TestAdminCleanupIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
-	idxInfo2 := findIndexByName("c2", tblInfo.Indices)
+	idxInfo2 := tblInfo.FindIndexByName("c2")
 	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
-	idxInfo3 := findIndexByName("c3", tblInfo.Indices)
+	idxInfo3 := tblInfo.FindIndexByName("c3")
 	indexOpr3 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
 
 	txn, err := s.store.Begin()
@@ -317,7 +308,7 @@ func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
-	idxInfo := findIndexByName("primary", tblInfo.Indices)
+	idxInfo := tblInfo.FindIndexByName("primary")
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 
 	txn, err := s.store.Begin()
@@ -365,9 +356,9 @@ func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
-	idxInfo1 := findIndexByName("c1", tblInfo.Indices)
+	idxInfo1 := tblInfo.FindIndexByName("c1")
 	indexOpr1 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo1)
-	idxInfo2 := findIndexByName("c2", tblInfo.Indices)
+	idxInfo2 := tblInfo.FindIndexByName("c2")
 	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
 
 	txn, err := s.store.Begin()
@@ -514,6 +505,16 @@ func (s *testSuite1) TestAdminCheckTable(c *C) {
 	tk.MustExec(`alter table t1 add column b timestamp not null;`)
 	tk.MustExec(`alter table t1 add index(b);`)
 	tk.MustExec(`admin check table t1;`)
+
+	// Test for index with change decimal precision.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1 (a decimal(2,1), index(a))`)
+	tk.MustExec(`insert into t1 set a='1.9'`)
+	_, err = tk.Exec(`alter table t1 modify column a decimal(3,2);`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify decimal column precision")
+	tk.MustExec(`delete from t1;`)
+	tk.MustExec(`admin check table t1;`)
 }
 
 func (s *testSuite1) TestAdminCheckPrimaryIndex(c *C) {
@@ -544,7 +545,7 @@ func (s *testSuite2) TestAdminCheckWithSnapshot(c *C) {
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
-	idxInfo := findIndexByName("a", tblInfo.Indices)
+	idxInfo := tblInfo.FindIndexByName("a")
 	idxOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)

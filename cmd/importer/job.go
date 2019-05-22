@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pingcap/errors"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 func addJobs(jobCount int, jobChan chan struct{}) {
@@ -33,24 +33,24 @@ func addJobs(jobCount int, jobChan chan struct{}) {
 func doInsert(table *table, db *sql.DB, count int) {
 	sqls, err := genRowDatas(table, count)
 	if err != nil {
-		log.Fatalf(errors.ErrorStack(err))
+		log.Fatal("generate data failed", zap.Error(err))
 	}
 
 	txn, err := db.Begin()
 	if err != nil {
-		log.Fatalf(errors.ErrorStack(err))
+		log.Fatal("begin failed", zap.Error(err))
 	}
 
 	for _, sql := range sqls {
 		_, err = txn.Exec(sql)
 		if err != nil {
-			log.Fatalf(errors.ErrorStack(err))
+			log.Fatal("exec failed", zap.Error(err))
 		}
 	}
 
 	err = txn.Commit()
 	if err != nil {
-		log.Fatalf(errors.ErrorStack(err))
+		log.Fatal("commit failed", zap.Error(err))
 	}
 }
 
@@ -96,6 +96,12 @@ func doProcess(table *table, dbs []*sql.DB, jobCount int, workerCount int, batch
 	start := time.Now()
 	go addJobs(jobCount, jobChan)
 
+	for _, col := range table.columns {
+		if col.incremental {
+			workerCount = 1
+			break
+		}
+	}
 	for i := 0; i < workerCount; i++ {
 		go doJob(table, dbs[i], batch, jobChan, doneChan)
 	}

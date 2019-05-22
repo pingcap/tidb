@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -67,26 +68,26 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
 func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, *RPCContext, error) {
-
-	// gofail: var tikvStoreSendReqResult string
-	// switch tikvStoreSendReqResult {
-	// case "timeout":
-	// 	 return nil, nil, errors.New("timeout")
-	// case "GCNotLeader":
-	// 	 if req.Type == tikvrpc.CmdGC {
-	//		 return &tikvrpc.Response{
-	//			 Type:   tikvrpc.CmdGC,
-	//			 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-	//		 }, nil, nil
-	//	 }
-	// case "GCServerIsBusy":
-	//	 if req.Type == tikvrpc.CmdGC {
-	//		 return &tikvrpc.Response{
-	//			 Type: tikvrpc.CmdGC,
-	//			 GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
-	//		 }, nil, nil
-	//	 }
-	// }
+	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
+		switch val.(string) {
+		case "timeout":
+			failpoint.Return(nil, nil, errors.New("timeout"))
+		case "GCNotLeader":
+			if req.Type == tikvrpc.CmdGC {
+				failpoint.Return(&tikvrpc.Response{
+					Type: tikvrpc.CmdGC,
+					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+				}, nil, nil)
+			}
+		case "GCServerIsBusy":
+			if req.Type == tikvrpc.CmdGC {
+				failpoint.Return(&tikvrpc.Response{
+					Type: tikvrpc.CmdGC,
+					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
+				}, nil, nil)
+			}
+		}
+	})
 
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
@@ -142,7 +143,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		}
 		return nil, true, nil
 	}
+	s.onSendSuccess(ctx)
 	return
+}
+
+func (s *RegionRequestSender) onSendSuccess(ctx *RPCContext) {
+	store := s.regionCache.getStoreByStoreID(ctx.Store.storeID)
+	store.markAccess(s.regionCache.notifyCheckCh, true)
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
@@ -162,7 +169,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	s.regionCache.DropStoreOnSendRequestFail(ctx, err)
+	s.regionCache.OnSendRequestFail(ctx, err)
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
@@ -219,7 +226,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.Logger(context.Background()).Warn("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
-		s.regionCache.ClearStoreByID(ctx.GetStoreID())
+		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
 		return true, nil
 	}
 
@@ -253,7 +260,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	logutil.Logger(context.Background()).Debug("tikv reports region error",
 		zap.Stringer("regionErr", regionErr),
 		zap.Stringer("ctx", ctx))
-	s.regionCache.DropRegion(ctx.Region)
+	s.regionCache.InvalidateCachedRegion(ctx.Region)
 	return false, nil
 }
 

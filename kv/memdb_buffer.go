@@ -56,7 +56,7 @@ func (m *memDbBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
 
 	err := i.Next()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return i, nil
 }
@@ -91,7 +91,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 		return errors.Trace(ErrCannotSetNilValue)
 	}
 	if len(k)+len(v) > m.entrySizeLimit {
-		return ErrEntryTooLarge.GenWithStack("entry too large, size: %d", len(k)+len(v))
+		return ErrEntryTooLarge.GenWithStackByArgs(m.entrySizeLimit, len(k)+len(v))
 	}
 
 	err := m.db.Put(k, v)

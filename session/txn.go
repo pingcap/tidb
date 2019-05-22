@@ -14,6 +14,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -21,12 +22,14 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -129,7 +132,7 @@ func (st *TxnState) changePendingToValid(txnCap int) error {
 	txn, err := future.wait()
 	if err != nil {
 		st.Transaction = nil
-		return errors.Trace(err)
+		return err
 	}
 	txn.SetCap(txnCap)
 	st.Transaction = txn
@@ -177,25 +180,27 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	}
 
 	// mockCommitError8942 is used for PR #8942.
-	// gofail: var mockCommitError8942 bool
-	// if mockCommitError8942 {
-	//	return kv.ErrRetryable
-	// }
+	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
 
 	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
-	// gofail: var mockCommitRetryForAutoID bool
-	// if mockCommitRetryForAutoID && !mockAutoIDRetry() {
-	//	enableMockAutoIDRetry()
-	//	return kv.ErrRetryable
-	// }
+	failpoint.Inject("mockCommitRetryForAutoID", func(val failpoint.Value) {
+		if val.(bool) && !mockAutoIDRetry() {
+			enableMockAutoIDRetry()
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
 
-	return errors.Trace(st.Transaction.Commit(ctx))
+	return st.Transaction.Commit(ctx)
 }
 
 // Rollback overrides the Transaction interface.
 func (st *TxnState) Rollback() error {
 	defer st.reset()
-	return errors.Trace(st.Transaction.Rollback())
+	return st.Transaction.Rollback()
 }
 
 func (st *TxnState) reset() {
@@ -214,7 +219,7 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 		}
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(val) == 0 {
 		return nil, kv.ErrNotExist
@@ -233,7 +238,7 @@ func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 			continue
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if len(val) != 0 {
 			bufferValues[i] = val
@@ -241,7 +246,7 @@ func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	}
 	storageValues, err := st.Transaction.BatchGet(shrinkKeys)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	for i, key := range keys {
 		if bufferValues[i] == nil {
@@ -266,11 +271,11 @@ func (st *TxnState) Delete(k kv.Key) error {
 func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.Iter(k, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	retrieverIt, err := st.Transaction.Iter(k, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
@@ -279,11 +284,11 @@ func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.IterReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	retrieverIt, err := st.Transaction.IterReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
@@ -300,6 +305,45 @@ func (st *TxnState) cleanup() {
 		}
 		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
+}
+
+// KeysNeedToLock returns the keys need to be locked.
+func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
+	keys := make([]kv.Key, 0, st.buf.Len())
+	if err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		if !keyNeedToLock(k, v) {
+			return nil
+		}
+		if mb := st.Transaction.GetMemBuffer(); mb != nil {
+			_, err1 := mb.Get(k)
+			if err1 == nil {
+				// Key is already in txn MemBuffer, must already been locked, we don't need to lock it again.
+				return nil
+			}
+		}
+		// The statement MemBuffer will be reused, so we must copy the key here.
+		keys = append(keys, append([]byte{}, k...))
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func keyNeedToLock(k, v []byte) bool {
+	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
+	if !isTableKey {
+		// meta key always need to lock.
+		return true
+	}
+	isDelete := len(v) == 0
+	if isDelete {
+		// only need to delete row key.
+		return k[10] == 'r'
+	}
+	isNonUniqueIndex := len(v) == 1 && v[0] == '0'
+	// Put row key and unique index need to lock.
+	return !isNonUniqueIndex
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
@@ -343,23 +387,10 @@ type txnFuture struct {
 	mockFail bool
 }
 
-// mockGetTSErrorInRetryOnce use to make sure gofail mockGetTSErrorInRetry only mock get TS error once.
-var mockGetTSErrorInRetryOnce = true
-
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	if tf.mockFail {
 		return nil, errors.New("mock get timestamp fail")
 	}
-
-	// mockGetTSErrorInRetry should wait mockCommitErrorOnce first, then will run into retry() logic.
-	// Then mockGetTSErrorInRetry will return retryable error when first retry.
-	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
-	// This may cause duplicate data to be written.
-	// gofail: var mockGetTSErrorInRetry bool
-	// if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockCommitErrorOnce {
-	//	 mockGetTSErrorInRetryOnce = false
-	//	 return nil, errors.Errorf("PD server timeout[try again later]")
-	// }
 
 	startTS, err := tf.future.Wait()
 	if err == nil {
@@ -391,23 +422,24 @@ func (s *session) StmtCommit() error {
 	st := &s.txn
 	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
+			if val.(bool) {
+				count++
+			}
+		})
 
-		// gofail: var mockStmtCommitError bool
-		// if mockStmtCommitError {
-		// 	count++
-		// }
 		if count > 3 {
 			return errors.New("mock stmt commit error")
 		}
 
 		if len(v) == 0 {
-			return errors.Trace(st.Transaction.Delete(k))
+			return st.Transaction.Delete(k)
 		}
-		return errors.Trace(st.Transaction.Set(k, v))
+		return st.Transaction.Set(k, v)
 	})
 	if err != nil {
 		st.doNotCommit = err
-		return errors.Trace(err)
+		return err
 	}
 
 	// Need to flush binlog.

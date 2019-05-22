@@ -354,7 +354,7 @@ func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
-	var pairs []Pair
+	pairs := make([]Pair, 0, len(ks))
 	for _, k := range ks {
 		v, err := mvcc.getValue(k, startTS, isoLevel)
 		if v == nil && err == nil {
@@ -498,6 +498,71 @@ func reverse(values []mvccValue) {
 	}
 }
 
+// PessimisticLock writes the pessimistic lock.
+func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS, forUpdateTS uint64, ttl uint64) []error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	anyError := false
+	batch := &leveldb.Batch{}
+	errs := make([]error, 0, len(mutations))
+	for _, m := range mutations {
+		err := pessimisticLockMutation(mvcc.db, batch, m, startTS, forUpdateTS, primary, ttl)
+		errs = append(errs, err)
+		if err != nil {
+			anyError = true
+		}
+	}
+	if anyError {
+		return errs
+	}
+	if err := mvcc.db.Write(batch, nil); err != nil {
+		return nil
+	}
+
+	return errs
+}
+
+func pessimisticLockMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS, forUpdateTS uint64, primary []byte, ttl uint64) error {
+	startKey := mvccEncode(mutation.Key, lockVer)
+	iter := newIterator(db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	dec := lockDecoder{
+		expectKey: mutation.Key,
+	}
+	ok, err := dec.Decode(iter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
+		if dec.lock.startTS != startTS {
+			return dec.lock.lockErr(mutation.Key)
+		}
+		return nil
+	}
+	if err = checkConflictValue(iter, mutation.Key, forUpdateTS); err != nil {
+		return err
+	}
+
+	lock := mvccLock{
+		startTS: startTS,
+		primary: primary,
+		op:      kvrpcpb.Op_PessimisticLock,
+		ttl:     ttl,
+	}
+	writeKey := mvccEncode(mutation.Key, lockVer)
+	writeValue, err := lock.MarshalBinary()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	batch.Put(writeKey, writeValue)
+	return nil
+}
+
 // Prewrite implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error {
 	mvcc.mu.Lock()
@@ -541,6 +606,25 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 	return errs
 }
 
+func checkConflictValue(iter *Iterator, key []byte, startTS uint64) error {
+	dec := valueDecoder{
+		expectKey: key,
+	}
+	ok, err := dec.Decode(iter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Note that it's a write conflict here, even if the value is a rollback one.
+	if ok && dec.value.commitTS >= startTS {
+		return &ErrConflict{
+			StartTS:    startTS,
+			ConflictTS: dec.value.commitTS,
+			Key:        key,
+		}
+	}
+	return nil
+}
+
 func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
 	startKey := mvccEncode(mutation.Key, lockVer)
 	iter := newIterator(db, &util.Range{
@@ -559,19 +643,15 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		if dec.lock.startTS != startTS {
 			return dec.lock.lockErr(mutation.Key)
 		}
-		return nil
-	}
-
-	dec1 := valueDecoder{
-		expectKey: mutation.Key,
-	}
-	ok, err = dec1.Decode(iter)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Note that it's a write conflict here, even if the value is a rollback one.
-	if ok && dec1.value.commitTS >= startTS {
-		return ErrRetryable("write conflict")
+		if dec.lock.op != kvrpcpb.Op_PessimisticLock {
+			return nil
+		}
+		// Overwrite the pessimistic lock.
+	} else {
+		err = checkConflictValue(iter, mutation.Key, startTS)
+		if err != nil {
+			return err
+		}
 	}
 
 	op := mutation.GetOp()
@@ -958,7 +1038,7 @@ func (mvcc *MVCCLevelDB) RawBatchGet(keys [][]byte) [][]byte {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
-	var values [][]byte
+	values := make([][]byte, 0, len(keys))
 	for _, key := range keys {
 		value, err := mvcc.db.Get(key, nil)
 		terror.Log(err)
