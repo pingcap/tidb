@@ -440,6 +440,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b = t2.c and t2.c=1 and t2.d=2 and t2.e=4",
 			best: "LeftHashJoin{TableReader(Table(t)->Sel([eq(test.t1.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1 2 4,1 2 4]], Table(t))}",
 		},
+		{
+			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c=1 and t2.d=1 and t2.e > 10 and t2.e < 20",
+			best: "LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[(1 1 10,1 1 20)], Table(t))}",
+		},
 	}
 	for i, tt := range tests {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)

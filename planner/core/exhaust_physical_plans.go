@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -482,29 +481,29 @@ type indexJoinBuildHelper struct {
 }
 
 func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column, outerJoinKeys []*expression.Column) string {
-	var builder strings.Builder
-	builder.WriteString("[")
-	accessConds := make([]string, 0, len(ijHelper.curPossibleUsedKeys)+len(ijHelper.chosenAccess))
+	buffer := bytes.NewBufferString("[")
+	isFirst := true
 	for idxOff, keyOff := range ijHelper.idxOff2KeyOff {
 		if keyOff == -1 {
 			continue
 		}
-		accessConds = append(accessConds, fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
-	}
-	for _, access := range ijHelper.chosenAccess {
-		accessConds = append(accessConds, fmt.Sprintf("%v", access))
-	}
-	isFirst := true
-	for _, cond := range accessConds {
 		if !isFirst {
-			builder.WriteString(" ")
+			buffer.WriteString(" ")
 		} else {
 			isFirst = false
 		}
-		builder.WriteString(cond)
+		buffer.WriteString(fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
 	}
-	builder.WriteString("]")
-	return builder.String()
+	for _, access := range ijHelper.chosenAccess {
+		if !isFirst {
+			buffer.WriteString(" ")
+		} else {
+			isFirst = false
+		}
+		buffer.WriteString(fmt.Sprintf("%v", access))
+	}
+	buffer.WriteString("]")
+	return buffer.String()
 }
 
 // constructInnerTableScan is specially used to construct the inner plan for PhysicalIndexJoin.
@@ -812,6 +811,9 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 	}
 	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
 	if lastColPos == len(idxCols) {
+		// If there's join key matched index column. Then choose hash join is always a better idea.
+		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1. And t2 has index(a, b).
+		//      If we don't have the following check, TiDB will build index join for this case.
 		if matchedKeyCnt <= 0 {
 			return nil
 		}
@@ -832,6 +834,12 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 	lastColAccess := ijHelper.buildLastColManager(lastPossibleCol, innerPlan, lastColManager)
 	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
 	if len(lastColAccess) == 0 {
+		// If there's join key matched index column. Then choose hash join is always a better idea.
+		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1 and t2.c > 10 and t2.c < 20. And t2 has index(a, b, c).
+		//      If we don't have the following check, TiDB will build index join for this case.
+		if matchedKeyCnt <= 0 {
+			return nil
+		}
 		colAccesses, colRemained := ranger.DetachCondsForColumn(ijHelper.join.ctx, rangeFilterCandidates, lastPossibleCol)
 		var ranges, nextColRange []*ranger.Range
 		var err error
