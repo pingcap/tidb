@@ -1258,7 +1258,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 }
 
 func (b *executorBuilder) buildSplitIndexRegion(v *plannercore.SplitIndexRegion) Executor {
-	base := newBaseExecutor(b.ctx, nil, v.ExplainID())
+	base := newBaseExecutor(b.ctx, nil, v.ExplainID(), b.planKey)
 	base.initCap = chunk.ZeroCapacity
 	return &SplitIndexRegionExec{
 		baseExecutor: base,
@@ -2156,7 +2156,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 }
 
 func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {
-	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), b.planKey)
 	base.initCap = chunk.ZeroCapacity
 
 	e := &SQLBindExec{

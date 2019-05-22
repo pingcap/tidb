@@ -228,7 +228,6 @@ func (e *ExecuteExec) Build(b *executorBuilder) error {
 	if err != nil {
 		return err
 	}
-	b.planKey = e.plan.CacheKey() //HERE: check the caller logic when creating the arg of executorBuilder
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))

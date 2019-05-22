@@ -144,11 +144,13 @@ func (e *baseExecutor) getHash() []byte {
 	return computeHashImpl(e.hashBuf, e.id, e.seqNo, e.noChunksUsed)
 }
 
-func computeHashImpl(hashBuf []byte, id string, seqNo int, noChunksUsed int) []byte {
-	var (
-		eid        = hack.Slice(id)
-		bufferSize = len(eid) + 2*8
-	)
+func computeHashImpl(hashBuf []byte, id fmt.Stringer, seqNo int, noChunksUsed int) []byte {
+
+	var eid []byte
+	if id != nil {
+		eid = hack.Slice(id.String())
+	}
+	var bufferSize = len(eid) + 2*8
 	if hashBuf == nil || cap(hashBuf) < bufferSize {
 		hashBuf = make([]byte, bufferSize)
 	}

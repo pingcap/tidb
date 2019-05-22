@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -65,7 +66,7 @@ type PointGetExecutor struct {
 	snapshot kv.Snapshot
 	done     bool
 
-	id           string
+	id           fmt.Stringer
 	seqNo        int
 	noChunksUsed int
 	hashBuf      []byte
