@@ -2849,45 +2849,32 @@ func getWindowName(name string) string {
 func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, spec *ast.WindowSpec, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []property.Item, []expression.Expression, error) {
 	b.optFlag |= flagEliminateProjection
 
-	var items []*ast.ByItem
-	lenPartition := 0
+	var partitionItems, orderItems []*ast.ByItem
 	if spec.PartitionBy != nil {
-		items = append(items, spec.PartitionBy.Items...)
-		lenPartition = len(spec.PartitionBy.Items)
+		partitionItems = spec.PartitionBy.Items
 	}
 	if spec.OrderBy != nil {
-		items = append(items, spec.OrderBy.Items...)
-	}
-	projLen := len(p.Schema().Columns) + len(items) + len(args)
-	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, projLen)}.Init(b.ctx)
-	schema := expression.NewSchema(make([]*expression.Column, 0, projLen)...)
-	for _, col := range p.Schema().Columns {
-		proj.Exprs = append(proj.Exprs, col)
-		schema.Append(col)
+		orderItems = spec.OrderBy.Items
 	}
 
-	transformer := &itemTransformer{}
-	propertyItems := make([]property.Item, 0, len(items))
-	for _, item := range items {
-		newExpr, _ := item.Expr.Accept(transformer)
-		item.Expr = newExpr.(ast.ExprNode)
-		it, np, err := b.rewrite(item.Expr, p, aggMap, true)
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
-		p = np
-		if col, ok := it.(*expression.Column); ok {
-			propertyItems = append(propertyItems, property.Item{Col: col, Desc: item.Desc})
-			continue
-		}
-		proj.Exprs = append(proj.Exprs, it)
-		col := &expression.Column{
-			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), schema.Len())),
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  it.GetType(),
-		}
-		schema.Append(col)
-		propertyItems = append(propertyItems, property.Item{Col: col, Desc: item.Desc})
+	projLen := len(p.Schema().Columns) + len(partitionItems) + len(orderItems) + len(args)
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, projLen)}.Init(b.ctx)
+	proj.SetSchema(expression.NewSchema(make([]*expression.Column, 0, projLen)...))
+	for _, col := range p.Schema().Columns {
+		proj.Exprs = append(proj.Exprs, col)
+		proj.schema.Append(col)
+	}
+
+	propertyItems := make([]property.Item, 0, len(partitionItems)+len(orderItems))
+	var err error
+	p, propertyItems, err = b.buildByItemsForWindow(p, proj, partitionItems, propertyItems, aggMap)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	lenPartition := len(propertyItems)
+	p, propertyItems, err = b.buildByItemsForWindow(p, proj, orderItems, propertyItems, aggMap)
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
 
 	newArgList := make([]expression.Expression, 0, len(args))
@@ -2904,17 +2891,51 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, spec *ast.WindowSp
 		}
 		proj.Exprs = append(proj.Exprs, newArg)
 		col := &expression.Column{
-			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), schema.Len())),
+			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), proj.schema.Len())),
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  newArg.GetType(),
 		}
-		schema.Append(col)
+		proj.schema.Append(col)
 		newArgList = append(newArgList, col)
 	}
 
-	proj.SetSchema(schema)
 	proj.SetChildren(p)
 	return proj, propertyItems[:lenPartition], propertyItems[lenPartition:], newArgList, nil
+}
+
+func (b *PlanBuilder) buildByItemsForWindow(
+	p LogicalPlan,
+	proj *LogicalProjection,
+	items []*ast.ByItem,
+	retItems []property.Item,
+	aggMap map[*ast.AggregateFuncExpr]int,
+) (LogicalPlan, []property.Item, error) {
+	transformer := &itemTransformer{}
+	for _, item := range items {
+		newExpr, _ := item.Expr.Accept(transformer)
+		item.Expr = newExpr.(ast.ExprNode)
+		it, np, err := b.rewrite(item.Expr, p, aggMap, true)
+		if err != nil {
+			return nil, nil, err
+		}
+		p = np
+		if it.GetType().Tp == mysql.TypeNull {
+			continue
+		}
+		if col, ok := it.(*expression.Column); ok {
+			retItems = append(retItems, property.Item{Col: col, Desc: item.Desc})
+			continue
+		}
+		proj.Exprs = append(proj.Exprs, it)
+		col := &expression.Column{
+			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), proj.schema.Len())),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  it.GetType(),
+		}
+		proj.schema.Append(col)
+		retItems = append(retItems, property.Item{Col: col, Desc: item.Desc})
+	}
+	return p, retItems, nil
 }
 
 // buildWindowFunctionFrameBound builds the bounds of window function frames.

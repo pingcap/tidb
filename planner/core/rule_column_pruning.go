@@ -145,6 +145,8 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 				continue
 			}
 			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
+		} else if ls.ByItems[i].Expr.GetType().Tp == mysql.TypeNull {
+			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
 		} else {
 			parentUsedCols = append(parentUsedCols, cols...)
 		}

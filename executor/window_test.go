@@ -146,6 +146,8 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 	result = tk.MustQuery("SELECT CUME_DIST() OVER (ORDER BY null);")
 	result.Check(testkit.Rows("1"))
 
+	tk.MustQuery("select lead(a) over(partition by null) from t").Check(testkit.Rows("1", "2", "2", "<nil>"))
+
 	tk.MustExec("create table issue10494(a INT, b CHAR(1), c DATETIME, d BLOB)")
 	tk.MustExec("insert into issue10494 VALUES (1,'x','2010-01-01','blob'), (2, 'y', '2011-01-01', ''), (3, 'y', '2012-01-01', ''), (4, 't', '2012-01-01', 'blob'), (5, null, '2013-01-01', null)")
 	tk.MustQuery("SELECT a, b, c, SUM(a) OVER (RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM issue10494 order by a;").Check(
