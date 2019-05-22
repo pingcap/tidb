@@ -16,6 +16,7 @@ package infoschema
 import (
 	"bufio"
 	"context"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -77,19 +78,24 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 			logutil.Logger(context.Background()).Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
 		}
 	}()
-
-	return ParseSlowLog(tz, bufio.NewScanner(file))
+	return ParseSlowLog(tz, bufio.NewReader(file))
 }
 
 // ParseSlowLog exports for testing.
 // TODO: optimize for parse huge log-file.
-func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, error) {
+func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, error) {
 	var rows [][]types.Datum
 	startFlag := false
 	var st *slowQueryTuple
-	var err error
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		lineByte, err := getOneLine(reader)
+		if err != nil {
+			if err == io.EOF {
+				return rows, nil
+			}
+			return rows, err
+		}
+		line := string(hack.String(lineByte))
 		// Check slow log entry start flag.
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
@@ -124,13 +130,32 @@ func ParseSlowLog(tz *time.Location, scanner *bufio.Scanner) ([][]types.Datum, e
 				}
 				rows = append(rows, st.convertToDatumRow())
 				startFlag = false
+			} else {
+				startFlag = false
 			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, errors.AddStack(err)
+}
+
+func getOneLine(reader *bufio.Reader) ([]byte, error) {
+	lineByte, isPrefix, err := reader.ReadLine()
+	if err != nil {
+		return lineByte, err
 	}
-	return rows, nil
+	var tempLine []byte
+	for isPrefix {
+		tempLine, isPrefix, err = reader.ReadLine()
+		lineByte = append(lineByte, tempLine...)
+
+		// Use the max value of max_allowed_packet to check the single line length.
+		if len(lineByte) > int(variable.MaxOfMaxAllowedPacket) {
+			return lineByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
+		}
+		if err != nil {
+			return lineByte, err
+		}
+	}
+	return lineByte, err
 }
 
 type slowQueryTuple struct {

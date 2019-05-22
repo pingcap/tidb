@@ -14,25 +14,33 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 )
+
+var _ = Suite(&testFastAnalyze{})
 
 func (s *testSuite1) TestAnalyzePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -339,4 +347,87 @@ func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 		"test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2", "test t  idx 1 2 3 1 3 3"))
 	tblStats = h.GetTableStats(tblInfo)
 	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(val), Equals, uint64(1))
+}
+
+type testFastAnalyze struct {
+	store   kv.Storage
+	dom     *domain.Domain
+	cluster *mocktikv.Cluster
+	cli     *regionProperityClient
+}
+
+func (s *testFastAnalyze) SetUpSuite(c *C) {
+	cli := &regionProperityClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+	s.cli = cli
+
+	var err error
+	s.cluster = mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(s.cluster)
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+		mockstore.WithCluster(s.cluster),
+	)
+	c.Assert(err, IsNil)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testFastAnalyze) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+type regionProperityClient struct {
+	tikv.Client
+	mu struct {
+		sync.Mutex
+		regionID uint64
+		count    int64
+	}
+}
+
+func (c *regionProperityClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdDebugGetRegionProperties {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.mu.count++
+		// Mock failure once.
+		if req.DebugGetRegionProperties.RegionId == c.mu.regionID {
+			c.mu.regionID = 0
+			return &tikvrpc.Response{}, nil
+		}
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+func (c *regionProperityClient) setFailRegion(regionID uint64) {
+	c.mu.Lock()
+	c.mu.regionID = regionID
+	c.mu.Unlock()
+}
+
+func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tid := tblInfo.Meta().ID
+	// construct 6 regions split by {6, 12, 18, 24, 30}
+	splitKeys := generateTableSplitKeyForInt(tid, []int{6, 12, 18, 24, 30})
+	regionIDs := manipulateCluster(s.cluster, splitKeys)
+	for i := 0; i < 30; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	s.cli.setFailRegion(regionIDs[4])
+	tk.MustExec("analyze table t")
+	// 4 regions will be sampled, and it will retry the last failed region.
+	c.Assert(s.cli.mu.count, Equals, int64(5))
 }

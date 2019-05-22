@@ -108,7 +108,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	a int not null,
 	b int not null
 	)
-	partition by range( id ) (
+	partition by range( a ) (
 		partition p1 values less than maxvalue,
 		partition p2 values less than (1991),
 		partition p3 values less than (1995)
@@ -141,7 +141,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	a int not null,
 	b int not null
 	)
-	partition by range( id ) (
+	partition by range( a ) (
 		partition p1 values less than (1991),
 		partition p2 values less than maxvalue,
 		partition p3 values less than maxvalue,
@@ -154,7 +154,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	a int not null,
 	b int not null
 	)
-	partition by range( id ) (
+	partition by range( a ) (
 		partition p1 values less than (19xx91),
 		partition p2 values less than maxvalue
 	);`)
@@ -233,6 +233,19 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	assertErrorCode(c, tk, `create table t33 (a timestamp, b int) partition by hash(a) partitions 30;`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
 	// TODO: fix this one
 	// assertErrorCode(c, tk, `create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`, tmysql.ErrPartitionFuncNotAllowed)
+
+	// Fix issue 8647
+	assertErrorCode(c, tk, `CREATE TABLE trb8 (
+		id int(11) DEFAULT NULL,
+		name varchar(50) DEFAULT NULL,
+		purchased date DEFAULT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin
+	PARTITION BY RANGE ( year(notexist.purchased) - 1 ) (
+		PARTITION p0 VALUES LESS THAN (1990),
+		PARTITION p1 VALUES LESS THAN (1995),
+		PARTITION p2 VALUES LESS THAN (2000),
+		PARTITION p3 VALUES LESS THAN (2005)
+	);`, tmysql.ErrBadField)
 }
 
 func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
@@ -1279,6 +1292,23 @@ func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
 	hired date not null
 	) partition by hash( year(hired) ) partitions 4;`)
 	testPartitionAddIndex(tk, c)
+
+	// Test hash partition for pr 10475.
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by hash(a) partitions 5;")
+	tk.MustExec("insert into t1 values (0,0),(1,1),(2,2),(3,3);")
+	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec("admin check table t1;")
+
+	// Test range partition for pr 10475.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int,b int,  primary key(a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
+	tk.MustExec("insert into t1 values (0,0);")
+	tk.MustExec("alter table t1 add index idx(a)")
+	tk.MustExec("admin check table t1;")
+
 }
 
 func testPartitionAddIndex(tk *testkit.TestKit, c *C) {

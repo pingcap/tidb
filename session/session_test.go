@@ -462,14 +462,14 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result.Check(testkit.Rows("sql_select_limit 100000000000"))
 
 	result = tk.MustQuery("select @@global.autocommit;")
-	result.Check(testkit.Rows("ON"))
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select @@autocommit;")
-	result.Check(testkit.Rows("ON"))
+	result.Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.autocommit = 0;")
 	result = tk.MustQuery("select @@global.autocommit;")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select @@autocommit;")
-	result.Check(testkit.Rows("ON"))
+	result.Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.autocommit=1")
 
 	_, err = tk.Exec("set global time_zone = 'timezone'")
@@ -2392,6 +2392,23 @@ func (s *testSessionSuite) TestCommitRetryCount(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSessionSuite) TestTxnRetryErrMsg(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("create table no_retry (id int)")
+	tk1.MustExec("insert into no_retry values (1)")
+	tk1.MustExec("begin")
+	tk2.MustExec("update no_retry set id = id + 1")
+	tk1.MustExec("update no_retry set id = id + 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly", `return(true)`), IsNil)
+	_, err := tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly"), IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
+}
+
 func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -2416,7 +2433,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.Se.NewTxn(context.Background())
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
-	// Autocommit update will retry, so it would not fail.
+	// AutoCommit update will retry, so it would not fail.
 	tk1.MustExec("update no_retry set id = 5")
 
 	// RestrictedSQL should retry.
@@ -2438,9 +2455,10 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 
-	// other errors could retry
 	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
 	tk1.MustExec("begin")
 	tk2.MustExec("alter table no_retry add index idx(id)")
@@ -2448,6 +2466,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("update no_retry set id = 10")
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
+	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 
 	// set autocommit to begin and commit
 	tk1.MustExec("set autocommit = 0")
@@ -2456,6 +2476,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("update no_retry set id = 12")
 	_, err = tk1.Se.Execute(context.Background(), "set autocommit = 1")
 	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("11"))
 
@@ -2465,6 +2487,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("update no_retry set id = 14")
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("13"))
 }
