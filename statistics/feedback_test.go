@@ -158,15 +158,15 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	appendBucket(h, 0, 10000)
 	feedbacks = feedbacks[:0]
 	feedbacks = append(feedbacks, newFeedback(0, 4000, 4000))
-	feedbacks = append(feedbacks, newFeedback(4001, 9999, 0))
+	feedbacks = append(feedbacks, newFeedback(4001, 9999, 1000))
 	q = NewQueryFeedback(0, h, 0, false)
 	q.Feedback = feedbacks
 	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q)
 	c.Assert(buildNewHistogram(q.Hist, buckets).ToString(0), Equals,
 		"column:0 ndv:0 totColSize:0\n"+
-			"num: 4000 lower_bound: 0 upper_bound: 10000 repeats: 0")
+			"num: 5001 lower_bound: 0 upper_bound: 10000 repeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{false})
-	c.Assert(totalCount, Equals, int64(4000))
+	c.Assert(totalCount, Equals, int64(5001))
 }
 
 func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
