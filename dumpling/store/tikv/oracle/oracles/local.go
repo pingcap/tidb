@@ -70,6 +70,14 @@ func (l *localOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
 	}
 }
 
+func (l *localOracle) GetLowResolutionTimestamp(ctx context.Context) (uint64, error) {
+	return l.GetTimestamp(ctx)
+}
+
+func (l *localOracle) GetLowResolutionTimestampAsync(ctx context.Context) oracle.Future {
+	return l.GetTimestampAsync(ctx)
+}
+
 type future struct {
 	ctx context.Context
 	l   *localOracle
