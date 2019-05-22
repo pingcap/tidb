@@ -68,6 +68,12 @@ const (
 	DrainerType      = "DRAINER"
 )
 
+// Transaction mode constants.
+const (
+	Optimistic  = "OPTIMISTIC"
+	Pessimistic = "PESSIMISTIC"
+)
+
 var (
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
@@ -365,12 +371,17 @@ func (n *ExecuteStmt) Accept(v Visitor) (Node, bool) {
 // See https://dev.mysql.com/doc/refman/5.7/en/commit.html
 type BeginStmt struct {
 	stmtNode
-	Pessimistic bool
+	Mode string
 }
 
 // Restore implements Node interface.
 func (n *BeginStmt) Restore(ctx *RestoreCtx) error {
-	ctx.WriteKeyWord("START TRANSACTION")
+	if n.Mode == "" {
+		ctx.WriteKeyWord("START TRANSACTION")
+	} else {
+		ctx.WriteKeyWord("BEGIN ")
+		ctx.WriteKeyWord(n.Mode)
+	}
 	return nil
 }
 
