@@ -304,7 +304,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		return kv.ErrWriteConflict.FastGenByArgs(txn.startTS, 0, "is stale")
+		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
 	err = committer.executeAndWriteFinishBinlog(ctx)
 	if err == nil {
