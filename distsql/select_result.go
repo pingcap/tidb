@@ -98,21 +98,21 @@ func (r *selectResult) fetch(ctx context.Context) {
 		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
 	}()
 	for {
+		var result resultWithErr
 		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
-			r.results <- resultWithErr{err: err}
+			result.err = err
+		} else if resultSubset == nil {
 			return
-		}
-		if resultSubset == nil {
-			return
-		}
-
-		if r.memTracker != nil {
-			r.memTracker.Consume(int64(resultSubset.MemSize()))
+		} else {
+			result.result = resultSubset
+			if r.memTracker != nil {
+				r.memTracker.Consume(int64(resultSubset.MemSize()))
+			}
 		}
 
 		select {
-		case r.results <- resultWithErr{result: resultSubset}:
+		case r.results <- result:
 		case <-r.closed:
 			// If selectResult called Close() already, make fetch goroutine exit.
 			return
