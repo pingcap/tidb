@@ -447,12 +447,19 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		return
 	}
-	if !c.switchWorkStore(r, leaderStoreID) {
+	leaderIdx, found := c.getPeerStoreIndex(r, leaderStoreID)
+	if !found {
 		logutil.Logger(context.Background()).Debug("regionCache: cannot find peer when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		r.invalidate()
+		return
 	}
+	rs := r.getStore()
+	if len(rs.stores) > leaderIdx {
+		rs.stores[leaderIdx].markAccess(nil, true)
+	}
+	c.switchWorkIdx(r, leaderIdx)
 }
 
 // insertRegionToCache tries to insert the Region to cache.
@@ -849,20 +856,27 @@ func (r *Region) EndKey() []byte {
 
 // switchWorkStore switches current store to the one on specific store. It returns
 // false if no peer matches the storeID.
-func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) (switchToTarget bool) {
+func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) {
+	leaderIdx, _ := c.getPeerStoreIndex(r, targetStoreID)
+	c.switchWorkIdx(r, leaderIdx)
+	return
+}
+
+func (c *RegionCache) getPeerStoreIndex(r *Region, id uint64) (idx int, found bool) {
 	if len(r.meta.Peers) == 0 {
 		return
 	}
-
-	leaderIdx := 0
 	for i, p := range r.meta.Peers {
-		if p.GetStoreId() == targetStoreID {
-			leaderIdx = i
-			switchToTarget = true
-			break
+		if p.GetStoreId() == id {
+			idx = i
+			found = true
+			return
 		}
 	}
+	return
+}
 
+func (c *RegionCache) switchWorkIdx(r *Region, leaderIdx int) {
 retry:
 	// switch to new leader.
 	oldRegionStore := r.getStore()
@@ -1089,6 +1103,9 @@ retry:
 	}
 	if !s.compareAndSwapState(oldState, state) {
 		goto retry
+	}
+	if notifyCheckCh == nil {
+		return
 	}
 	if triggerCheck {
 		select {
