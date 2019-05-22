@@ -492,7 +492,6 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		accessConds = append(accessConds, fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
 	}
 	for _, access := range ijHelper.chosenAccess {
-		// Since now there must be eq/in condition so here we can just append space directly.
 		accessConds = append(accessConds, fmt.Sprintf("%v", access))
 	}
 	isFirst := true
