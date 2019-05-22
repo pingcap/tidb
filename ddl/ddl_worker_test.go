@@ -395,9 +395,10 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 
 		{act: model.ActionModifyTableCharsetAndCollate, jobIDs: []int64{firstID + 25}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionModifyTableCharsetAndCollate, jobIDs: []int64{firstID + 26}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 26)}, cancelState: model.StatePublic},
-
 		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 27}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 28}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 28)}, cancelState: model.StatePublic},
+		{act: model.ActionModifySchemaCharsetAndCollate, jobIDs: []int64{firstID + 30}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifySchemaCharsetAndCollate, jobIDs: []int64{firstID + 31}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 31)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -726,6 +727,25 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
 	c.Assert(changedTable.Meta().Partition.Definitions[0].ID == partitionTblInfo.Partition.Definitions[0].ID, IsFalse)
+
+	// test modify schema charset failed caused by canceled.
+	test = &tests[26]
+	charsetAndCollate := []interface{}{"utf8mb4", "utf8mb4_bin"}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, charsetAndCollate, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	dbInfo, err = testGetSchemaInfoWithError(d, dbInfo.ID)
+	c.Assert(err, IsNil)
+	c.Assert(dbInfo.Charset, Equals, "")
+	c.Assert(dbInfo.Collate, Equals, "")
+
+	// test modify table charset successfully.
+	test = &tests[27]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, charsetAndCollate)
+	c.Check(checkErr, IsNil)
+	dbInfo, err = testGetSchemaInfoWithError(d, dbInfo.ID)
+	c.Assert(err, IsNil)
+	c.Assert(dbInfo.Charset, Equals, "utf8mb4")
+	c.Assert(dbInfo.Collate, Equals, "utf8mb4_bin")
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
@@ -835,7 +855,6 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	ctx := testNewContext(d)
 	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
-
 	/*
 		build structure:
 			DBs -> {
