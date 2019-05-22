@@ -14,6 +14,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -180,7 +182,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	// mockCommitError8942 is used for PR #8942.
 	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(kv.ErrRetryable)
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
 
@@ -188,7 +190,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	failpoint.Inject("mockCommitRetryForAutoID", func(val failpoint.Value) {
 		if val.(bool) && !mockAutoIDRetry() {
 			enableMockAutoIDRetry()
-			failpoint.Return(kv.ErrRetryable)
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
 
@@ -303,6 +305,45 @@ func (st *TxnState) cleanup() {
 		}
 		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
+}
+
+// KeysNeedToLock returns the keys need to be locked.
+func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
+	keys := make([]kv.Key, 0, st.buf.Len())
+	if err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		if !keyNeedToLock(k, v) {
+			return nil
+		}
+		if mb := st.Transaction.GetMemBuffer(); mb != nil {
+			_, err1 := mb.Get(k)
+			if err1 == nil {
+				// Key is already in txn MemBuffer, must already been locked, we don't need to lock it again.
+				return nil
+			}
+		}
+		// The statement MemBuffer will be reused, so we must copy the key here.
+		keys = append(keys, append([]byte{}, k...))
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func keyNeedToLock(k, v []byte) bool {
+	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
+	if !isTableKey {
+		// meta key always need to lock.
+		return true
+	}
+	isDelete := len(v) == 0
+	if isDelete {
+		// only need to delete row key.
+		return k[10] == 'r'
+	}
+	isNonUniqueIndex := len(v) == 1 && v[0] == '0'
+	// Put row key and unique index need to lock.
+	return !isNonUniqueIndex
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {

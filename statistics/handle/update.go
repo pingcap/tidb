@@ -436,6 +436,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newIdx.CMSketch = statistics.UpdateCMSketch(idx.CMSketch, eqFB)
 			newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB})
 			newIdx.Histogram.PreCalculateScalar()
+			newIdx.Flag = statistics.ResetAnalyzeFlag(newIdx.Flag)
 			newTblStats.Indices[fb.Hist.ID] = &newIdx
 		} else {
 			col, ok := tblStats.Columns[fb.Hist.ID]
@@ -448,6 +449,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newFB := &statistics.QueryFeedback{Feedback: ranFB}
 			newFB = newFB.DecodeIntValues()
 			newCol.Histogram = *statistics.UpdateHistogram(&col.Histogram, newFB)
+			newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 			newTblStats.Columns[fb.Hist.ID] = &newCol
 		}
 		h.UpdateTableStats([]*statistics.Table{newTblStats}, nil)
@@ -970,7 +972,11 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 			ran.HighVal[0] = statistics.GetMaxValue(q.Hist.Tp)
 		}
 	}
-	ranges := q.Hist.SplitRange(sc, []*ranger.Range{ran}, q.Tp == statistics.IndexType)
+	ranges, ok := q.Hist.SplitRange(sc, []*ranger.Range{ran}, q.Tp == statistics.IndexType)
+	if !ok {
+		logutil.Logger(context.Background()).Debug("type of histogram and ranges mismatch")
+		return nil
+	}
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
 	for i, r := range ranges {
