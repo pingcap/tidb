@@ -651,6 +651,10 @@ AAAAAAAAAAAA5gm5Mg==
 		{"split table t1 index idx1 by (1)", true, "SPLIT TABLE `t1` INDEX `idx1` BY (1)"},
 		{"split table t1 index idx1 by ('abc',123), ('xyz'), ('yz', 1000)", true, "SPLIT TABLE `t1` INDEX `idx1` BY ('abc',123),('xyz'),('yz',1000)"},
 		{"split table t1 index idx1 by ", false, ""},
+
+		// for transaction mode
+		{"begin pessimistic", true, "BEGIN PESSIMISTIC"},
+		{"begin optimistic", true, "BEGIN OPTIMISTIC"},
 	}
 	s.RunTest(c, table)
 }
