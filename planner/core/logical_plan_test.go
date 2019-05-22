@@ -629,43 +629,43 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h < 31",
+			sql:  "select * from t where t.ptn < 31",
 			best: "UnionAll{Partition(41)->Partition(42)}->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h < 61",
+			sql:  "select * from t where t.ptn < 61",
 			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h > 17 and t.h < 61",
+			sql:  "select * from t where t.ptn > 17 and t.ptn < 61",
 			best: "UnionAll{Partition(42)->Partition(43)}->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h < 8",
+			sql:  "select * from t where t.ptn < 8",
 			best: "Partition(41)->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h > 128",
+			sql:  "select * from t where t.ptn > 128",
 			best: "Partition(45)->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h > 128",
+			sql:  "select * from t where t.ptn > 128",
 			best: "Dual->Projection",
 			is:   is1,
 		},
 		{
 			// NULL will be located in the first partition.
-			sql:  "select * from t where t.h is null",
+			sql:  "select * from t where t.ptn is null",
 			best: "Partition(41)->Projection",
 			is:   is,
 		},
 		{
-			sql:  "select * from t where t.h is null or t.h > 70",
+			sql:  "select * from t where t.ptn is null or t.ptn > 70",
 			best: "UnionAll{Partition(41)->Partition(44)}->Projection",
 			is:   is1,
 		},
