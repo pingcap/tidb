@@ -1091,7 +1091,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			}
 		case ast.ShowCreateView:
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, "", "", "", err)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 		}
 		p.SetSchema(buildShowSchema(show, isView))
 	}
@@ -1577,6 +1577,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
 		IsLocal:     ld.IsLocal,
+		OnDuplicate: ld.OnDuplicate,
 		Path:        ld.Path,
 		Table:       ld.Table,
 		Columns:     ld.Columns,
