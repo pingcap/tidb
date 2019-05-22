@@ -473,7 +473,7 @@ func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContex
 	if len(feedbacks) == 0 {
 		return 0, 0, false
 	}
-	// Sort feedbacks by end point incrementally and start point descending, then pick every feedback that is not overlapped
+	// Sort feedbacks by end point and start point incrementally, then pick every feedback that is not overlapped
 	// with the previous chosen feedbacks.
 	var existsErr bool
 	sort.Slice(feedbacks, func(i, j int) bool {
@@ -488,7 +488,7 @@ func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContex
 		if err != nil {
 			existsErr = true
 		}
-		return res > 0
+		return res < 0
 	})
 	if existsErr {
 		return 0, 0, false
