@@ -376,6 +376,9 @@ type SessionVars struct {
 
 	// TxnMode indicates should be pessimistic or optimistic.
 	TxnMode string
+
+	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
+	LowResolutionTSO bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -795,6 +798,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err := s.setTxnMode(val); err != nil {
 			return err
 		}
+	case TiDBLowResolutionTSO:
+		s.LowResolutionTSO = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
