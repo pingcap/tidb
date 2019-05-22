@@ -972,7 +972,11 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 			ran.HighVal[0] = statistics.GetMaxValue(q.Hist.Tp)
 		}
 	}
-	ranges := q.Hist.SplitRange(sc, []*ranger.Range{ran}, q.Tp == statistics.IndexType)
+	ranges, ok := q.Hist.SplitRange(sc, []*ranger.Range{ran}, q.Tp == statistics.IndexType)
+	if !ok {
+		logutil.Logger(context.Background()).Debug("type of histogram and ranges mismatch")
+		return nil
+	}
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
 	for i, r := range ranges {

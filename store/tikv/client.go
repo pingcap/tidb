@@ -565,7 +565,6 @@ func sendBatchRequest(
 	}
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
 	select {
 	case connArray.batchCommandsCh <- entry:
 	case <-ctx1.Done():
