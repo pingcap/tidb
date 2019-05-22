@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -4007,5 +4008,34 @@ func (s *testIntegrationSuite) TestDateTimeAddReal(c *C) {
 
 	for _, c := range cases {
 		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue9710(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	getSAndMS := func(str string) (int, int) {
+		results := strings.Split(str, ":")
+		SAndMS := strings.Split(results[len(results)-1], ".")
+		var s, ms int
+		s, _ = strconv.Atoi(SAndMS[0])
+		if len(SAndMS) > 1 {
+			ms, _ = strconv.Atoi(SAndMS[1])
+		}
+		return s, ms
+	}
+
+	for {
+		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now())")
+		s, ms := getSAndMS(rs.Rows()[0][1].(string))
+		if ms < 500000 {
+			time.Sleep(time.Second / 10)
+			continue
+		}
+
+		s1, _ := getSAndMS(rs.Rows()[0][0].(string))
+		c.Assert(s, Equals, s1) // now() will truncate the result instead of rounding it
+
+		c.Assert(rs.Rows()[0][2], Equals, rs.Rows()[0][3]) // unix_timestamp() will truncate the result
+		break
 	}
 }
