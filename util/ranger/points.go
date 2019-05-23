@@ -250,6 +250,8 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
+	// if the colunm is unsigned int or unsigned decimal, and the value
+	// is less than zero, we only need compare with zero.
 	if mysql.HasUnsignedFlag(ft.Flag) {
 		needFix := false
 		zeroValue := new(types.Datum)
@@ -267,13 +269,10 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 				return nil
 			}
 			if cmp == -1 {
-				if op == ast.GT || op == ast.GE {
+				// if the operation is GT, GE or NE, the range is [0, +inf]
+				if op == ast.GT || op == ast.GE || op == ast.NE {
 					op = ast.GE
 					value = *zeroValue
-				} else if op == ast.NE {
-					startPoint := point{value: types.MinNotNullDatum(), start: true}
-					endPoint := point{value: types.MaxValueDatum()}
-					return []point{startPoint, endPoint}
 				} else {
 					return nil
 				}
