@@ -1788,7 +1788,9 @@ func (s *testSuite4) TestLoadData(c *C) {
 	tk.MustExec(createSQL)
 	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, NotNil)
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	_, err = tk.Exec("load data local infile '/tmp/nonexistence.csv' replace into table load_data_test")
+	c.Assert(err, NotNil)
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
 	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
 	c.Assert(ok, IsTrue)
@@ -2018,7 +2020,7 @@ func (s *testSuite4) TestLoadDataIgnoreLines(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-// related to issue 6360
+// TestLoadDataOverflowBigintUnsigned related to issue 6360
 func (s *testSuite4) TestLoadDataOverflowBigintUnsigned(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
@@ -2217,6 +2219,18 @@ func (s *testBypassSuite) TestLatch(c *C) {
 
 	tk1.MustExec("truncate table t")
 	fn()
+	tk1.MustExec("commit")
+
+	// Test the error type of latch and it could be retry if TiDB enable the retry.
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set id = id + 1")
+	tk2.MustExec("update t set id = id + 1")
+	_, err = tk1.Exec("commit")
+	c.Assert(kv.ErrWriteConflictInTiDB.Equal(err), IsTrue)
+
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk1.MustExec("update t set id = id + 1")
+	tk2.MustExec("update t set id = id + 1")
 	tk1.MustExec("commit")
 }
 

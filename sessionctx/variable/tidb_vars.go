@@ -138,6 +138,9 @@ const (
 	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
 	// isolation level.
 	TiDBSkipIsolationLevelCheck = "tidb_skip_isolation_level_check"
+
+	// TiDBLowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
+	TiDBLowResolutionTSO = "tidb_low_resolution_tso"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -300,7 +303,7 @@ const (
 	DefMaxChunkSize                    = 1024
 	DefDMLBatchSize                    = 20000
 	DefMaxPreparedStmtCount            = -1
-	DefWaitTimeout                     = 28800
+	DefWaitTimeout                     = 0
 	DefTiDBMemQuotaHashJoin            = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin           = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort                = 32 << 30 // 32GB.

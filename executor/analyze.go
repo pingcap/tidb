@@ -587,12 +587,12 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
 	defer func() {
-		e.wg.Done()
 		if *needRebuild == true {
 			for ok := true; ok; _, ok = <-e.sampLocs {
 				// Do nothing, just clear the channel.
 			}
 		}
+		e.wg.Done()
 	}()
 	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for {
@@ -641,7 +641,51 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 	}
 }
 
-// buildSampTask returns tow variables, the first bool is whether the task meets region error
+// getNextSampleKey gets the next sample key after last failed request. It only retries the needed region.
+// Different from other requests, each request range must be the whole region because the region row count
+// is only for a whole region. So we need to first find the longest successive prefix ranges of previous request,
+// then the next sample key should be the last range that could align with the region bound.
+func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) (kv.Key, error) {
+	if len(e.sampTasks) == 0 {
+		e.scanTasks = e.scanTasks[:0]
+		return startKey, nil
+	}
+	sort.Slice(e.sampTasks, func(i, j int) bool {
+		return bytes.Compare(e.sampTasks[i].Location.StartKey, e.sampTasks[j].Location.StartKey) < 0
+	})
+	// The sample task should be consecutive with scan task.
+	if len(e.scanTasks) > 0 && bytes.Equal(e.scanTasks[0].StartKey, startKey) && !bytes.Equal(e.scanTasks[0].EndKey, e.sampTasks[0].Location.StartKey) {
+		e.scanTasks = e.scanTasks[:0]
+		e.sampTasks = e.sampTasks[:0]
+		return startKey, nil
+	}
+	prefixLen := 0
+	for ; prefixLen < len(e.sampTasks)-1; prefixLen++ {
+		if !bytes.Equal(e.sampTasks[prefixLen].Location.EndKey, e.sampTasks[prefixLen+1].Location.StartKey) {
+			break
+		}
+	}
+	// Find the last one that could align with region bound.
+	for ; prefixLen >= 0; prefixLen-- {
+		loc, err := e.cache.LocateKey(bo, e.sampTasks[prefixLen].Location.EndKey)
+		if err != nil {
+			return nil, err
+		}
+		if bytes.Compare(loc.StartKey, e.sampTasks[prefixLen].Location.EndKey) == 0 {
+			startKey = loc.StartKey
+			break
+		}
+	}
+	e.sampTasks = e.sampTasks[:prefixLen+1]
+	for i := len(e.scanTasks) - 1; i >= 0; i-- {
+		if bytes.Compare(startKey, e.scanTasks[i].EndKey) < 0 {
+			e.scanTasks = e.scanTasks[:i]
+		}
+	}
+	return startKey, nil
+}
+
+// buildSampTask returns two variables, the first bool is whether the task meets region error
 // and need to rebuild.
 func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
@@ -674,10 +718,10 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.physicalTableID)
-	// extract all regions contain the table
-	e.scanTasks = e.scanTasks[:0]
-	e.sampTasks = e.sampTasks[:0]
-	targetKey := startKey
+	targetKey, err := e.getNextSampleKey(bo, startKey)
+	if err != nil {
+		return false, err
+	}
 	for {
 		// Search for the region which contains the targetKey.
 		loc, err := e.cache.LocateKey(bo, targetKey)
@@ -691,7 +735,7 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 		targetKey = loc.EndKey
 
 		// If the KV pairs in the region all belonging to the table, add it to the sample task.
-		if bytes.Compare(startKey, loc.StartKey) <= 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
+		if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
 			e.sampLocs <- loc
 			continue
 		}

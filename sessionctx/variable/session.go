@@ -374,8 +374,11 @@ type SessionVars struct {
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
 
-	// PessimisticLock indicates whether new transaction should be pessimistic .
+	// PessimisticLock indicates whether new transaction should be pessimistic.
 	PessimisticLock bool
+
+	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
+	LowResolutionTSO bool
 
 	// ExpensiveQueryTimeThreshold indicates the time threshold when trigger the expensive query log.
 	ExpensiveQueryTimeThreshold int
@@ -799,6 +802,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ExpensiveQueryTimeThreshold = tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)
 	case TiDBPessimisticLock:
 		s.PessimisticLock = TiDBOptOn(val)
+	case TiDBLowResolutionTSO:
+		s.LowResolutionTSO = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

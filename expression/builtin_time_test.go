@@ -1764,6 +1764,33 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v.GetMysqlTime().String(), Equals, test.expected)
 	}
+	testDurations := []struct {
+		dur      string
+		fsp      int
+		unit     string
+		format   interface{}
+		expected string
+	}{
+		{
+			dur:      "00:00:00",
+			fsp:      0,
+			unit:     "MICROSECOND",
+			format:   "100",
+			expected: "00:00:00.000100",
+		},
+	}
+	for _, tt := range testDurations {
+		dur, _, ok, err := types.StrToDuration(nil, tt.dur, tt.fsp)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+		args = types.MakeDatums(dur, tt.format, tt.unit)
+		f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v.GetMysqlDuration().String(), Equals, tt.expected)
+	}
 }
 
 func (s *testEvaluatorSuite) TestTimestamp(c *C) {
@@ -2376,19 +2403,24 @@ func (s *testEvaluatorSuite) TestPeriodDiff(c *C) {
 	}{
 		{201611, 201611, true, 0},
 		{200802, 200703, true, 11},
-		{0, 999999999, true, -120000086},
-		{9999999, 0, true, 1200086},
-		{411, 200413, true, -2},
-		{197000, 207700, true, -1284},
 		{201701, 201611, true, 2},
 		{201702, 201611, true, 3},
 		{201510, 201611, true, -13},
 		{201702, 1611, true, 3},
 		{197102, 7011, true, 3},
-		{12509, 12323, true, 10},
-		{12509, 12323, true, 10},
 	}
 
+	tests2 := []struct {
+		Period1 int64
+		Period2 int64
+	}{
+		{0, 999999999},
+		{9999999, 0},
+		{411, 200413},
+		{197000, 207700},
+		{12509, 12323},
+		{12509, 12323},
+	}
 	fc := funcs[ast.PeriodDiff]
 	for _, test := range tests {
 		period1 := types.NewIntDatum(test.Period1)
@@ -2406,6 +2438,18 @@ func (s *testEvaluatorSuite) TestPeriodDiff(c *C) {
 		value := result.GetInt64()
 		c.Assert(value, Equals, test.Expect)
 	}
+
+	for _, test := range tests2 {
+		period1 := types.NewIntDatum(test.Period1)
+		period2 := types.NewIntDatum(test.Period2)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{period1, period2}))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		_, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[expression:1210]Incorrect arguments to period_diff")
+	}
+
 	// nil
 	args := []types.Datum{types.NewDatum(nil), types.NewIntDatum(0)}
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
