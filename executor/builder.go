@@ -2114,25 +2114,32 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	for _, item := range v.PartitionBy {
 		groupByItems = append(groupByItems, item.Col)
 	}
-	aggDesc := aggregation.NewAggFuncDesc(b.ctx, v.WindowFuncDesc.Name, v.WindowFuncDesc.Args, false)
-	resultColIdx := len(v.Schema().Columns) - 1
 	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
 	for _, item := range v.OrderBy {
 		orderByCols = append(orderByCols, item.Col)
 	}
-	agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
+	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
+	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
+	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
+	for _, desc := range v.WindowFuncDescs {
+		aggDesc := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+		agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
+		windowFuncs = append(windowFuncs, agg)
+		partialResults = append(partialResults, agg.AllocPartialResult())
+		resultColIdx++
+	}
 	var processor windowProcessor
 	if v.Frame == nil {
 		processor = &aggWindowProcessor{
-			windowFunc:    agg,
-			partialResult: agg.AllocPartialResult(),
+			windowFuncs:    windowFuncs,
+			partialResults: partialResults,
 		}
 	} else if v.Frame.Type == ast.Rows {
 		processor = &rowFrameWindowProcessor{
-			windowFunc:    agg,
-			partialResult: agg.AllocPartialResult(),
-			start:         v.Frame.Start,
-			end:           v.Frame.End,
+			windowFuncs:    windowFuncs,
+			partialResults: partialResults,
+			start:          v.Frame.Start,
+			end:            v.Frame.End,
 		}
 	} else {
 		cmpResult := int64(-1)
@@ -2140,8 +2147,8 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 			cmpResult = 1
 		}
 		processor = &rangeFrameWindowProcessor{
-			windowFunc:        agg,
-			partialResult:     agg.AllocPartialResult(),
+			windowFuncs:       windowFuncs,
+			partialResults:    partialResults,
 			start:             v.Frame.Start,
 			end:               v.Frame.End,
 			orderByCols:       orderByCols,
@@ -2149,8 +2156,9 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		}
 	}
 	return &WindowExec{baseExecutor: base,
-		processor:    processor,
-		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+		processor:      processor,
+		groupChecker:   newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
 
