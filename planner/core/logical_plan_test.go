@@ -2196,8 +2196,8 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:3591]Window 'w1' is defined twice.",
 		},
 		{
-			sql:    "select sum(a) over(w1), avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(partition by test.t.a))->Window(avg(cast(test.t.a)) over())->Projection",
+			sql:    "select avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)) over(partition by test.t.a))->Projection",
 		},
 		{
 			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
@@ -2256,8 +2256,8 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "TableReader(Table(t))->Window(row_number() over())->Projection",
 		},
 		{
-			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max, min(avg(b)) over(rows between 1 preceding and 1 following) min from t group by c",
-			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_4) over(rows between 1 preceding and 1 following))->Window(min(sel_agg_5) over(rows between 1 preceding and 1 following))->Projection",
+			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
+			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_3) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select nth_value(a, 1.0) over() from t",
@@ -2282,6 +2282,14 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "select nth_value(i_date, 1) over() from t",
 			result: "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1) over())->Projection",
+		},
+		{
+			sql:    "select sum(b) over w, sum(c) over w from t window w as (order by a)",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.b)), sum(cast(test.t.c)) over(order by test.t.a asc range between unbounded preceding and current row))->Projection",
+		},
+		{
+			sql:    "delete from t order by (sum(a) over())",
+			result: "[planner:3593]You cannot use the window function 'sum' in this context.'",
 		},
 	}
 

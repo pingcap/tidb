@@ -321,7 +321,7 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	for i := 0; i < len(p.Schema().Columns)-1; i++ {
+	for i := 0; i < len(p.Schema().Columns)-len(p.WindowFuncDescs); i++ {
 		col := p.Schema().Columns[i]
 		newCol, err := col.ResolveIndices(p.children[0].Schema())
 		if err != nil {
@@ -343,10 +343,12 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 		}
 		p.OrderBy[i].Col = newCol.(*expression.Column)
 	}
-	for i, arg := range p.WindowFuncDesc.Args {
-		p.WindowFuncDesc.Args[i], err = arg.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return err
+	for _, desc := range p.WindowFuncDescs {
+		for i, arg := range desc.Args {
+			desc.Args[i], err = arg.ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if p.Frame != nil {
