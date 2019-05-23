@@ -158,7 +158,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 func (ds *DataSource) generateIndexMergeOrPaths() {
 	usedIndexCount := len(ds.possibleAccessPaths) - 1
 	for i, cond := range ds.pushedDownConds {
-		var ixMergePartialIxPaths = make([]*accessPath, 0, 0)
+		var ixMergePartialIxPaths = make([]*accessPath, 0, 2)
 
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
@@ -196,7 +196,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 
 // buildAccessPath generates all possible index paths for conditions.
 func (ds *DataSource) buildAccessPath(conditions []expression.Expression, usedIndexCount int) []*accessPath {
-	var results = make([]*accessPath, 0, 0)
+	var results = make([]*accessPath, 0, 1)
 	for i := 1; i <= usedIndexCount; i++ {
 		newAccessPath := new(accessPath)
 		newAccessPath.index = ds.possibleAccessPaths[i].index

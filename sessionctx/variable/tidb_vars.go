@@ -275,7 +275,6 @@ const (
 	// TiDBEnableFastAnalyze indicates to use fast analyze.
 	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
 
-
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
 
