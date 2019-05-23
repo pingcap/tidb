@@ -64,17 +64,15 @@ type Region struct {
 // RegionStore represents region stores info
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
-	workStoreIdx     int32    // point to current work peer in meta.Peers and work store in stores(same idx)
-	stores           []*Store // stores in this region
-	attemptAfterLoad uint8    // indicate switch peer attempts after load region info
+	workStoreIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx)
+	stores       []*Store // stores in this region
 }
 
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
 	return &RegionStore{
-		workStoreIdx:     r.workStoreIdx,
-		stores:           r.stores,
-		attemptAfterLoad: r.attemptAfterLoad,
+		workStoreIdx: r.workStoreIdx,
+		stores:       r.stores,
 	}
 }
 
@@ -442,22 +440,21 @@ func (c *RegionCache) InvalidateCachedRegion(id RegionVerID) {
 }
 
 // UpdateLeader update some region cache with newer leader info.
-func (c *RegionCache) UpdateLeader(regionID RegionVerID, leader *metapb.Peer, currentPeerIdx int) {
+func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, currentPeerIdx int) {
 	r := c.getCachedRegionWithRLock(regionID)
 	if r == nil {
 		logutil.Logger(context.Background()).Debug("regionCache: cannot find region when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
-			zap.Uint64("leaderStoreID", leader.GetStoreId()))
+			zap.Uint64("leaderStoreID", leaderStoreID))
 		return
 	}
 
-	if leader == nil {
-		c.switchNext(r, currentPeerIdx)
+	if leaderStoreID == 0 {
+		c.switchNextPeer(r, currentPeerIdx)
 		return
 	}
 
-	leaderStoreID := leader.GetStoreId()
-	if !c.switchWorkStore(r, leaderStoreID) {
+	if !c.switchToPeer(r, leaderStoreID) {
 		logutil.Logger(context.Background()).Debug("regionCache: cannot find peer when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Uint64("leaderStoreID", leaderStoreID))
@@ -557,7 +554,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 		region := &Region{meta: meta}
 		region.init(c)
 		if leader != nil {
-			c.switchWorkStore(region, leader.StoreId)
+			c.switchToPeer(region, leader.StoreId)
 		}
 		return region, nil
 	}
@@ -593,7 +590,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 		region := &Region{meta: meta}
 		region.init(c)
 		if leader != nil {
-			c.switchWorkStore(region, leader.GetStoreId())
+			c.switchToPeer(region, leader.GetStoreId())
 		}
 		return region, nil
 	}
@@ -664,7 +661,7 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 func (c *RegionCache) OnSendRequestFail(ctx *RPCContext, err error) {
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r == nil {
-		c.switchNext(r, ctx.PeerIdx)
+		c.switchNextPeer(r, ctx.PeerIdx)
 	}
 }
 
@@ -693,7 +690,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 		}
 		region := &Region{meta: meta}
 		region.init(c)
-		c.switchWorkStore(region, ctx.Store.storeID)
+		c.switchToPeer(region, ctx.Store.storeID)
 		c.insertRegionToCache(region)
 		if ctx.Region == region.VerID() {
 			needInvalidateOld = false
@@ -781,15 +778,15 @@ func (r *Region) EndKey() []byte {
 	return r.meta.EndKey
 }
 
-// switchWorkStore switches current store to the one on specific store. It returns
+// switchToPeer switches current store to the one on specific store. It returns
 // false if no peer matches the storeID.
-func (c *RegionCache) switchWorkStore(r *Region, targetStoreID uint64) (found bool) {
+func (c *RegionCache) switchToPeer(r *Region, targetStoreID uint64) (found bool) {
 	leaderIdx, found := c.getPeerStoreIndex(r, targetStoreID)
 	c.switchWorkIdx(r, leaderIdx)
 	return
 }
 
-func (c *RegionCache) switchNext(r *Region, currentPeerIdx int) {
+func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int) {
 	regionStore := r.getStore()
 	if int(regionStore.workStoreIdx) != currentPeerIdx {
 		return
@@ -797,18 +794,7 @@ func (c *RegionCache) switchNext(r *Region, currentPeerIdx int) {
 	nextIdx := (currentPeerIdx + 1) % len(regionStore.stores)
 	newRegionStore := regionStore.clone()
 	newRegionStore.workStoreIdx = int32(nextIdx)
-	newRegionStore.attemptAfterLoad++
-	attemptOverThreshold := newRegionStore.attemptAfterLoad == reloadRegionThreshold
-	if attemptOverThreshold {
-		newRegionStore.attemptAfterLoad = 0
-	}
-	if !r.compareAndSwapStore(regionStore, newRegionStore) {
-		return
-	}
-	//  reload region info after attempts more than reloadRegionThreshold
-	if attemptOverThreshold {
-		r.scheduleReload()
-	}
+	r.compareAndSwapStore(regionStore, newRegionStore)
 }
 
 func (c *RegionCache) getPeerStoreIndex(r *Region, id uint64) (idx int, found bool) {

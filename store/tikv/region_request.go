@@ -52,10 +52,11 @@ var ShuttingDown uint32
 // errors, since region range have changed, the request may need to split, so we
 // simply return the error to caller.
 type RegionRequestSender struct {
-	regionCache *RegionCache
-	client      Client
-	storeAddr   string
-	rpcError    error
+	regionCache  *RegionCache
+	client       Client
+	storeAddr    string
+	rpcError     error
+	failStoreIDs map[uint64]struct{}
 }
 
 // NewRegionRequestSender creates a new sender.
@@ -171,7 +172,18 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	s.regionCache.OnSendRequestFail(ctx, err)
+	r := s.regionCache.getCachedRegionWithRLock(ctx.Region)
+	if r != nil {
+		s.regionCache.switchNextPeer(r, ctx.PeerIdx)
+
+		if s.failStoreIDs == nil {
+			s.failStoreIDs = make(map[uint64]struct{})
+		}
+		s.failStoreIDs[ctx.Store.storeID] = struct{}{}
+		if len(s.failStoreIDs) == len(ctx.Meta.Peers) {
+			r.scheduleReload()
+		}
+	}
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
@@ -207,7 +219,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.Logger(context.Background()).Debug("tikv reports `NotLeader` retry later",
 			zap.String("notLeader", notLeader.String()),
 			zap.String("ctx", ctx.String()))
-		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader(), ctx.PeerIdx)
+		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.PeerIdx)
 
 		var boType backoffType
 		if notLeader.GetLeader() != nil {
