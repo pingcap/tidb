@@ -1739,10 +1739,10 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		CreateTime:    time.Now(),
 	}
 	if !s.sessionVars.IsAutocommit() {
-		txnConf := config.GetGlobalConfig().PessimisticTxn
-		if txnConf.Enable {
+		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
+		if pessTxnConf.Enable {
 			txnMode := s.sessionVars.TxnMode
-			if txnMode == "" && txnConf.Default {
+			if txnMode == "" && pessTxnConf.Default {
 				txnMode = ast.Pessimistic
 			}
 			if txnMode == ast.Pessimistic {
