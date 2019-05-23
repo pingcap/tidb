@@ -52,10 +52,11 @@ var ShuttingDown uint32
 // errors, since region range have changed, the request may need to split, so we
 // simply return the error to caller.
 type RegionRequestSender struct {
-	regionCache *RegionCache
-	client      Client
-	storeAddr   string
-	rpcError    error
+	regionCache  *RegionCache
+	client       Client
+	storeAddr    string
+	rpcError     error
+	failStoreIDs map[uint64]struct{}
 }
 
 // NewRegionRequestSender creates a new sender.
@@ -149,13 +150,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		}
 		return nil, true, nil
 	}
-	s.onSendSuccess(ctx)
 	return
-}
-
-func (s *RegionRequestSender) onSendSuccess(ctx *RPCContext) {
-	store := s.regionCache.getStoreByStoreID(ctx.Store.storeID)
-	store.markAccess(s.regionCache.notifyCheckCh, true)
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
@@ -177,7 +172,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	s.regionCache.OnSendRequestFail(ctx, err)
+	s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx))
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
@@ -185,6 +180,19 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// when some unrecoverable disaster happened.
 	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
 	return errors.Trace(err)
+}
+
+// needReloadRegion checks is all peers has sent failed, if so need reload.
+func (s *RegionRequestSender) needReloadRegion(ctx *RPCContext) (need bool) {
+	if s.failStoreIDs == nil {
+		s.failStoreIDs = make(map[uint64]struct{})
+	}
+	s.failStoreIDs[ctx.Store.storeID] = struct{}{}
+	need = len(s.failStoreIDs) == len(ctx.Meta.Peers)
+	if need {
+		s.failStoreIDs = nil
+	}
+	return
 }
 
 func regionErrorToLabel(e *errorpb.Error) string {
@@ -213,7 +221,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.Logger(context.Background()).Debug("tikv reports `NotLeader` retry later",
 			zap.String("notLeader", notLeader.String()),
 			zap.String("ctx", ctx.String()))
-		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId())
+		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.PeerIdx)
 
 		var boType backoffType
 		if notLeader.GetLeader() != nil {
