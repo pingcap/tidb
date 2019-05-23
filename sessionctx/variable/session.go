@@ -274,6 +274,9 @@ type SessionVars struct {
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
+	// MemoryAllocator is used to alloc memory.
+	MemoryAllocator chunk.Allocator
+
 	// LastFoundRows is the number of found rows of last query statement
 	LastFoundRows uint64
 

@@ -362,10 +362,12 @@ func (mr MutRow) ShallowCopyPartialRow(colIdx int, row Row) {
 			elemLen := len(srcCol.elemBuf)
 			offset := row.idx * elemLen
 			dstCol.data = srcCol.data[offset : offset+elemLen]
+			dstCol.cantReuse = true
 		} else {
 			start, end := srcCol.offsets[row.idx], srcCol.offsets[row.idx+1]
 			dstCol.data = srcCol.data[start:end]
 			dstCol.offsets[1] = int64(len(dstCol.data))
+			dstCol.cantReuse = true
 		}
 	}
 }

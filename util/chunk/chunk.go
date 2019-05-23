@@ -38,6 +38,8 @@ type Chunk struct {
 
 	// requiredRows indicates how many rows the parent executor want.
 	requiredRows int
+
+	a        Allocator
 }
 
 // Capacity constants.
@@ -167,11 +169,13 @@ func (c *Chunk) IsFull() bool {
 // MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
 func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
+	c.columns[dstColIdx].cantReuse = true
 }
 
 // MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
 func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
 	c.columns[dstColIdx] = src.columns[srcColIdx]
+	src.columns[dstColIdx].cantReuse = true
 }
 
 // SwapColumn swaps column "c.columns[colIdx]" with column
@@ -232,13 +236,13 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
+	c.numVirtualRows = 0
 	if c.columns == nil {
 		return
 	}
 	for _, col := range c.columns {
 		col.reset()
 	}
-	c.numVirtualRows = 0
 }
 
 // CopyConstruct creates a new chunk and copies this chunk's data into it.
@@ -553,6 +557,11 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 	case types.KindMysqlJSON:
 		c.AppendJSON(colIdx, d.GetMysqlJSON())
 	}
+}
+
+// Release releases this chunk.
+func (c *Chunk) Release() {
+	ReleaseChunk(c)
 }
 
 func writeTime(buf []byte, t types.Time) {

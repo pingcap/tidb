@@ -1290,6 +1290,9 @@ func (s *session) Close() {
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
+		if s.sessionVars.MemoryAllocator != nil {
+			s.sessionVars.MemoryAllocator.Close()
+		}
 	}
 }
 
@@ -1536,6 +1539,8 @@ func createSession(store kv.Storage) (*session, error) {
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
+	s.sessionVars.MemoryAllocator = chunk.NewBufAllocator(15, 32)
+	s.sessionVars.MemoryAllocator.SetParent(chunk.GlobalAllocator)
 	s.txn.init()
 	return s, nil
 }

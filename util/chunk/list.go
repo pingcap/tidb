@@ -125,6 +125,7 @@ func (l *List) allocChunk() (chk *Chunk) {
 	if len(l.chunks) > 0 {
 		return Renew(l.chunks[len(l.chunks)-1], l.maxChunkSize)
 	}
+	// TODO: new chunk with allocator
 	return New(l.fieldTypes, l.initChunkSize, l.maxChunkSize)
 }
 

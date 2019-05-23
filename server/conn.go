@@ -1295,6 +1295,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewRecordBatch()
+	defer req.Release()
 	gotColumnInfo := false
 	for {
 		// Here server.tidbResultSet implements Next method.
@@ -1343,6 +1344,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 
 	// if fetchedRows is not enough, getting data from recordSet.
 	req := rs.NewRecordBatch()
+	defer req.Release()
 	for len(fetchedRows) < fetchSize {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)

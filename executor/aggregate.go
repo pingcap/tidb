@@ -544,6 +544,12 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 		for i := range e.partialInputChs {
 			close(e.partialInputChs[i])
 		}
+		for len(e.inputCh) > 0 {
+			if p := <-e.inputCh; p.chk != nil {
+				p.chk.Release()
+				p.chk = nil
+			}
+		}
 	}()
 	for {
 		select {
@@ -788,6 +794,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *StreamAggExec) Close() error {
+	e.childResult.Release()
 	e.childResult = nil
 	return e.baseExecutor.Close()
 }

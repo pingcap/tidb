@@ -44,6 +44,7 @@ func (c *column) appendJSON(j json.BinaryJSON) {
 }
 
 type column struct {
+	cantReuse  bool // if this column can be reused.
 	length     int
 	nullCount  int
 	nullBitmap []byte
