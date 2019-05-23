@@ -38,7 +38,6 @@ type column struct {
 	min         string
 	max         string
 	incremental bool
-	step        int64
 	set         []string
 
 	table *table
@@ -52,7 +51,7 @@ func (col *column) String() string {
 	}
 
 	return fmt.Sprintf("[column]idx: %d, name: %s, tp: %v, min: %s, max: %s, step: %d, set: %v\n",
-		col.idx, col.name, col.tp, col.min, col.max, col.step, col.set)
+		col.idx, col.name, col.tp, col.min, col.max, col.data.step, col.set)
 }
 
 func (col *column) parseRule(kvs []string, uniq bool) {
@@ -72,7 +71,7 @@ func (col *column) parseRule(kvs []string, uniq bool) {
 		}
 	} else if key == "step" {
 		var err error
-		col.step, err = strconv.ParseInt(value, 10, 64)
+		col.data.step, err = strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -97,6 +96,15 @@ func (col *column) parseRule(kvs []string, uniq bool) {
 		}
 		col.data.repeats = repeats
 		col.data.remains = repeats
+	} else if key == "probability" {
+		prob, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if prob > 100 || prob == 0 {
+			log.Fatal("probability must be in (0, 100]")
+		}
+		col.data.probability = uint32(prob)
 	}
 }
 
@@ -234,7 +242,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 	t.tblInfo = mockTbl
 
 	for i, col := range stmt.Cols {
-		column := &column{idx: i + 1, table: t, step: defaultStep, data: newDatum()}
+		column := &column{idx: i + 1, table: t, data: newDatum()}
 		column.parseColumn(col)
 	}
 

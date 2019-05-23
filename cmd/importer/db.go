@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"math/rand"
 	"strconv"
 	"strings"
 
@@ -79,7 +80,7 @@ func randInt64Value(column *column, min int64, max int64) int64 {
 
 func nextInt64Value(column *column, min int64, max int64) int64 {
 	min, max = intRangeValue(column, min, max)
-	column.data.setInitInt64Value(column.step, min, max)
+	column.data.setInitInt64Value(min, max)
 	return column.data.nextInt64()
 }
 
@@ -133,6 +134,13 @@ func genRowData(table *table) (string, error) {
 func genColumnData(table *table, column *column) (string, error) {
 	tp := column.tp
 	incremental := column.incremental
+	if incremental {
+		incremental = uint32(rand.Int31n(100))+1 <= column.data.probability
+		// If incremental, there is only one worker, so it is safe to directly access datum.
+		if !incremental && column.data.remains > 0 {
+			column.data.remains--
+		}
+	}
 	if _, ok := table.uniqIndices[column.name]; ok {
 		incremental = true
 	}
@@ -142,7 +150,11 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeTiny:
 		var data int64
 		if incremental {
-			data = nextInt64Value(column, 0, math.MaxUint8)
+			if isUnsigned {
+				data = nextInt64Value(column, 0, math.MaxUint8)
+			} else {
+				data = nextInt64Value(column, math.MinInt8, math.MaxInt8)
+			}
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxUint8)
@@ -154,7 +166,11 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeShort:
 		var data int64
 		if incremental {
-			data = nextInt64Value(column, 0, math.MaxUint16)
+			if isUnsigned {
+				data = nextInt64Value(column, 0, math.MaxUint16)
+			} else {
+				data = nextInt64Value(column, math.MinInt16, math.MaxInt16)
+			}
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxUint16)
@@ -166,7 +182,11 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeLong:
 		var data int64
 		if incremental {
-			data = nextInt64Value(column, 0, math.MaxUint32)
+			if isUnsigned {
+				data = nextInt64Value(column, 0, math.MaxUint32)
+			} else {
+				data = nextInt64Value(column, math.MinInt32, math.MaxInt32)
+			}
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxUint32)
@@ -178,7 +198,11 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeLonglong:
 		var data int64
 		if incremental {
-			data = nextInt64Value(column, 0, math.MaxInt64)
+			if isUnsigned {
+				data = nextInt64Value(column, 0, math.MaxInt64-1)
+			} else {
+				data = nextInt64Value(column, math.MinInt32, math.MaxInt32)
+			}
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxInt64-1)
@@ -200,7 +224,11 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		var data float64
 		if incremental {
-			data = float64(nextInt64Value(column, 0, math.MaxInt64))
+			if isUnsigned {
+				data = float64(nextInt64Value(column, 0, math.MaxInt64-1))
+			} else {
+				data = float64(nextInt64Value(column, math.MinInt32, math.MaxInt32))
+			}
 		} else {
 			if isUnsigned {
 				data = float64(randInt64Value(column, 0, math.MaxInt64-1))
@@ -256,7 +284,11 @@ func genColumnData(table *table, column *column) (string, error) {
 			limit = math.MaxInt64
 		}
 		if incremental {
-			intVal = nextInt64Value(column, 0, limit-1)
+			if isUnsigned {
+				intVal = nextInt64Value(column, 0, limit-1)
+			} else {
+				intVal = nextInt64Value(column, (-limit+1)/2, (limit-1)/2)
+			}
 		} else {
 			if isUnsigned {
 				intVal = randInt64Value(column, 0, limit-1)

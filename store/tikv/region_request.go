@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,6 +30,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )
+
+// ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
+// receved for example). If this flag is set, tikv client should not retry on
+// network error because tidb-server expect tikv client to exit as soon as possible.
+var ShuttingDown uint32
 
 // RegionRequestSender sends KV/Cop requests to tikv server. It handles network
 // errors and some region errors internally.
@@ -143,13 +149,21 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		}
 		return nil, true, nil
 	}
+	s.onSendSuccess(ctx)
 	return
+}
+
+func (s *RegionRequestSender) onSendSuccess(ctx *RPCContext) {
+	store := s.regionCache.getStoreByStoreID(ctx.Store.storeID)
+	store.markAccess(s.regionCache.notifyCheckCh, true)
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
+	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
+		return errTiDBShuttingDown
 	}
 	if grpc.Code(errors.Cause(err)) == codes.Canceled {
 		select {
@@ -163,7 +177,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	s.regionCache.DropStoreOnSendRequestFail(ctx, err)
+	s.regionCache.OnSendRequestFail(ctx, err)
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
@@ -220,7 +234,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.Logger(context.Background()).Warn("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
-		s.regionCache.ClearStoreByID(ctx.GetStoreID())
+		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
 		return true, nil
 	}
 
@@ -254,7 +268,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	logutil.Logger(context.Background()).Debug("tikv reports region error",
 		zap.Stringer("regionErr", regionErr),
 		zap.Stringer("ctx", ctx))
-	s.regionCache.DropRegion(ctx.Region)
+	s.regionCache.InvalidateCachedRegion(ctx.Region)
 	return false, nil
 }
 
