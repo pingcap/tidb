@@ -657,14 +657,6 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 	return
 }
 
-// OnSendRequestFail is used for clearing cache when a tikv server does not respond.
-func (c *RegionCache) OnSendRequestFail(ctx *RPCContext, err error) {
-	r := c.getCachedRegionWithRLock(ctx.Region)
-	if r == nil {
-		c.switchNextPeer(r, ctx.PeerIdx)
-	}
-}
-
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
 func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) error {
 	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, backoff.
