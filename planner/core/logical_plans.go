@@ -485,7 +485,8 @@ func (ds *DataSource) getHandleCol() *expression.Column {
 // deriveIndexPathStats will fulfill the information that the accessPath need.
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
-// considerConditions is the conditions used to generate the DetachRangeResult for path. If it is nil, we just use ds.pushDownConds.
+// considerConditions is the conditions used to generate the DetachRangeResult for path. If it is
+// nil, we just use ds.pushDownConds.
 func (ds *DataSource) deriveIndexPathStats(path *accessPath, considerConditions []expression.Expression) (bool, error) {
 	if considerConditions == nil {
 		considerConditions = ds.pushedDownConds
