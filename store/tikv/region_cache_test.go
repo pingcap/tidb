@@ -223,8 +223,102 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(store3))
 }
 
-func (s *testRegionCacheSuite) TestUpdateLeader4(c *C) {
+func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
+	// 3 nodes and no.1 is leader.
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.ChangeLeader(s.region1, s.peer1)
 
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer1)
+	c.Assert(len(ctx.Meta.Peers), Equals, 3)
+
+	// send fail leader switch to 2
+	s.cache.OnSendFail(s.bo, ctx, false)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer2)
+
+	// access 1 it will return NotLeader, leader back to 2 again
+	s.cache.UpdateLeader(loc.Region, s.store2, ctx.PeerIdx)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer2)
+}
+
+func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
+	// 3 nodes and no.1 is leader.
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.ChangeLeader(s.region1, s.peer1)
+
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer1)
+	c.Assert(len(ctx.Meta.Peers), Equals, 3)
+
+	// send fail leader switch to 2
+	s.cache.OnSendFail(s.bo, ctx, false)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer2)
+
+	// access 2, it's in hibernate and return 0 leader, so switch to 3
+	s.cache.UpdateLeader(loc.Region, 0, ctx.PeerIdx)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, peer3)
+
+	// again peer back to 1
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	s.cache.UpdateLeader(loc.Region, 0, ctx.PeerIdx)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer1)
+}
+
+func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
+	// 3 nodes and no.1 is leader.
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.ChangeLeader(s.region1, s.peer1)
+
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	ctx, err := s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer1)
+	c.Assert(len(ctx.Meta.Peers), Equals, 3)
+
+	// send fail leader switch to 2
+	s.cache.OnSendFail(s.bo, ctx, false)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer2)
+
+	// send 2 fail leader switch to 3
+	s.cache.OnSendFail(s.bo, ctx, false)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, peer3)
+
+	// 3 can be access, so switch to 1
+	s.cache.UpdateLeader(loc.Region, s.store1, ctx.PeerIdx)
+	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer1)
 }
 
 func (s *testRegionCacheSuite) TestSplit(c *C) {

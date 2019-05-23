@@ -35,7 +35,6 @@ const (
 	btreeDegree                = 32
 	rcDefaultRegionCacheTTLSec = 600
 	invalidatedLastAccessTime  = -1
-	reloadRegionThreshold      = 5
 )
 
 var (
@@ -359,20 +358,42 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 	return r, nil
 }
 
+func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool) {
+	r := c.getCachedRegionWithRLock(ctx.Region)
+	if r != nil {
+		c.switchNextPeer(r, ctx.PeerIdx)
+		if scheduleReload {
+			r.scheduleReload()
+		}
+	}
+}
+
 // LocateRegionByID searches for the region with ID.
 func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLocation, error) {
 	c.mu.RLock()
 	r := c.getRegionByIDFromCache(regionID)
+	c.mu.RUnlock()
 	if r != nil {
+		if r.needReload() {
+			lr, err := c.loadRegionByID(bo, regionID)
+			if err != nil {
+				// ignore error and use old region info.
+				logutil.Logger(bo.ctx).Error("load region failure",
+					zap.Uint64("regionID", regionID), zap.Error(err))
+			} else {
+				r = lr
+				c.mu.Lock()
+				c.insertRegionToCache(r)
+				c.mu.Unlock()
+			}
+		}
 		loc := &KeyLocation{
 			Region:   r.VerID(),
 			StartKey: r.StartKey(),
 			EndKey:   r.EndKey(),
 		}
-		c.mu.RUnlock()
 		return loc, nil
 	}
-	c.mu.RUnlock()
 
 	r, err := c.loadRegionByID(bo, regionID)
 	if err != nil {
@@ -459,7 +480,6 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		r.invalidate()
-		return
 	}
 }
 

@@ -172,18 +172,9 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	r := s.regionCache.getCachedRegionWithRLock(ctx.Region)
-	if r != nil {
-		s.regionCache.switchNextPeer(r, ctx.PeerIdx)
+	needReloadRegion := s.needReloadRegion(ctx)
 
-		if s.failStoreIDs == nil {
-			s.failStoreIDs = make(map[uint64]struct{})
-		}
-		s.failStoreIDs[ctx.Store.storeID] = struct{}{}
-		if len(s.failStoreIDs) == len(ctx.Meta.Peers) {
-			r.scheduleReload()
-		}
-	}
+	s.regionCache.OnSendFail(bo, ctx, needReloadRegion)
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
@@ -191,6 +182,19 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// when some unrecoverable disaster happened.
 	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
 	return errors.Trace(err)
+}
+
+// needReloadRegion checks is all peers has sent failed, if so need reload.
+func (s *RegionRequestSender) needReloadRegion(ctx *RPCContext) (need bool) {
+	if s.failStoreIDs == nil {
+		s.failStoreIDs = make(map[uint64]struct{})
+	}
+	s.failStoreIDs[ctx.Store.storeID] = struct{}{}
+	need = len(s.failStoreIDs) == len(ctx.Meta.Peers)
+	if need {
+		s.failStoreIDs = nil
+	}
+	return
 }
 
 func regionErrorToLabel(e *errorpb.Error) string {
