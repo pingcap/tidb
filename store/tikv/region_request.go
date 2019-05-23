@@ -149,13 +149,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		}
 		return nil, true, nil
 	}
-	s.onSendSuccess(ctx)
 	return
-}
-
-func (s *RegionRequestSender) onSendSuccess(ctx *RPCContext) {
-	store := s.regionCache.getStoreByStoreID(ctx.Store.storeID)
-	store.markAccess(s.regionCache.notifyCheckCh, true)
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
@@ -213,7 +207,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.Logger(context.Background()).Debug("tikv reports `NotLeader` retry later",
 			zap.String("notLeader", notLeader.String()),
 			zap.String("ctx", ctx.String()))
-		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId())
+		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader(), ctx.PeerIdx)
 
 		var boType backoffType
 		if notLeader.GetLeader() != nil {
