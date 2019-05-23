@@ -84,6 +84,7 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		{` cast( a as decimal ) `, "CAST(`a` AS DECIMAL(11))"},
 		{` cast( a as decimal (3) ) `, "CAST(`a` AS DECIMAL(3))"},
 		{` cast( a as decimal (3,3) ) `, "CAST(`a` AS DECIMAL(3, 3))"},
+		{` ((case when (c0 = 0) then 0 when (c0 > 0) then (c1 / c0) end)) `, "((CASE WHEN (`c0` = 0) THEN 0 WHEN (`c0` > 0) THEN (`c1` / `c0`) END))"},
 		{` convert (a, signed) `, "CONVERT(`a`, SIGNED)"},
 		{` binary "hello"`, `BINARY "hello"`},
 	}
