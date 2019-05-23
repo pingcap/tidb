@@ -83,7 +83,7 @@ PhysicalIndexMergeLookUpReader(IndexMergeUnion)
 	TableScan
 ```
 
-To compare our demo implementation against the master branch, we set up a experiment for the DNF form. The schema and test SQL form we defined are as below:
+To compare our demo implementation against the master branch, we set up an experiment for the DNF form. The schema and test SQL form we defined are as below:
 
 ```
 Table Schema:
