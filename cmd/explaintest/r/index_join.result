@@ -38,3 +38,4 @@ IndexJoin_10	8000.00	root	semi join, inner:IndexReader_9, outer key:test.t1.a, i
   └─IndexScan_8	10.00	cop	table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
+set @@tidb_opt_insubq_to_join_and_agg=1;
