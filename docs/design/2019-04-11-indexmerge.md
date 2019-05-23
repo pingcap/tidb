@@ -39,7 +39,7 @@ Now consider the following types of queries:
 
 （1）Conditions in conjunctive normal form (CNF), e.g, `select * from t1 where c1 and c2 and c3 and …`
 
-In this form, each CNF item can be covered by a single index respectively. For example, if we have single column indexes for `t1.a`, `ta.b` and `t1.c` respectively, for SQL `select * from t1 where (a < 10 or a > 100) and b < 10 and c > 1000`, we can use all the three indexes to read the table handles. The result plan for it is:
+In this form, each CNF item can be covered by a single index respectively. For example, if we have single column indexes for `t1.a`, `t1.b` and `t1.c` respectively, for SQL `select * from t1 where (a < 10 or a > 100) and b < 10 and c > 1000`, we can use all the three indexes to read the table handles. The result plan for it is:
 
 ```
 PhysicalIndexMergeLookUpReader(IndexMergeIntersect)
@@ -51,7 +51,7 @@ PhysicalIndexMergeLookUpReader(IndexMergeIntersect)
 
 For the CNF items not covered by any index, we take them as table filters and convert them to selections on top of the scan node. For SQL `select * from t1 where (a < 10 or c >100) and b < 10`, only item `b < 10` can function as an index access condition, so we will use a single index lookup reader.
 
-To compare our demo implementation against the master branch, we set up a experiment for the CNF form. The schema and test SQL form we defined are as below:
+To compare our demo implementation against the master branch, we set up an experiment for the CNF form. The schema and test SQL form we defined are as below:
 
 ```
 Table Schema:
@@ -99,7 +99,7 @@ We load two million rows into table `T200` with one to two million sequence for 
 <img alt="DNF 200" src="./imgs/dnf200.png" width="500pt"/>
 
 
-The structure of PhysicalIndexMergeLookUpReader is designed as:
+The structure of `PhysicalIndexMergeLookUpReader` is designed as:
 	
 ```
 // PhysicalIndexMergeLookUpReader
