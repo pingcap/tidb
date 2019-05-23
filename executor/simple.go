@@ -400,8 +400,17 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
 	pTxnConf := config.GetGlobalConfig().PessimisticTxn
-	if pTxnConf.Enable && (s.Pessimistic || pTxnConf.Default || e.ctx.GetSessionVars().PessimisticLock) {
-		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	if pTxnConf.Enable {
+		txnMode := s.Mode
+		if txnMode == "" {
+			txnMode = e.ctx.GetSessionVars().TxnMode
+			if txnMode == "" && pTxnConf.Default {
+				txnMode = ast.Pessimistic
+			}
+		}
+		if txnMode == ast.Pessimistic {
+			e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
+		}
 	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
