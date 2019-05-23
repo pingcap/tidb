@@ -237,8 +237,8 @@ func (c *RPCContext) GetStoreID() uint64 {
 }
 
 func (c *RPCContext) String() string {
-	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s",
-		c.Region.GetID(), c.Meta, c.Peer, c.Addr)
+	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d, store: %v",
+		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx, c.Store)
 }
 
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
@@ -358,6 +358,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 	return r, nil
 }
 
+// OnSendFail handles send request fail logic.
 func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool) {
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {

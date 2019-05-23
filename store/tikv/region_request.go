@@ -172,9 +172,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	needReloadRegion := s.needReloadRegion(ctx)
-
-	s.regionCache.OnSendFail(bo, ctx, needReloadRegion)
+	s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx))
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
