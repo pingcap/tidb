@@ -208,8 +208,10 @@ func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column)
 }
 
 func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, arg := range p.WindowFuncDesc.Args {
-		resolveExprAndReplace(arg, replace)
+	for _, desc := range p.WindowFuncDescs {
+		for _, arg := range desc.Args {
+			resolveExprAndReplace(arg, replace)
+		}
 	}
 	for _, item := range p.PartitionBy {
 		resolveColumnAndReplace(item.Col, replace)
