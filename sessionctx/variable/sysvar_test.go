@@ -44,4 +44,6 @@ func (*testSysVarSuite) TestSysVar(c *C) {
 	c.Assert(f, NotNil)
 	c.Assert(f.Value, Equals, "4000")
 
+	f = GetSysVar("tidb_low_resolution_tso")
+	c.Assert(f.Value, Equals, "0")
 }
