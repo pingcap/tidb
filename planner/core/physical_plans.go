@@ -384,10 +384,10 @@ type PhysicalTableDual struct {
 type PhysicalWindow struct {
 	physicalSchemaProducer
 
-	WindowFuncDesc *aggregation.WindowFuncDesc
-	PartitionBy    []property.Item
-	OrderBy        []property.Item
-	Frame          *WindowFrame
+	WindowFuncDescs []*aggregation.WindowFuncDesc
+	PartitionBy     []property.Item
+	OrderBy         []property.Item
+	Frame           *WindowFrame
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
