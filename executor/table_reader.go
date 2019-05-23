@@ -96,8 +96,9 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 
 	e.resultHandler = &tableResultHandler{}
+	// Split ranges here since the unsigned part and signed part will swap their position when encoding the range to kv ranges.
 	if e.feedback != nil && e.feedback.Hist() != nil {
-		e.ranges = e.feedback.Hist().SplitRange(e.ranges)
+		e.ranges = e.feedback.Hist().SplitRange(e.ctx.GetSessionVars().StmtCtx, e.ranges)
 	}
 	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)

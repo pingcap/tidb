@@ -604,7 +604,7 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 				HighExclude: t.exclude[i+1],
 			})
 		}
-		ranges = h.SplitRange(ranges)
+		ranges = h.SplitRange(nil, ranges)
 		var ranStrs []string
 		for _, ran := range ranges {
 			ranStrs = append(ranStrs, ran.String())
@@ -1344,7 +1344,7 @@ func (s *testStatsUpdateSuite) TestUnsignedFeedbackRanges(c *C) {
 	statistics.FeedbackProbability = 1
 
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")
+	testKit.MustExec("create table t (a bigint unsigned, primary key(a))")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
@@ -1371,7 +1371,7 @@ func (s *testStatsUpdateSuite) TestUnsignedFeedbackRanges(c *C) {
 			hist: "column:1 ndv:30 totColSize:0\n" +
 				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
 				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 255 repeats: 0",
+				"num: 14 lower_bound: 16 upper_bound: 18446744073709551615 repeats: 0",
 		},
 	}
 	is := s.do.InfoSchema()
