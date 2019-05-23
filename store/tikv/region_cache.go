@@ -237,8 +237,8 @@ func (c *RPCContext) GetStoreID() uint64 {
 }
 
 func (c *RPCContext) String() string {
-	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d, store: %v",
-		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx, c.Store)
+	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d",
+		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx)
 }
 
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
@@ -977,11 +977,6 @@ func (s *Store) getResolveState() resolveState {
 
 func (s *Store) compareAndSwapState(oldState, newState resolveState) bool {
 	return atomic.CompareAndSwapUint64(&s.state, uint64(oldState), uint64(newState))
-}
-
-func (s *Store) storeState(newState resolveState) {
-	newValue := *(*uint64)(unsafe.Pointer(&newState))
-	atomic.StoreUint64(&s.state, newValue)
 }
 
 // markNeedCheck marks resolved store to be async resolve to check store addr change.
