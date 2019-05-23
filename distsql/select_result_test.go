@@ -33,7 +33,7 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	t := uint64(1)
 	sr.selectResp = &tipb.SelectResponse{
 		ExecutionSummaries: []*tipb.ExecutorExecutionSummary{
-			{&t, &t, &t, []byte{}},
+			{TimeProcessedNs: &t, NumProducedRows: &t, NumIterations: &t},
 		},
 	}
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()) != len(sr.copPlanIDs), IsTrue)

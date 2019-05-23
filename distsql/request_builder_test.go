@@ -569,7 +569,7 @@ func (s *testSuite) TestTableRangesToKVRangesWithFbs(c *C) {
 	fb := statistics.NewQueryFeedback(0, hist, 0, false)
 	lower, upper := types.NewIntDatum(2), types.NewIntDatum(3)
 	fb.Feedback = []statistics.Feedback{
-		{&lower, &upper, 1, 1},
+		{Lower: &lower, Upper: &upper, Count: 1, Repeat: 1},
 	}
 	actual := TableRangesToKVRanges(0, ranges, fb)
 	expect := []kv.KeyRange{
@@ -599,7 +599,7 @@ func (s *testSuite) TestIndexRangesToKVRangesWithFbs(c *C) {
 	fb := statistics.NewQueryFeedback(0, hist, 0, false)
 	lower, upper := types.NewIntDatum(2), types.NewIntDatum(3)
 	fb.Feedback = []statistics.Feedback{
-		{&lower, &upper, 1, 1},
+		{Lower: &lower, Upper: &upper, Count: 1, Repeat: 1},
 	}
 	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 0, 0, ranges, fb)
 	c.Assert(err, IsNil)
