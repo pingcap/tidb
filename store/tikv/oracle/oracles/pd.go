@@ -146,3 +146,22 @@ func (o *pdOracle) UntilExpired(lockTS uint64, TTL uint64) int64 {
 func (o *pdOracle) Close() {
 	close(o.quit)
 }
+
+// A future that resolves immediately to a low resolution timestamp.
+type lowResolutionTsFuture uint64
+
+// Wait implements the oracle.Future interface.
+func (f lowResolutionTsFuture) Wait() (uint64, error) {
+	return uint64(f), nil
+}
+
+// GetLowResolutionTimestamp gets a new increasing time.
+func (o *pdOracle) GetLowResolutionTimestamp(ctx context.Context) (uint64, error) {
+	lastTS := atomic.LoadUint64(&o.lastTS)
+	return lastTS, nil
+}
+
+func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context) oracle.Future {
+	lastTS := atomic.LoadUint64(&o.lastTS)
+	return lowResolutionTsFuture(lastTS)
+}

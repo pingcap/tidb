@@ -694,7 +694,7 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
-func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, considerWindow bool) (LogicalPlan, int, error) {
+func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool) (LogicalPlan, int, error) {
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx)
@@ -726,9 +726,17 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 			schema.Append(col)
 			continue
 		}
-		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
+		newExpr, np, err := b.rewriteWithPreprocess(field.Expr, p, mapper, windowMapper, true, nil)
 		if err != nil {
 			return nil, 0, err
+		}
+
+		// For window functions in the order by clause, we will append an field for it.
+		// We need rewrite the window mapper here so order by clause could find the added field.
+		if considerWindow && isWindowFuncField && field.Auxiliary {
+			if windowExpr, ok := field.Expr.(*ast.WindowFuncExpr); ok {
+				windowMapper[windowExpr] = i
+			}
 		}
 
 		p = np
@@ -852,7 +860,7 @@ func (b *PlanBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 	oldLen := unionPlan.Schema().Len()
 
 	if union.OrderBy != nil {
-		unionPlan, err = b.buildSort(unionPlan, union.OrderBy.Items, nil)
+		unionPlan, err = b.buildSort(unionPlan, union.OrderBy.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -957,7 +965,7 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
-func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) (*LogicalSort, error) {
+func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
@@ -969,7 +977,7 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	for _, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
-		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
+		it, np, err := b.rewriteWithPreprocess(item.Expr, p, aggMapper, windowMapper, true, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1210,6 +1218,13 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
 			return node, false
 		}
+		if a.curClause == orderByClause {
+			a.selectFields = append(a.selectFields, &ast.SelectField{
+				Auxiliary: true,
+				Expr:      v,
+				AsName:    model.NewCIStr(fmt.Sprintf("sel_window_%d", len(a.selectFields))),
+			})
+		}
 	case *ast.WindowSpec:
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
@@ -1315,6 +1330,9 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	if sel.OrderBy != nil {
 		extractor.curClause = orderByClause
 		for _, item := range sel.OrderBy.Items {
+			if ast.HasWindowFlag(item.Expr) {
+				continue
+			}
 			n, ok := item.Expr.Accept(extractor)
 			if !ok {
 				return nil, nil, errors.Trace(extractor.err)
@@ -1366,6 +1384,19 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		_, ok := spec.Accept(extractor)
 		if !ok {
 			return nil, extractor.err
+		}
+	}
+	if sel.OrderBy != nil {
+		extractor.curClause = orderByClause
+		for _, item := range sel.OrderBy.Items {
+			if !ast.HasWindowFlag(item.Expr) {
+				continue
+			}
+			n, ok := item.Expr.Accept(extractor)
+			if !ok {
+				return nil, extractor.err
+			}
+			item.Expr = n.(ast.ExprNode)
 		}
 	}
 	sel.Fields.Fields = extractor.selectFields
@@ -1939,7 +1970,7 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	var (
 		aggFuncs                      []*ast.AggregateFuncExpr
 		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
-		windowMap                     map[*ast.AggregateFuncExpr]int
+		windowAggMap                  map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
 	)
 
@@ -1974,7 +2005,7 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 
 	hasWindowFuncField := b.detectSelectWindow(sel)
 	if hasWindowFuncField {
-		windowMap, err = b.resolveWindowFunction(sel, p)
+		windowAggMap, err = b.resolveWindowFunction(sel, p)
 		if err != nil {
 			return nil, err
 		}
@@ -2014,7 +2045,7 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	var oldLen int
 	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
 	// we can only process window functions after having clause, so `considerWindow` is false now.
-	p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, totalMap, false)
+	p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, totalMap, nil, false)
 	if err != nil {
 		return nil, err
 	}
@@ -2032,9 +2063,19 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		return nil, err
 	}
 
+	var windowMapper map[*ast.WindowFuncExpr]int
 	if hasWindowFuncField {
+		windowFuncs := extractWindowFuncs(sel.Fields.Fields)
+		groupedFuncs, err := b.groupWindowFuncs(windowFuncs)
+		if err != nil {
+			return nil, err
+		}
+		p, windowMapper, err = b.buildWindowFunctions(p, groupedFuncs, windowAggMap)
+		if err != nil {
+			return nil, err
+		}
 		// Now we build the window function fields.
-		p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, windowMap, true)
+		p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, windowAggMap, windowMapper, true)
 		if err != nil {
 			return nil, err
 		}
@@ -2045,7 +2086,7 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	}
 
 	if sel.OrderBy != nil {
-		p, err = b.buildSort(p, sel.OrderBy.Items, orderMap)
+		p, err = b.buildSort(p, sel.OrderBy.Items, orderMap, windowMapper)
 		if err != nil {
 			return nil, err
 		}
@@ -2503,7 +2544,7 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		}
 	}
 	if sel.OrderBy != nil {
-		p, err = b.buildSort(p, sel.OrderBy.Items, nil)
+		p, err = b.buildSort(p, sel.OrderBy.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -2599,7 +2640,7 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 					return expr
 				}
 			}
-			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
+			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, nil, false, rewritePreprocess)
 		}
 		if err != nil {
 			return nil, nil, err
@@ -2698,7 +2739,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	}
 
 	if sel.OrderBy != nil {
-		p, err = b.buildSort(p, sel.OrderBy.Items, nil)
+		p, err = b.buildSort(p, sel.OrderBy.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -2805,27 +2846,8 @@ func getWindowName(name string) string {
 
 // buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
 // so after the projection, window functions only needs to deal with columns.
-func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []property.Item, []expression.Expression, error) {
+func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, spec *ast.WindowSpec, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []property.Item, []expression.Expression, error) {
 	b.optFlag |= flagEliminateProjection
-
-	if expr.Spec.Name.L != "" {
-		ref, ok := b.windowSpecs[expr.Spec.Name.L]
-		if !ok {
-			return nil, nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(expr.Spec.Name.O)
-		}
-		expr.Spec = ref
-	}
-	spec := expr.Spec
-	if spec.Ref.L != "" {
-		ref, ok := b.windowSpecs[spec.Ref.L]
-		if !ok {
-			return nil, nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(spec.Ref.O)
-		}
-		err := mergeWindowSpec(&spec, &ref)
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
-	}
 
 	var partitionItems, orderItems []*ast.ByItem
 	if spec.PartitionBy != nil {
@@ -2835,7 +2857,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 		orderItems = spec.OrderBy.Items
 	}
 
-	projLen := len(p.Schema().Columns) + len(partitionItems) + len(orderItems) + len(expr.Args)
+	projLen := len(p.Schema().Columns) + len(partitionItems) + len(orderItems) + len(args)
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, projLen)}.Init(b.ctx)
 	proj.SetSchema(expression.NewSchema(make([]*expression.Column, 0, projLen)...))
 	for _, col := range p.Schema().Columns {
@@ -2855,8 +2877,8 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 		return nil, nil, nil, nil, err
 	}
 
-	newArgList := make([]expression.Expression, 0, len(expr.Args))
-	for _, arg := range expr.Args {
+	newArgList := make([]expression.Expression, 0, len(args))
+	for _, arg := range args {
 		newArg, np, err := b.rewrite(arg, p, aggMap, true)
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -3076,62 +3098,138 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 	return frame, err
 }
 
-func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
-	p, partitionBy, orderBy, args, err := b.buildProjectionForWindow(p, expr, aggMap)
-	if err != nil {
-		return nil, err
-	}
+func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
+	args := make([]ast.ExprNode, 0, 4)
+	windowMap := make(map[*ast.WindowFuncExpr]int)
+	for spec, funcs := range groupedFuncs {
+		args = args[:0]
+		for _, windowFunc := range funcs {
+			args = append(args, windowFunc.Args...)
+		}
+		np, partitionBy, orderBy, args, err := b.buildProjectionForWindow(p, spec, args, aggMap)
+		if err != nil {
+			return nil, nil, err
+		}
+		frame, err := b.buildWindowFunctionFrame(spec, orderBy)
+		if err != nil {
+			return nil, nil, err
+		}
 
-	needFrame := aggregation.NeedFrame(expr.F)
+		window := LogicalWindow{
+			PartitionBy: partitionBy,
+			OrderBy:     orderBy,
+			Frame:       frame,
+		}.Init(b.ctx)
+		schema := np.Schema().Clone()
+		descs := make([]*aggregation.WindowFuncDesc, 0, len(funcs))
+		preArgs := 0
+		for _, windowFunc := range funcs {
+			desc := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.F, args[preArgs:preArgs+len(windowFunc.Args)])
+			if desc == nil {
+				return nil, nil, ErrWrongArguments.GenWithStackByArgs(windowFunc.F)
+			}
+			preArgs += len(windowFunc.Args)
+			desc.WrapCastForAggArgs(b.ctx)
+			descs = append(descs, desc)
+			windowMap[windowFunc] = schema.Len()
+			schema.Append(&expression.Column{
+				ColName:      model.NewCIStr(fmt.Sprintf("%d_window_%d", window.id, schema.Len())),
+				UniqueID:     b.ctx.GetSessionVars().AllocPlanColumnID(),
+				IsReferenced: true,
+				RetType:      desc.RetTp,
+			})
+		}
+		window.WindowFuncDescs = descs
+		window.SetChildren(np)
+		window.SetSchema(schema)
+		p = window
+	}
+	return p, windowMap, nil
+}
+
+func extractWindowFuncs(fields []*ast.SelectField) []*ast.WindowFuncExpr {
+	extractor := &WindowFuncExtractor{}
+	for _, f := range fields {
+		n, _ := f.Expr.Accept(extractor)
+		f.Expr = n.(ast.ExprNode)
+	}
+	return extractor.windowFuncs
+}
+
+func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, name string) (*ast.WindowSpec, bool) {
+	needFrame := aggregation.NeedFrame(name)
 	// According to MySQL, In the absence of a frame clause, the default frame depends on whether an ORDER BY clause is present:
 	//   (1) With order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW";
 	//   (2) Without order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING",
 	//       which is the same as an empty frame.
-	if needFrame && expr.Spec.Frame == nil && len(orderBy) > 0 {
-		expr.Spec.Frame = &ast.FrameClause{
+	if needFrame && spec.Frame == nil && spec.OrderBy != nil {
+		newSpec := *spec
+		newSpec.Frame = &ast.FrameClause{
 			Type: ast.Ranges,
 			Extent: ast.FrameExtent{
 				Start: ast.FrameBound{Type: ast.Preceding, UnBounded: true},
 				End:   ast.FrameBound{Type: ast.CurrentRow},
 			},
 		}
+		return &newSpec, true
 	}
 	// For functions that operate on the entire partition, the frame clause will be ignored.
-	if !needFrame && expr.Spec.Frame != nil {
-		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(expr.F, getWindowName(expr.Spec.Name.O)))
-		expr.Spec.Frame = nil
+	if !needFrame && spec.Frame != nil {
+		specName := spec.Name.O
+		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(name, specName))
+		newSpec := *spec
+		newSpec.Frame = nil
+		return &newSpec, true
 	}
-	frame, err := b.buildWindowFunctionFrame(&expr.Spec, orderBy)
-	if err != nil {
-		return nil, err
+	return spec, false
+}
+
+// groupWindowFuncs groups the window functions according to the window specification name.
+// TODO: We can group the window function by the definition of window specification.
+func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*ast.WindowSpec][]*ast.WindowFuncExpr, error) {
+	// updatedSpecMap is used to handle the specifications that have frame clause changed.
+	updatedSpecMap := make(map[string]*ast.WindowSpec)
+	groupedWindow := make(map[*ast.WindowSpec][]*ast.WindowFuncExpr)
+	for _, windowFunc := range windowFuncs {
+		if windowFunc.Spec.Name.L == "" {
+			spec := &windowFunc.Spec
+			if spec.Ref.L != "" {
+				ref, ok := b.windowSpecs[spec.Ref.L]
+				if !ok {
+					return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(getWindowName(spec.Ref.O))
+				}
+				err := mergeWindowSpec(spec, ref)
+				if err != nil {
+					return nil, err
+				}
+			}
+			spec, _ = b.handleDefaultFrame(spec, windowFunc.F)
+			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
+			continue
+		}
+
+		name := windowFunc.Spec.Name.L
+		spec, ok := b.windowSpecs[name]
+		if !ok {
+			return nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
+		}
+		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
+		if !updated {
+			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
+		} else {
+			if _, ok := updatedSpecMap[name]; !ok {
+				updatedSpecMap[name] = newSpec
+			}
+			updatedSpec := updatedSpecMap[name]
+			groupedWindow[updatedSpec] = append(groupedWindow[updatedSpec], windowFunc)
+		}
 	}
-	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, args)
-	if desc == nil {
-		return nil, ErrWrongArguments.GenWithStackByArgs(expr.F)
-	}
-	// TODO: Check if the function is aggregation function after we support more functions.
-	desc.WrapCastForAggArgs(b.ctx)
-	window := LogicalWindow{
-		WindowFuncDesc: desc,
-		PartitionBy:    partitionBy,
-		OrderBy:        orderBy,
-		Frame:          frame,
-	}.Init(b.ctx)
-	schema := p.Schema().Clone()
-	schema.Append(&expression.Column{
-		ColName:      model.NewCIStr(fmt.Sprintf("%d_window_%d", window.id, p.Schema().Len())),
-		UniqueID:     b.ctx.GetSessionVars().AllocPlanColumnID(),
-		IsReferenced: true,
-		RetType:      desc.RetTp,
-	})
-	window.SetChildren(p)
-	window.SetSchema(schema)
-	return window, nil
+	return groupedWindow, nil
 }
 
 // resolveWindowSpec resolve window specifications for sql like `select ... from t window w1 as (w2), w2 as (partition by a)`.
 // We need to resolve the referenced window to get the definition of current window spec.
-func resolveWindowSpec(spec *ast.WindowSpec, specs map[string]ast.WindowSpec, inStack map[string]bool) error {
+func resolveWindowSpec(spec *ast.WindowSpec, specs map[string]*ast.WindowSpec, inStack map[string]bool) error {
 	if inStack[spec.Name.L] {
 		return errors.Trace(ErrWindowCircularityInWindowGraph)
 	}
@@ -3143,12 +3241,12 @@ func resolveWindowSpec(spec *ast.WindowSpec, specs map[string]ast.WindowSpec, in
 		return ErrWindowNoSuchWindow.GenWithStackByArgs(spec.Ref.O)
 	}
 	inStack[spec.Name.L] = true
-	err := resolveWindowSpec(&ref, specs, inStack)
+	err := resolveWindowSpec(ref, specs, inStack)
 	if err != nil {
 		return err
 	}
 	inStack[spec.Name.L] = false
-	return mergeWindowSpec(spec, &ref)
+	return mergeWindowSpec(spec, ref)
 }
 
 func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
@@ -3169,17 +3267,18 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 	return nil
 }
 
-func buildWindowSpecs(specs []ast.WindowSpec) (map[string]ast.WindowSpec, error) {
-	specsMap := make(map[string]ast.WindowSpec, len(specs))
+func buildWindowSpecs(specs []ast.WindowSpec) (map[string]*ast.WindowSpec, error) {
+	specsMap := make(map[string]*ast.WindowSpec, len(specs))
 	for _, spec := range specs {
 		if _, ok := specsMap[spec.Name.L]; ok {
 			return nil, ErrWindowDuplicateName.GenWithStackByArgs(spec.Name.O)
 		}
-		specsMap[spec.Name.L] = spec
+		newSpec := spec
+		specsMap[spec.Name.L] = &newSpec
 	}
 	inStack := make(map[string]bool, len(specs))
-	for _, spec := range specs {
-		err := resolveWindowSpec(&spec, specsMap, inStack)
+	for _, spec := range specsMap {
+		err := resolveWindowSpec(spec, specsMap, inStack)
 		if err != nil {
 			return nil, err
 		}
