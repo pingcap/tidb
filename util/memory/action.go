@@ -16,8 +16,11 @@ package memory
 import (
 	"sync"
 
+	"context"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // ActionOnExceed is the action taken when memory usage exceeds memory quota.
@@ -47,6 +50,11 @@ func (a *LogOnExceed) Action(t *Tracker) {
 	defer a.mutex.Unlock()
 	if !a.acted {
 		a.acted = true
+		if a.logHook == nil {
+			logutil.Logger(context.Background()).Warn("memory exceeds quota",
+				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String())))
+			return
+		}
 		a.logHook(a.ConnID)
 	}
 }

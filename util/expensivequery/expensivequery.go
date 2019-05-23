@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -64,12 +63,8 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 				if len(info.Info) == 0 || info.Time.Equal(lastQueryStartTime[connID]) {
 					continue
 				}
-				sessVars, ok := sm.GetSessionVars(connID)
-				if !ok {
-					continue
-				}
 				if costTime := time.Since(info.Time); costTime >= curInterval {
-					logExpensiveQuery(sessVars, costTime, info)
+					logExpensiveQuery(costTime, info)
 					lastQueryStartTime[connID] = info.Time
 				}
 			}
@@ -86,11 +81,7 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 			if !ok {
 				continue
 			}
-			sessVars, ok := sm.GetSessionVars(connID)
-			if !ok {
-				continue
-			}
-			logExpensiveQuery(sessVars, time.Since(info.Time), info)
+			logExpensiveQuery(time.Since(info.Time), info)
 		case <-eqh.exitCh:
 			return
 		}
@@ -104,19 +95,19 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 }
 
 // logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
-func logExpensiveQuery(sessVars *variable.SessionVars, costTime time.Duration, info util.ProcessInfo) {
+func logExpensiveQuery(costTime time.Duration, info util.ProcessInfo) {
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
-	execDetail := sessVars.StmtCtx.GetExecDetails()
+	execDetail := info.StmtCtx.GetExecDetails()
 	logFields = append(logFields, execDetail.ToZapFields()...)
-	if copTaskInfo := sessVars.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
+	if copTaskInfo := info.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
 		logFields = append(logFields, copTaskInfo.ToZapFields()...)
 	}
-	if len(info.StatsInfo) > 0 {
+	if statsInfo := info.StatsInfo(info.Plan); len(statsInfo) > 0 {
 		var buf strings.Builder
 		firstComma := false
 		vStr := ""
-		for k, v := range info.StatsInfo {
+		for k, v := range statsInfo {
 			if v == 0 {
 				vStr = "pseudo"
 			} else {
@@ -131,27 +122,26 @@ func logExpensiveQuery(sessVars *variable.SessionVars, costTime time.Duration, i
 		}
 		logFields = append(logFields, zap.String("stats", buf.String()))
 	}
-	if sessVars.ConnectionID != 0 {
-		logFields = append(logFields, zap.Uint64("conn_id", sessVars.ConnectionID))
+	if info.ID != 0 {
+		logFields = append(logFields, zap.Uint64("conn_id", info.ID))
 	}
-	if sessVars.User != nil {
-		logFields = append(logFields, zap.String("user", sessVars.User.String()))
+	if len(info.User) > 0 {
+		logFields = append(logFields, zap.String("user", info.User))
 	}
-	if len(sessVars.CurrentDB) > 0 {
-		logFields = append(logFields, zap.String("database", sessVars.CurrentDB))
+	if len(info.DB) > 0 {
+		logFields = append(logFields, zap.String("database", info.DB))
 	}
 	var tableIDs, indexIDs string
-	if len(sessVars.StmtCtx.TableIDs) > 0 {
-		tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
+	if len(info.StmtCtx.TableIDs) > 0 {
+		tableIDs = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.TableIDs), " ", ",", -1)
 		logFields = append(logFields, zap.String("table_ids", tableIDs))
 	}
-	if len(sessVars.StmtCtx.IndexIDs) > 0 {
-		indexIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.IndexIDs), " ", ",", -1)
+	if len(info.StmtCtx.IndexIDs) > 0 {
+		indexIDs = strings.Replace(fmt.Sprintf("%v", info.StmtCtx.IndexIDs), " ", ",", -1)
 		logFields = append(logFields, zap.String("index_ids", indexIDs))
 	}
-	txnTs := sessVars.TxnCtx.StartTS
-	logFields = append(logFields, zap.Uint64("txn_start_ts", txnTs))
-	if memTracker := sessVars.StmtCtx.MemTracker; memTracker != nil {
+	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
+	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {
 		logFields = append(logFields, zap.String("mem_max", memTracker.BytesToString(memTracker.MaxConsumed())))
 	}
 

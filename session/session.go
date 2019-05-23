@@ -909,14 +909,16 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	pi := util.ProcessInfo{
-		ID:        s.sessionVars.ConnectionID,
-		DB:        s.sessionVars.CurrentDB,
-		Command:   command,
-		Plan:      s.currentPlan,
-		Time:      t,
-		State:     s.Status(),
-		Info:      sql,
-		StatsInfo: plannercore.GetStatsInfo(s.currentPlan),
+		ID:            s.sessionVars.ConnectionID,
+		DB:            s.sessionVars.CurrentDB,
+		Command:       command,
+		Plan:          s.currentPlan,
+		Time:          t,
+		State:         s.Status(),
+		Info:          sql,
+		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
+		StmtCtx:       s.sessionVars.StmtCtx,
+		StatsInfo:     plannercore.GetStatsInfo,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
