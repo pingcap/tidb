@@ -1158,10 +1158,10 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 		return nil
 	}
 	window := PhysicalWindow{
-		WindowFuncDesc: p.WindowFuncDesc,
-		PartitionBy:    p.PartitionBy,
-		OrderBy:        p.OrderBy,
-		Frame:          p.Frame,
+		WindowFuncDescs: p.WindowFuncDescs,
+		PartitionBy:     p.PartitionBy,
+		OrderBy:         p.OrderBy,
+		Frame:           p.Frame,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
 	window.SetSchema(p.Schema())
 	return []PhysicalPlan{window}
