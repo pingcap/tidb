@@ -474,7 +474,6 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	mustExec(c, se, `CREATE USER 'dev'@'localhost'`)
 	mustExec(c, se, `GRANT 'app_developer' TO 'dev'@'localhost'`)
 	mustExec(c, se, `SET DEFAULT ROLE 'app_developer' TO 'dev'@'localhost'`)
-	mustExec(c, se, `FLUSH PRIVILEGES`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "use app_db")
 	c.Assert(err, IsNil)
