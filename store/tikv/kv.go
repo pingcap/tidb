@@ -296,6 +296,7 @@ func (s *tikvStore) Close() error {
 	if s.txnLatches != nil {
 		s.txnLatches.Close()
 	}
+	s.regionCache.Close()
 	return nil
 }
 
