@@ -52,6 +52,7 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 	ticker := time.NewTicker(curInterval / 2)
 	// lastQueryStartTime is used to avoid print duplicated log when exceeding time threshold.
 	lastQueryStartTime := make(map[uint64]time.Time)
+	cleaner := time.NewTicker(2 * curInterval / 3)
 	for {
 		select {
 		case <-ticker.C:
@@ -71,7 +72,9 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 			if newInterval := time.Second * time.Duration(sctx.GetSessionVars().ExpensiveQueryTimeThreshold); curInterval != newInterval {
 				curInterval = newInterval
 				ticker.Stop()
+				cleaner.Stop()
 				ticker = time.NewTicker(curInterval / 2)
+				cleaner = time.NewTicker(2 * curInterval / 3)
 			}
 		case connID := <-eqh.memExceedConnCh:
 			if log.GetLevel() > zapcore.WarnLevel {
@@ -82,6 +85,15 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 				continue
 			}
 			logExpensiveQuery(time.Since(info.Time), info)
+		case <-cleaner.C:
+			if log.GetLevel() > zapcore.WarnLevel {
+				continue
+			}
+			for connID := range lastQueryStartTime {
+				if _, ok := sm.GetProcessInfo(connID); !ok {
+					delete(lastQueryStartTime, connID)
+				}
+			}
 		case <-eqh.exitCh:
 			return
 		}
