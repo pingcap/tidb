@@ -686,15 +686,15 @@ type FrameBound struct {
 type LogicalWindow struct {
 	logicalSchemaProducer
 
-	WindowFuncDesc *aggregation.WindowFuncDesc
-	PartitionBy    []property.Item
-	OrderBy        []property.Item
-	Frame          *WindowFrame
+	WindowFuncDescs []*aggregation.WindowFuncDesc
+	PartitionBy     []property.Item
+	OrderBy         []property.Item
+	Frame           *WindowFrame
 }
 
-// GetWindowResultColumn returns the column storing the result of the window function.
-func (p *LogicalWindow) GetWindowResultColumn() *expression.Column {
-	return p.schema.Columns[p.schema.Len()-1]
+// GetWindowResultColumns returns the columns storing the result of the window function.
+func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
+	return p.schema.Columns[p.schema.Len()-len(p.WindowFuncDescs):]
 }
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
