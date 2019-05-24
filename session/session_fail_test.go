@@ -17,22 +17,65 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 func (s *testSessionSuite) TestFailStatementCommit(c *C) {
-	defer gofail.Disable("github.com/pingcap/tidb/session/mockStmtCommitError")
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1)")
-	gofail.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`)
-	_, err := tk.Exec("insert into t values (2)")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`), IsNil)
+	_, err := tk.Exec("insert into t values (2),(3),(4),(5)")
 	c.Assert(err, NotNil)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockStmtCommitError"), IsNil)
+
+	_, err = tk.Exec("select * from t")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("insert into t values (3)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("insert into t values (4)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("commit")
+	c.Assert(err, NotNil)
+
+	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (2)")
 	tk.MustExec("commit")
-	tk.MustQuery(`select * from t`).Check(testkit.Rows("1"))
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (3)")
+	tk.MustExec("rollback")
+
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2"))
+}
+
+func (s *testSessionSuite) TestFailStatementCommitInRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int)")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (2),(3),(4),(5)")
+	tk.MustExec("insert into t values (6)")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError8942", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`), IsNil)
+	_, err := tk.Exec("commit")
+	c.Assert(err, NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError8942"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockStmtCommitError"), IsNil)
+
+	tk.MustExec("insert into t values (6)")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("6"))
 }
 
 func (s *testSessionSuite) TestGetTSFailDirtyState(c *C) {
@@ -50,14 +93,36 @@ func (s *testSessionSuite) TestGetTSFailDirtyState(c *C) {
 }
 
 func (s *testSessionSuite) TestGetTSFailDirtyStateInretry(c *C) {
-	defer gofail.Disable("github.com/pingcap/tidb/session/mockCommitError")
-	defer gofail.Disable("github.com/pingcap/tidb/session/mockGetTSErrorInRetry")
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockGetTSErrorInRetry"), IsNil)
+	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int)")
 
-	gofail.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`)
-	gofail.Enable("github.com/pingcap/tidb/session/mockGetTSErrorInRetry", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`), IsNil)
+	// This test will mock a PD timeout error, and recover then.
+	// Just make mockGetTSErrorInRetry return true once, and then return false.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockGetTSErrorInRetry",
+		`1*return(true)->return(false)`), IsNil)
 	tk.MustExec("insert into t values (2)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2"))
+}
+
+func (s *testSessionSuite) TestRetryPreparedSleep(c *C) {
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tmpMaxTxnTime"), IsNil)
+	}()
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (c1 int)")
+	tk.MustExec("insert t values (11)")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tmpMaxTxnTime", `return(2)->return(0)`), IsNil)
+	tk.MustExec("begin")
+	tk.MustExec("update t set c1=? where c1=11;", 21)
+	tk.MustExec("insert into t select sleep(3)")
+	tk.MustExec("commit")
+
+	tk.MustQuery("select c1 from t").Check(testkit.Rows("21", "0"))
 }

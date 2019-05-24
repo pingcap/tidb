@@ -30,6 +30,7 @@ var (
 	_ functionClass = &databaseFunctionClass{}
 	_ functionClass = &foundRowsFunctionClass{}
 	_ functionClass = &currentUserFunctionClass{}
+	_ functionClass = &currentRoleFunctionClass{}
 	_ functionClass = &userFunctionClass{}
 	_ functionClass = &connectionIDFunctionClass{}
 	_ functionClass = &lastInsertIDFunctionClass{}
@@ -154,6 +155,50 @@ func (b *builtinCurrentUserSig) evalString(row chunk.Row) (string, bool, error) 
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
 	return data.User.AuthIdentityString(), false, nil
+}
+
+type currentRoleFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *currentRoleFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Flen = 64
+	sig := &builtinCurrentRoleSig{bf}
+	return sig, nil
+}
+
+type builtinCurrentRoleSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCurrentRoleSig) Clone() builtinFunc {
+	newSig := &builtinCurrentRoleSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinCurrentUserSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (string, bool, error) {
+	data := b.ctx.GetSessionVars()
+	if data == nil || data.ActiveRoles == nil {
+		return "", true, errors.Errorf("Missing session variable when eval builtin")
+	}
+	if len(data.ActiveRoles) == 0 {
+		return "", false, nil
+	}
+	res := ""
+	for i, r := range data.ActiveRoles {
+		res += r.String()
+		if i != len(data.ActiveRoles)-1 {
+			res += ","
+		}
+	}
+	return res, false, nil
 }
 
 type userFunctionClass struct {
@@ -384,7 +429,104 @@ type benchmarkFunctionClass struct {
 }
 
 func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "BENCHMARK")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	// Syntax: BENCHMARK(loop_count, expression)
+	// Define with same eval type of input arg to avoid unnecessary cast function.
+	sameEvalType := args[1].GetType().EvalType()
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, sameEvalType)
+	sig := &builtinBenchmarkSig{bf}
+	return sig, nil
+}
+
+type builtinBenchmarkSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBenchmarkSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinBenchmarkSig. It will execute expression repeatedly count times.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
+func (b *builtinBenchmarkSig) evalInt(row chunk.Row) (int64, bool, error) {
+	// Get loop count.
+	loopCount, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	// BENCHMARK() will return NULL if loop count < 0,
+	// behavior observed on MySQL 5.7.24.
+	if loopCount < 0 {
+		return 0, true, nil
+	}
+
+	// Eval loop count times based on arg type.
+	// BENCHMARK() will pass-through the eval error,
+	// behavior observed on MySQL 5.7.24.
+	var i int64
+	arg, ctx := b.args[1], b.ctx
+	switch evalType := arg.GetType().EvalType(); evalType {
+	case types.ETInt:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalInt(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETReal:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalReal(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETDecimal:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalDecimal(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETString:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalString(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalTime(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETDuration:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalDuration(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETJson:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalJSON(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	default: // Should never go into here.
+		return 0, true, errors.Errorf("EvalType %v not implemented for builtin BENCHMARK()", evalType)
+	}
+
+	// Return value of BENCHMARK() is always 0.
+	return 0, false, nil
 }
 
 type charsetFunctionClass struct {

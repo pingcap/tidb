@@ -32,12 +32,16 @@ var _ = Suite(&testExpressionSuite{})
 type testExpressionSuite struct{}
 
 func newColumn(id int) *Column {
+	return newColumnWithType(id, types.NewFieldType(mysql.TypeLonglong))
+}
+
+func newColumnWithType(id int, t *types.FieldType) *Column {
 	return &Column{
 		UniqueID: int64(id),
 		ColName:  model.NewCIStr(fmt.Sprint(id)),
 		TblName:  model.NewCIStr("t"),
 		DBName:   model.NewCIStr("test"),
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  t,
 	}
 }
 
@@ -45,6 +49,18 @@ func newLonglong(value int64) *Constant {
 	return &Constant{
 		Value:   types.NewIntDatum(value),
 		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+}
+
+func newDate(year, month, day int) *Constant {
+	var tmp types.Datum
+	tmp.SetMysqlTime(types.Time{
+		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+	})
+	return &Constant{
+		Value:   tmp,
+		RetType: types.NewFieldType(mysql.TypeDate),
 	}
 }
 
@@ -177,6 +193,91 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			sort.Strings(result)
 			c.Assert(strings.Join(result, ", "), Equals, tt.result, Commentf("different for expr %s", tt.conditions))
 		}
+	}
+}
+
+func (*testExpressionSuite) TestConstraintPropagation(c *C) {
+	defer testleak.AfterTest(c)()
+	col1 := newColumnWithType(1, types.NewFieldType(mysql.TypeDate))
+	tests := []struct {
+		solver     constraintSolver
+		conditions []Expression
+		result     string
+	}{
+		// Don't propagate this any more, because it makes the code more complex but not
+		// useful for partition pruning.
+		// {
+		// 	solver: newConstraintSolver(ruleColumnGTConst),
+		// 	conditions: []Expression{
+		// 		newFunction(ast.GT, newColumn(0), newLonglong(5)),
+		// 		newFunction(ast.GT, newColumn(0), newLonglong(7)),
+		// 	},
+		// 	result: "gt(test.t.0, 7)",
+		// },
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			conditions: []Expression{
+				newFunction(ast.GT, newColumn(0), newLonglong(5)),
+				newFunction(ast.LT, newColumn(0), newLonglong(5)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			conditions: []Expression{
+				newFunction(ast.GT, newColumn(0), newLonglong(7)),
+				newFunction(ast.LT, newColumn(0), newLonglong(5)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			// col1 > '2018-12-11' and to_days(col1) < 5 => false
+			conditions: []Expression{
+				newFunction(ast.GT, col1, newDate(2018, 12, 11)),
+				newFunction(ast.LT, newFunction(ast.ToDays, col1), newLonglong(5)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			conditions: []Expression{
+				newFunction(ast.LT, newColumn(0), newLonglong(5)),
+				newFunction(ast.GT, newColumn(0), newLonglong(5)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			conditions: []Expression{
+				newFunction(ast.LT, newColumn(0), newLonglong(5)),
+				newFunction(ast.GT, newColumn(0), newLonglong(7)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			// col1 < '2018-12-11' and to_days(col1) > 737999 => false
+			conditions: []Expression{
+				newFunction(ast.LT, col1, newDate(2018, 12, 11)),
+				newFunction(ast.GT, newFunction(ast.ToDays, col1), newLonglong(737999)),
+			},
+			result: "0",
+		},
+	}
+	for _, tt := range tests {
+		ctx := mock.NewContext()
+		conds := make([]Expression, 0, len(tt.conditions))
+		for _, cd := range tt.conditions {
+			conds = append(conds, FoldConstant(cd))
+		}
+		newConds := tt.solver.Solve(ctx, conds)
+		var result []string
+		for _, v := range newConds {
+			result = append(result, v.String())
+		}
+		sort.Strings(result)
+		c.Assert(strings.Join(result, ", "), Equals, tt.result, Commentf("different for expr %s", tt.conditions))
 	}
 }
 

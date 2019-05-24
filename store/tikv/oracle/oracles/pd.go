@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var _ oracle.Oracle = &pdOracle{}
@@ -105,7 +106,8 @@ func (o *pdOracle) getTimestamp(ctx context.Context) (uint64, error) {
 	}
 	dist := time.Since(now)
 	if dist > slowDist {
-		log.Warnf("get timestamp too slow: %s", dist)
+		logutil.Logger(ctx).Warn("get timestamp too slow",
+			zap.Duration("cost time", dist))
 	}
 	return oracle.ComposeTS(physical, logical), nil
 }
@@ -124,7 +126,7 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 		case <-ticker.C:
 			ts, err := o.getTimestamp(ctx)
 			if err != nil {
-				log.Errorf("updateTS error: %v", err)
+				logutil.Logger(ctx).Error("updateTS error", zap.Error(err))
 				break
 			}
 			o.setLastTS(ts)
@@ -135,6 +137,31 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 	}
 }
 
+// UntilExpired implement oracle.Oracle interface.
+func (o *pdOracle) UntilExpired(lockTS uint64, TTL uint64) int64 {
+	lastTS := atomic.LoadUint64(&o.lastTS)
+	return oracle.ExtractPhysical(lockTS) + int64(TTL) - oracle.ExtractPhysical(lastTS)
+}
+
 func (o *pdOracle) Close() {
 	close(o.quit)
+}
+
+// A future that resolves immediately to a low resolution timestamp.
+type lowResolutionTsFuture uint64
+
+// Wait implements the oracle.Future interface.
+func (f lowResolutionTsFuture) Wait() (uint64, error) {
+	return uint64(f), nil
+}
+
+// GetLowResolutionTimestamp gets a new increasing time.
+func (o *pdOracle) GetLowResolutionTimestamp(ctx context.Context) (uint64, error) {
+	lastTS := atomic.LoadUint64(&o.lastTS)
+	return lastTS, nil
+}
+
+func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context) oracle.Future {
+	lastTS := atomic.LoadUint64(&o.lastTS)
+	return lowResolutionTsFuture(lastTS)
 }

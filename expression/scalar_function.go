@@ -165,6 +165,20 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 	return false
 }
 
+// ConstItem implements Expression interface.
+func (sf *ScalarFunction) ConstItem() bool {
+	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
+	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
+		return false
+	}
+	for _, arg := range sf.GetArgs() {
+		if !arg.ConstItem() {
+			return false
+		}
+	}
+	return true
+}
+
 // Decorrelate implements Expression interface.
 func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	for i, arg := range sf.GetArgs() {
@@ -259,14 +273,18 @@ func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (sf *ScalarFunction) ResolveIndices(schema *Schema) Expression {
+func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
 	newSf := sf.Clone()
-	newSf.resolveIndices(schema)
-	return newSf
+	err := newSf.resolveIndices(schema)
+	return newSf, err
 }
 
-func (sf *ScalarFunction) resolveIndices(schema *Schema) {
+func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 	for _, arg := range sf.GetArgs() {
-		arg.resolveIndices(schema)
+		err := arg.resolveIndices(schema)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }

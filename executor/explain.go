@@ -46,7 +46,7 @@ func (e *ExplainExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *ExplainExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.rows == nil {
 		var err error
 		e.rows, err = e.generateExplainInfo(ctx)
@@ -55,15 +55,15 @@ func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 
-	chk.GrowAndReset(e.maxChunkSize)
+	req.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.rows) {
 		return nil
 	}
 
-	numCurRows := mathutil.Min(chk.Capacity(), len(e.rows)-e.cursor)
+	numCurRows := mathutil.Min(req.Capacity(), len(e.rows)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurRows; i++ {
 		for j := range e.rows[i] {
-			chk.AppendString(j, e.rows[i][j])
+			req.AppendString(j, e.rows[i][j])
 		}
 	}
 	e.cursor += numCurRows
@@ -74,7 +74,7 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 	if e.analyzeExec != nil {
 		chk := e.analyzeExec.newFirstChunk()
 		for {
-			err := e.analyzeExec.Next(ctx, chk)
+			err := e.analyzeExec.Next(ctx, chunk.NewRecordBatch(chk))
 			if err != nil {
 				return nil, err
 			}

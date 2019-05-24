@@ -31,7 +31,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -43,7 +43,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -51,16 +51,13 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -78,7 +75,6 @@ type seqTestSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *seqTestSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -104,7 +100,6 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 func (s *seqTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 func (s *seqTestSuite) TestEarlyClose(c *C) {
@@ -134,20 +129,22 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err1, IsNil)
 		rs := rss[0]
-		chk := rs.NewChunk()
-		err = rs.Next(ctx, chk)
+		req := rs.NewRecordBatch()
+		err = rs.Next(ctx, req)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
 
 	// Goroutine should not leak when error happen.
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError"), IsNil)
+	}()
 	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err, NotNil)
 	rs.Close()
 }
@@ -227,11 +224,11 @@ func (s *seqTestSuite) TestShow(c *C) {
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
 		"t1", "CREATE TABLE `t1` (\n" +
-			"  `c1` tinyint(3) UNSIGNED DEFAULT NULL,\n" +
-			"  `c2` smallint(5) UNSIGNED DEFAULT NULL,\n" +
-			"  `c3` mediumint(8) UNSIGNED DEFAULT NULL,\n" +
-			"  `c4` int(10) UNSIGNED DEFAULT NULL,\n" +
-			"  `c5` bigint(20) UNSIGNED DEFAULT NULL\n" +
+			"  `c1` tinyint(3) unsigned DEFAULT NULL,\n" +
+			"  `c2` smallint(5) unsigned DEFAULT NULL,\n" +
+			"  `c3` mediumint(8) unsigned DEFAULT NULL,\n" +
+			"  `c4` int(10) unsigned DEFAULT NULL,\n" +
+			"  `c5` bigint(20) unsigned DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
@@ -333,7 +330,11 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(testSQL)
 	testSQL = "show create database show_test_DB;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_test_DB|CREATE DATABASE `show_test_DB` /* !40100 DEFAULT CHARACTER SET utf8mb4 */",
+		"show_test_DB|CREATE DATABASE `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	testSQL = "show create database if not exists show_test_DB;"
+	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+		"show_test_DB|CREATE DATABASE /*!32312 IF NOT EXISTS*/ `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
 	tk.MustExec("use show_test_DB")
@@ -345,7 +346,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`drop table if exists show_test_comment`)
 	tk.MustExec(`create table show_test_comment (id int not null default 0 comment "show_test_comment_id")`)
 	tk.MustQuery(`show full columns from show_test_comment`).Check(testutil.RowsWithSep("|",
-		"id|int(11)|binary|NO||0||select,insert,update,references|show_test_comment_id",
+		"id|int(11)|<nil>|NO||0||select,insert,update,references|show_test_comment_id",
 	))
 
 	// Test show create table with AUTO_INCREMENT option
@@ -547,7 +548,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
-			"  `y` year NOT NULL,\n"+
+			"  `y` year(4) NOT NULL,\n"+
 			"  `x` int(11) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`y`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -558,7 +559,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) NOT NULL,\n"+
-			"  `val` tinyint(10) UNSIGNED ZEROFILL DEFAULT NULL,\n"+
+			"  `val` tinyint(10) unsigned zerofill DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
@@ -585,8 +586,8 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c5|varchar(6)|YES||'C6'|",
 		"c6|enum('s','m','l','xl')|YES||xl|",
 		"c7|set('a','b','c','d')|YES||a,c,c|",
-		"c8|datetime|YES||CURRENT_TIMESTAMP|on update CURRENT_TIMESTAMP",
-		"c9|year|YES||2014|",
+		"c8|datetime|YES||CURRENT_TIMESTAMP|DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+		"c9|year(4)|YES||2014|",
 	))
 }
 
@@ -600,17 +601,17 @@ func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (1), (2)")
 	do, _ := session.GetDomain(s.store)
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
+	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
+	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
 	do.StatsHandle().Update(do.InfoSchema())
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
+	do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
 	do.StatsHandle().Update(do.InfoSchema())
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }
@@ -638,8 +639,8 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
-	err = rs.Next(context.Background(), chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
@@ -662,14 +663,16 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	//     └─TableScan_10     | 3.00  | cop  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
-	gofail.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/executor/parallelHashAggError")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/parallelHashAggError"), IsNil)
+	}()
 	ctx := context.Background()
 	rss, err := tk.Se.Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err.Error(), Equals, "HashAggExec.parallelExec error")
 }
 
@@ -681,14 +684,16 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 
 	// Goroutine should not leak when error happen.
-	gofail.Enable("github.com/pingcap/tidb/executor/unparallelHashAggError", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/unparallelHashAggError", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError"), IsNil)
+	}()
 	ctx := context.Background()
 	rss, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err.Error(), Equals, "HashAggExec.unparallelExec error")
 }
 
@@ -772,14 +777,14 @@ func (s *seqTestSuite) TestCartesianProduct(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int)")
-	plannercore.AllowCartesianProduct = false
+	plannercore.AllowCartesianProduct.Store(false)
 	err := tk.ExecToErr("select * from t t1, t t2")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	err = tk.ExecToErr("select * from t t1 left join t t2 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	err = tk.ExecToErr("select * from t t1 right join t t2 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	plannercore.AllowCartesianProduct = true
+	plannercore.AllowCartesianProduct.Store(true)
 }
 
 type checkPrioClient struct {

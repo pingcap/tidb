@@ -13,19 +13,12 @@
 
 package kv
 
-import (
-	"bytes"
-
-	"github.com/pingcap/errors"
-)
-
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
-	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
-	// Lazy condition pairs should be checked before transaction commit.
-	CheckLazyConditionPairs() error
+	// Returns related condition pair
+	LookupConditionPair(k Key) *conditionPair
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -38,6 +31,16 @@ type UnionStore interface {
 	// GetMemBuffer return the MemBuffer binding to this UnionStore.
 	GetMemBuffer() MemBuffer
 }
+
+// AssertionType is the type of a assertion.
+type AssertionType int
+
+// The AssertionType constants.
+const (
+	None AssertionType = iota
+	Exist
+	NotExist
+)
 
 // Option is used for customizing kv store's behaviors during a transaction.
 type Option int
@@ -56,11 +59,18 @@ type conditionPair struct {
 	err   error
 }
 
+func (c *conditionPair) ShouldNotExist() bool {
+	return len(c.value) == 0
+}
+
+func (c *conditionPair) Err() error {
+	return c.err
+}
+
 // unionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
 	*BufferStore
-	snapshot           Snapshot                  // for read
 	lazyConditionPairs map[string]*conditionPair // for delay check
 	opts               options
 }
@@ -69,7 +79,6 @@ type unionStore struct {
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
 		BufferStore:        NewBufferStore(snapshot, DefaultTxnMembufCap),
-		snapshot:           snapshot,
 		lazyConditionPairs: make(map[string]*conditionPair),
 		opts:               make(map[Option]interface{}),
 	}
@@ -183,7 +192,7 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 		v, err = us.BufferStore.r.Get(k)
 	}
 	if err != nil {
-		return v, errors.Trace(err)
+		return v, err
 	}
 	if len(v) == 0 {
 		return nil, ErrNotExist
@@ -201,30 +210,9 @@ func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) {
 	}
 }
 
-// CheckLazyConditionPairs implements the UnionStore interface.
-func (us *unionStore) CheckLazyConditionPairs() error {
-	if len(us.lazyConditionPairs) == 0 {
-		return nil
-	}
-	keys := make([]Key, 0, len(us.lazyConditionPairs))
-	for _, v := range us.lazyConditionPairs {
-		keys = append(keys, v.key)
-	}
-	values, err := us.snapshot.BatchGet(keys)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for k, v := range us.lazyConditionPairs {
-		if len(v.value) == 0 {
-			if _, exist := values[k]; exist {
-				return errors.Trace(v.err)
-			}
-		} else {
-			if bytes.Compare(values[k], v.value) != 0 {
-				return errors.Trace(ErrLazyConditionPairsNotMatch)
-			}
-		}
+func (us *unionStore) LookupConditionPair(k Key) *conditionPair {
+	if c, ok := us.lazyConditionPairs[string(k)]; ok {
+		return c
 	}
 	return nil
 }

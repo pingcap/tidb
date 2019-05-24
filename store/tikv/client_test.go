@@ -32,6 +32,9 @@ type testClientSuite struct {
 var _ = Suite(&testClientSuite{})
 
 func (s *testClientSuite) TestConn(c *C) {
+	globalConfig := config.GetGlobalConfig()
+	globalConfig.TiKVClient.MaxBatchSize = 0 // Disable batch.
+
 	client := newRPCClient(config.Security{})
 
 	addr := "127.0.0.1:6379"

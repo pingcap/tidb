@@ -14,13 +14,15 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Scanner support tikv scan
@@ -143,7 +145,9 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 }
 
 func (s *Scanner) getData(bo *Backoffer) error {
-	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
+	logutil.Logger(context.Background()).Debug("txn getData",
+		zap.Binary("nextStartKey", s.nextStartKey),
+		zap.Uint64("txnStartTS", s.startTS()))
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 
 	for {
@@ -151,11 +155,17 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		reqEndKey := s.endKey
+		if len(reqEndKey) > 0 && len(loc.EndKey) > 0 && bytes.Compare(loc.EndKey, reqEndKey) < 0 {
+			reqEndKey = loc.EndKey
+		}
+
 		req := &tikvrpc.Request{
 			Type: tikvrpc.CmdScan,
 			Scan: &pb.ScanRequest{
 				StartKey: s.nextStartKey,
-				EndKey:   s.endKey,
+				EndKey:   reqEndKey,
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 				KeyOnly:  s.snapshot.keyOnly,
@@ -174,7 +184,8 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			log.Debugf("scanner getData failed: %s", regionErr)
+			logutil.Logger(context.Background()).Debug("scanner getData failed",
+				zap.Stringer("regionErr", regionErr))
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)

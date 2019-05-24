@@ -77,7 +77,7 @@ func max(a, b int) int {
 func (ds *dataStore) get(e entry, key []byte) []byte {
 	slice := ds.slices[e.addr.sliceIdx]
 	valOffset := e.addr.offset + e.keyLen
-	if bytes.Compare(key, slice[e.addr.offset:valOffset]) != 0 {
+	if !bytes.Equal(key, slice[e.addr.offset:valOffset]) {
 		return nil
 	}
 	return slice[valOffset : valOffset+e.valLen]

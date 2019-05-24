@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/pd/client"
 )
 
@@ -78,8 +78,9 @@ func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *
 	return region, peer, nil
 }
 
-func (c *pdClient) GetPrevRegion(context.Context, []byte) (*metapb.Region, *metapb.Peer, error) {
-	panic("unimplemented")
+func (c *pdClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+	region, peer := c.cluster.GetPrevRegionByKey(key)
+	return region, peer, nil
 }
 
 func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
@@ -97,8 +98,8 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	return store, nil
 }
 
-func (c *pdClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
-	panic(errors.New("unimplemented"))
+func (c *pdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	return c.cluster.GetAllStores(), nil
 }
 
 func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
@@ -106,4 +107,12 @@ func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uin
 }
 
 func (c *pdClient) Close() {
+}
+
+func (c *pdClient) ScatterRegion(ctx context.Context, regionID uint64) error {
+	return nil
+}
+
+func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
+	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }

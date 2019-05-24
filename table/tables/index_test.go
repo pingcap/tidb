@@ -99,7 +99,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	err = index.Delete(sc, txn, values, 1)
+	err = index.Delete(sc, txn, values, 1, nil)
 	c.Assert(err, IsNil)
 
 	it, err = index.SeekFirst(txn)

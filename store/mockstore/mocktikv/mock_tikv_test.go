@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"math"
-	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -512,7 +511,8 @@ func (s *testMockTiKVSuite) TestDeleteRange(c *C) {
 
 func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {
 	c.Assert(errs[i], NotNil)
-	c.Assert(strings.Contains(errs[i].Error(), "write conflict"), IsTrue)
+	_, ok := errs[i].(*ErrConflict)
+	c.Assert(ok, IsTrue)
 }
 
 func (s *testMockTiKVSuite) TestRC(c *C) {

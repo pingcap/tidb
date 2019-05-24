@@ -14,18 +14,23 @@
 package domain
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestT(t *testing.T) {
@@ -60,6 +65,7 @@ func (*testSuite) TestT(c *C) {
 	store = dom.Store()
 	ctx := mock.NewContext()
 	ctx.Store = store
+	snapTS := oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
 	dd := dom.DDL()
 	c.Assert(dd, NotNil)
 	c.Assert(dd.GetLease(), Equals, 80*time.Millisecond)
@@ -75,6 +81,27 @@ func (*testSuite) TestT(c *C) {
 	// for setting lease
 	lease := 100 * time.Millisecond
 
+	// for updating the self schema version
+	goCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	cancel()
+	c.Assert(err, IsNil)
+	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
+	c.Assert(snapIs, NotNil)
+	c.Assert(err, IsNil)
+	// Make sure that the self schema version doesn't be changed.
+	goCtx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
+	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
+	cancel()
+	c.Assert(err, IsNil)
+
+	// for GetSnapshotInfoSchema
+	snapTS = oracle.EncodeTSO(oracle.GetPhysical(time.Now()))
+	snapIs, err = dom.GetSnapshotInfoSchema(snapTS)
+	c.Assert(err, IsNil)
+	c.Assert(snapIs, NotNil)
+	c.Assert(snapIs.SchemaMetaVersion(), Equals, is.SchemaMetaVersion())
+
 	// for schemaValidator
 	schemaVer := dom.SchemaValidator.(*schemaValidator).latestSchemaVer
 	ver, err := store.CurrentVersion()
@@ -83,7 +110,7 @@ func (*testSuite) TestT(c *C) {
 
 	succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
-	dom.MockReloadFailed.SetValue(true)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
 	err = dom.Reload()
 	c.Assert(err, NotNil)
 	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
@@ -95,7 +122,7 @@ func (*testSuite) TestT(c *C) {
 	ts = ver.Ver
 	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultUnknown)
-	dom.MockReloadFailed.SetValue(false)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
 	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
@@ -127,6 +154,16 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(res, HasLen, 2)
 	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
 	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+
+	metrics.PanicCounter.Reset()
+	// Since the stats lease is 0 now, so create a new ticker will panic.
+	// Test that they can recover from panic correctly.
+	dom.updateStatsWorker(ctx, nil)
+	dom.autoAnalyzeWorker(nil)
+	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
+	pb := &dto.Metric{}
+	counter.Write(pb)
+	c.Assert(pb.GetCounter().GetValue(), Equals, float64(2))
 
 	err = store.Close()
 	c.Assert(err, IsNil)

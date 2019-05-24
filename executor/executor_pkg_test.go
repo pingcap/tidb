@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -23,7 +22,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -50,6 +48,15 @@ func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
 	return ret
 }
 
+func (msm *mockSessionManager) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
+	for _, item := range msm.PS {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return util.ProcessInfo{}, false
+}
+
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
@@ -69,7 +76,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 		User:    "test",
 		Host:    "127.0.0.1",
 		DB:      "test",
-		Command: "select * from t",
+		Command: 't',
 		State:   1,
 		Info:    "",
 	}
@@ -83,7 +90,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(sctx, schema, ""),
+		baseExecutor: newBaseExecutor(sctx, schema, nil),
 		Tp:           ast.ShowProcessList,
 	}
 
@@ -95,13 +102,13 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
-		err = e.Next(context.Background(), chk)
+		err = e.Next(context.Background(), chunk.NewRecordBatch(chk))
 		c.Assert(err, IsNil)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			c.Assert(row.GetUint64(0), Equals, p.ID)
 		}
 	}
-	err = e.Next(context.Background(), chk)
+	err = e.Next(context.Background(), chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 0)
 	err = e.Close()
@@ -128,7 +135,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 	return schema
 }
 
-func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
+func (s *testExecSuite) TestBuildKvRangesForIndexJoinWithoutCwc(c *C) {
 	indexRanges := make([]*ranger.Range, 0, 6)
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
@@ -137,16 +144,16 @@ func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
 
-	joinKeyRows := make([][]types.Datum, 0, 5)
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(1, 1))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(1, 2))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 1))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 2))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 3))
+	joinKeyRows := make([]*indexJoinLookUpContent, 0, 5)
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 1)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 2)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 1)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 2)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 3)})
 
 	keyOff2IdxOff := []int{1, 3}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	kvRanges, err := buildKvRangesForIndexJoin(sc, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff)
+	ctx := mock.NewContext()
+	kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil)
 	c.Assert(err, IsNil)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
@@ -198,6 +205,11 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 			`"\0\b\n\r\t\Z\\\  \c\'\""`,
 			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
 		},
+		// Test mixed.
+		{
+			`"123",456,"\t7890",abcd`,
+			[]string{"123", "456", "\t7890", "abcd"},
+		},
 	}
 
 	ldInfo := LoadDataInfo{
@@ -214,7 +226,7 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 	}
 
 	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 }
 
 func assertEqualStrings(c *C, got []field, expect []string) {

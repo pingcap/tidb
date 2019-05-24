@@ -21,12 +21,13 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 )
 
@@ -45,14 +46,19 @@ var _ = Suite(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
-	store, err := mockstore.NewMockTikvStore()
+
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	store, err := mockstore.NewMockTikvStore(mockstore.WithCluster(cluster))
+
 	s.store = store.(tikv.Storage)
 	c.Assert(err, IsNil)
 	s.oracle = &mockoracle.MockOracle{}
 	s.store.SetOracle(s.oracle)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	gcWorker, err := NewGCWorker(s.store, nil)
+
+	gcWorker, err := NewGCWorker(s.store, mocktikv.NewPDClient(cluster))
 	c.Assert(err, IsNil)
 	gcWorker.Start()
 	gcWorker.Close()
@@ -174,23 +180,23 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
 
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
 	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
-	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
 	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
-	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
 	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
-	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
 }
 
 func (s *testGCWorkerSuite) TestDoGC(c *C) {
@@ -201,16 +207,47 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency))
 	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
+	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20, concurrency)
 	c.Assert(err, IsNil)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
 	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20, concurrency)
 	c.Assert(err, IsNil)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency))
 	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20, concurrency)
+	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
+	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+	// Now the row must be set to the default value.
+	str, err := s.gcWorker.loadValueFromSysTable(gcModeKey)
+	c.Assert(err, IsNil)
+	c.Assert(str, Equals, gcModeDistributed)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, false)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
 }

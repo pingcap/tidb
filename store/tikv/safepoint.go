@@ -22,7 +22,8 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Safe point constants.
@@ -69,7 +70,7 @@ func (w *MockSafePointKV) Put(k string, v string) error {
 func (w *MockSafePointKV) Get(k string) (string, error) {
 	w.mockLock.RLock()
 	defer w.mockLock.RUnlock()
-	elem, _ := w.store[k]
+	elem := w.store[k]
 	return elem, nil
 }
 
@@ -116,7 +117,7 @@ func saveSafePoint(kv SafePointKV, key string, t uint64) error {
 	s := strconv.FormatUint(t, 10)
 	err := kv.Put(GcSavedSafePoint, s)
 	if err != nil {
-		log.Error("save safepoint failed:", err)
+		logutil.Logger(context.Background()).Error("save safepoint failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return nil

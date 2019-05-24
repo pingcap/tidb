@@ -26,6 +26,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -42,8 +43,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/twinj/uuid"
+	"go.uber.org/zap"
 )
 
 const (
@@ -69,6 +71,9 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
+
+	// ddlLogCtx uses for log.
+	ddlLogCtx = context.Background()
 )
 
 var (
@@ -76,6 +81,7 @@ var (
 	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
+	errCantDecodeIndex       = terror.ClassDDL.New(codeCantDecodeIndex, "cannot decode index value, because %s")
 	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid DDL job")
 	errCancelledDDLJob       = terror.ClassDDL.New(codeCancelledDDLJob, "cancelled DDL job")
 	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
@@ -83,7 +89,6 @@ var (
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
 	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
 
-	errUnknownPartition = terror.ClassDDL.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex     = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn     = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
@@ -94,10 +99,9 @@ var (
 	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
 
 	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with auto_increment column.")
-
-	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
-	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
-	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
+	errBlobKeyWithoutLength      = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
+	errIncorrectPrefixKey        = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
+	errTooLongKey                = terror.ClassDDL.New(codeTooLongKey,
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
 	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
@@ -115,19 +119,29 @@ var (
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
 	// errUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
 	errUnsupportedOnGeneratedColumn = terror.ClassDDL.New(codeUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
-	// errGeneratedColumnNonPrior forbiddens to refer generated column non prior to it.
+	// errGeneratedColumnNonPrior forbids to refer generated column non prior to it.
 	errGeneratedColumnNonPrior = terror.ClassDDL.New(codeGeneratedColumnNonPrior, mysql.MySQLErrName[mysql.ErrGeneratedColumnNonPrior])
-	// errDependentByGeneratedColumn forbiddens to delete columns which are dependent by generated columns.
+	// errDependentByGeneratedColumn forbids to delete columns which are dependent by generated columns.
 	errDependentByGeneratedColumn = terror.ClassDDL.New(codeDependentByGeneratedColumn, mysql.MySQLErrName[mysql.ErrDependentByGeneratedColumn])
-	// errJSONUsedAsKey forbiddens to use JSON as key or index.
+	// errJSONUsedAsKey forbids to use JSON as key or index.
 	errJSONUsedAsKey = terror.ClassDDL.New(codeJSONUsedAsKey, mysql.MySQLErrName[mysql.ErrJSONUsedAsKey])
-	// errBlobCantHaveDefault forbiddens to give not null default value to TEXT/BLOB/JSON.
+	// errBlobCantHaveDefault forbids to give not null default value to TEXT/BLOB/JSON.
 	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
 	errTooLongIndexComment = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
+	// ErrInvalidDefaultValue returns for invalid default value for columns.
+	ErrInvalidDefaultValue = terror.ClassDDL.New(codeInvalidDefaultValue, mysql.MySQLErrName[mysql.ErrInvalidDefault])
+	// ErrGeneratedColumnRefAutoInc forbids to refer generated columns to auto-increment columns .
+	ErrGeneratedColumnRefAutoInc = terror.ClassDDL.New(codeErrGeneratedColumnRefAutoInc, mysql.MySQLErrName[mysql.ErrGeneratedColumnRefAutoInc])
 	// ErrUnsupportedAddPartition returns for does not support add partitions.
 	ErrUnsupportedAddPartition = terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
 	ErrUnsupportedCoalescePartition = terror.ClassDDL.New(codeUnsupportedCoalescePartition, "unsupported coalesce partitions")
+	// ErrGeneratedColumnFunctionIsNotAllowed returns for unsupported functions for generated columns.
+	ErrGeneratedColumnFunctionIsNotAllowed = terror.ClassDDL.New(codeErrGeneratedColumnFunctionIsNotAllowed, "Expression of generated column '%s' contains a disallowed function.")
+	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
+	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(codeUnsupportedPartitionByRangeColumns,
+		"unsupported partition by range columns")
+	errUnsupportedCreatePartition = terror.ClassDDL.New(codeUnsupportedCreatePartition, "unsupported partition type, treat as normal table")
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
@@ -167,6 +181,12 @@ var (
 	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 	// ErrUnknownCharacterSet returns unknown character set.
 	ErrUnknownCharacterSet = terror.ClassDDL.New(codeUnknownCharacterSet, "Unknown character set: '%s'")
+	// ErrUnknownCollation returns unknown collation.
+	ErrUnknownCollation = terror.ClassDDL.New(codeUnknownCollation, "Unknown collation: '%s'")
+	// ErrCollationCharsetMismatch returns when collation not match the charset.
+	ErrCollationCharsetMismatch = terror.ClassDDL.New(codeCollationCharsetMismatch, mysql.MySQLErrName[mysql.ErrCollationCharsetMismatch])
+	// ErrConflictingDeclarations return conflict declarations.
+	ErrConflictingDeclarations = terror.ClassDDL.New(codeConflictingDeclarations, "Conflicting declarations: 'CHARACTER SET %s' and 'CHARACTER SET %s'")
 	// ErrPrimaryCantHaveNull returns All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead
 	ErrPrimaryCantHaveNull = terror.ClassDDL.New(codePrimaryCantHaveNull, mysql.MySQLErrName[mysql.ErrPrimaryCantHaveNull])
 
@@ -190,6 +210,8 @@ var (
 	ErrDropLastPartition = terror.ClassDDL.New(codeDropLastPartition, mysql.MySQLErrName[mysql.ErrDropLastPartition])
 	//ErrTooManyPartitions returns too many partitions were defined.
 	ErrTooManyPartitions = terror.ClassDDL.New(codeTooManyPartitions, mysql.MySQLErrName[mysql.ErrTooManyPartitions])
+	//ErrNoParts returns no partition were defined.
+	ErrNoParts = terror.ClassDDL.New(codeNoParts, mysql.MySQLErrName[mysql.ErrNoParts])
 	//ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
 	ErrPartitionFunctionIsNotAllowed = terror.ClassDDL.New(codePartitionFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFunctionIsNotAllowed])
 	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.
@@ -203,16 +225,29 @@ var (
 	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(codeCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
 	// ErrViewWrongList returns create view must include all columns in the select clause
 	ErrViewWrongList = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
+	// ErrAlterOperationNotSupported returns when alter operations is not supported.
+	ErrAlterOperationNotSupported = terror.ClassDDL.New(codeNotSupportedAlterOperation, mysql.MySQLErrName[mysql.ErrAlterOperationNotSupportedReason])
+	// ErrWrongObject returns for wrong object.
+	ErrWrongObject = terror.ClassDDL.New(codeErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
+	// ErrTableCantHandleFt returns FULLTEXT keys are not supported by table type
+	ErrTableCantHandleFt = terror.ClassDDL.New(codeErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
+	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
+	ErrFieldNotFoundPart = terror.ClassDDL.New(codeFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
+	// ErrPartitionColumnList returns "Inconsistency in usage of column lists for partitioning".
+	ErrPartitionColumnList = terror.ClassDDL.New(codePartitionColumnList, mysql.MySQLErrName[mysql.ErrPartitionColumnList])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
 	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
+	AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
+	RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
+	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr) error
@@ -246,9 +281,8 @@ type DDL interface {
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m          sync.RWMutex
-	infoHandle *infoschema.Handle
-	quitCh     chan struct{}
+	m      sync.RWMutex
+	quitCh chan struct{}
 
 	*ddlCtx
 	workers     map[workerType]*worker
@@ -266,6 +300,7 @@ type ddlCtx struct {
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoHandle   *infoschema.Handle
 
 	// hook may be modified.
 	mu struct {
@@ -277,7 +312,7 @@ type ddlCtx struct {
 
 func (dc *ddlCtx) isOwner() bool {
 	isOwner := dc.ownerManager.IsOwner()
-	log.Debugf("[ddl] it's the DDL owner %v, self ID %s", isOwner, dc.uuid)
+	logutil.Logger(ddlLogCtx).Debug("[ddl] check whether is the DDL owner", zap.Bool("isOwner", isOwner), zap.String("selfID", dc.uuid))
 	if isOwner {
 		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
@@ -306,7 +341,7 @@ func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 			case d.ddlEventCh <- e:
 				return
 			default:
-				log.Warnf("Fail to notify event %s.", e)
+				logutil.Logger(ddlLogCtx).Warn("[ddl] fail to notify DDL event", zap.String("event", e.String()))
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
@@ -346,12 +381,12 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
+		infoHandle:   infoHandle,
 	}
 	ddlCtx.mu.hook = hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		infoHandle: infoHandle,
-		ddlCtx:     ddlCtx,
+		ddlCtx: ddlCtx,
 	}
 
 	d.start(ctx, ctxPool)
@@ -367,7 +402,7 @@ func (d *ddl) Stop() error {
 	defer d.m.Unlock()
 
 	d.close()
-	log.Infof("[ddl] stop DDL:%s", d.uuid)
+	logutil.Logger(ddlLogCtx).Info("[ddl] stop DDL", zap.String("ID", d.uuid))
 	return nil
 }
 
@@ -375,7 +410,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	var delRangeMgr delRangeManager
 	if !mock {
 		delRangeMgr = newDelRangeManager(d.store, d.sessPool)
-		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !d.store.SupportDeleteRange())
+		logutil.Logger(ddlLogCtx).Info("[ddl] start delRangeManager OK", zap.Bool("is a emulator", !d.store.SupportDeleteRange()))
 	} else {
 		delRangeMgr = newMockDelRangeManager()
 	}
@@ -387,7 +422,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // start campaigns the owner and starts workers.
 // ctxPool is used for the worker's delRangeManager and creates sessions.
 func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
-	log.Infof("[ddl] start DDL:%s, run worker %v", d.uuid, RunWorker)
+	logutil.Logger(ddlLogCtx).Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.quitCh = make(chan struct{})
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
@@ -408,7 +443,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 				func() { w.start(d.ddlCtx) },
 				func(r interface{}) {
 					if r != nil {
-						log.Errorf("[ddl-%s] ddl %s meet panic", w, d.uuid)
+						logutil.Logger(w.logCtx).Error("[ddl] DDL worker meet panic", zap.String("ID", d.uuid))
 						metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 					}
 				})
@@ -431,7 +466,7 @@ func (d *ddl) close() {
 	d.ownerManager.Cancel()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
-		log.Errorf("[ddl] remove self version path failed %v", err)
+		logutil.Logger(ddlLogCtx).Error("[ddl] remove self version path failed", zap.Error(err))
 	}
 
 	for _, worker := range d.workers {
@@ -444,7 +479,7 @@ func (d *ddl) close() {
 		d.delRangeMgr.clear()
 	}
 
-	log.Infof("[ddl] closing DDL:%s takes time %v", d.uuid, time.Since(startTime))
+	logutil.Logger(ddlLogCtx).Info("[ddl] closing DDL", zap.String("ID", d.uuid), zap.Duration("takeTime", time.Since(startTime)))
 }
 
 // GetLease implements DDL.GetLease interface.
@@ -455,8 +490,10 @@ func (d *ddl) GetLease() time.Duration {
 	return lease
 }
 
-// GetInformationSchema gets the infoschema binding to d. It's expoted for testing.
-func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema {
+// GetInfoSchemaWithInterceptor gets the infoschema binding to d. It's exported for testing.
+// Please don't use this function, it is used by TestParallelDDLBeforeRunDDLJob to intercept the calling of d.infoHandle.Get(), use d.infoHandle.Get() instead.
+// Otherwise, the TestParallelDDLBeforeRunDDLJob will hang up forever.
+func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
 	is := d.infoHandle.Get()
 
 	d.mu.RLock()
@@ -469,10 +506,11 @@ func (d *ddl) genGlobalID() (int64, error) {
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
 
-		// gofail: var mockGenGlobalIDFail bool
-		// if mockGenGlobalIDFail {
-		//	 return errors.New("gofail genGlobalID error")
-		// }
+		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.New("gofail genGlobalID error"))
+			}
+		})
 
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
@@ -531,7 +569,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(job.Type)
-	log.Infof("[ddl] start DDL job %s, Query:%s", job, job.Query)
+	logutil.Logger(ddlLogCtx).Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
 	jobID := job.ID
@@ -554,23 +592,23 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
 		if err != nil {
-			log.Errorf("[ddl] get history DDL job err %v, check again", err)
+			logutil.Logger(ddlLogCtx).Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
 		} else if historyJob == nil {
-			log.Debugf("[ddl] DDL job ID:%d is not in history, maybe not run", jobID)
+			logutil.Logger(ddlLogCtx).Debug("[ddl] DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}
 
-		// If a job is a history job, the state must be JobSynced or JobCancel.
+		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
-			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
+			logutil.Logger(ddlLogCtx).Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
 		}
 
 		if historyJob.Error != nil {
 			return errors.Trace(historyJob.Error)
 		}
-		panic("When the state is JobCancel, historyJob.Error should never be nil")
+		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
 }
 
@@ -610,6 +648,7 @@ const (
 	codeCancelledDDLJob                      = 12
 	codeInvalidRanges                        = 13
 	codeReorgWorkerPanic                     = 14
+	codeCantDecodeIndex                      = 15
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101
@@ -617,16 +656,18 @@ const (
 	codeInvalidIndexState      = 103
 	codeInvalidForeignKeyState = 104
 
-	codeCantDropColWithIndex         = 201
-	codeUnsupportedAddColumn         = 202
-	codeUnsupportedModifyColumn      = 203
-	codeUnsupportedDropPKHandle      = 204
-	codeUnsupportedCharset           = 205
-	codeUnsupportedModifyPrimaryKey  = 206
-	codeUnsupportedShardRowIDBits    = 207
-	codeUnsupportedAddPartition      = 208
-	codeUnsupportedCoalescePartition = 209
-	codeUnsupportedModifyCharset     = 210
+	codeCantDropColWithIndex               = 201
+	codeUnsupportedAddColumn               = 202
+	codeUnsupportedModifyColumn            = 203
+	codeUnsupportedDropPKHandle            = 204
+	codeUnsupportedCharset                 = 205
+	codeUnsupportedModifyPrimaryKey        = 206
+	codeUnsupportedShardRowIDBits          = 207
+	codeUnsupportedAddPartition            = 208
+	codeUnsupportedCoalescePartition       = 209
+	codeUnsupportedModifyCharset           = 210
+	codeUnsupportedPartitionByRangeColumns = 211
+	codeUnsupportedCreatePartition         = 212
 
 	codeFileNotFound                           = 1017
 	codeErrorOnRename                          = 1025
@@ -634,6 +675,7 @@ const (
 	codeBadField                               = 1054
 	codeTooLongIdent                           = 1059
 	codeDupKeyName                             = 1061
+	codeInvalidDefaultValue                    = mysql.ErrInvalidDefault
 	codeTooLongKey                             = 1071
 	codeKeyColumnDoesNotExits                  = mysql.ErrKeyColumnDoesNotExits
 	codeIncorrectPrefixKey                     = 1089
@@ -648,6 +690,7 @@ const (
 	codeWrongKeyColumn                         = 1167
 	codeBlobKeyWithoutLength                   = 1170
 	codeInvalidOnUpdate                        = 1294
+	codeErrWrongObject                         = terror.ErrCode(mysql.ErrWrongObject)
 	codeViewWrongList                          = 1353
 	codeUnsupportedOnGeneratedColumn           = 3106
 	codeGeneratedColumnNonPrior                = 3107
@@ -656,6 +699,9 @@ const (
 	codeWrongNameForIndex                      = terror.ErrCode(mysql.ErrWrongNameForIndex)
 	codeErrTooLongIndexComment                 = terror.ErrCode(mysql.ErrTooLongIndexComment)
 	codeUnknownCharacterSet                    = terror.ErrCode(mysql.ErrUnknownCharacterSet)
+	codeUnknownCollation                       = terror.ErrCode(mysql.ErrUnknownCollation)
+	codeCollationCharsetMismatch               = terror.ErrCode(mysql.ErrCollationCharsetMismatch)
+	codeConflictingDeclarations                = terror.ErrCode(mysql.ErrConflictingDeclarations)
 	codeCantCreateTable                        = terror.ErrCode(mysql.ErrCantCreateTable)
 	codeTableMustHaveColumns                   = terror.ErrCode(mysql.ErrTableMustHaveColumns)
 	codePartitionsMustBeDefined                = terror.ErrCode(mysql.ErrPartitionsMustBeDefined)
@@ -667,6 +713,7 @@ const (
 	codeErrTooManyValues                       = terror.ErrCode(mysql.ErrTooManyValues)
 	codeDropLastPartition                      = terror.ErrCode(mysql.ErrDropLastPartition)
 	codeTooManyPartitions                      = terror.ErrCode(mysql.ErrTooManyPartitions)
+	codeNoParts                                = terror.ErrCode(mysql.ErrNoParts)
 	codePartitionFunctionIsNotAllowed          = terror.ErrCode(mysql.ErrPartitionFunctionIsNotAllowed)
 	codeErrPartitionFuncNotAllowed             = terror.ErrCode(mysql.ErrPartitionFuncNotAllowed)
 	codeErrFieldTypeNotAllowedAsPartitionField = terror.ErrCode(mysql.ErrFieldTypeNotAllowedAsPartitionField)
@@ -674,8 +721,14 @@ const (
 	codePrimaryCantHaveNull                    = terror.ErrCode(mysql.ErrPrimaryCantHaveNull)
 	codeWrongExprInPartitionFunc               = terror.ErrCode(mysql.ErrWrongExprInPartitionFunc)
 	codeWarnDataTruncated                      = terror.ErrCode(mysql.WarnDataTruncated)
+	codeErrTableCantHandleFt                   = terror.ErrCode(mysql.ErrTableCantHandleFt)
 	codeCoalesceOnlyOnHashPartition            = terror.ErrCode(mysql.ErrCoalesceOnlyOnHashPartition)
 	codeUnknownPartition                       = terror.ErrCode(mysql.ErrUnknownPartition)
+	codeErrGeneratedColumnFunctionIsNotAllowed = terror.ErrCode(mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	codeErrGeneratedColumnRefAutoInc           = terror.ErrCode(mysql.ErrGeneratedColumnRefAutoInc)
+	codeNotSupportedAlterOperation             = terror.ErrCode(mysql.ErrAlterOperationNotSupportedReason)
+	codeFieldNotFoundPart                      = terror.ErrCode(mysql.ErrFieldNotFoundPart)
+	codePartitionColumnList                    = terror.ErrCode(mysql.ErrPartitionColumnList)
 )
 
 func init() {
@@ -709,6 +762,9 @@ func init() {
 		codeErrTooLongIndexComment:                 mysql.ErrTooLongIndexComment,
 		codeViewWrongList:                          mysql.ErrViewWrongList,
 		codeUnknownCharacterSet:                    mysql.ErrUnknownCharacterSet,
+		codeUnknownCollation:                       mysql.ErrUnknownCollation,
+		codeCollationCharsetMismatch:               mysql.ErrCollationCharsetMismatch,
+		codeConflictingDeclarations:                mysql.ErrConflictingDeclarations,
 		codePartitionsMustBeDefined:                mysql.ErrPartitionsMustBeDefined,
 		codePartitionMgmtOnNonpartitioned:          mysql.ErrPartitionMgmtOnNonpartitioned,
 		codeDropPartitionNonExistent:               mysql.ErrDropPartitionNonExistent,
@@ -718,6 +774,7 @@ func init() {
 		codeErrTooManyValues:                       mysql.ErrTooManyValues,
 		codeDropLastPartition:                      mysql.ErrDropLastPartition,
 		codeTooManyPartitions:                      mysql.ErrTooManyPartitions,
+		codeNoParts:                                mysql.ErrNoParts,
 		codePartitionFunctionIsNotAllowed:          mysql.ErrPartitionFunctionIsNotAllowed,
 		codeErrPartitionFuncNotAllowed:             mysql.ErrPartitionFuncNotAllowed,
 		codeErrFieldTypeNotAllowedAsPartitionField: mysql.ErrFieldTypeNotAllowedAsPartitionField,
@@ -725,8 +782,15 @@ func init() {
 		codePrimaryCantHaveNull:                    mysql.ErrPrimaryCantHaveNull,
 		codeWrongExprInPartitionFunc:               mysql.ErrWrongExprInPartitionFunc,
 		codeWarnDataTruncated:                      mysql.WarnDataTruncated,
+		codeErrTableCantHandleFt:                   mysql.ErrTableCantHandleFt,
 		codeCoalesceOnlyOnHashPartition:            mysql.ErrCoalesceOnlyOnHashPartition,
 		codeUnknownPartition:                       mysql.ErrUnknownPartition,
+		codeNotSupportedAlterOperation:             mysql.ErrAlterOperationNotSupportedReason,
+		codeErrWrongObject:                         mysql.ErrWrongObject,
+		codeFieldNotFoundPart:                      mysql.ErrFieldNotFoundPart,
+		codePartitionColumnList:                    mysql.ErrPartitionColumnList,
+		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
+		codeErrGeneratedColumnRefAutoInc:           mysql.ErrGeneratedColumnRefAutoInc,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

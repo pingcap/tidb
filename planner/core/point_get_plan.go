@@ -41,6 +41,7 @@ type PointGetPlan struct {
 	IndexInfo        *model.IndexInfo
 	Handle           int64
 	HandleParam      *driver.ParamMarkerExpr
+	UnsignedHandle   bool
 	IndexValues      []types.Datum
 	IndexValueParams []*driver.ParamMarkerExpr
 	expr             expression.Expression
@@ -98,7 +99,7 @@ func (p *PointGetPlan) StatsCount() float64 {
 	return 1
 }
 
-// StatsCount will return the the RowCount of property.StatsInfo for this plan.
+// statsInfo will return the the RowCount of property.StatsInfo for this plan.
 func (p *PointGetPlan) statsInfo() *property.StatsInfo {
 	if p.stats == nil {
 		p.stats = &property.StatsInfo{}
@@ -116,7 +117,9 @@ func (p *PointGetPlan) Children() []PhysicalPlan {
 func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-func (p *PointGetPlan) ResolveIndices() {}
+func (p *PointGetPlan) ResolveIndices() error {
+	return nil
+}
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
@@ -183,11 +186,8 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if pairs == nil {
 		return nil
 	}
-	handlePair := findPKHandle(tbl, pairs)
-	if handlePair.value.Kind() != types.KindNull {
-		if len(pairs) != 1 {
-			return nil
-		}
+	handlePair, unsigned := findPKHandle(tbl, pairs)
+	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
 		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
@@ -198,9 +198,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if err != nil {
 			return nil
 		}
+		p.UnsignedHandle = unsigned
 		p.HandleParam = handlePair.param
 		return p
 	}
+
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique {
 			continue
@@ -241,7 +243,7 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointGetPlan, chec
 	}
 	dbName := ctx.GetSessionVars().CurrentDB
 	for _, checkType := range checkTypes {
-		if !pm.RequestVerification(dbName, fastPlan.TblInfo.Name.L, "", checkType) {
+		if !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, fastPlan.TblInfo.Name.L, "", checkType) {
 			return errors.New("privilege check fail")
 		}
 	}
@@ -362,20 +364,20 @@ func getNameValuePairs(nvPairs []nameValuePair, expr ast.ExprNode) []nameValuePa
 	return nil
 }
 
-func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair) {
+func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, unsigned bool) {
 	if !tblInfo.PKIsHandle {
-		return handlePair
+		return handlePair, unsigned
 	}
 	for _, col := range tblInfo.Columns {
 		if mysql.HasPriKeyFlag(col.Flag) {
 			i := findInPairs(col.Name.L, pairs)
 			if i == -1 {
-				return handlePair
+				return handlePair, unsigned
 			}
-			return pairs[i]
+			return pairs[i], mysql.HasUnsignedFlag(col.Flag)
 		}
 	}
-	return handlePair
+	return handlePair, unsigned
 }
 
 func getIndexValues(idxInfo *model.IndexInfo, pairs []nameValuePair) ([]types.Datum, []*driver.ParamMarkerExpr) {
@@ -455,7 +457,10 @@ func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*
 			return nil
 		}
 		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
-		newAssign.Expr = expr.ResolveIndices(fastSelect.schema)
+		newAssign.Expr, err = expr.ResolveIndices(fastSelect.schema)
+		if err != nil {
+			return nil
+		}
 		orderedList = append(orderedList, newAssign)
 	}
 	return orderedList

@@ -374,6 +374,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) LogicalPlan {
 					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
 					newChildren = append(newChildren, newChild)
 				}
+				union.SetSchema(expression.NewSchema(newChildren[0].Schema().Columns...))
 				union.SetChildren(newChildren...)
 			}
 		}

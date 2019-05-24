@@ -223,11 +223,11 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 
 	fcName := ast.ConcatWS
 	// ERROR 1582 (42000): Incorrect parameter count in the call to native function 'concat_ws'
-	f, err := newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants([]interface{}{nil})...)
+	_, err := newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants([]interface{}{nil})...)
 	c.Assert(err, NotNil)
 
 	for _, t := range cases {
-		f, err = newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		val, err1 := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -676,41 +676,61 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 func (s *testEvaluatorSuite) TestConvert(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		str    string
-		cs     string
-		result string
+		str           interface{}
+		cs            string
+		result        string
+		hasBinaryFlag bool
 	}{
-		{"haha", "utf8", "haha"},
-		{"haha", "ascii", "haha"},
-		{"haha", "binary", "haha"},
+		{"haha", "utf8", "haha", false},
+		{"haha", "ascii", "haha", false},
+		{"haha", "binary", "haha", true},
+		{"haha", "bInAry", "haha", true},
+		{types.NewBinaryLiteralFromUint(0x7e, -1), "BiNarY", "~", true},
+		{types.NewBinaryLiteralFromUint(0xe4b8ade696870a, -1), "uTf8", "中文\n", false},
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
+		retType := f.getRetTp()
+		c.Assert(retType.Charset, Equals, strings.ToLower(v.cs))
+		collate, err := charset.GetDefaultCollation(strings.ToLower(v.cs))
+		c.Assert(err, IsNil)
+		c.Assert(retType.Collate, Equals, collate)
+		c.Assert(mysql.HasBinaryFlag(retType.Flag), Equals, v.hasBinaryFlag)
+
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
 		c.Assert(r.GetString(), Equals, v.result)
 	}
 
-	// Test case for error
+	// Test case for getFunction() error
 	errTbl := []struct {
-		str    interface{}
-		cs     string
-		result string
+		str interface{}
+		cs  string
+		err string
 	}{
-		{"haha", "wrongcharset", "haha"},
+		{"haha", "wrongcharset", "[expression:1115]Unknown character set: 'wrongcharset'"},
+		{"haha", "cp866", "[expression:1115]Unknown character set: 'cp866'"},
 	}
 	for _, v := range errTbl {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		_, err = evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, v.err)
+		c.Assert(f, IsNil)
 	}
+
+	// Test wrong charset while evaluating.
+	fc := funcs[ast.Convert]
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("haha", "utf8")))
+	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	wrongFunction := f.(*builtinConvertSig)
+	wrongFunction.tp.Charset = "wrongcharset"
+	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
+	c.Assert(err.Error(), Equals, "[expression:1115]Unknown character set: 'wrongcharset'")
 }
 
 func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
@@ -1199,6 +1219,13 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum("AB"))
+
+	// Test unsupported charset.
+	fc = funcs[ast.CharFunc]
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("65", "tidb")))
+	c.Assert(err, IsNil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
 }
 
 func (s *testEvaluatorSuite) TestCharLength(c *C) {
@@ -1599,38 +1626,49 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		locale    string
 		ret       interface{}
 	}{
-		{12332.1234561111111111111111111111111111111111111, 4, "en_US", "12,332.1234"},
+		{12332.12341111111111111111111111111111111111111, 4, "en_US", "12,332.1234"},
 		{nil, 22, "en_US", nil},
 	}
 	formatTests1 := []struct {
 		number    interface{}
 		precision interface{}
 		ret       interface{}
+		warnings  int
 	}{
-		{12332.123456, 4, "12,332.1234"},
-		{12332.123456, 0, "12,332"},
-		{12332.123456, -4, "12,332"},
-		{-12332.123456, 4, "-12,332.1234"},
-		{-12332.123456, 0, "-12,332"},
-		{-12332.123456, -4, "-12,332"},
-		{"12332.123456", "4", "12,332.1234"},
-		{"12332.123456A", "4", "12,332.1234"},
-		{"-12332.123456", "4", "-12,332.1234"},
-		{"-12332.123456A", "4", "-12,332.1234"},
-		{"A123345", "4", "0.0000"},
-		{"-A123345", "4", "0.0000"},
-		{"-12332.123456", "A", "-12,332"},
-		{"12332.123456", "A", "12,332"},
-		{"-12332.123456", "4A", "-12,332.1234"},
-		{"12332.123456", "4A", "12,332.1234"},
-		{"-A12332.123456", "A", "0"},
-		{"A12332.123456", "A", "0"},
-		{"-A12332.123456", "4A", "0.0000"},
-		{"A12332.123456", "4A", "0.0000"},
-		{"-.12332.123456", "4A", "-0.1233"},
-		{".12332.123456", "4A", "0.1233"},
-		{"12332.1234567890123456789012345678901", 22, "12,332.1234567890123456789012"},
-		{nil, 22, nil},
+		// issue #8796
+		{1.12345, 4, "1.1235", 0},
+		{9.99999, 4, "10.0000", 0},
+		{1.99999, 4, "2.0000", 0},
+		{1.09999, 4, "1.1000", 0},
+		{-2.5000, 0, "-3", 0},
+
+		{12332.123444, 4, "12,332.1234", 0},
+		{12332.123444, 0, "12,332", 0},
+		{12332.123444, -4, "12,332", 0},
+		{-12332.123444, 4, "-12,332.1234", 0},
+		{-12332.123444, 0, "-12,332", 0},
+		{-12332.123444, -4, "-12,332", 0},
+		{"12332.123444", "4", "12,332.1234", 0},
+		{"12332.123444A", "4", "12,332.1234", 1},
+		{"-12332.123444", "4", "-12,332.1234", 0},
+		{"-12332.123444A", "4", "-12,332.1234", 1},
+		{"A123345", "4", "0.0000", 1},
+		{"-A123345", "4", "0.0000", 1},
+		{"-12332.123444", "A", "-12,332", 1},
+		{"12332.123444", "A", "12,332", 1},
+		{"-12332.123444", "4A", "-12,332.1234", 1},
+		{"12332.123444", "4A", "12,332.1234", 1},
+		{"-A12332.123444", "A", "0", 2},
+		{"A12332.123444", "A", "0", 2},
+		{"-A12332.123444", "4A", "0.0000", 2},
+		{"A12332.123444", "4A", "0.0000", 2},
+		{"-.12332.123444", "4A", "-0.1233", 2},
+		{".12332.123444", "4A", "0.1233", 2},
+		{"12332.1234567890123456789012345678901", 22, "12,332.1234567890110000000000", 0},
+		{nil, 22, nil, 0},
+		{1, 1024, "1.000000000000000000000000000000", 0},
+		{"", 1, "0.0", 1},
+		{1, "", "1", 1},
 	}
 	formatTests2 := struct {
 		number    interface{}
@@ -1644,9 +1682,15 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		locale    string
 		ret       interface{}
 	}{"-12332.123456", "4", "de_GE", nil}
+	formatTests4 := struct {
+		number    interface{}
+		precision interface{}
+		locale    interface{}
+		ret       interface{}
+	}{1, 4, nil, "1.0000"}
 
+	fc := funcs[ast.Format]
 	for _, tt := range formatTests {
-		fc := funcs[ast.Format]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
@@ -1655,31 +1699,50 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
 	}
 
+	origConfig := s.ctx.GetSessionVars().StmtCtx.TruncateAsWarning
+	s.ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
 	for _, tt := range formatTests1 {
-		fc := funcs[ast.Format]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret), Commentf("test %v", tt))
+		if tt.warnings > 0 {
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(len(warnings), Equals, tt.warnings, Commentf("test %v", tt))
+			for i := 0; i < tt.warnings; i++ {
+				c.Assert(terror.ErrorEqual(types.ErrTruncated, warnings[i].Err), IsTrue, Commentf("test %v", tt))
+			}
+			s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+		}
 	}
+	s.ctx.GetSessionVars().StmtCtx.TruncateAsWarning = origConfig
 
-	fc2 := funcs[ast.Format]
-	f2, err := fc2.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
+	f2, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
 	c.Assert(err, IsNil)
 	c.Assert(f2, NotNil)
 	r2, err := evalBuiltinFunc(f2, chunk.Row{})
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not implemented")))
 	c.Assert(r2, testutil.DatumEquals, types.NewDatum(formatTests2.ret))
 
-	fc3 := funcs[ast.Format]
-	f3, err := fc3.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
+	f3, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
 	c.Assert(err, IsNil)
 	c.Assert(f3, NotNil)
 	r3, err := evalBuiltinFunc(f3, chunk.Row{})
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not support for the specific locale")))
 	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.ret))
+
+	f4, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests4.number, formatTests4.precision, formatTests4.locale)))
+	c.Assert(err, IsNil)
+	c.Assert(f4, NotNil)
+	r4, err := evalBuiltinFunc(f4, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(r4, testutil.DatumEquals, types.NewDatum(formatTests4.ret))
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 1)
+	c.Assert(terror.ErrorEqual(errUnknownLocale, warnings[0].Err), IsTrue)
+	s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 }
 
 func (s *testEvaluatorSuite) TestFromBase64(c *C) {

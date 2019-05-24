@@ -252,7 +252,7 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 				selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
 			} else {
 				// TODO: should rewrite the filter to `cast(expr as SIGNED) != 0` and always use `EvalInt`.
-				bVal, err := EvalBool(ctx, []Expression{filter}, row)
+				bVal, _, err := EvalBool(ctx, []Expression{filter}, row)
 				if err != nil {
 					return nil, err
 				}

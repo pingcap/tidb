@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 )
 
 type simpleRewriter struct {
@@ -39,10 +40,10 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 	exprStr = "select " + exprStr
 	stmts, warns, err := parser.New().Parse(exprStr, "", "")
 	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	if err != nil {
-		return nil, err
+		return nil, util.SyntaxError(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr)
@@ -77,10 +78,10 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 	exprStr = "select " + exprStr
 	stmts, warns, err := parser.New().Parse(exprStr, "", "")
 	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	if err != nil {
-		return nil, err
+		return nil, util.SyntaxWarn(err)
 	}
 	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
 	exprs := make([]Expression, 0, len(fields))
@@ -105,8 +106,8 @@ func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, sche
 }
 
 func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
-	col := sr.schema.FindColumnByName(nodeColName.Name.Name.L)
-	if col != nil {
+	col, err := sr.schema.FindColumn(nodeColName.Name)
+	if col != nil && err == nil {
 		return col, nil
 	}
 	return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")

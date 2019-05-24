@@ -51,7 +51,8 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
-	txn.Set([]byte("a"), []byte("b"))
+	err = txn.Set([]byte("a"), []byte("b"))
+	c.Assert(err, IsNil)
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
@@ -59,7 +60,8 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
-	txn.Set([]byte("a"), []byte("b"))
+	err = txn.Set([]byte("a"), []byte("b"))
+	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
@@ -176,7 +178,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, types.MakeDatums(i, i, i), false)
+		_, err := t.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 

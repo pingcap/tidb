@@ -37,9 +37,7 @@ var _ = Suite(&testSuite{})
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -53,7 +51,10 @@ func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{
-			MockResponse: &mockResponse{},
+			MockResponse: &mockResponse{
+				batch: 1,
+				total: 2,
+			},
 		},
 	}
 	s.sctx = ctx
@@ -67,7 +68,10 @@ func (s *testSuite) SetUpTest(c *C) {
 	ctx := s.sctx.(*mock.Context)
 	store := ctx.Store.(*mock.Store)
 	store.Client = &mock.Client{
-		MockResponse: &mockResponse{},
+		MockResponse: &mockResponse{
+			batch: 1,
+			total: 2,
+		},
 	}
 }
 
