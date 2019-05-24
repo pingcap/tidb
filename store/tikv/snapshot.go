@@ -300,8 +300,8 @@ func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (s *tikvSnapshot) IterReverse(endKey kv.Key) (kv.Iterator, error) {
-	scanner, err := newScanner(s, nil, endKey, scanBatchSize, true)
+func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
+	scanner, err := newScanner(s, nil, k, scanBatchSize, true)
 	return scanner, errors.Trace(err)
 }
 

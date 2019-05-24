@@ -637,18 +637,7 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	jobs := make([]*model.Job, 0, len(pairs))
-	for _, pair := range pairs {
-		job := &model.Job{}
-		err = job.Decode(pair.Value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		jobs = append(jobs, job)
-	}
-	sorter := &jobsSorter{jobs: jobs}
-	sort.Sort(sorter)
-	return jobs, nil
+	return decodeAndSortJob(pairs)
 }
 
 // GetLastNHistoryDDLJobs gets latest N history ddl jobs.
@@ -657,10 +646,14 @@ func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var jobs []*model.Job
-	for _, pair := range pairs {
+	return decodeAndSortJob(pairs)
+}
+
+func decodeAndSortJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
+	jobs := make([]*model.Job, 0, len(jobPairs))
+	for _, pair := range jobPairs {
 		job := &model.Job{}
-		err = job.Decode(pair.Value)
+		err := job.Decode(pair.Value)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -669,6 +662,7 @@ func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
 	sorter := &jobsSorter{jobs: jobs}
 	sort.Sort(sorter)
 	return jobs, nil
+
 }
 
 // jobsSorter implements the sort.Interface interface.
