@@ -15,8 +15,8 @@ package math
 
 import "math"
 
-// http://cavaliercoder.com/blog/optimized-abs-for-int64-in-go.html
-func abs(n int64) int64 {
+// Abs implement the abs function according to http://cavaliercoder.com/blog/optimized-abs-for-int64-in-go.html
+func Abs(n int64) int64 {
 	y := n >> 63
 	return (n ^ y) - y
 }
@@ -46,5 +46,5 @@ func StrLenOfInt64Fast(x int64) int {
 	if x < 0 {
 		size = 1 // add "-" sign on the length count
 	}
-	return size + StrLenOfUint64Fast(uint64(abs(x)))
+	return size + StrLenOfUint64Fast(uint64(Abs(x)))
 }

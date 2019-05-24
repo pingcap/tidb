@@ -16,6 +16,7 @@ package infoschema
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
@@ -42,6 +43,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	} else if diff.Type == model.ActionDropSchema {
 		tblIDs := b.applyDropSchema(diff.SchemaID)
 		return tblIDs, nil
+	} else if diff.Type == model.ActionModifySchemaCharsetAndCollate {
+		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	}
 
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
@@ -126,6 +129,23 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 	return nil
 }
 
+func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDbInfo := b.copySchemaTables(di.Name.O)
+	newDbInfo.Charset = di.Charset
+	newDbInfo.Collate = di.Collate
+	return nil
+}
+
 func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	di, ok := b.is.SchemaByID(schemaID)
 	if !ok {
@@ -172,6 +192,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
+	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 
 	if alloc == nil {
@@ -195,6 +216,20 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
 	}
 	return nil
+}
+
+// ConvertCharsetCollateToLowerCaseIfNeed convert the charset / collation of table and its columns to lower case,
+// if the table's version is prior to TableInfoVersion3.
+func ConvertCharsetCollateToLowerCaseIfNeed(tbInfo *model.TableInfo) {
+	if tbInfo.Version >= model.TableInfoVersion3 {
+		return
+	}
+	tbInfo.Charset = strings.ToLower(tbInfo.Charset)
+	tbInfo.Collate = strings.ToLower(tbInfo.Collate)
+	for _, col := range tbInfo.Columns {
+		col.Charset = strings.ToLower(col.Charset)
+		col.Collate = strings.ToLower(col.Collate)
+	}
 }
 
 // ConvertOldVersionUTF8ToUTF8MB4IfNeed convert old version UTF8 to UTF8MB4 if config.TreatOldVersionUTF8AsUTF8MB4 is enable.

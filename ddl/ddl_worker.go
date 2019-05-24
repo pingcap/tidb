@@ -487,7 +487,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	switch job.Type {
 	case model.ActionCreateSchema:
-		ver, err = onCreateSchema(t, job)
+		ver, err = onCreateSchema(d, t, job)
+	case model.ActionModifySchemaCharsetAndCollate:
+		ver, err = onModifySchemaCharsetAndCollate(t, job)
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(t, job)
 	case model.ActionCreateTable:
@@ -523,7 +525,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionRebaseAutoID:
 		ver, err = onRebaseAutoID(d.store, t, job)
 	case model.ActionRenameTable:
-		ver, err = onRenameTable(t, job)
+		ver, err = onRenameTable(d, t, job)
 	case model.ActionShardRowID:
 		ver, err = w.onShardRowID(d, t, job)
 	case model.ActionModifyTableComment:

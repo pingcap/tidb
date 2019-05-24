@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -38,6 +39,8 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
+
+var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -279,7 +282,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
 	}
-	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
+	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
 	return tasks, nil
 }
 
@@ -545,8 +548,8 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 	return
 }
 
-func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse) (exit bool) {
-	if worker.memTracker != nil {
+func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
+	if worker.memTracker != nil && checkOOM {
 		worker.memTracker.Consume(int64(resp.MemSize()))
 	}
 	select {
@@ -614,7 +617,8 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: errors.Errorf("%v", r)}
-			worker.sendToRespCh(resp, task.respChan)
+			// if panic has happened, set checkOOM to false to avoid another panic.
+			worker.sendToRespCh(resp, task.respChan, false)
 		}
 	}()
 	remainTasks := []*copTask{task}
@@ -622,7 +626,7 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
-			worker.sendToRespCh(resp, respCh)
+			worker.sendToRespCh(resp, respCh, true)
 			return
 		}
 		if len(tasks) > 0 {
@@ -636,11 +640,11 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
-
-	// gofail: var handleTaskOnceError bool
-	// if handleTaskOnceError {
-	// 	return nil, errors.New("mock handleTaskOnce error")
-	// }
+	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
+		}
+	})
 
 	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
 	req := &tikvrpc.Request{
@@ -775,12 +779,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.Logger(context.Background()).Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
-		ok, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
+		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		if !ok {
-			if err := bo.Backoff(boTxnLockFast, errors.New(lockErr.String())); err != nil {
+		if msBeforeExpired > 0 {
+			if err := bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.New(lockErr.String())); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -817,7 +821,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			}
 		}
 	}
-	worker.sendToRespCh(resp, ch)
+	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
 }
 

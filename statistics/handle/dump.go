@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics
+package handle
 
 import (
 	"time"
@@ -21,7 +21,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -42,26 +44,28 @@ type jsonColumn struct {
 	NullCount         int64           `json:"null_count"`
 	TotColSize        int64           `json:"tot_col_size"`
 	LastUpdateVersion uint64          `json:"last_update_version"`
+	Correlation       float64         `json:"correlation"`
 }
 
-func dumpJSONCol(hist *Histogram, CMSketch *CMSketch) *jsonColumn {
+func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch) *jsonColumn {
 	jsonCol := &jsonColumn{
-		Histogram:         HistogramToProto(hist),
+		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
 		TotColSize:        hist.TotColSize,
 		LastUpdateVersion: hist.LastUpdateVersion,
+		Correlation:       hist.Correlation,
 	}
 	if CMSketch != nil {
-		jsonCol.CMSketch = CMSketchToProto(CMSketch)
+		jsonCol.CMSketch = statistics.CMSketchToProto(CMSketch)
 	}
 	return jsonCol
 }
 
 // DumpStatsToJSON dumps statistic to json.
-func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JSONTable, error) {
+func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
-		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID)
+		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, historyStatsExec)
 	}
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
@@ -69,7 +73,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
 	}
 	for _, def := range pi.Definitions {
-		tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID)
+		tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID, historyStatsExec)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -81,13 +85,14 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 	return jsonTbl, nil
 }
 
-func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64) (*JSONTable, error) {
-	tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, true)
-	if err != nil {
-		return nil, errors.Trace(err)
+func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
+	tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, true, historyStatsExec)
+	if err != nil || tbl == nil {
+		return nil, err
 	}
-	if tbl == nil {
-		return nil, nil
+	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, historyStatsExec)
+	if err != nil {
+		return nil, err
 	}
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
@@ -170,16 +175,16 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 }
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
-func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) (*Table, error) {
-	newHistColl := HistColl{
+func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) (*statistics.Table, error) {
+	newHistColl := statistics.HistColl{
 		PhysicalID:     physicalID,
 		HavePhysicalID: true,
 		Count:          jsonTbl.Count,
 		ModifyCount:    jsonTbl.ModifyCount,
-		Columns:        make(map[int64]*Column, len(jsonTbl.Columns)),
-		Indices:        make(map[int64]*Index, len(jsonTbl.Indices)),
+		Columns:        make(map[int64]*statistics.Column, len(jsonTbl.Columns)),
+		Indices:        make(map[int64]*statistics.Index, len(jsonTbl.Indices)),
 	}
-	tbl := &Table{
+	tbl := &statistics.Table{
 		HistColl: newHistColl,
 	}
 	for id, jsonIdx := range jsonTbl.Indices {
@@ -187,11 +192,11 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			if idxInfo.Name.L != id {
 				continue
 			}
-			hist := HistogramFromProto(jsonIdx.Histogram)
-			hist.ID, hist.NullCount, hist.LastUpdateVersion = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion
-			idx := &Index{
+			hist := statistics.HistogramFromProto(jsonIdx.Histogram)
+			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.Correlation = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.Correlation
+			idx := &statistics.Index{
 				Histogram: *hist,
-				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),
+				CMSketch:  statistics.CMSketchFromProto(jsonIdx.CMSketch),
 				Info:      idxInfo,
 			}
 			tbl.Indices[idx.ID] = idx
@@ -203,21 +208,21 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			if colInfo.Name.L != id {
 				continue
 			}
-			hist := HistogramFromProto(jsonCol.Histogram)
-			count := int64(hist.totalRowCount())
+			hist := statistics.HistogramFromProto(jsonCol.Histogram)
+			count := int64(hist.TotalRowCount())
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize
-			col := &Column{
+			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
+			col := &statistics.Column{
 				PhysicalID: physicalID,
 				Histogram:  *hist,
-				CMSketch:   CMSketchFromProto(jsonCol.CMSketch),
+				CMSketch:   statistics.CMSketchFromProto(jsonCol.CMSketch),
 				Info:       colInfo,
 				Count:      count,
-				isHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			tbl.Columns[col.ID] = col
 		}

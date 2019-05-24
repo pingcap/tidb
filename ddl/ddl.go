@@ -26,6 +26,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -239,6 +240,7 @@ var (
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
 	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
+	AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
@@ -279,9 +281,8 @@ type DDL interface {
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m          sync.RWMutex
-	infoHandle *infoschema.Handle
-	quitCh     chan struct{}
+	m      sync.RWMutex
+	quitCh chan struct{}
 
 	*ddlCtx
 	workers     map[workerType]*worker
@@ -299,6 +300,7 @@ type ddlCtx struct {
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoHandle   *infoschema.Handle
 
 	// hook may be modified.
 	mu struct {
@@ -379,12 +381,12 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
+		infoHandle:   infoHandle,
 	}
 	ddlCtx.mu.hook = hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		infoHandle: infoHandle,
-		ddlCtx:     ddlCtx,
+		ddlCtx: ddlCtx,
 	}
 
 	d.start(ctx, ctxPool)
@@ -504,10 +506,11 @@ func (d *ddl) genGlobalID() (int64, error) {
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
 
-		// gofail: var mockGenGlobalIDFail bool
-		// if mockGenGlobalIDFail {
-		//	 return errors.New("gofail genGlobalID error")
-		// }
+		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.New("gofail genGlobalID error"))
+			}
+		})
 
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)

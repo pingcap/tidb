@@ -92,11 +92,15 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.StatsInfo, *statistics.HistColl) {
 	profile := &property.StatsInfo{
-		RowCount:       float64(ds.statisticTable.Count),
-		Cardinality:    make([]float64, len(ds.Columns)),
-		HistColl:       ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
-		UsePseudoStats: ds.statisticTable.Pseudo,
+		RowCount:     float64(ds.statisticTable.Count),
+		Cardinality:  make([]float64, len(ds.Columns)),
+		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
+		StatsVersion: ds.statisticTable.Version,
 	}
+	if ds.statisticTable.Pseudo {
+		profile.StatsVersion = statistics.PseudoVersion
+	}
+
 	for i, col := range ds.Columns {
 		profile.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}
@@ -348,10 +352,13 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo) (*property
 		RowCount:    childProfile.RowCount,
 		Cardinality: make([]float64, p.schema.Len()),
 	}
-	for i := 0; i < p.schema.Len()-1; i++ {
+	childLen := p.schema.Len() - len(p.WindowFuncDescs)
+	for i := 0; i < childLen; i++ {
 		colIdx := p.children[0].Schema().ColumnIndex(p.schema.Columns[i])
 		p.stats.Cardinality[i] = childProfile.Cardinality[colIdx]
 	}
-	p.stats.Cardinality[p.schema.Len()-1] = childProfile.RowCount
+	for i := childLen; i < p.schema.Len(); i++ {
+		p.stats.Cardinality[i] = childProfile.RowCount
+	}
 	return p.stats, nil
 }

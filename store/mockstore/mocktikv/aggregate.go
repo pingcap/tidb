@@ -267,7 +267,7 @@ func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 		}
 		e.currGroupByValues = append(e.currGroupByValues, buf)
 	}
-	e.currGroupByRow = types.CopyRow(e.nextGroupByRow)
+	e.currGroupByRow = types.CloneRow(e.nextGroupByRow)
 	return append(value, e.currGroupByValues...), nil
 }
 
@@ -296,7 +296,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 		e.tmpGroupByRow = append(e.tmpGroupByRow, d)
 	}
 	if firstGroup {
-		e.currGroupByRow = types.CopyRow(e.tmpGroupByRow)
+		e.currGroupByRow = types.CloneRow(e.tmpGroupByRow)
 	}
 	if matched {
 		return false, nil

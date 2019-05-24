@@ -15,6 +15,7 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -74,7 +75,7 @@ type selectResult struct {
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
-	copPlanIDs []string
+	copPlanIDs []fmt.Stringer
 
 	memTracker *memory.Tracker
 }
@@ -86,26 +87,32 @@ func (r *selectResult) Fetch(ctx context.Context) {
 func (r *selectResult) fetch(ctx context.Context) {
 	startTime := time.Now()
 	defer func() {
+		if c := recover(); c != nil {
+			err := fmt.Errorf("%v", c)
+			logutil.Logger(ctx).Error("OOM", zap.Error(err))
+			r.results <- resultWithErr{err: err}
+		}
+
 		close(r.results)
 		duration := time.Since(startTime)
 		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
 	}()
 	for {
+		var result resultWithErr
 		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
-			r.results <- resultWithErr{err: err}
+			result.err = err
+		} else if resultSubset == nil {
 			return
-		}
-		if resultSubset == nil {
-			return
-		}
-
-		if r.memTracker != nil {
-			r.memTracker.Consume(int64(resultSubset.MemSize()))
+		} else {
+			result.result = resultSubset
+			if r.memTracker != nil {
+				r.memTracker.Consume(int64(resultSubset.MemSize()))
+			}
 		}
 
 		select {
-		case r.results <- resultWithErr{result: resultSubset}:
+		case r.results <- result:
 		case <-r.closed:
 			// If selectResult called Close() already, make fetch goroutine exit.
 			return
@@ -207,7 +214,7 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID, callee, detail)
+				RecordOneCopTask(planID.String(), callee, detail)
 		}
 	}
 }
