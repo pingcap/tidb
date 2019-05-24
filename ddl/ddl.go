@@ -472,11 +472,11 @@ func (d *ddl) close() {
 	for _, worker := range d.workers {
 		worker.close()
 	}
-	if d.sessPool != nil {
-		d.sessPool.close()
-	}
 	if d.delRangeMgr != nil {
 		d.delRangeMgr.clear()
+	}
+	if d.sessPool != nil {
+		d.sessPool.close()
 	}
 
 	logutil.Logger(ddlLogCtx).Info("[ddl] closing DDL", zap.String("ID", d.uuid), zap.Duration("takeTime", time.Since(startTime)))
