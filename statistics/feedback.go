@@ -1164,7 +1164,7 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 			ran.HighVal[0] = getMaxValue(q.hist.tp)
 		}
 	}
-	ranges := q.hist.SplitRange([]*ranger.Range{ran})
+	ranges := q.hist.SplitRange(nil, []*ranger.Range{ran})
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
 	for i, r := range ranges {
