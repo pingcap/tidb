@@ -184,7 +184,7 @@ type PlanBuilder struct {
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
 
-	windowSpecs map[string]ast.WindowSpec
+	windowSpecs map[string]*ast.WindowSpec
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -422,6 +422,13 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	for _, f := range sel.Fields.Fields {
 		if ast.HasWindowFlag(f.Expr) {
 			return true
+		}
+	}
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			if ast.HasWindowFlag(item.Expr) {
+				return true
+			}
 		}
 	}
 	return false
@@ -1447,7 +1454,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan 
 	}
 
 	for i, assign := range insert.Setlist {
-		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, checkRefColumn)
+		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
 		}
@@ -1508,7 +1515,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 					RetType: &x.Type,
 				}
 			default:
-				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, true, checkRefColumn)
+				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				return err
