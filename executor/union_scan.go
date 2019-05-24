@@ -14,7 +14,13 @@
 package executor
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"sort"
 	"time"
 
@@ -210,6 +216,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				continue
 			}
 			if _, ok := us.dirty.addedRows[snapshotHandle]; ok {
+				fmt.Printf("\n\nhandle: %v\n--------\n-n", snapshotHandle)
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.
 				continue
@@ -291,6 +298,54 @@ func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.
 		return nil, err
 	}
 	return v, nil
+}
+
+func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) error {
+	condition := us.conditions
+	if len(e.plans) > 1 {
+		if sel, ok := e.plans[1].(*core.PhysicalSelection); ok {
+			condition = sel.Conditions
+		}
+	}
+	_ = condition
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
+	if err != nil {
+		return err
+	}
+
+	txn, err := us.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+
+	prefix := tablecodec.EncodeTableIndexPrefix(e.physicalTableID, e.index.ID)
+	for _, rg := range kvRanges {
+		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
+		if err != nil {
+			return err
+		}
+		for iter.Valid() {
+			key := iter.Key()
+			value := iter.Value()
+			if !bytes.Contains(key, prefix) {
+				continue
+			}
+			key = key[len(prefix):]
+			fmt.Printf("\n\nkey: %v, value: %v\n\n------------------\n", key, value)
+
+			ds, err := codec.Decode(key, len(e.index.Columns)+1)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("\n\nds %#v\n\n------------------\n", ds)
+
+			err = iter.Next()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
