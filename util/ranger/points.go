@@ -250,20 +250,12 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
-	// if the colunm is unsigned int or unsigned decimal, and the value
+	// if the colunm is unsigned integer and the value
 	// is less than zero, we only need compare with zero.
 	if mysql.HasUnsignedFlag(ft.Flag) {
-		needFix := false
-		zeroValue := new(types.Datum)
 		if mysql.IsIntegerType(ft.Tp) && value.Kind() == types.KindInt64 {
-			needFix = true
-			zeroValue.SetInt64(int64(0))
-		} else if (ft.Tp == mysql.TypeDecimal || ft.Tp == mysql.TypeNewDecimal) &&
-			value.Kind() == types.KindMysqlDecimal {
-			needFix = true
-			zeroValue.SetMysqlDecimal(new(types.MyDecimal))
-		}
-		if needFix {
+			zeroValue := new(types.Datum)
+			zeroValue.SetUint64(0)
 			cmp, err := value.CompareDatum(r.sc, zeroValue)
 			if err != nil {
 				return nil
