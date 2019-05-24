@@ -403,8 +403,17 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
 	pTxnConf := config.GetGlobalConfig().PessimisticTxn
-	if pTxnConf.Enable && (s.Pessimistic || pTxnConf.Default || e.ctx.GetSessionVars().PessimisticLock) {
-		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	if pTxnConf.Enable {
+		txnMode := s.Mode
+		if txnMode == "" {
+			txnMode = e.ctx.GetSessionVars().TxnMode
+			if txnMode == "" && pTxnConf.Default {
+				txnMode = ast.Pessimistic
+			}
+		}
+		if txnMode == ast.Pessimistic {
+			e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
+		}
 	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
@@ -624,15 +633,15 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 
 func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	failedUsers := make([]string, 0, len(s.UserList))
+	notExistUsers := make([]string, 0, len(s.UserList))
+
 	for _, user := range s.UserList {
 		exists, err := userExists(e.ctx, user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
 		if !exists {
-			if !s.IfExists {
-				failedUsers = append(failedUsers, user.String())
-			}
+			notExistUsers = append(notExistUsers, user.String())
 			continue
 		}
 
@@ -712,6 +721,17 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			failedUsers = append(failedUsers, user.String())
 		}
 	}
+
+	if len(notExistUsers) > 0 {
+		if s.IfExists {
+			for _, user := range notExistUsers {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
+			}
+		} else {
+			failedUsers = append(failedUsers, notExistUsers...)
+		}
+	}
+
 	if len(failedUsers) > 0 {
 		return ErrCannotUser.GenWithStackByArgs("DROP USER", strings.Join(failedUsers, ","))
 	}

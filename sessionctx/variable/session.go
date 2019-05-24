@@ -374,8 +374,11 @@ type SessionVars struct {
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
 
-	// PessimisticLock indicates whether new transaction should be pessimistic .
-	PessimisticLock bool
+	// TxnMode indicates should be pessimistic or optimistic.
+	TxnMode string
+
+	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
+	LowResolutionTSO bool
 }
 
 // ConnectionInfo present connection used by audit.
@@ -791,10 +794,28 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableFastAnalyze = TiDBOptOn(val)
 	case TiDBWaitTableSplitFinish:
 		s.WaitTableSplitFinish = TiDBOptOn(val)
-	case TiDBPessimisticLock:
-		s.PessimisticLock = TiDBOptOn(val)
+	case TiDBTxnMode:
+		if err := s.setTxnMode(val); err != nil {
+			return err
+		}
+	case TiDBLowResolutionTSO:
+		s.LowResolutionTSO = TiDBOptOn(val)
 	}
 	s.systems[name] = val
+	return nil
+}
+
+func (s *SessionVars) setTxnMode(val string) error {
+	switch strings.ToUpper(val) {
+	case ast.Pessimistic:
+		s.TxnMode = ast.Pessimistic
+	case ast.Optimistic:
+		s.TxnMode = ast.Optimistic
+	case "":
+		s.TxnMode = ""
+	default:
+		return ErrWrongValueForVar.FastGenByArgs(TiDBTxnMode, val)
+	}
 	return nil
 }
 
