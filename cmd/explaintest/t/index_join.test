@@ -20,3 +20,8 @@ set @@tidb_opt_insubq_to_join_and_agg=0;
 explain select /*+ TIDB_INLJ(t2) */ * from t1 where t1.a in (select t2.a from t2);
 show warnings;
 set @@tidb_opt_insubq_to_join_and_agg=1;
+
+drop table if exists t1, t2;
+create table t1(a int not null, b int not null, key a(a));
+create table t2(a int not null, b int not null, key a(a));
+explain select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in (select t2.a from t2);
