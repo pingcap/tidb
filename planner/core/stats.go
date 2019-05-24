@@ -158,7 +158,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 func (ds *DataSource) generateIndexMergeOrPaths() {
 	usedIndexCount := len(ds.possibleAccessPaths) - 1
 	for i, cond := range ds.pushedDownConds {
-		var ixMergePartialIxPaths = make([]*accessPath, 0, 2)
+		var ixMergePartialIxPaths = make([]*accessPath, 0, usedIndexCount)
 
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
@@ -166,27 +166,27 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		}
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
-			var indexAccessPaths []*accessPath
+			var itemPaths []*accessPath
 			if itemF, ok := item.(*expression.ScalarFunction); ok && itemF.FuncName.L == ast.LogicAnd {
 				cnfItems := expression.FlattenCNFConditions(itemF)
-				indexAccessPaths = ds.buildAccessPath(cnfItems, usedIndexCount)
+				itemPaths = ds.accessPathsForConds(cnfItems, usedIndexCount)
 			} else {
 				tempArgs := []expression.Expression{item}
-				indexAccessPaths = ds.buildAccessPath(tempArgs, usedIndexCount)
+				itemPaths = ds.accessPathsForConds(tempArgs, usedIndexCount)
 			}
-			if indexAccessPaths == nil {
+			if len(itemPaths) == 0 {
 				ixMergePartialIxPaths = nil
 				break
 			}
-			ixMergePartialIxPath := ds.generateIndexMergePartialIndexPath(indexAccessPaths)
-			if ixMergePartialIxPath == nil {
+			partialPath := ds.buildIndexMergePartialPath(itemPaths)
+			if partialPath == nil {
 				ixMergePartialIxPaths = nil
 				break
 			}
-			ixMergePartialIxPaths = append(ixMergePartialIxPaths, ixMergePartialIxPath)
+			ixMergePartialIxPaths = append(ixMergePartialIxPaths, partialPath)
 		}
 		if len(ixMergePartialIxPaths) > 1 {
-			possiblePath := ds.generateIndexMergeOrPath(ixMergePartialIxPaths, i)
+			possiblePath := ds.buildIndexMergeOrPath(ixMergePartialIxPaths, i)
 			if possiblePath != nil {
 				ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
 			}
@@ -194,38 +194,34 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 	}
 }
 
-// buildAccessPath generates all possible index paths for conditions.
-func (ds *DataSource) buildAccessPath(conditions []expression.Expression, usedIndexCount int) []*accessPath {
-	var results = make([]*accessPath, 0, 1)
+// accessPathsForConds generates all possible index paths for conditions.
+func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, usedIndexCount int) []*accessPath {
+	var results = make([]*accessPath, 0, usedIndexCount)
 	for i := 1; i <= usedIndexCount; i++ {
-		newAccessPath := new(accessPath)
-		newAccessPath.index = ds.possibleAccessPaths[i].index
-		_, err := ds.deriveIndexPathStats(newAccessPath, conditions)
+		path := &accessPath{index: ds.possibleAccessPaths[i].index}
+		_, err := ds.deriveIndexPathStats(path, conditions)
 		if err != nil {
 			return nil
 		}
 		// if accessConds is empty or tableFilter is not empty, we ignore the access path.
-		if len(newAccessPath.tableFilters) > 0 || len(newAccessPath.accessConds) == 0 {
+		if len(path.tableFilters) > 0 || len(path.accessConds) == 0 {
 			continue
 		}
-		results = append(results, newAccessPath)
-	}
-	if len(results) == 0 {
-		results = nil
+		results = append(results, path)
 	}
 	return results
 }
 
-// generateIndexMergePartialIndexPath chooses a best index path from all possible index paths.
-// Now we just choose the index with more columns.
-func (ds *DataSource) generateIndexMergePartialIndexPath(indexAccessPaths []*accessPath) *accessPath {
+// buildIndexMergePartialPath chooses the best index path from all possible paths.
+// Now we just choose the index with most columns.
+func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*accessPath) *accessPath {
 	if len(indexAccessPaths) == 1 {
 		return indexAccessPaths[0]
 	}
 
 	maxColsIndex := 0
 	maxCols := len(indexAccessPaths[0].idxCols)
-	for i := 0; i < len(indexAccessPaths); i++ {
+	for i := 1; i < len(indexAccessPaths); i++ {
 		current := len(indexAccessPaths[i].idxCols)
 		if current > maxCols {
 			maxColsIndex = i
@@ -235,18 +231,14 @@ func (ds *DataSource) generateIndexMergePartialIndexPath(indexAccessPaths []*acc
 	return indexAccessPaths[maxColsIndex]
 }
 
-// generateIndexMergeOrPath generates one possible IndexMergePath
-func (ds *DataSource) generateIndexMergeOrPath(ixMergePartialIxPaths []*accessPath, current int) *accessPath {
-	indexMergePath := new(accessPath)
-	indexMergePath.isIndexMergePath = true
-	indexMergePath.indexMergeType = 3
-	indexMergePath.partialIndexPaths = append(indexMergePath.partialIndexPaths, ixMergePartialIxPaths...)
-
-	for i := 0; i < len(ds.pushedDownConds); i++ {
+// buildIndexMergeOrPath generates one possible IndexMergePath
+func (ds *DataSource) buildIndexMergeOrPath(ixMergePartialIxPaths []*accessPath, current int) *accessPath {
+	indexMergePath := &accessPath{partialIndexPaths: ixMergePartialIxPaths}
+	for i, cond := range ds.pushedDownConds {
 		if i == current {
 			continue
 		}
-		indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[i])
+		indexMergePath.tableFilters = append(indexMergePath.tableFilters, cond)
 	}
 	return indexMergePath
 }
