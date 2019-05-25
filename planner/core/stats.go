@@ -242,7 +242,7 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*accessPath)
 func (ds *DataSource) buildIndexMergeOrPath(ixMergePartialIxPaths []*accessPath, current int) *accessPath {
 	indexMergePath := &accessPath{partialIndexPaths: ixMergePartialIxPaths}
 	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[:current]...)
-	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[current + 1:]...)
+	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[current+1:]...)
 	return indexMergePath
 }
 
