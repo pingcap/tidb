@@ -136,7 +136,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 			}
 			continue
 		}
-		noIntervalRanges, err := ds.deriveIndexPathStats(path, nil)
+		noIntervalRanges, err := ds.deriveIndexPathStats(path, ds.pushedDownConds)
 		if err != nil {
 			return nil, err
 		}
@@ -147,9 +147,17 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 			break
 		}
 	}
-	// consider the IndexMergePath.
+	// consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
 	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 2 && ds.ctx.GetSessionVars().EnableIndexMerge {
-		ds.generateIndexMergeOrPaths()
+		needConsiderIndexMerge := true
+		for i := 1; i < len(ds.possibleAccessPaths); i++ {
+			if len(ds.possibleAccessPaths[i].accessConds) != 0 {
+				needConsiderIndexMerge = false
+			}
+		}
+		if needConsiderIndexMerge {
+			ds.generateIndexMergeOrPaths()
+		}
 	}
 	return ds.stats, nil
 }
@@ -167,13 +175,8 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
 			var itemPaths []*accessPath
-			if itemF, ok := item.(*expression.ScalarFunction); ok && itemF.FuncName.L == ast.LogicAnd {
-				cnfItems := expression.FlattenCNFConditions(itemF)
-				itemPaths = ds.accessPathsForConds(cnfItems, usedIndexCount)
-			} else {
-				tempArgs := []expression.Expression{item}
-				itemPaths = ds.accessPathsForConds(tempArgs, usedIndexCount)
-			}
+			cnfItems := expression.SplitCNFItems(item)
+			itemPaths = ds.accessPathsForConds(cnfItems, usedIndexCount)
 			if len(itemPaths) == 0 {
 				ixMergePartialIxPaths = nil
 				break
@@ -204,6 +207,10 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			return nil
 		}
 		// if accessConds is empty or tableFilter is not empty, we ignore the access path.
+		// now these conditions are too strict.
+		// for example, a sql `select * from t where a > 1 or (b < 2 and c >3)` and table `t` with indexes on a and b separately.
+		// we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c >3)`.
+		// TODO: solve the above case
 		if len(path.tableFilters) > 0 || len(path.accessConds) == 0 {
 			continue
 		}
@@ -234,12 +241,8 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*accessPath)
 // buildIndexMergeOrPath generates one possible IndexMergePath
 func (ds *DataSource) buildIndexMergeOrPath(ixMergePartialIxPaths []*accessPath, current int) *accessPath {
 	indexMergePath := &accessPath{partialIndexPaths: ixMergePartialIxPaths}
-	for i, cond := range ds.pushedDownConds {
-		if i == current {
-			continue
-		}
-		indexMergePath.tableFilters = append(indexMergePath.tableFilters, cond)
-	}
+	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[:current]...)
+	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[current + 1:]...)
 	return indexMergePath
 }
 
