@@ -544,6 +544,22 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 
 	// c_decimal decimal(6, 3)
 	c.Assert(colInfos[5].Decimal, Equals, uint8(3))
+
+	// for issue#10513
+	tooLongColumnAsName := "COALESCE(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)"
+	columnAsName := tooLongColumnAsName[:tmysql.MaxAliasIdentifierLen]
+
+	rs, err := qctx.Execute(ctx, "select "+tooLongColumnAsName)
+	c.Assert(err, IsNil)
+	cols := rs[0].Columns()
+	c.Assert(cols[0].OrgName, Equals, tooLongColumnAsName)
+	c.Assert(cols[0].Name, Equals, columnAsName)
+
+	rs, err = qctx.Execute(ctx, "select c_bit as '"+tooLongColumnAsName+"' from t")
+	c.Assert(err, IsNil)
+	cols = rs[0].Columns()
+	c.Assert(cols[0].OrgName, Equals, "c_bit")
+	c.Assert(cols[0].Name, Equals, columnAsName)
 }
 
 func (ts *TidbTestSuite) TestSumAvg(c *C) {
