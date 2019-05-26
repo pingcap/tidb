@@ -2331,6 +2331,8 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	oldSchema := p.Schema()
+	oldLen := oldSchema.Len()
 
 	if sel.Where != nil {
 		p, err = b.buildSelection(p, sel.Where, nil)
@@ -2351,6 +2353,15 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+
+	// Add a projection for the following case, otherwise the final schema will be the schema of the join.
+	// delete from t where a in (select ...) or b in (select ...)
+	if !delete.IsMultiTable && oldLen != p.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.ctx)
+		proj.SetChildren(p)
+		proj.SetSchema(oldSchema.Clone())
+		p = proj
 	}
 
 	var tables []*ast.TableName
