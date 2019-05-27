@@ -85,7 +85,7 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 	result = tk.MustQuery("select row_number() over(rows between 1 preceding and 1 following) from t")
 	result.Check(testkit.Rows("1", "2", "3", "4"))
 	result = tk.MustQuery("show warnings")
-	result.Check(testkit.Rows("Note 3599 Window function 'row_number' ignores the frame clause of window '<unnamed window>' and aggregates over the whole partition"))
+	result.Check(testkit.Rows("Note 3599 Window function 'row_number' ignores the frame clause of window '' and aggregates over the whole partition"))
 
 	result = tk.MustQuery("select a, sum(a) over() from t")
 	result.Check(testkit.Rows("1 6", "1 6", "2 6", "2 6"))
