@@ -122,8 +122,8 @@ const (
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
-	// tidb_pessimistic_lock is used to control the transactin behavior.
-	TiDBPessimisticLock = "tidb_pessimistic_lock"
+	// tidb_txn_mode is used to control the transaction behavior.
+	TiDBTxnMode = "tidb_txn_mode"
 
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
@@ -317,7 +317,7 @@ const (
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
-	DefTiDBPessimisticLock           = 0
+	DefTiDBTxnMode                   = ""
 	DefTiDBDDLReorgWorkerCount       = 16
 	DefTiDBDDLReorgBatchSize         = 1024
 	DefTiDBDDLErrorCountLimit        = 512
