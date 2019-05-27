@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
@@ -430,4 +431,15 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	tk.MustExec("analyze table t")
 	// 4 regions will be sampled, and it will retry the last failed region.
 	c.Assert(s.cli.mu.count, Equals, int64(5))
+}
+
+func (s *testSuite1) TestFailedAnalyzeRequest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/buildStatsFromResult", `return(true)`), IsNil)
+	_, err := tk.Exec("analyze table t")
+	c.Assert(err.Error(), Equals, "mock buildStatsFromResult error")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/buildStatsFromResult"), IsNil)
 }

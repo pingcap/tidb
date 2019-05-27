@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -164,12 +165,8 @@ type analyzeTask struct {
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- analyzeResult, isCloseChanThread bool) {
+	var task *analyzeTask
 	defer func() {
-		e.wg.Done()
-		if isCloseChanThread {
-			e.wg.Wait()
-			close(resultCh)
-		}
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
@@ -178,11 +175,18 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- analyzeResult{
 				Err: errAnalyzeWorkerPanic,
+				job: task.job,
 			}
+		}
+		e.wg.Done()
+		if isCloseChanThread {
+			e.wg.Wait()
+			close(resultCh)
 		}
 	}()
 	for {
-		task, ok := <-taskCh
+		var ok bool
+		task, ok = <-taskCh
 		if !ok {
 			break
 		}
@@ -295,6 +299,11 @@ func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error
 }
 
 func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, error) {
+	failpoint.Inject("buildStatsFromResult", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, nil, errors.New("mock buildStatsFromResult error"))
+		}
+	})
 	hist := &statistics.Histogram{}
 	var cms *statistics.CMSketch
 	if needCMS {
@@ -335,7 +344,10 @@ func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool)
 		return nil, nil, err
 	}
 	defer func() {
-		err = closeAll(e.result, e.countNullRes)
+		err1 := closeAll(e.result, e.countNullRes)
+		if err == nil {
+			err = err1
+		}
 	}()
 	hist, cms, err = e.buildStatsFromResult(e.result, true)
 	if err != nil {
