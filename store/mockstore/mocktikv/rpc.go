@@ -246,7 +246,7 @@ func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 
 func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanResponse {
 	if !h.checkKeyInRegion(req.GetStartKey()) {
-		panic("KvScan: startKey not in region")
+		panic(fmt.Sprintf("KvScan: startKey not in region, region: [%v, %v), startKey: %v", h.startKey, h.endKey, req.GetStartKey()))
 	}
 	endKey := h.endKey
 	var pairs []Pair

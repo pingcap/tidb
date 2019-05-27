@@ -135,6 +135,11 @@ func (m *Meta) tableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
 }
 
+// DDLJobHistoryKey exports for test.
+func DDLJobHistoryKey(m *Meta, jobID int64) []byte {
+	return m.txn.EncodeHashDataKey(mDDLJobHistoryKey, m.jobIDKey(jobID))
+}
+
 // GenAutoTableIDKeyValue generates meta key by dbID, tableID and corresponding value by autoID.
 func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
 	dbKey := m.dbKey(dbID)
