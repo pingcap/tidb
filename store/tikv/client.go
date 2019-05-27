@@ -83,6 +83,8 @@ type connArray struct {
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
+
+	waitGroup *sync.WaitGroup
 }
 
 type batchCommandsClient struct {
@@ -99,6 +101,9 @@ type batchCommandsClient struct {
 	closed int32
 	// clientLock protects client when re-create the streaming.
 	clientLock sync.Mutex
+
+	// to collect exited goroutines when shutdown the server.
+	waitGroup *sync.WaitGroup
 }
 
 func (c *batchCommandsClient) isStopped() bool {
@@ -125,7 +130,9 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				zap.Stack("stack"))
 			logutil.Logger(context.Background()).Info("restart batchRecvLoop")
 			go c.batchRecvLoop(cfg)
+			return
 		}
+		c.waitGroup.Done()
 	}()
 
 	for {
@@ -208,6 +215,7 @@ func newConnArray(maxSize uint, addr string, security config.Security) (*connArr
 		batchCommandsCh:        make(chan *batchCommandsEntry, cfg.TiKVClient.MaxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, maxSize),
 		tikvTransportLayerLoad: 0,
+		waitGroup:              &sync.WaitGroup{},
 	}
 	if err := a.Init(addr, security); err != nil {
 		return nil, err
@@ -283,13 +291,16 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				idAlloc:                0,
 				tikvTransportLayerLoad: &a.tikvTransportLayerLoad,
 				closed:                 0,
+                                waitGroup: a.waitGroup,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
+                        a.waitGroup.Add(1)
 			go batchClient.batchRecvLoop(cfg.TiKVClient)
 		}
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
 	if allowBatch {
+                a.waitGroup.Add(1)
 		go a.batchSendLoop(cfg.TiKVClient)
 	}
 
@@ -316,6 +327,7 @@ func (a *connArray) Close() {
 			a.v[i] = nil
 		}
 	}
+        a.waitGroup.Wait()
 	close(a.streamTimeout)
 }
 
@@ -413,7 +425,9 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 				zap.Stack("stack"))
 			logutil.Logger(context.Background()).Info("restart batchSendLoop")
 			go a.batchSendLoop(cfg)
+                        return
 		}
+                a.waitGroup.Done()
 	}()
 
 	entries := make([]*batchCommandsEntry, 0, cfg.MaxBatchSize)
