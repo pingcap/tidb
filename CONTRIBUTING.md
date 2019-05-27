@@ -53,7 +53,7 @@ things.
 
 ### Does this add an error message, or configuration option?
 
-Please mention @pingcap/usability-team in your pull request. We can help provide suggestions on naming and style, so that the usage is clear and understandable.
+Please mention **@pingcap/usability-team** in your pull request. We can help provide suggestions on naming and style, so that the usage is clear and understandable.
 
 ## Building TiDB on a local OS/shell environment
 
