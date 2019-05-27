@@ -229,6 +229,10 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 	statsTbl := s.prepareSelectivity(testKit, c)
 	is := s.do.InfoSchema()
 
+	longExpr := "0 < a and a = 1 "
+	for i := 1; i < 64; i++ {
+		longExpr += fmt.Sprintf(" and a > %d ", i)
+	}
 	tests := []struct {
 		exprs       string
 		selectivity float64
@@ -264,6 +268,10 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		{
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity: 0,
+		},
+		{
+			exprs:       longExpr,
+			selectivity: 0.001,
 		},
 	}
 	for _, tt := range tests {

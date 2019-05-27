@@ -31,4 +31,6 @@ func (s *testStatisticsSuite) TestMoveToHistory(c *C) {
 		MoveToHistory(jobs[i])
 	}
 	c.Assert(len(GetAllAnalyzeJobs()), Equals, numMaxHistoryJobs)
+	ClearHistoryJobs()
+	c.Assert(len(GetAllAnalyzeJobs()), Equals, 0)
 }
