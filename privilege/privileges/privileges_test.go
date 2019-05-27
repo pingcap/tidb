@@ -162,6 +162,26 @@ func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	c.Assert(pc2.RequestVerification(activeRoles, "test", "test", "", mysql.IndexPriv), IsTrue)
 }
 
+func (s *testPrivilegeSuite) TestCheckViewPrivilege(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'vuser'@'localhost';`)
+	mustExec(c, rootSe, `CREATE VIEW v AS SELECT * FROM test;`)
+
+	se := newSession(c, s.store, s.dbName)
+	activeRoles := make([]*auth.RoleIdentity, 0)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "vuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	pc := privilege.GetPrivilegeManager(se)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "v", "", mysql.SelectPriv), IsFalse)
+
+	mustExec(c, rootSe, `GRANT SELECT ON test.v TO 'vuser'@'localhost';`)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "v", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "v", "", mysql.ShowViewPriv), IsFalse)
+
+	mustExec(c, rootSe, `GRANT SHOW VIEW ON test.v TO 'vuser'@'localhost';`)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "v", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification(activeRoles, "test", "v", "", mysql.ShowViewPriv), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'test_role'@'localhost';`)
@@ -555,7 +575,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 
 	_, err = se.Execute(context.Background(), "select * from t1")
-	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'localhost'@'anobody' for table 't1'")
+	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'anobody'@'localhost' for table 't1'")
 
 	// try again after SELECT privilege granted
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
