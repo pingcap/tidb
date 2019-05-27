@@ -244,6 +244,17 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 		{Field: []byte("1"), Value: []byte("1")},
 		{Field: []byte("2"), Value: []byte("2")}})
 
+	res, err = tx.HGetLastN(key, 1)
+	c.Assert(err, IsNil)
+	c.Assert(res, DeepEquals, []structure.HashPair{
+		{Field: []byte("2"), Value: []byte("2")}})
+
+	res, err = tx.HGetLastN(key, 2)
+	c.Assert(err, IsNil)
+	c.Assert(res, DeepEquals, []structure.HashPair{
+		{Field: []byte("2"), Value: []byte("2")},
+		{Field: []byte("1"), Value: []byte("1")}})
+
 	err = tx.HDel(key, []byte("1"))
 	c.Assert(err, IsNil)
 

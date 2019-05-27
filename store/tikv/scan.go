@@ -37,7 +37,7 @@ type Scanner struct {
 	eof          bool
 
 	// Use for reverse scan.
-	desc       bool
+	reverse    bool
 	nextEndKey []byte
 }
 
@@ -52,7 +52,7 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSiz
 		valid:        true,
 		nextStartKey: startKey,
 		endKey:       endKey,
-		desc:         desc,
+		reverse:      desc,
 		nextEndKey:   endKey,
 	}
 	err := scanner.Next()
@@ -108,8 +108,8 @@ func (s *Scanner) Next() error {
 		}
 
 		current := s.cache[s.idx]
-		if (!s.desc && (len(s.endKey) > 0 && kv.Key(current.Key).Cmp(kv.Key(s.endKey)) >= 0)) ||
-			(s.desc && len(s.nextStartKey) > 0 && kv.Key(current.Key).Cmp(kv.Key(s.nextStartKey)) < 0) {
+		if (!s.reverse && (len(s.endKey) > 0 && kv.Key(current.Key).Cmp(kv.Key(s.endKey)) >= 0)) ||
+			(s.reverse && len(s.nextStartKey) > 0 && kv.Key(current.Key).Cmp(kv.Key(s.nextStartKey)) < 0) {
 			s.eof = true
 			s.Close()
 			return nil
@@ -156,14 +156,14 @@ func (s *Scanner) getData(bo *Backoffer) error {
 	logutil.Logger(context.Background()).Debug("txn getData",
 		zap.Binary("nextStartKey", s.nextStartKey),
 		zap.Binary("nextEndKey", s.nextEndKey),
-		zap.Bool("desc", s.desc),
+		zap.Bool("reverse", s.reverse),
 		zap.Uint64("txnStartTS", s.startTS()))
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 	var reqEndKey, reqStartKey []byte
 	var loc *KeyLocation
 	var err error
 	for {
-		if !s.desc {
+		if !s.reverse {
 			loc, err = s.snapshot.store.regionCache.LocateKey(bo, s.nextStartKey)
 		} else {
 			loc, err = s.snapshot.store.regionCache.LocateEndKey(bo, s.nextEndKey)
@@ -172,7 +172,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(err)
 		}
 
-		if !s.desc {
+		if !s.reverse {
 			reqEndKey = s.endKey
 			if len(reqEndKey) > 0 && len(loc.EndKey) > 0 && bytes.Compare(loc.EndKey, reqEndKey) < 0 {
 				reqEndKey = loc.EndKey
@@ -199,7 +199,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				NotFillCache: s.snapshot.notFillCache,
 			},
 		}
-		if s.desc {
+		if s.reverse {
 			req.Scan.StartKey = s.nextEndKey
 			req.Scan.EndKey = reqStartKey
 			req.Scan.Reverse = true
@@ -247,13 +247,13 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if len(kvPairs) < s.batchSize {
 			// No more data in current Region. Next getData() starts
 			// from current Region's endKey.
-			if !s.desc {
+			if !s.reverse {
 				s.nextStartKey = loc.EndKey
 			} else {
 				s.nextEndKey = reqStartKey
 			}
-			if (!s.desc && (len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0))) ||
-				(s.desc && (len(loc.StartKey) == 0 || (len(s.nextStartKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.nextEndKey)) >= 0))) {
+			if (!s.reverse && (len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0))) ||
+				(s.reverse && (len(loc.StartKey) == 0 || (len(s.nextStartKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.nextEndKey)) >= 0))) {
 				// Current Region is the last one.
 				s.eof = true
 			}
@@ -264,7 +264,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// may get an empty response if the Region in fact does not have
 		// more data.
 		lastKey := kvPairs[len(kvPairs)-1].GetKey()
-		if !s.desc {
+		if !s.reverse {
 			s.nextStartKey = kv.Key(lastKey).Next()
 		} else {
 			s.nextEndKey = kv.Key(lastKey)
