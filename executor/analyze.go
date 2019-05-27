@@ -165,6 +165,7 @@ type analyzeTask struct {
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- analyzeResult, isCloseChanThread bool) {
+	var task *analyzeTask
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -174,6 +175,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- analyzeResult{
 				Err: errAnalyzeWorkerPanic,
+				job: task.job,
 			}
 		}
 		e.wg.Done()
@@ -183,7 +185,8 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 		}
 	}()
 	for {
-		task, ok := <-taskCh
+		var ok bool
+		task, ok = <-taskCh
 		if !ok {
 			break
 		}
