@@ -2806,7 +2806,7 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	// Test read lock.
 	tk.MustExec("lock tables t1 read")
 	tk.MustQuery("select * from t1")
-	tk2.MustExec("select * from t1")
+	tk2.MustQuery("select * from t1")
 	_, err := tk.Exec("insert into t1 set a=1")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
 	_, err = tk.Exec("update t1 set a=1")
@@ -2913,11 +2913,11 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 
 	// Test for lock unsupported schema tables.
 	_, err = tk2.Exec("lock tables performance_schema.global_status write")
-	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
 	_, err = tk2.Exec("lock tables information_schema.tables write")
-	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
 	_, err = tk2.Exec("lock tables mysql.db write")
-	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
 
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")

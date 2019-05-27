@@ -68,6 +68,8 @@ var (
 	ErrNonuniqTable = terror.ClassSchema.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 	// ErrTableLocked returns when the table was locked by other session.
 	ErrTableLocked = terror.ClassSchema.New(codeTableLocked, "Table '%s' was locked in %s by %v")
+	// ErrAccessDenied return when the user doesn't have the permission to access the table.
+	ErrAccessDenied = terror.ClassSchema.New(codeErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -335,6 +337,7 @@ const (
 	codeErrTableNotLockedForWrite = mysql.ErrTableNotLockedForWrite
 	codeErrTableNotLocked         = mysql.ErrTableNotLocked
 	codeErrNonuniqTable           = mysql.ErrNonuniqTable
+	codeErrAccessDenied           = mysql.ErrAccessDenied
 )
 
 func init() {
@@ -359,6 +362,7 @@ func init() {
 		codeErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
 		codeErrTableNotLocked:         mysql.ErrTableNotLocked,
 		codeErrNonuniqTable:           mysql.ErrNonuniqTable,
+		mysql.ErrAccessDenied:         mysql.ErrAccessDenied,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

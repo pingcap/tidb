@@ -3234,8 +3234,11 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	// Check whether the table was already locked by other.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
-		if tb.Schema.L == "information_schema" || tb.Schema.L == "performance_schema" || tb.Schema.L == "mysql" {
-			return table.ErrUnsupportedOp
+		if tb.Schema.L == strings.ToLower(infoschema.Name) || tb.Schema.L == "performance_schema" || tb.Schema.L == mysql.SystemDB {
+			if ctx.GetSessionVars().User != nil {
+				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
+			}
+			return infoschema.ErrAccessDenied
 		}
 		schema, ok := is.SchemaByName(tb.Schema)
 		if !ok {
