@@ -291,16 +291,16 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				idAlloc:                0,
 				tikvTransportLayerLoad: &a.tikvTransportLayerLoad,
 				closed:                 0,
-                                waitGroup: a.waitGroup,
+				waitGroup:              a.waitGroup,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
-                        a.waitGroup.Add(1)
+			a.waitGroup.Add(1)
 			go batchClient.batchRecvLoop(cfg.TiKVClient)
 		}
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
 	if allowBatch {
-                a.waitGroup.Add(1)
+		a.waitGroup.Add(1)
 		go a.batchSendLoop(cfg.TiKVClient)
 	}
 
@@ -327,7 +327,7 @@ func (a *connArray) Close() {
 			a.v[i] = nil
 		}
 	}
-        a.waitGroup.Wait()
+	a.waitGroup.Wait()
 	close(a.streamTimeout)
 }
 
@@ -425,9 +425,9 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 				zap.Stack("stack"))
 			logutil.Logger(context.Background()).Info("restart batchSendLoop")
 			go a.batchSendLoop(cfg)
-                        return
+			return
 		}
-                a.waitGroup.Done()
+		a.waitGroup.Done()
 	}()
 
 	entries := make([]*batchCommandsEntry, 0, cfg.MaxBatchSize)
