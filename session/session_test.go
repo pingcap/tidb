@@ -2392,6 +2392,23 @@ func (s *testSessionSuite) TestCommitRetryCount(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSessionSuite) TestTxnRetryErrMsg(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("create table no_retry (id int)")
+	tk1.MustExec("insert into no_retry values (1)")
+	tk1.MustExec("begin")
+	tk2.MustExec("update no_retry set id = id + 1")
+	tk1.MustExec("update no_retry set id = id + 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly", `return(true)`), IsNil)
+	_, err := tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly"), IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
+}
+
 func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -2438,9 +2455,10 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 
-	// other errors could retry
 	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
 	tk1.MustExec("begin")
 	tk2.MustExec("alter table no_retry add index idx(id)")
@@ -2448,6 +2466,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("update no_retry set id = 10")
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
+	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 
 	// set autocommit to begin and commit
 	tk1.MustExec("set autocommit = 0")
@@ -2456,6 +2476,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("update no_retry set id = 12")
 	_, err = tk1.Se.Execute(context.Background(), "set autocommit = 1")
 	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("11"))
 
@@ -2465,6 +2487,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("update no_retry set id = 14")
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("13"))
 }
@@ -2611,4 +2635,40 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 
 	tk.MustExec("rollback")
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
+}
+
+func (s *testSessionSuite) TestGrantViewRelated(c *C) {
+	tkRoot := testkit.NewTestKitWithInit(c, s.store)
+	tkUser := testkit.NewTestKitWithInit(c, s.store)
+
+	tkRoot.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+
+	tkRoot.MustExec("create table if not exists t (a int)")
+	tkRoot.MustExec("create view v_version29 as select * from t")
+	tkRoot.MustExec("create user 'u_version29'@'%'")
+	tkRoot.MustExec("grant select on t to u_version29@'%'")
+
+	tkUser.Se.Auth(&auth.UserIdentity{Username: "u_version29", Hostname: "localhost", CurrentUser: true, AuthUsername: "u_version29", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+
+	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
+	err := tkUser.ExecToErr("select * from test.v_version29;")
+	c.Assert(err, NotNil)
+	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
+	err = tkUser.ExecToErr("create view v_version29_c as select * from t;")
+	c.Assert(err, NotNil)
+
+	tkRoot.MustExec(`grant show view on v_version29 to 'u_version29'@'%'`)
+	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29'").Check(testkit.Rows("Show View"))
+
+	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
+	tkUser.MustQuery("show create view v_version29;")
+	err = tkUser.ExecToErr("create view v_version29_c as select * from v_version29;")
+	c.Assert(err, NotNil)
+
+	tkRoot.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`)
+	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29_c'").Check(testkit.Rows("Create View"))
+
+	tkRoot.MustExec(`grant select on v_version29 to 'u_version29'@'%'`)
+	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
+	tkUser.MustExec("create view v_version29_c as select * from v_version29;")
 }

@@ -224,7 +224,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), txnRetryableMark), IsTrue, Commentf("err: %s", err))
+	c.Assert(kv.ErrWriteConflictInTiDB.Equal(err), IsTrue, Commentf("err: %s", err))
 }
 
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
@@ -349,7 +349,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	c.Assert(err, IsNil)
 	err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
 	c.Assert(err, NotNil)
-	errMsgMustContain(c, err, "conflictTS")
+	errMsgMustContain(c, err, "conflictCommitTS")
 }
 
 func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {

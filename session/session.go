@@ -358,7 +358,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
 		if val.(bool) && kv.IsMockCommitErrorEnable() {
 			kv.MockCommitErrorDisable()
-			failpoint.Return(kv.ErrRetryable)
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
 
@@ -414,7 +414,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
+		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -541,11 +541,11 @@ func (s *session) isInternal() bool {
 	return s.sessionVars.InRestrictedSQL
 }
 
-func (s *session) isRetryableError(err error) bool {
+func (s *session) isTxnRetryableError(err error) bool {
 	if SchemaChangedWithoutRetry {
-		return kv.IsRetryableError(err)
+		return kv.IsTxnRetryableError(err)
 	}
-	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
+	return kv.IsTxnRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
@@ -560,7 +560,7 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
 		return nil
 	}
-	return errors.New("current transaction is aborted, commands ignored until end of transaction block")
+	return errors.New("current transaction is aborted, commands ignored until end of transaction block:" + s.txn.doNotCommit.Error())
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
@@ -638,7 +638,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				break
 			}
 		}
-		if !s.isRetryableError(err) {
+		if !s.isTxnRetryableError(err) {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", label),
 				zap.Stringer("session", s),
@@ -1564,7 +1564,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 31
+	currentBootstrapVersion = 32
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1739,9 +1739,15 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		CreateTime:    time.Now(),
 	}
 	if !s.sessionVars.IsAutocommit() {
-		txnConf := config.GetGlobalConfig().PessimisticTxn
-		if txnConf.Enable && (txnConf.Default || s.sessionVars.PessimisticLock) {
-			s.sessionVars.TxnCtx.IsPessimistic = true
+		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
+		if pessTxnConf.Enable {
+			txnMode := s.sessionVars.TxnMode
+			if txnMode == "" && pessTxnConf.Default {
+				txnMode = ast.Pessimistic
+			}
+			if txnMode == ast.Pessimistic {
+				s.sessionVars.TxnCtx.IsPessimistic = true
+			}
 		}
 	}
 }

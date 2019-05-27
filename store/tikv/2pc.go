@@ -52,6 +52,11 @@ var (
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
 )
 
+// Global variable set by config file.
+var (
+	PessimisticLockTTL uint64
+)
+
 func (ca twoPhaseCommitAction) String() string {
 	switch ca {
 	case actionPrewrite:
@@ -532,13 +537,13 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
+		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		atomic.AddInt64(&c.detail.ResolveLockTime, int64(time.Since(start)))
-		if !ok {
-			err = bo.Backoff(BoTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
+		if msBeforeExpired > 0 {
+			err = bo.BackoffWithMaxSleep(BoTxnLock, int(msBeforeExpired), errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -567,7 +572,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
 			ForUpdateTs:  c.forUpdateTS,
-			LockTtl:      config.GetGlobalConfig().PessimisticTxn.TTL,
+			LockTtl:      PessimisticLockTTL,
 			IsFirstLock:  c.isFirstLock,
 		},
 		Context: pb.Context{
@@ -619,12 +624,12 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			}
 			locks = append(locks, lock)
 		}
-		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
+		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !ok {
-			err = bo.Backoff(BoTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
+		if msBeforeExpired > 0 {
+			err = bo.BackoffWithMaxSleep(BoTxnLock, int(msBeforeExpired), errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -813,9 +818,6 @@ func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) err
 	return errors.Trace(err)
 }
 
-// mockGetTSErrorInRetryOnce use to make sure gofail mockGetTSErrorInRetry only mock get TS error once.
-var mockGetTSErrorInRetryOnce = true
-
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	defer func() {
@@ -861,17 +863,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Trace(err)
 	}
-
-	// mockGetTSErrorInRetry should wait MockCommitErrorOnce first, then will run into retry() logic.
-	// Then mockGetTSErrorInRetry will return retryable error when first retry.
-	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
-	// This may cause duplicate data to be written.
-	failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
-		if val.(bool) && !kv.IsMockCommitErrorEnable() && mockGetTSErrorInRetryOnce {
-			mockGetTSErrorInRetryOnce = false
-			failpoint.Return(errors.Errorf("PD server timeout[try again later]"))
-		}
-	})
 
 	start = time.Now()
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
