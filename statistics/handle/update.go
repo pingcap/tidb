@@ -337,10 +337,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	} else {
 		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", startTS, delta.Delta, delta.Count, id)
 	}
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
-	if err != nil {
-		return
-	}
+	err = execSQLs(context.Background(), exec, []string{sql})
 	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	return
 }
