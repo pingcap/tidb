@@ -66,6 +66,7 @@ const (
 	codeDBaccessDenied                  = mysql.ErrDBaccessDenied
 	codeTableaccessDenied               = mysql.ErrTableaccessDenied
 	codeSpecificAccessDenied            = mysql.ErrSpecificAccessDenied
+	codeViewNoExplain                   = mysql.ErrViewNoExplain
 	codeWindowFrameStartIllegal         = mysql.ErrWindowFrameStartIllegal
 	codeWindowFrameEndIllegal           = mysql.ErrWindowFrameEndIllegal
 	codeWindowFrameIllegal              = mysql.ErrWindowFrameIllegal
@@ -128,6 +129,7 @@ var (
 	ErrDBaccessDenied                  = terror.ClassOptimizer.New(mysql.ErrDBaccessDenied, mysql.MySQLErrName[mysql.ErrDBaccessDenied])
 	ErrTableaccessDenied               = terror.ClassOptimizer.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
 	ErrSpecificAccessDenied            = terror.ClassOptimizer.New(mysql.ErrSpecificAccessDenied, mysql.MySQLErrName[mysql.ErrSpecificAccessDenied])
+	ErrViewNoExplain                   = terror.ClassOptimizer.New(mysql.ErrViewNoExplain, mysql.MySQLErrName[mysql.ErrViewNoExplain])
 	ErrWindowFrameStartIllegal         = terror.ClassOptimizer.New(codeWindowFrameStartIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameStartIllegal])
 	ErrWindowFrameEndIllegal           = terror.ClassOptimizer.New(codeWindowFrameEndIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameEndIllegal])
 	ErrWindowFrameIllegal              = terror.ClassOptimizer.New(codeWindowFrameIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameIllegal])
@@ -183,6 +185,7 @@ func init() {
 		codeDBaccessDenied:                  mysql.ErrDBaccessDenied,
 		codeTableaccessDenied:               mysql.ErrTableaccessDenied,
 		codeSpecificAccessDenied:            mysql.ErrSpecificAccessDenied,
+		codeViewNoExplain:                   mysql.ErrViewNoExplain,
 		codeWindowFrameStartIllegal:         mysql.ErrWindowFrameStartIllegal,
 		codeWindowFrameEndIllegal:           mysql.ErrWindowFrameEndIllegal,
 		codeWindowFrameIllegal:              mysql.ErrWindowFrameIllegal,
