@@ -303,8 +303,8 @@ type PessimisticTxn struct {
 	Default bool `toml:"default" json:"default"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
-	// The pessimistic lock ttl in milliseconds.
-	TTL uint64 `toml:"ttl" json:"ttl"`
+	// The pessimistic lock ttl.
+	TTL string `toml:"ttl" json:"ttl"`
 }
 
 var defaultConf = Config{
@@ -395,7 +395,7 @@ var defaultConf = Config{
 		Enable:        false,
 		Default:       false,
 		MaxRetryCount: 256,
-		TTL:           60 * 1000,
+		TTL:           "30s",
 	},
 }
 
@@ -557,6 +557,17 @@ func (c *Config) Valid() error {
 	}
 	if c.TiKVClient.MaxTxnTimeUse == 0 {
 		return fmt.Errorf("max-txn-time-use should be greater than 0")
+	}
+	if c.PessimisticTxn.TTL != "" {
+		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
+		if err != nil {
+			return err
+		}
+		minDur := time.Second * 15
+		maxDur := time.Second * 60
+		if dur < minDur || dur > maxDur {
+			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]", dur, minDur, maxDur)
+		}
 	}
 	return nil
 }
