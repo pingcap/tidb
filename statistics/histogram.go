@@ -509,11 +509,11 @@ func validRange(sc *stmtctx.StatementContext, ran *ranger.Range) bool {
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
 		var err error
-		low, err = codec.EncodeKey(nil, nil, ran.LowVal[0])
+		low, err = codec.EncodeKey(sc, nil, ran.LowVal[0])
 		if err != nil {
 			return false
 		}
-		high, err = codec.EncodeKey(nil, nil, ran.HighVal[0])
+		high, err = codec.EncodeKey(sc, nil, ran.HighVal[0])
 		if err != nil {
 			return false
 		}
