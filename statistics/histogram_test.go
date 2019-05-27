@@ -95,6 +95,7 @@ num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0`
 	c.Assert(newColl.Columns[2].String(), Equals, stringColResult)
 
 	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
+	coll.Indices[0] = idx
 	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
 	for i := 0; i < 5; i++ {
 		low, err1 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3)))
@@ -116,7 +117,16 @@ num: 30 lower_bound: 3 upper_bound: 5 repeats: 10
 num: 30 lower_bound: 9 upper_bound: 11 repeats: 10
 num: 30 lower_bound: 12 upper_bound: 14 repeats: 10`
 
-	newIdx, err := idx.newIndexBySelectivity(sc, node3)
-	c.Assert(err, IsNil, Commentf("Test failed: %v", err))
-	c.Assert(newIdx.String(), Equals, idxResult)
+	newColl = coll.NewHistCollBySelectivity(sc, []*StatsNode{node3})
+	c.Assert(newColl.Indices[0].String(), Equals, idxResult)
+}
+
+func (s *testStatisticsSuite) TestTruncateHistogram(c *C) {
+	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 1, 0)
+	low, high := types.NewIntDatum(0), types.NewIntDatum(1)
+	hist.AppendBucket(&low, &high, 0, 1)
+	newHist := hist.TruncateHistogram(1)
+	c.Assert(HistogramEqual(hist, newHist, true), IsTrue)
+	newHist = hist.TruncateHistogram(0)
+	c.Assert(newHist.Len(), Equals, 0)
 }

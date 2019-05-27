@@ -168,10 +168,7 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 		}
 	}
 	err = h.SaveMetaToStorage(tbl.PhysicalID, tbl.Count, tbl.ModifyCount)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return err
 }
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.

@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
@@ -159,13 +160,9 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 }
 
 func mergeQueryFeedback(lq []*statistics.QueryFeedback, rq []*statistics.QueryFeedback) []*statistics.QueryFeedback {
-	for _, q := range rq {
-		if len(lq) >= int(MaxQueryFeedbackCount.Load()) {
-			break
-		}
-		lq = append(lq, q)
-	}
-	return lq
+	remained := mathutil.MinInt64(int64(len(rq)), MaxQueryFeedbackCount.Load()-int64(len(lq)))
+	remained = mathutil.MaxInt64(0, remained)
+	return append(lq, rq[:remained]...)
 }
 
 var (
@@ -688,10 +685,7 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 		return s, s, errors.Trace(err)
 	}
 	e, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, end, time.UTC)
-	if err != nil {
-		return s, e, errors.Trace(err)
-	}
-	return s, e, nil
+	return s, e, err
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
@@ -743,10 +737,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-		if _, ok := statsTbl.Indices[idx.ID]; !ok {
+		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
 			logutil.Logger(context.Background()).Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
 			h.execAutoAnalyze(sql)
@@ -850,13 +841,12 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 				zap.String("range", rangeString))
 		} else if colHist := t.ColumnByName(colName); colHist != nil && colHist.Histogram.Len() > 0 {
 			err = convertRangeType(&rang, colHist.Tp, sc.TimeZone)
-			if err != nil {
-				continue
+			if err == nil {
+				rangeString := colRangeToStr(colHist, &rang, -1, factor)
+				logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
+					zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
+					zap.String("range", rangeString))
 			}
-			rangeString := colRangeToStr(colHist, &rang, -1, factor)
-			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
-				zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
-				zap.String("range", rangeString))
 		} else {
 			count, err := statistics.GetPseudoRowCountByColumnRanges(sc, float64(t.Count), []*ranger.Range{&rang}, 0)
 			if err == nil {
@@ -942,11 +932,8 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount)
 		expected *= c.GetIncreaseFactor(t.Count)
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
 	q.Expected = int64(expected)
-	return nil
+	return err
 }
 
 func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Range, rangeCount float64, q *statistics.QueryFeedback) error {

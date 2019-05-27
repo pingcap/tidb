@@ -15,6 +15,8 @@ package statistics
 
 import (
 	"math"
+
+	"github.com/cznic/mathutil"
 )
 
 // calculateEstimateNDV calculates the estimate ndv of a sampled data from a multisize with size total.
@@ -42,12 +44,7 @@ func calculateEstimateNDV(h *topNHelper, rowCount uint64) (ndv uint64, scaleRati
 	d := float64(sampleNDV)
 
 	ndv = uint64(math.Sqrt(N/n)*f1 + d - f1 + 0.5)
-
-	if ndv < sampleNDV {
-		ndv = sampleNDV
-	}
-	if ndv > rowCount {
-		ndv = rowCount
-	}
+	ndv = mathutil.MaxUint64(ndv, sampleNDV)
+	ndv = mathutil.MinUint64(ndv, rowCount)
 	return ndv, scaleRatio
 }

@@ -326,11 +326,8 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64, history
 	} else {
 		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil, nil
+	if err != nil || len(rows) == 0 {
+		return nil, err
 	}
 	return statistics.LoadCMSketchWithTopN(h.restrictedExec, tblID, isIndex, histID, rows[0].GetBytes(0))
 }
@@ -491,22 +488,18 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	} else {
 		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	}
-	if err != nil {
-		return nil, err
-	}
 	// Check deleted table.
-	if len(rows) == 0 {
+	if err != nil || len(rows) == 0 {
 		return nil, nil
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			if err := h.indexStatsFromStorage(row, table, tableInfo, historyStatsExec); err != nil {
-				return nil, errors.Trace(err)
-			}
+			err = h.indexStatsFromStorage(row, table, tableInfo, historyStatsExec)
 		} else {
-			if err := h.columnStatsFromStorage(row, table, tableInfo, loadAll, historyStatsExec); err != nil {
-				return nil, errors.Trace(err)
-			}
+			err = h.columnStatsFromStorage(row, table, tableInfo, loadAll, historyStatsExec)
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	return table, nil

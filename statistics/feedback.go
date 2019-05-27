@@ -366,9 +366,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	err := types.SortDatums(nil, vals)
 	if err != nil {
 		logutil.Logger(context.Background()).Debug("sort datums failed", zap.Error(err))
-		vals = vals[:0]
-		vals = append(vals, *b.lower, *b.upper)
-		return vals
+		return []types.Datum{*b.lower, *b.upper}
 	}
 	total, interval := 0, len(vals)/num
 	// Pick values per `interval`.
@@ -772,10 +770,7 @@ func EncodeFeedback(q *QueryFeedback) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	err = enc.Encode(pb)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), err
 }
 
 func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
@@ -826,22 +821,23 @@ func ConvertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Locati
 	return nil
 }
 
+func decodeColumnBounds(data []byte, ft *types.FieldType) ([]types.Datum, error) {
+	vals, err := codec.DecodeRange(data, 1)
+	if err != nil {
+		return nil, err
+	}
+	err = ConvertDatumsType(vals, ft, time.UTC)
+	return vals, err
+}
+
 func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback, ft *types.FieldType) error {
 	q.Tp = ColType
 	for i := 0; i < len(pb.ColumnRanges); i += 2 {
-		low, err := codec.DecodeRange(pb.ColumnRanges[i], 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = ConvertDatumsType(low, ft, time.UTC)
+		low, err := decodeColumnBounds(pb.ColumnRanges[i], ft)
 		if err != nil {
 			return err
 		}
-		high, err := codec.DecodeRange(pb.ColumnRanges[i+1], 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = ConvertDatumsType(high, ft, time.UTC)
+		high, err := decodeColumnBounds(pb.ColumnRanges[i+1], ft)
 		if err != nil {
 			return err
 		}
@@ -864,41 +860,9 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldTy
 	} else if len(pb.IntRanges) > 0 {
 		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))
 	} else {
-		err := decodeFeedbackForColumn(q, pb, ft)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		err = decodeFeedbackForColumn(q, pb, ft)
 	}
-	return nil
-}
-
-// Equal tests if two query feedback equal, it is only used in test.
-func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
-	if len(q.Feedback) != len(rq.Feedback) {
-		return false
-	}
-	for i, fb := range q.Feedback {
-		rfb := rq.Feedback[i]
-		if fb.Count != rfb.Count {
-			return false
-		}
-		if fb.Lower.Kind() == types.KindInt64 {
-			if fb.Lower.GetInt64() != rfb.Lower.GetInt64() {
-				return false
-			}
-			if fb.Upper.GetInt64() != rfb.Upper.GetInt64() {
-				return false
-			}
-		} else {
-			if !bytes.Equal(fb.Lower.GetBytes(), rfb.Lower.GetBytes()) {
-				return false
-			}
-			if !bytes.Equal(fb.Upper.GetBytes(), rfb.Upper.GetBytes()) {
-				return false
-			}
-		}
-	}
-	return true
+	return err
 }
 
 // SplitFeedbackByQueryType splits the feedbacks into equality feedbacks and range feedbacks.
@@ -946,9 +910,8 @@ func SupportColumnType(ft *types.FieldType) bool {
 		mysql.TypeDouble, mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeNewDecimal, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return true
-	default:
-		return false
 	}
+	return false
 }
 
 // GetMaxValue returns the max value datum for each type.
