@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -626,14 +627,14 @@ func getMostCorrColFromExprs(exprs []expression.Expression, histColl *statistics
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	colSet := make(map[int64]interface{})
+	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		if _, ok := colSet[col.UniqueID]; ok {
+		if colSet.Exist(col.UniqueID) {
 			continue
 		}
-		colSet[col.UniqueID] = col
+		colSet.Insert(col.UniqueID)
 		hist, ok := histColl.Columns[col.ID]
 		if !ok {
 			continue
