@@ -75,9 +75,9 @@ func (s *testScanMockSuite) TestReverseScan(c *C) {
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()})
-	scanner, err := newScanner(snapshot, []byte("a"), nil, 10, true)
+	scanner, err := newScanner(snapshot, nil, []byte("z"), 10, true)
 	c.Assert(err, IsNil)
-	for ch := byte('z'); ch >= byte('a'); ch-- {
+	for ch := byte('y'); ch >= byte('a'); ch-- {
 		c.Assert(string([]byte{ch}), Equals, string([]byte(scanner.Key())))
 		c.Assert(scanner.Next(), IsNil)
 	}
