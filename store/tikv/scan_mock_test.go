@@ -59,7 +59,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	c.Assert(scanner.Valid(), IsFalse)
 }
 
-func (s *testScanMockSuite) TestDescScan(c *C) {
+func (s *testScanMockSuite) TestReverseScan(c *C) {
 	store := NewTestStore(c).(*tikvStore)
 	defer store.Close()
 
