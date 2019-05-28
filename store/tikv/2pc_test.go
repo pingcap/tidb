@@ -450,9 +450,11 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	c.Assert(err, IsNil)
 	commiter, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
+	commiter.forUpdateTS = 100
 	var batch batchKeys
 	batch.keys = append(batch.keys, []byte("t1"))
 	batch.region = RegionVerID{1, 1, 1}
 	req := commiter.buildPrewriteRequest(batch)
 	c.Assert(len(req.Prewrite.IsPessimisticLock), Greater, 0)
+	c.Assert(req.Prewrite.ForUpdateTs, Equals, uint64(100))
 }
