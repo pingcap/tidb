@@ -2785,5 +2785,5 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 
 func init() {
 	// Make sure it will only be executed once.
-	domain.SchemaOutOfDateRetryInterval = int64(10 * time.Millisecond)
+	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
 }
