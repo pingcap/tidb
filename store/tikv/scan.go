@@ -41,7 +41,7 @@ type Scanner struct {
 	nextEndKey []byte
 }
 
-func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int, desc bool) (*Scanner, error) {
+func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int, reverse bool) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
 		batchSize = scanBatchSize
@@ -52,7 +52,7 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSiz
 		valid:        true,
 		nextStartKey: startKey,
 		endKey:       endKey,
-		reverse:      desc,
+		reverse:      reverse,
 		nextEndKey:   endKey,
 	}
 	err := scanner.Next()

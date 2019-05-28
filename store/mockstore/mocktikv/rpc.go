@@ -245,7 +245,6 @@ func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 }
 
 func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanResponse {
-
 	endKey := h.endKey
 	var pairs []Pair
 	if !req.Reverse {
@@ -257,6 +256,8 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 		}
 		pairs = h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
 	} else {
+		// TiKV use range [end_key, start_key) for reverse scan.
+		// Should use the req.EndKey to check in region.
 		if !h.checkKeyInRegion(req.GetEndKey()) {
 			panic("KvScan: startKey not in region")
 		}

@@ -667,7 +667,6 @@ func decodeAndSortJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
 	sorter := &jobsSorter{jobs: jobs}
 	sort.Sort(sorter)
 	return jobs, nil
-
 }
 
 // jobsSorter implements the sort.Interface interface.

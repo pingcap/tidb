@@ -833,7 +833,7 @@ func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRang
 	return buildCopTasks(bo, worker.store.regionCache, remainedRanges, worker.req.Desc, worker.req.Streaming)
 }
 
-// calculateRemain splits the input ranges into two, and take one of them according to reverse flag.
+// calculateRemain splits the input ranges into two, and take one of them according to desc flag.
 // It's used in streaming API, to calculate which range is consumed and what needs to be retry.
 // For example:
 // ranges: [r1 --> r2) [r3 --> r4)

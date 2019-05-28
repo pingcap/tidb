@@ -227,9 +227,9 @@ func (s *testSuite) TestAdmin(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJob, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
-	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJob[0].ID))
-	result.Check(testkit.Rows(historyJob[0].Query))
+	historyJobs, err = admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
+	result.Check(testkit.Rows(historyJobs[0].Query))
 	c.Assert(err, IsNil)
 
 	// check table test
@@ -284,19 +284,21 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
 	tk.MustExec("admin check table t1;")
 
-	// Test for get history ddl jobs when ddl history jobs has multiple regions.
+	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	historyJob, err = admin.GetHistoryDDLJobs(txn, 20)
+	historyJobs, err = admin.GetHistoryDDLJobs(txn, 20)
 	c.Assert(err, IsNil)
-	m := meta.NewMeta(txn)
-	startKey := meta.DDLJobHistoryKey(m, 1)
-	endKey := meta.DDLJobHistoryKey(m, historyJob[0].ID)
-	s.cluster.SplitKeys(s.mvccStore, startKey, endKey, int(historyJob[0].ID/2))
 
-	historyJob2, err := admin.GetHistoryDDLJobs(txn, 20)
+	// Split history ddl job queues.
+	m := meta.NewMeta(txn)
+	startKey := meta.DDLJobHistoryKey(m, 0)
+	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
+	s.cluster.SplitKeys(s.mvccStore, startKey, endKey, int(historyJobs[0].ID/2))
+
+	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
 	c.Assert(err, IsNil)
-	c.Assert(historyJob, DeepEquals, historyJob2)
+	c.Assert(historyJobs, DeepEquals, historyJobs2)
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
