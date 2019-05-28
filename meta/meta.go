@@ -135,7 +135,7 @@ func (m *Meta) tableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
 }
 
-// DDLJobHistoryKey exports for test.
+// DDLJobHistoryKey is only used for testing.
 func DDLJobHistoryKey(m *Meta, jobID int64) []byte {
 	return m.txn.EncodeHashDataKey(mDDLJobHistoryKey, m.jobIDKey(jobID))
 }
