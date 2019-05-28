@@ -114,7 +114,7 @@ func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 }
 
-// for issue #3848
+// TestInvalidNameWhenCreateTable for issue #3848
 func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -133,7 +133,7 @@ func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
 	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue, Commentf("err %v", err))
 }
 
-// for issue #6879
+// TestCreateTableIfNotExists for issue #6879
 func (s *testIntegrationSuite) TestCreateTableIfNotExists(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -269,6 +269,12 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 		rs.Close()
 	}
 	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'gbk'")
+	rs, err = tk.Exec("alter table t charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
+
 	rs, err = tk.Exec("alter table t charset utf8 collate latin1_bin")
 	if rs != nil {
 		rs.Close()

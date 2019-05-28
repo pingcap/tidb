@@ -676,41 +676,61 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 func (s *testEvaluatorSuite) TestConvert(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		str    string
-		cs     string
-		result string
+		str           interface{}
+		cs            string
+		result        string
+		hasBinaryFlag bool
 	}{
-		{"haha", "utf8", "haha"},
-		{"haha", "ascii", "haha"},
-		{"haha", "binary", "haha"},
+		{"haha", "utf8", "haha", false},
+		{"haha", "ascii", "haha", false},
+		{"haha", "binary", "haha", true},
+		{"haha", "bInAry", "haha", true},
+		{types.NewBinaryLiteralFromUint(0x7e, -1), "BiNarY", "~", true},
+		{types.NewBinaryLiteralFromUint(0xe4b8ade696870a, -1), "uTf8", "中文\n", false},
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
+		retType := f.getRetTp()
+		c.Assert(retType.Charset, Equals, strings.ToLower(v.cs))
+		collate, err := charset.GetDefaultCollation(strings.ToLower(v.cs))
+		c.Assert(err, IsNil)
+		c.Assert(retType.Collate, Equals, collate)
+		c.Assert(mysql.HasBinaryFlag(retType.Flag), Equals, v.hasBinaryFlag)
+
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
 		c.Assert(r.GetString(), Equals, v.result)
 	}
 
-	// Test case for error
+	// Test case for getFunction() error
 	errTbl := []struct {
-		str    interface{}
-		cs     string
-		result string
+		str interface{}
+		cs  string
+		err string
 	}{
-		{"haha", "wrongcharset", "haha"},
+		{"haha", "wrongcharset", "[expression:1115]Unknown character set: 'wrongcharset'"},
+		{"haha", "cp866", "[expression:1115]Unknown character set: 'cp866'"},
 	}
 	for _, v := range errTbl {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		_, err = evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, v.err)
+		c.Assert(f, IsNil)
 	}
+
+	// Test wrong charset while evaluating.
+	fc := funcs[ast.Convert]
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("haha", "utf8")))
+	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	wrongFunction := f.(*builtinConvertSig)
+	wrongFunction.tp.Charset = "wrongcharset"
+	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
+	c.Assert(err.Error(), Equals, "[expression:1115]Unknown character set: 'wrongcharset'")
 }
 
 func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
@@ -1199,6 +1219,13 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum("AB"))
+
+	// Test unsupported charset.
+	fc = funcs[ast.CharFunc]
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("65", "tidb")))
+	c.Assert(err, IsNil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
 }
 
 func (s *testEvaluatorSuite) TestCharLength(c *C) {
