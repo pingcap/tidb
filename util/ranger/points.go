@@ -250,26 +250,9 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
-	// if the colunm is unsigned integer and the value
-	// is less than zero, we only need compare with zero.
-	if mysql.HasUnsignedFlag(ft.Flag) {
-		if mysql.IsIntegerType(ft.Tp) && value.Kind() == types.KindInt64 {
-			zeroValue := new(types.Datum)
-			zeroValue.SetUint64(0)
-			cmp, err := value.CompareDatum(r.sc, zeroValue)
-			if err != nil {
-				return nil
-			}
-			if cmp == -1 {
-				// if the operation is GT, GE or NE, the range is [0, +inf]
-				if op == ast.GT || op == ast.GE || op == ast.NE {
-					op = ast.GE
-					value = *zeroValue
-				} else {
-					return nil
-				}
-			}
-		}
+	value, op, err = handleUnsignedIntCol(ft, value, op)
+	if err != nil {
+		return nil
 	}
 
 	switch op {
@@ -359,6 +342,28 @@ func HandlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType
 	default:
 		return val, nil
 	}
+}
+
+// handleUnsignedIntCol handles negative integer for unsigned integer colunm
+func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, error) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+	isIntegerType := mysql.IsIntegerType(ft.Tp)
+	isNegativeInteger := (val.Kind() == types.KindInt64 && val.GetInt64() < 0)
+
+	if !isUnsigned || !isIntegerType || !isNegativeInteger {
+		return val, op, nil
+	}
+
+	// if the operation is GT, GE or NE, the range is [0, +inf]
+	// otherwise the value can not match any (key, value) pair in tikv storage.
+	if op == ast.GT || op == ast.GE || op == ast.NE {
+		op = ast.GE
+		val.SetUint64(0)
+	} else {
+		return val, op, kv.ErrNotExist
+	}
+
+	return val, op, nil
 }
 
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {
