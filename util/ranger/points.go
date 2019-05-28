@@ -250,8 +250,8 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
-	value, op, err = handleUnsignedIntCol(ft, value, op)
-	if err != nil {
+	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
+	if isValidRange == false {
 		return nil
 	}
 
@@ -345,25 +345,25 @@ func HandlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType
 }
 
 // handleUnsignedIntCol handles negative integer for unsigned integer colunm
-func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, error) {
+func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
 	isIntegerType := mysql.IsIntegerType(ft.Tp)
 	isNegativeInteger := (val.Kind() == types.KindInt64 && val.GetInt64() < 0)
 
 	if !isUnsigned || !isIntegerType || !isNegativeInteger {
-		return val, op, nil
+		return val, op, true
 	}
 
 	// if the operation is GT, GE or NE, the range is [0, +inf]
-	// otherwise the value can not match any (key, value) pair in tikv storage.
+	// otherwise the value is not in valid range
 	if op == ast.GT || op == ast.GE || op == ast.NE {
 		op = ast.GE
 		val.SetUint64(0)
 	} else {
-		return val, op, kv.ErrNotExist
+		return val, op, false
 	}
 
-	return val, op, nil
+	return val, op, true
 }
 
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {
