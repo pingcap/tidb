@@ -14,8 +14,11 @@
 package kv_test
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -25,8 +28,9 @@ var _ = Suite(testFaultInjectionSuite{})
 
 func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	var cfg kv.InjectionConfig
-	err := errors.New("foo")
-	cfg.SetGetError(err)
+	err1 := errors.New("foo")
+	cfg.SetGetError(err1)
+	cfg.SetCommitError(err1)
 
 	storage := kv.NewInjectedStore(kv.NewMockStorage(), &cfg)
 	txn, err := storage.Begin()
@@ -37,9 +41,50 @@ func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	snap, err := storage.GetSnapshot(ver)
 	c.Assert(err, IsNil)
 	b, err := txn.Get([]byte{'a'})
-	c.Assert(err.Error(), Equals, errors.New("foo").Error())
+	c.Assert(err.Error(), Equals, err1.Error())
 	c.Assert(b, IsNil)
 	b, err = snap.Get([]byte{'a'})
-	c.Assert(err.Error(), Equals, errors.New("foo").Error())
+	c.Assert(err.Error(), Equals, err1.Error())
 	c.Assert(b, IsNil)
+
+	bs, err := snap.BatchGet(nil)
+	c.Assert(err.Error(), Equals, err1.Error())
+	c.Assert(bs, IsNil)
+
+	bs, err = txn.BatchGet(nil)
+	c.Assert(err.Error(), Equals, err1.Error())
+	c.Assert(bs, IsNil)
+
+	err = txn.Commit(context.Background())
+	c.Assert(err.Error(), Equals, err1.Error())
+
+	cfg.SetGetError(nil)
+	cfg.SetCommitError(nil)
+
+	storage = kv.NewInjectedStore(kv.NewMockStorage(), &cfg)
+	txn, err = storage.Begin()
+	c.Assert(err, IsNil)
+	snap, err = storage.GetSnapshot(ver)
+	c.Assert(err, IsNil)
+
+	b, err = txn.Get([]byte{'a'})
+	c.Assert(err, IsNil)
+	c.Assert(b, IsNil)
+
+	bs, err = txn.BatchGet(nil)
+	c.Assert(err, IsNil)
+	c.Assert(bs, IsNil)
+
+	b, err = snap.Get([]byte{'a'})
+	c.Assert(terror.ErrorEqual(kv.ErrNotExist, err), IsTrue)
+	c.Assert(b, IsNil)
+
+	bs, err = snap.BatchGet([]kv.Key{[]byte("a")})
+	c.Assert(err, IsNil)
+	c.Assert(len(bs), Equals, 0)
+
+	err = txn.Commit(context.Background())
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, kv.ErrTxnRetryable), IsTrue)
+
 }

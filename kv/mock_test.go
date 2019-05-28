@@ -34,6 +34,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Check(err, IsNil)
 	_, err = snapshot.BatchGet([]Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
+	snapshot.SetPriority(0)
 
 	transaction, err := storage.Begin()
 	c.Check(err, IsNil)
@@ -59,8 +60,30 @@ func (s testMockSuite) TestInterface(c *C) {
 
 	transaction, err = storage.Begin()
 	c.Check(err, IsNil)
+
+	// Test for mockTxn interface.
+	c.Assert(transaction.String(), Equals, "")
+	c.Assert(transaction.Valid(), Equals, true)
+	c.Assert(transaction.Len(), Equals, 0)
+	c.Assert(transaction.Size(), Equals, 0)
+	c.Assert(transaction.GetMemBuffer(), IsNil)
+	transaction.SetCap(0)
+	transaction.Reset()
 	err = transaction.Rollback()
 	c.Check(err, IsNil)
+	c.Assert(transaction.Valid(), Equals, false)
+	c.Assert(transaction.IsPessimistic(), Equals, false)
+	c.Assert(transaction.Delete(nil), IsNil)
+
+	// Test for mockStorage interface.
+	c.Assert(storage.GetOracle(), IsNil)
+	c.Assert(storage.Name(), Equals, "KVMockStorage")
+	c.Assert(storage.Describe(), Equals, "KVMockStorage is a mock Store implementation, only for unittests in KV package")
+	c.Assert(storage.SupportDeleteRange(), IsFalse)
+
+	status, err := storage.ShowStatus(nil, "")
+	c.Assert(status, IsNil)
+	c.Assert(err, IsNil)
 
 	err = storage.Close()
 	c.Check(err, IsNil)
