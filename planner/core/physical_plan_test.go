@@ -867,12 +867,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test hash agg + index single.
 		{
 			sql:  "select sum(e), avg(e + c) from t where c = 1 group by d",
-			best: "IndexReader(Index(t.c_d_e)[[1,1]]->HashAgg)->HashAgg",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]]->StreamAgg)->StreamAgg",
 		},
 		// Test hash agg + index double.
 		{
 			sql:  "select sum(e), avg(b + c) from t where c = 1 and e = 1 group by d",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->Projection->HashAgg",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->Projection->Projection->StreamAgg",
 		},
 		// Test stream agg + index double.
 		{
@@ -882,7 +882,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test hash agg + order.
 		{
 			sql:  "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by d order by k",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->HashAgg->Sort",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Projection->StreamAgg->Sort",
 		},
 		// Test stream agg + order.
 		{
