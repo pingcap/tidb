@@ -153,6 +153,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		for i := 1; i < len(ds.possibleAccessPaths); i++ {
 			if len(ds.possibleAccessPaths[i].accessConds) != 0 {
 				needConsiderIndexMerge = false
+				break
 			}
 		}
 		if needConsiderIndexMerge {
