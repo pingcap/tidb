@@ -87,6 +87,7 @@ var _ = Suite(&testSuite{})
 var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
+var _ = Suite(&testSuite4{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
@@ -2117,6 +2118,28 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
 
+func (s *testSuite) TestLowResolutionTSORead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@autocommit=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists low_resolution_tso")
+	tk.MustExec("create table low_resolution_tso(a int)")
+	tk.MustExec("insert low_resolution_tso values (1)")
+
+	// enable low resolution tso
+	c.Assert(tk.Se.GetSessionVars().LowResolutionTSO, IsFalse)
+	tk.Exec("set @@tidb_low_resolution_tso = 'on'")
+	c.Assert(tk.Se.GetSessionVars().LowResolutionTSO, IsTrue)
+
+	time.Sleep(3 * time.Second)
+	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("1"))
+	_, err := tk.Exec("update low_resolution_tso set a = 2")
+	c.Assert(err, NotNil)
+	tk.MustExec("set @@tidb_low_resolution_tso = 'off'")
+	tk.MustExec("update low_resolution_tso set a = 2")
+	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("2"))
+}
+
 func (s *testSuite) TestScanControlSelection(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3757,6 +3780,19 @@ func (s *testSuite) TestSplitIndexRegion(c *C) {
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
+}
+
+func (s *testSuite) TestIssue10435(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(i int, j int, k int)")
+	tk.MustExec("insert into t1 VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4)")
+	tk.MustExec("INSERT INTO t1 SELECT 10*i,j,5*j FROM t1 UNION SELECT 20*i,j,5*j FROM t1 UNION SELECT 30*i,j,5*j FROM t1")
+
+	tk.MustExec("set @@session.tidb_enable_window_function=1")
+	tk.MustQuery("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w").Check(
+		testkit.Rows("1", "2", "3", "4", "11", "22", "31", "33", "44", "61", "62", "93", "122", "124", "183", "244"),
+	)
 }
 
 func (s *testSuite) TestUnsignedFeedback(c *C) {
