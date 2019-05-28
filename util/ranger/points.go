@@ -345,6 +345,7 @@ func HandlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType
 }
 
 // handleUnsignedIntCol handles negative integer for unsigned integer colunm
+// returns fixed value, op and isValidRange.
 func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
 	isIntegerType := mysql.IsIntegerType(ft.Tp)
@@ -354,8 +355,8 @@ func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (type
 		return val, op, true
 	}
 
-	// if the operation is GT, GE or NE, the range is [0, +inf]
-	// otherwise the value is not in valid range
+	// If the operation is GT, GE or NE, the range should be [0, +inf].
+	// Otherwise the value is out of valid range.
 	if op == ast.GT || op == ast.GE || op == ast.NE {
 		op = ast.GE
 		val.SetUint64(0)
