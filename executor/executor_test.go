@@ -294,11 +294,9 @@ func (s *testSuite) TestAdmin(c *C) {
 	endKey := meta.DDLJobHistoryKey(m, historyJob[0].ID)
 	s.cluster.SplitKeys(s.mvccStore, startKey, endKey, int(historyJob[0].ID/2))
 
-	txn, err = s.store.Begin()
-	c.Assert(err, IsNil)
 	historyJob2, err := admin.GetHistoryDDLJobs(txn, 20)
 	c.Assert(err, IsNil)
-	c.Assert(len(historyJob2) >= len(historyJob), IsTrue)
+	c.Assert(historyJob, DeepEquals, historyJob2)
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
