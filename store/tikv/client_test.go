@@ -45,6 +45,8 @@ func (s *testClientSuite) TestConn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(conn2.Get(), Not(Equals), conn1.Get())
 
+	client.recycleIdleConnArray()
+
 	client.Close()
 	conn3, err := client.getConnArray(addr)
 	c.Assert(err, NotNil)
