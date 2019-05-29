@@ -563,7 +563,6 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewDurationDatum(newDuration(time.Second * 2)),
 		},
 
-
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsDuration,
 				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewIntDatum(1))),
