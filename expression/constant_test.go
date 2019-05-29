@@ -15,6 +15,8 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"sort"
 	"strings"
 
@@ -344,4 +346,79 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 		c.Assert(ok, IsTrue, comment)
 		c.Assert(newConst.DeferredExpr.String(), Equals, tt.deferred, comment)
 	}
+}
+
+func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {
+	defer testleak.AfterTest(c)()
+	m := &MockExpr{}
+	cst := &Constant{DeferredExpr: m}
+	m.i, m.err = nil, fmt.Errorf("ERROR")
+	_, _, err := cst.EvalInt(nil, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalReal(nil, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalDecimal(nil, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalString(nil, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalTime(nil, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalDuration(nil, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalJSON(nil, chunk.Row{})
+	c.Assert(err, NotNil)
+
+	m.i, m.err = nil, nil
+	_, isNull, err := cst.EvalInt(nil, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalReal(nil, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalDecimal(nil, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalString(nil, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalTime(nil, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalDuration(nil, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalJSON(nil, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+
+	m.i = int64(2333)
+	xInt, _, _ := cst.EvalInt(nil, chunk.Row{})
+	c.Assert(xInt, Equals, int64(2333))
+
+	m.i = float64(123.45)
+	xFlo, _, _ := cst.EvalReal(nil, chunk.Row{})
+	c.Assert(xFlo, Equals, float64(123.45))
+
+	m.i = "abc"
+	xStr, _, _ := cst.EvalString(nil, chunk.Row{})
+	c.Assert(xStr, Equals, "abc")
+
+	m.i = &types.MyDecimal{}
+	xDec, _, _ := cst.EvalDecimal(nil, chunk.Row{})
+	c.Assert(xDec, Equals, m.i)
+
+	m.i = types.Time{}
+	xTim, _, _ := cst.EvalTime(nil, chunk.Row{})
+	c.Assert(m.i, Equals, xTim)
+
+	m.i = types.Duration{}
+	xDur, _, _ := cst.EvalDuration(nil, chunk.Row{})
+	c.Assert(m.i, Equals, xDur)
+
+	m.i = json.BinaryJSON{}
+	xJsn, _, _ := cst.EvalJSON(nil, chunk.Row{})
+	c.Assert(m.i, Equals, xJsn)
+
+	cln := cst.Clone().(*Constant)
+	c.Assert(cln.DeferredExpr, Equals, cst.DeferredExpr)
 }

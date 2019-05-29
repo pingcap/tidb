@@ -14,6 +14,10 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"testing"
 
 	"github.com/pingcap/check"
@@ -161,3 +165,66 @@ func BenchmarkExprFromSchema(b *testing.B) {
 	}
 	b.ReportAllocs()
 }
+
+// MockExpr is mainly for test.
+type MockExpr struct {
+	err error
+	t   *types.FieldType
+	i   interface{}
+}
+
+func (m *MockExpr) String() string                          { return "" }
+func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
+func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
+func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+	if x, ok := m.i.(int64); ok {
+		return int64(x), false, m.err
+	}
+	return 0, m.i == nil, m.err
+}
+func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error) {
+	if x, ok := m.i.(float64); ok {
+		return float64(x), false, m.err
+	}
+	return 0, m.i == nil, m.err
+}
+func (m *MockExpr) EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
+	if x, ok := m.i.(string); ok {
+		return string(x), false, m.err
+	}
+	return "", m.i == nil, m.err
+}
+func (m *MockExpr) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
+	if x, ok := m.i.(*types.MyDecimal); ok {
+		return x, false, m.err
+	}
+	return nil, m.i == nil, m.err
+}
+func (m *MockExpr) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error) {
+	if x, ok := m.i.(types.Time); ok {
+		return x, false, m.err
+	}
+	return types.Time{}, m.i == nil, m.err
+}
+func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
+	if x, ok := m.i.(types.Duration); ok {
+		return x, false, m.err
+	}
+	return types.Duration{}, m.i == nil, m.err
+}
+func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error) {
+	if x, ok := m.i.(json.BinaryJSON); ok {
+		return x, false, m.err
+	}
+	return json.BinaryJSON{}, m.i == nil, m.err
+}
+func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
+func (m *MockExpr) Clone() Expression                                 { return nil }
+func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
+func (m *MockExpr) IsCorrelated() bool                                { return false }
+func (m *MockExpr) ConstItem() bool                                   { return false }
+func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
+func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
+func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
+func (m *MockExpr) ExplainInfo() string                               { return "" }
+func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
