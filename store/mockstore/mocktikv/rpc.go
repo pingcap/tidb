@@ -291,11 +291,23 @@ func (h *rpcHandler) handleKvPrewrite(req *kvrpcpb.PrewriteRequest) *kvrpcpb.Pre
 func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest) *kvrpcpb.PessimisticLockResponse {
 	for _, m := range req.Mutations {
 		if !h.checkKeyInRegion(m.Key) {
-			panic("KvPrewrite: key not in region")
+			panic("KvPessimisticLock: key not in region")
 		}
 	}
 	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(), req.GetLockTtl())
 	return &kvrpcpb.PessimisticLockResponse{
+		Errors: convertToKeyErrors(errs),
+	}
+}
+
+func (h *rpcHandler) handleKvPessimisticRollback(req *kvrpcpb.PessimisticRollbackRequest) *kvrpcpb.PessimisticRollbackResponse {
+	for _, key := range req.Keys {
+		if !h.checkKeyInRegion(key) {
+			panic("KvPessimisticRollback: key not in region")
+		}
+	}
+	errs := h.mvccStore.PessimisticRollback(req.Keys, req.StartVersion, req.ForUpdateTs)
+	return &kvrpcpb.PessimisticRollbackResponse{
 		Errors: convertToKeyErrors(errs),
 	}
 }
@@ -662,6 +674,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.PessimisticLock = handler.handleKvPessimisticLock(r)
+	case tikvrpc.CmdPessimisticRollback:
+		r := req.PessimisticRollback
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.PessimisticRollback = &kvrpcpb.PessimisticRollbackResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.PessimisticRollback = handler.handleKvPessimisticRollback(r)
 	case tikvrpc.CmdCommit:
 		failpoint.Inject("rpcCommitResult", func(val failpoint.Value) {
 			switch val.(string) {

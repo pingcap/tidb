@@ -45,6 +45,7 @@ const (
 	CmdGC
 	CmdDeleteRange
 	CmdPessimisticLock
+	CmdPessimisticRollback
 
 	CmdRawGet CmdType = 256 + iota
 	CmdRawBatchGet
@@ -134,7 +135,6 @@ type Request struct {
 	Get                *kvrpcpb.GetRequest
 	Scan               *kvrpcpb.ScanRequest
 	Prewrite           *kvrpcpb.PrewriteRequest
-	PessimisticLock    *kvrpcpb.PessimisticLockRequest
 	Commit             *kvrpcpb.CommitRequest
 	Cleanup            *kvrpcpb.CleanupRequest
 	BatchGet           *kvrpcpb.BatchGetRequest
@@ -156,6 +156,9 @@ type Request struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyRequest
 	MvccGetByStartTs   *kvrpcpb.MvccGetByStartTsRequest
 	SplitRegion        *kvrpcpb.SplitRegionRequest
+
+	PessimisticLock     *kvrpcpb.PessimisticLockRequest
+	PessimisticRollback *kvrpcpb.PessimisticRollbackRequest
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
 }
@@ -224,7 +227,6 @@ type Response struct {
 	Get                *kvrpcpb.GetResponse
 	Scan               *kvrpcpb.ScanResponse
 	Prewrite           *kvrpcpb.PrewriteResponse
-	PessimisticLock    *kvrpcpb.PessimisticLockResponse
 	Commit             *kvrpcpb.CommitResponse
 	Cleanup            *kvrpcpb.CleanupResponse
 	BatchGet           *kvrpcpb.BatchGetResponse
@@ -247,6 +249,9 @@ type Response struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS   *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion        *kvrpcpb.SplitRegionResponse
+
+	PessimisticLock     *kvrpcpb.PessimisticLockResponse
+	PessimisticRollback *kvrpcpb.PessimisticRollbackResponse
 
 	DebugGetRegionProperties *debugpb.GetRegionPropertiesResponse
 }
@@ -296,6 +301,8 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 		return &Response{Type: CmdCop, Cop: res.Coprocessor}
 	case *tikvpb.BatchCommandsResponse_Response_PessimisticLock:
 		return &Response{Type: CmdPessimisticLock, PessimisticLock: res.PessimisticLock}
+	case *tikvpb.BatchCommandsResponse_Response_PessimisticRollback:
+		return &Response{Type: CmdPessimisticRollback, PessimisticRollback: res.PessimisticRollback}
 	}
 	return nil
 }
