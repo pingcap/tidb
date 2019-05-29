@@ -230,6 +230,16 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewIntDatum(1),
 		},
 		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LTReal,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(1)), datumExpr(c, types.NewFloat64Datum(2))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_EQReal,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(1)), datumExpr(c, types.NewFloat64Datum(1))),
+			types.NewIntDatum(1),
+		},
+		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NEReal,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(1)), datumExpr(c, types.NewFloat64Datum(2))),
 			types.NewIntDatum(1),
@@ -250,6 +260,16 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewIntDatum(1),
 		},
 		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LTDecimal,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1"))), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2")))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_EQDecimal,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1"))), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
+			types.NewIntDatum(1),
+		},
+		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NEDecimal,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1"))), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2")))),
 			types.NewIntDatum(1),
@@ -265,6 +285,16 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewIntDatum(1),
 		},
 		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_GTDuration,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second*2))), datumExpr(c, types.NewDurationDatum(newDuration(time.Second)))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_EQDuration,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second))), datumExpr(c, types.NewDurationDatum(newDuration(time.Second)))),
+			types.NewIntDatum(1),
+		},
+		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LEDuration,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second))), datumExpr(c, types.NewDurationDatum(newDuration(time.Second*2)))),
 			types.NewIntDatum(1),
@@ -276,6 +306,26 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQDuration,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewDatum(nil))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_GEString,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("1")), datumExpr(c, types.NewStringDatum("1"))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LEString,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("1")), datumExpr(c, types.NewStringDatum("1"))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_NEString,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("2")), datumExpr(c, types.NewStringDatum("1"))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQString,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewDatum(nil))),
 			types.NewIntDatum(1),
 		},
