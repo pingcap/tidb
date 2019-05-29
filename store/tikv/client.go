@@ -481,6 +481,9 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		}
 
 		length = removeCanceledRequests(&entries, &requests)
+		if length == 0 {
+			continue // All requests are canceled.
+		}
 		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
 		for i := 0; i < length; i++ {
 			requestID := uint64(i) + maxBatchID - uint64(length)
