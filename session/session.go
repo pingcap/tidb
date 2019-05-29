@@ -927,7 +927,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) ([]sqlexec.RecordSet, error) {
+func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) (sqlexec.RecordSet, error) {
 	s.SetValue(sessionctx.QueryString, stmt.OriginText())
 	if _, ok := stmtNode.(ast.DDLNode); ok {
 		s.SetValue(sessionctx.LastExecuteDDL, true)
@@ -952,10 +952,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	}
 
-	if recordSet != nil {
-		recordSets = append(recordSets, recordSet)
-	}
-	return recordSets, nil
+	return recordSet, nil
 }
 
 func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
@@ -967,6 +964,49 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
 	return
+}
+
+const (
+	// MaxExecutionTime is currently used for selection Statement only
+	MaxExecutionTime = "max_execution_time"
+)
+
+type exeutionHints struct {
+	maxExecutionTime uint64
+}
+
+func (s *session) getExecutionHints(hints []*ast.TableOptimizerHint) (execHints *exeutionHints) {
+	execHints = &exeutionHints{maxExecutionTime: 0}
+	for _, hint := range hints {
+		switch hint.HintName.L {
+		case MaxExecutionTime:
+			execHints.maxExecutionTime = hint.MaxExecutionTime
+		default:
+		}
+	}
+	return execHints
+}
+
+// getStmtMaxExecTimeMS the timeout value of a stmt, 0 if there is no timeout value.
+func (s *session) getStmtMaxExecTimeMS(stmtNode ast.StmtNode) uint64 {
+	var timeOutMS uint64 = 0
+	switch stmtNode.(type) {
+	case *ast.SelectStmt:
+		sel := stmtNode.(*ast.SelectStmt)
+		execHints := s.getExecutionHints(sel.TableHints)
+		if execHints.maxExecutionTime != 0 {
+			timeOutMS = execHints.maxExecutionTime
+		} else if s.GetSessionVars().MaxExecutionTime != 0 {
+			timeOutMS = s.GetSessionVars().MaxExecutionTime
+		} else if str, ok := s.GetSessionVars().GetSystemVar(variable.MaxExecutionTime); ok {
+			t, err := strconv.ParseUint(str, 10, 64)
+			if err == nil {
+				timeOutMS = t
+			}
+		}
+	default:
+	}
+	return timeOutMS
 }
 
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
@@ -998,6 +1038,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	var tempStmtNodes []ast.StmtNode
 	compiler := executor.Compiler{Ctx: s}
+
 	for idx, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
 
@@ -1032,10 +1073,17 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			sessionExecuteCompileDurationGeneral.Observe(time.Since(startTS).Seconds())
 		}
 		s.currentPlan = stmt.Plan
+		maxExecTimeMS := s.getStmtMaxExecTimeMS(stmtNode)
 
 		// Step3: Execute the physical plan.
-		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
+		rs, err := s.executeStatement(ctx, connID, stmtNode, stmt, recordSets)
+		if err != nil {
 			return nil, err
+		}
+		if rs != nil {
+			rs.SetMaxExecDuration(time.Duration(maxExecTimeMS) * time.Millisecond)
+			rs.SetStartExecTime(startTS)
+			recordSets = append(recordSets, rs)
 		}
 	}
 
@@ -1645,7 +1693,6 @@ var builtinGlobalVariable = []string{
 	variable.AutoIncrementIncrement,
 	variable.CollationServer,
 	variable.NetWriteTimeout,
-
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,

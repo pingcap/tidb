@@ -141,4 +141,6 @@ type ResultSet interface {
 	StoreFetchedRows(rows []chunk.Row)
 	GetFetchedRows() []chunk.Row
 	Close() error
+	MaxExecDuration() time.Duration
+	StartExecTime() time.Time
 }

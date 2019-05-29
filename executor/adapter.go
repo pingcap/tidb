@@ -55,11 +55,29 @@ type processinfoSetter interface {
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
-	fields     []*ast.ResultField
-	executor   Executor
-	stmt       *ExecStmt
-	lastErr    error
-	txnStartTS uint64
+	fields          []*ast.ResultField
+	executor        Executor
+	stmt            *ExecStmt
+	lastErr         error
+	txnStartTS      uint64
+	maxExecDuration time.Duration
+	startExecTime   time.Time
+}
+
+func (a *recordSet) SetMaxExecDuration(d time.Duration) {
+	a.maxExecDuration = d
+}
+
+func (a *recordSet) MaxExecDuration() time.Duration {
+	return a.maxExecDuration
+}
+
+func (a *recordSet) SetStartExecTime(t time.Time) {
+	a.startExecTime = t
+}
+
+func (a *recordSet) StartExecTime() time.Time {
+	return a.startExecTime
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -286,10 +304,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 }
 
 type chunkRowRecordSet struct {
-	rows   []chunk.Row
-	idx    int
-	fields []*ast.ResultField
-	e      Executor
+	rows            []chunk.Row
+	idx             int
+	fields          []*ast.ResultField
+	e               Executor
+	maxExecDuration time.Duration
+	startExecTime   time.Time
 }
 
 func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
@@ -312,6 +332,22 @@ func (c *chunkRowRecordSet) NewRecordBatch() *chunk.RecordBatch {
 
 func (c *chunkRowRecordSet) Close() error {
 	return nil
+}
+
+func (c *chunkRowRecordSet) SetMaxExecDuration(d time.Duration) {
+	c.maxExecDuration = d
+}
+
+func (c *chunkRowRecordSet) MaxExecDuration() time.Duration {
+	return c.maxExecDuration
+}
+
+func (c *chunkRowRecordSet) SetStartExecTime(t time.Time) {
+	c.startExecTime = t
+}
+
+func (c *chunkRowRecordSet) StartExecTime() time.Time {
+	return c.startExecTime
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {

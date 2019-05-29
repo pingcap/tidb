@@ -18,13 +18,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type ConnTestSuite struct {
@@ -206,4 +210,65 @@ func mapBelong(m1, m2 map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
+	//There is no underlying netCon, use failpoint to avoid panic
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
+
+	c.Parallel()
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	ts.dom, err = session.BootstrapSession(ts.store)
+	go ts.dom.ExpensiveQueryHandle().Run(nil)
+	c.Assert(err, IsNil)
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: 1,
+		server: &Server{
+			capability: defaultCapability,
+		},
+		ctx:   tc,
+		alloc: arena.NewAllocator(32 * 1024),
+	}
+	str := fmt.Sprintf("cc:%p", cc)
+	logutil.Logger(context.Background()).Info(str)
+
+	//handleQuery will WriteOK even there is no data output, which may cause panic in packetIO.writePacket
+	_, err = se.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
+	for i := 0; i < 10; i++ {
+		str := fmt.Sprintf("insert into testTable2 values(%d, %d)", i, i%80)
+		_, err = se.Execute(context.Background(), str)
+		c.Assert(err, IsNil)
+	}
+
+	_, err = se.Execute(context.Background(), "select SLEEP(1);")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 500;")
+	c.Assert(err, IsNil)
+
+	err = cc.handleQuery(context.Background(), "select  * FROM testTable2 WHERE  SLEEP(2);")
+	c.Assert(err, Equals, errMaxExecTimeExceeded)
+
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
+	c.Assert(err, IsNil)
+
+	err = cc.handleQuery(context.Background(), "select SLEEP(2);")
+	c.Assert(err, IsNil)
+
+	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(2);")
+	c.Assert(err, Equals, errMaxExecTimeExceeded)
+
+	//	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/SleepInwriteChunks"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
 }

@@ -49,11 +49,29 @@ type testStatisticsSuite struct {
 }
 
 type recordSet struct {
-	firstIsID bool
-	data      []types.Datum
-	count     int
-	cursor    int
-	fields    []*ast.ResultField
+	firstIsID     bool
+	data          []types.Datum
+	count         int
+	cursor        int
+	fields        []*ast.ResultField
+	startExecTime time.Time
+	maxExecTime   time.Duration
+}
+
+func (r *recordSet) SetMaxExecDuration(d time.Duration) {
+	r.maxExecTime = d
+}
+
+func (r *recordSet) MaxExecDuration() time.Duration {
+	return r.maxExecTime
+}
+
+func (r *recordSet) SetStartExecTime(t time.Time) {
+	r.startExecTime = t
+}
+
+func (r *recordSet) StartExecTime() time.Time {
+	return r.startExecTime
 }
 
 func (r *recordSet) Fields() []*ast.ResultField {

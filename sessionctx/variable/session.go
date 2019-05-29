@@ -111,7 +111,7 @@ type TransactionContext struct {
 	TableDeltaMap map[int64]TableDelta
 	IsPessimistic bool
 
-	// For metrics.
+	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
 }
@@ -205,15 +205,14 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
-	// params for prepared statements
+	// PreparedParams params for prepared statements
 	PreparedParams []types.Datum
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
 
-	// retry information
 	RetryInfo *RetryInfo
-	// Should be reset on transaction finished.
+	//  TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
 	// KVVars is the variables for KV storage.
@@ -221,9 +220,9 @@ type SessionVars struct {
 
 	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
 	TxnIsolationLevelOneShot struct {
-		// state 0 means default
-		// state 1 means it's set in current transaction.
-		// state 2 means it should be used in current transaction.
+		// State 0 means default
+		// State 1 means it's set in current transaction.
+		// State 2 means it should be used in current transaction.
 		State int
 		Value string
 	}
@@ -364,7 +363,7 @@ type SessionVars struct {
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
 
-	// TIDBOptJoinOrderAlgoThreshold defines the minimal number of join nodes
+	// TiDBOptJoinReorderThreshold defines the minimal number of join nodes
 	// to use the greedy join reorder algorithm.
 	TiDBOptJoinReorderThreshold int
 
@@ -379,6 +378,8 @@ type SessionVars struct {
 
 	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	LowResolutionTSO bool
+
+	MaxExecutionTime uint64
 }
 
 // ConnectionInfo present connection used by audit.
@@ -688,6 +689,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
+	case MaxExecutionTime:
+		timeoutMS := tidbOptInt64(val, 0)
+		if timeoutMS < 0 {
+			timeoutMS = 0
+		}
+		s.MaxExecutionTime = uint64(timeoutMS)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -842,6 +849,7 @@ const (
 	TxnIsolation         = "tx_isolation"
 	TransactionIsolation = "transaction_isolation"
 	TxnIsolationOneShot  = "tx_isolation_one_shot"
+	MaxExecutionTime     = "max_execution_time"
 )
 
 // these variables are useless for TiDB, but still need to validate their values for some compatible issues.
@@ -888,7 +896,7 @@ type Concurrency struct {
 	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
 	HashAggPartialConcurrency int
 
-	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
+	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
 	HashAggFinalConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.

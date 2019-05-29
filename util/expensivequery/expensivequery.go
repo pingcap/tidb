@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,12 +32,17 @@ import (
 
 // Handle is the handler for expensive query.
 type Handle struct {
-	exitCh chan struct{}
+	mu      sync.RWMutex
+	exitCh  chan struct{}
+	queries map[uint32]InterruptableQuery
 }
 
 // NewExpensiveQueryHandle builds a new expensive query handler.
 func NewExpensiveQueryHandle(exitCh chan struct{}) *Handle {
-	return &Handle{exitCh}
+	return &Handle{
+		exitCh:  exitCh,
+		queries: make(map[uint32]InterruptableQuery),
+	}
 }
 
 // Run starts a expensive query checker goroutine at the start time of the server.
@@ -47,7 +53,8 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 	for {
 		select {
 		case <-ticker.C:
-			if log.GetLevel() > zapcore.WarnLevel {
+			eqh.checkAll()
+			if log.GetLevel() > zapcore.WarnLevel || sm == nil {
 				continue
 			}
 			processInfo := sm.ShowProcessList()

@@ -357,6 +357,14 @@ type tidbResultSet struct {
 	closed    int32
 }
 
+func (trs *tidbResultSet) MaxExecDuration() time.Duration {
+	return trs.recordSet.MaxExecDuration()
+}
+
+func (trs *tidbResultSet) StartExecTime() time.Time {
+	return trs.recordSet.StartExecTime()
+}
+
 func (trs *tidbResultSet) NewRecordBatch() *chunk.RecordBatch {
 	return trs.recordSet.NewRecordBatch()
 }
