@@ -476,6 +476,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Reque
 			StartVersion:      c.startTS,
 			LockTtl:           c.lockTTL,
 			IsPessimisticLock: isPessimisticLock,
+			ForUpdateTs:       c.forUpdateTS,
 		},
 		Context: pb.Context{
 			Priority: c.priority,
@@ -615,6 +616,9 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
 				}
 				return errors.Trace(conditionPair.Err())
+			}
+			if deadlock := keyErr.Deadlock; deadlock != nil {
+				return errors.New("deadlock")
 			}
 
 			// Extract lock from key error
