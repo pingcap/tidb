@@ -154,7 +154,6 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-	tbs := is.SchemaTables(schema)
 	job := &model.Job{
 		SchemaID:   old.ID,
 		Type:       model.ActionDropSchema,
@@ -162,18 +161,20 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	}
 
 	err = d.doDDLJob(ctx, job)
-	if err == nil {
-		// clear table locks.
-		tableLocks := make([]model.TableLockTpInfo, 0)
-		for _, tb := range tbs {
-			if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-				tableLocks = append(tableLocks, model.TableLockTpInfo{SchemaID: old.ID, TableID: tb.Meta().ID})
-			}
-		}
-		ctx.ReleaseTableLock(tableLocks)
-	}
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// clear table locks.
+	tbs := is.SchemaTables(schema)
+	lockTableIDs := make([]int64, 0)
+	for _, tb := range tbs {
+		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+			lockTableIDs = append(lockTableIDs, tb.Meta().ID)
+		}
+	}
+	ctx.ReleaseTableLockByTableIDs(lockTableIDs)
+	return nil
 }
 
 func checkTooLongSchema(schema model.CIStr) error {
@@ -2843,14 +2844,14 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	err = d.doDDLJob(ctx, job)
-	if err == nil {
-		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-			ctx.ReleaseTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: tb.Meta().ID}})
-		}
-	}
-
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
+	}
+	return nil
 }
 
 // DropView will proceed even if some view in the list does not exists.
@@ -2894,18 +2895,21 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
 		// AddTableLock here to avoid this ddl job was execute successful but the session was been kill before return.
+		// The session will release its all table locks, if don't add table lock of the new table id here,
+		// the session maybe forgot release the new table id lock when this ddl job was execute successful but the session was been kill before return.
 		ctx.AddTableLock(([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}}))
 	}
 	err = d.doDDLJob(ctx, job)
-	if err == nil {
-		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-			ctx.ReleaseTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: tb.Meta().ID}})
-		}
-	} else {
-		ctx.ReleaseTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID}})
-	}
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if err != nil {
+		ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
+		return errors.Trace(err)
+	}
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
+	}
+	return nil
+
 }
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
@@ -3246,11 +3250,14 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		}
 		t, err := is.TableByName(tb.Schema, tb.Name)
 		if err != nil {
-			return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(tb.Schema, tb.Name))
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(tb.Schema, tb.Name)
 		}
 		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
 		if err != nil {
 			return err
+		}
+		if t.Meta().IsView() {
+			return table.ErrUnsupportedOp.GenWithStackByArgs()
 		}
 		if _, ok := uniqueTableID[t.Meta().ID]; ok {
 			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
@@ -3276,7 +3283,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	ctx.AddTableLock(lockTables)
 	err := d.doDDLJob(ctx, job)
 	if err == nil {
-		ctx.ReleaseTableLock(unlockTables)
+		ctx.ReleaseTableLocks(unlockTables)
 		ctx.AddTableLock(lockTables)
 	}
 	err = d.callHookOnChanged(err)

@@ -67,7 +67,7 @@ var (
 	// ErrNonuniqTable returns when none unique tables errors.
 	ErrNonuniqTable = terror.ClassSchema.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 	// ErrTableLocked returns when the table was locked by other session.
-	ErrTableLocked = terror.ClassSchema.New(codeTableLocked, "Table '%s' was locked in %s by %v")
+	ErrTableLocked = terror.ClassSchema.New(codeTableLocked, mysql.MySQLErrName[mysql.ErrTableLocked])
 	// ErrAccessDenied return when the user doesn't have the permission to access the table.
 	ErrAccessDenied = terror.ClassSchema.New(codeErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
@@ -312,8 +312,6 @@ func (h *Handle) EmptyClone() *Handle {
 
 // Schema error codes.
 const (
-	codeTableLocked terror.ErrCode = 1
-
 	codeDBDropExists      terror.ErrCode = 1008
 	codeDatabaseNotExists                = 1049
 	codeTableNotExists                   = 1146
@@ -338,6 +336,7 @@ const (
 	codeErrTableNotLocked         = mysql.ErrTableNotLocked
 	codeErrNonuniqTable           = mysql.ErrNonuniqTable
 	codeErrAccessDenied           = mysql.ErrAccessDenied
+	codeTableLocked               = mysql.ErrTableLocked
 )
 
 func init() {
@@ -363,6 +362,7 @@ func init() {
 		codeErrTableNotLocked:         mysql.ErrTableNotLocked,
 		codeErrNonuniqTable:           mysql.ErrNonuniqTable,
 		mysql.ErrAccessDenied:         mysql.ErrAccessDenied,
+		codeTableLocked:               mysql.ErrTableLocked,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

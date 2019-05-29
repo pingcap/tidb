@@ -44,7 +44,12 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 	switch privilege {
-	case mysql.CreatePriv, mysql.ShowDBPriv, mysql.AllPrivMask:
+	case mysql.ShowDBPriv, mysql.AllPrivMask:
+		return nil
+	case mysql.CreatePriv, mysql.CreateViewPriv:
+		if c.ctx.HasLockedTables() {
+			return infoschema.ErrTableNotLocked.GenWithStackByArgs(table)
+		}
 		return nil
 	}
 	tb, err := c.is.TableByName(model.NewCIStr(db), model.NewCIStr(table))

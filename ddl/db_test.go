@@ -2890,7 +2890,7 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk2.MustExec("unlock tables")
 	tk.MustExec("lock tables t1 write, t2 write")
 	tk.MustExec("drop table t1")
-	tk.MustExec("create table t1 (a int)")
+	tk2.MustExec("create table t1 (a int)")
 	tk.MustExec("lock tables t1 write, t2 read")
 
 	// Test lock tables and drop database.
@@ -2899,7 +2899,7 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk.MustExec("create table test_lock.t3 (a int)")
 	tk.MustExec("lock tables t1 write, test_lock.t3 write")
 	tk.MustExec("drop database test_lock")
-	tk.MustExec("create table t3 (a int)")
+	tk2.MustExec("create table t3 (a int)")
 	tk.MustExec("lock tables t1 write, t3 write")
 	tk.MustExec("drop table t3")
 
@@ -2918,6 +2918,20 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
 	_, err = tk2.Exec("lock tables mysql.db write")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
+
+	// Test create table/view when session is holding the table locks.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write, t2 read")
+	_, err = tk.Exec("create table t3 (a int)")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
+	_, err = tk.Exec("create view v1 as select * from t1;")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
+
+	// Test for lock view was not supported.
+	tk.MustExec("unlock tables")
+	tk.MustExec("create view v1 as select * from t1;")
+	_, err = tk.Exec("lock tables v1 read")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
 
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")

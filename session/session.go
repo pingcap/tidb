@@ -201,11 +201,20 @@ func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	s.lockedTables.Unlock()
 }
 
-// ReleaseTableLock releases table lock in the session lock map.
-func (s *session) ReleaseTableLock(locks []model.TableLockTpInfo) {
+// ReleaseTableLocks releases table lock in the session lock map.
+func (s *session) ReleaseTableLocks(locks []model.TableLockTpInfo) {
 	s.lockedTables.Lock()
 	for _, l := range locks {
 		delete(s.lockedTables.holdLocks, l.TableID)
+	}
+	s.lockedTables.Unlock()
+}
+
+// ReleaseTableLockByTableIDs releases table lock in the session lock map by table ID.
+func (s *session) ReleaseTableLockByTableIDs(tableIDs []int64) {
+	s.lockedTables.Lock()
+	for _, tblID := range tableIDs {
+		delete(s.lockedTables.holdLocks, tblID)
 	}
 	s.lockedTables.Unlock()
 }
