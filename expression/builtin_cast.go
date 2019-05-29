@@ -22,7 +22,9 @@
 package expression
 
 import (
+	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -1246,7 +1248,9 @@ func (b *builtinCastTimeAsTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinCastTimeAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
+	fmt.Println("--------->>>>> ", reflect.TypeOf(b.args[0]))
 	res, isNull, err = b.args[0].EvalTime(b.ctx, row)
+	fmt.Println(">>>>>>>>> ", res, isNull, err)
 	if isNull || err != nil {
 		return res, isNull, err
 	}

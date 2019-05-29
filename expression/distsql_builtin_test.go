@@ -460,8 +460,6 @@ func (s *testEvalSuite) TestEval(c *C) {
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second))), datumExpr(c, types.NewDurationDatum(newDuration(time.Second)))),
 			types.NewIntDatum(1),
 		},
-
-
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullInt,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewIntDatum(1))),
@@ -511,6 +509,58 @@ func (s *testEvalSuite) TestEval(c *C) {
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfDuration,
 				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewDurationDatum(newDuration(time.Second*2)))),
 			types.NewDurationDatum(newDuration(time.Second * 2)),
+		},
+
+
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsDuration,
+				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewIntDatum(1))),
+			types.NewDurationDatum(newDuration(time.Second * 1)),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsDuration,
+				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewFloat64Datum(1))),
+			types.NewDurationDatum(newDuration(time.Second * 1)),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsDuration,
+				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
+			types.NewDurationDatum(newDuration(time.Second * 1)),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastDurationAsDuration,
+				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second*1)))),
+			types.NewDurationDatum(newDuration(time.Second * 1)),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsDuration,
+				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewStringDatum("1"))),
+			types.NewDurationDatum(newDuration(time.Second * 1)),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastTimeAsTime,
+				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewTimeDatum(newDateTime(c, "2000-01-01")))),
+			types.NewTimeDatum(newDateTime(c, "2000-01-01")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsTime,
+				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewIntDatum(20000101))),
+			types.NewTimeDatum(newDateTime(c, "2000-01-01")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsTime,
+				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewFloat64Datum(20000101))),
+			types.NewTimeDatum(newDateTime(c, "2000-01-01")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsTime,
+				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "20000101")))),
+			types.NewTimeDatum(newDateTime(c, "2000-01-01")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsTime,
+				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewStringDatum("20000101"))),
+			types.NewTimeDatum(newDateTime(c, "2000-01-01")),
 		},
 	}
 	sc := new(stmtctx.StatementContext)
@@ -577,6 +627,12 @@ func datumExpr(c *C, d types.Datum) *tipb.Expr {
 		expr.Val = make([]byte, 0, 1024)
 		expr.Val, err = codec.EncodeValue(nil, expr.Val, d)
 		c.Assert(err, IsNil)
+	case types.KindMysqlTime:
+		expr.Tp = tipb.ExprType_MysqlTime
+		var err error
+		expr.Val, err = codec.EncodeMySQLTime(nil, d, mysql.TypeUnspecified, nil)
+		c.Assert(err, IsNil)
+		expr.FieldType = ToPBFieldType(newDateFieldType())
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
@@ -623,6 +679,18 @@ func newDuration(dur time.Duration) types.Duration {
 	return types.Duration{
 		Duration: dur,
 		Fsp:      types.DefaultFsp,
+	}
+}
+
+func newDateTime(c *C, s string) types.Time {
+	t, err := types.ParseDate(nil, s)
+	c.Assert(err, IsNil)
+	return t
+}
+
+func newDateFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp: mysql.TypeDate,
 	}
 }
 
