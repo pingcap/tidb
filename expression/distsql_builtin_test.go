@@ -42,8 +42,21 @@ func (s *testEvalSuite) allocColID() int64 {
 	return s.colID
 }
 
+func (s *testEvalSuite) TestPBToExprOnInvalidVal(c *C) {
+	sc := new(stmtctx.StatementContext)
+	fieldTps := make([]*types.FieldType, 1)
+	ds := []types.Datum{types.NewIntDatum(1), types.NewUintDatum(1), types.NewFloat64Datum(1),
+		types.NewDecimalDatum(newMyDecimal(c, "1")), types.NewDurationDatum(newDuration(time.Second))}
+
+	for _, d := range ds {
+		expr := datumExpr(c, d)
+		expr.Val = expr.Val[:len(expr.Val)/2]
+		_, err := PBToExpr(expr, fieldTps, sc)
+		c.Assert(err, NotNil)
+	}
+}
+
 // TestEval test expr.Eval().
-// TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(100)}).ToRow()
 	fieldTps := make([]*types.FieldType, 1)
