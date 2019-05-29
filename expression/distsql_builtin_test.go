@@ -330,6 +330,41 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewIntDatum(1),
 		},
 		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_GTJson,
+				toPBFieldType(newIntFieldType()), jsonDatumExpr(c, "[2]"), jsonDatumExpr(c, "[1]")),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_GEJson,
+				toPBFieldType(newIntFieldType()), jsonDatumExpr(c, "[2]"), jsonDatumExpr(c, "[1]")),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LTJson,
+				toPBFieldType(newIntFieldType()), jsonDatumExpr(c, "[1]"), jsonDatumExpr(c, "[2]")),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LEJson,
+				toPBFieldType(newIntFieldType()), jsonDatumExpr(c, "[1]"), jsonDatumExpr(c, "[2]")),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_EQJson,
+				toPBFieldType(newIntFieldType()), jsonDatumExpr(c, "[1]"), jsonDatumExpr(c, "[1]")),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_NEJson,
+				toPBFieldType(newIntFieldType()), jsonDatumExpr(c, "[1]"), jsonDatumExpr(c, "[2]")),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQJson,
+				toPBFieldType(newIntFieldType()), jsonDatumExpr(c, "[1]"), jsonDatumExpr(c, "[1]")),
+			types.NewIntDatum(1),
+		},
+		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_DecimalIsNull,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(nil))),
 			types.NewIntDatum(1),
