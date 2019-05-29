@@ -14,7 +14,8 @@
 package expression
 
 import (
-	"fmt"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	"time"
 )
 
 var _ = Suite(&testEvalSuite{})
@@ -782,7 +782,6 @@ func (s *testEvalSuite) TestEval(c *C) {
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
-		fmt.Println(">>> ", tt.expr.Sig)
 		expr, err := PBToExpr(tt.expr, fieldTps, sc)
 		c.Assert(err, IsNil)
 		result, err := expr.Eval(row)

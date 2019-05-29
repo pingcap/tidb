@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"math"
+	
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -25,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testleak"
-	"math"
 )
 
 func (s *testEvaluatorSuite) TestDatabase(c *C) {
