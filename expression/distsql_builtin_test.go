@@ -364,6 +364,41 @@ func (s *testEvalSuite) TestEval(c *C) {
 				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "-1.23")))),
 			types.NewDecimalDatum(newMyDecimal(c, "1.23")),
 		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LogicalAnd,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(1))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LogicalOr,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(0))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LogicalXor,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(0))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_BitAndSig,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(1))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_BitOrSig,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(0))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_BitXorSig,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(0))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_BitNegSig,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(0))),
+			types.NewIntDatum(-1),
+		},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
