@@ -304,7 +304,7 @@ var defaultConf = Config{
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
-		Level:              "info",
+		Level:              "debug",
 		Format:             "text",
 		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
 		SlowQueryFile:      "tidb-slow.log",

@@ -14,10 +14,10 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 
-	"context"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
