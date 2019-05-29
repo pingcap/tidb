@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -449,19 +450,72 @@ func (s *testEvalSuite) TestEval(c *C) {
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("1")), datumExpr(c, types.NewStringDatum("1"))),
 			types.NewIntDatum(1),
 		},
-		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_InTime,
-				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewTimeDatum(types.ZeroDate)), datumExpr(c, types.NewTimeDatum(types.ZeroDate))),
-			types.NewIntDatum(1),
-		},
+		//{
+		//	scalarFunctionExpr(tipb.ScalarFuncSig_InTime,
+		//		toPBFieldType(newIntFieldType()), datumExpr(c, types.NewTimeDatum(types.ZeroDate)), datumExpr(c, types.NewTimeDatum(types.ZeroDate))),
+		//	types.NewIntDatum(1),
+		//},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_InDuration,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second))), datumExpr(c, types.NewDurationDatum(newDuration(time.Second)))),
 			types.NewIntDatum(1),
 		},
+
+
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewIntDatum(1))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_IfInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(2))),
+			types.NewIntDatum(2),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewFloat64Datum(1))),
+			types.NewFloat64Datum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_IfReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewFloat64Datum(1)), datumExpr(c, types.NewFloat64Datum(2))),
+			types.NewFloat64Datum(2),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullDecimal,
+				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
+			types.NewDecimalDatum(newMyDecimal(c, "1")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_IfDecimal,
+				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2")))),
+			types.NewDecimalDatum(newMyDecimal(c, "2")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullString,
+				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewStringDatum("1"))),
+			types.NewStringDatum("1"),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_IfString,
+				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewStringDatum("2"))),
+			types.NewStringDatum("2"),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullDuration,
+				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewDurationDatum(newDuration(time.Second)))),
+			types.NewDurationDatum(newDuration(time.Second)),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_IfDuration,
+				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewDurationDatum(newDuration(time.Second*2)))),
+			types.NewDurationDatum(newDuration(time.Second * 2)),
+		},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
+		fmt.Println(">>> ", tt.expr.Sig)
 		expr, err := PBToExpr(tt.expr, fieldTps, sc)
 		c.Assert(err, IsNil)
 		result, err := expr.Eval(row)
