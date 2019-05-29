@@ -619,6 +619,9 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedDeny(c, mysql.TypeYear, 123, "<nil>")
 	signedDeny(c, mysql.TypeYear, 3000, "<nil>")
 	signedAccept(c, mysql.TypeYear, "2000", "2000")
+	signedAccept(c, mysql.TypeYear, "abc", "0")
+	signedAccept(c, mysql.TypeYear, "00abc", "2000")
+	signedAccept(c, mysql.TypeYear, "0019", "2019")
 
 	// time from string
 	signedAccept(c, mysql.TypeDate, "2012-08-23", "2012-08-23")

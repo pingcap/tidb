@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
@@ -74,4 +76,27 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 		}
 	}()
 	exec()
+}
+
+const (
+	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
+	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
+)
+
+// SyntaxError converts parser error to TiDB's syntax error.
+func SyntaxError(err error) error {
+	if err == nil {
+		return nil
+	}
+	logutil.Logger(context.Background()).Error("syntax error", zap.Error(err))
+
+	// If the error is already a terror with stack, pass it through.
+	if errors.HasStack(err) {
+		cause := errors.Cause(err)
+		if _, ok := cause.(*terror.Error); ok {
+			return err
+		}
+	}
+
+	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }

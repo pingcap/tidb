@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -557,6 +558,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	ctx := context.Background()
+	var err error
 
 	// for length
 	tk.MustExec("drop table if exists t")
@@ -898,8 +900,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 
 	// for convert
-	result = tk.MustQuery(`select convert("123" using "binary"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
-	result.Check(testkit.Rows("123 123 中文 中文 中文 中文"))
+	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
+	result.Check(testkit.Rows("123 中文 中文 中文 中文"))
+	// Charset 866 does not have a default collation configured currently, so this will return error.
+	_, err = tk.Exec(`select convert("123" using "866");`)
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: '866'")
+	// Test case in issue #4436.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(20));")
+	_, err = tk.Exec("select convert(a using a) from t;")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'a'")
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
@@ -1300,6 +1310,18 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2017-01-18 12:39:50.123 2017-01-18 12:39:50.999"))
 	result = tk.MustQuery("select timestamp('2003-12-31', '01:01:01.01'), timestamp('2003-12-31 12:34', '01:01:01.01')," +
 		" timestamp('2008-12-31','00:00:00.0'), timestamp('2008-12-31 00:00:00.000');")
+
+	tk.MustQuery(`select timestampadd(second, 1, cast("2001-01-01" as date))`).Check(testkit.Rows("2001-01-01 00:00:01"))
+	tk.MustQuery(`select timestampadd(hour, 1, cast("2001-01-01" as date))`).Check(testkit.Rows("2001-01-01 01:00:00"))
+	tk.MustQuery(`select timestampadd(day, 1, cast("2001-01-01" as date))`).Check(testkit.Rows("2001-01-02"))
+	tk.MustQuery(`select timestampadd(month, 1, cast("2001-01-01" as date))`).Check(testkit.Rows("2001-02-01"))
+	tk.MustQuery(`select timestampadd(year, 1, cast("2001-01-01" as date))`).Check(testkit.Rows("2002-01-01"))
+	tk.MustQuery(`select timestampadd(second, 1, cast("2001-01-01" as datetime))`).Check(testkit.Rows("2001-01-01 00:00:01"))
+	tk.MustQuery(`select timestampadd(hour, 1, cast("2001-01-01" as datetime))`).Check(testkit.Rows("2001-01-01 01:00:00"))
+	tk.MustQuery(`select timestampadd(day, 1, cast("2001-01-01" as datetime))`).Check(testkit.Rows("2001-01-02 00:00:00"))
+	tk.MustQuery(`select timestampadd(month, 1, cast("2001-01-01" as datetime))`).Check(testkit.Rows("2001-02-01 00:00:00"))
+	tk.MustQuery(`select timestampadd(year, 1, cast("2001-01-01" as datetime))`).Check(testkit.Rows("2002-01-01 00:00:00"))
+
 	result.Check(testkit.Rows("2003-12-31 01:01:01.01 2003-12-31 13:35:01.01 2008-12-31 00:00:00.0 2008-12-31 00:00:00.000"))
 	result = tk.MustQuery("select timestamp('2003-12-31', 1), timestamp('2003-12-31', -1);")
 	result.Check(testkit.Rows("2003-12-31 00:00:01 2003-12-30 23:59:59"))
@@ -1438,16 +1460,28 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("123456 10 <nil> <nil>"))
 
 	// for period_add
-	result = tk.MustQuery(`SELECT period_add(191, 2), period_add(191, -2), period_add(0, 20), period_add(0, 0);`)
-	result.Check(testkit.Rows("200809 200805 0 0"))
-	result = tk.MustQuery(`SELECT period_add(NULL, 2), period_add(-191, NULL), period_add(NULL, NULL), period_add(12.09, -2), period_add("21aa", "11aa"), period_add("", "");`)
-	result.Check(testkit.Rows("<nil> <nil> <nil> 200010 200208 0"))
+	result = tk.MustQuery(`SELECT period_add(200807, 2), period_add(200807, -2);`)
+	result.Check(testkit.Rows("200809 200805"))
+	result = tk.MustQuery(`SELECT period_add(NULL, 2), period_add(-191, NULL), period_add(NULL, NULL), period_add(12.09, -2), period_add("200207aa", "1aa");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> 200010 200208"))
+	for _, errPeriod := range []string{
+		"period_add(0, 20)", "period_add(0, 0)", "period_add(-1, 1)", "period_add(200013, 1)", "period_add(-200012, 1)", "period_add('', '')",
+	} {
+		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
+		c.Assert(err.Error(), Equals, "[expression:1210]Incorrect arguments to period_add")
+	}
 
 	// for period_diff
-	result = tk.MustQuery(`SELECT period_diff(191, 2), period_diff(191, -2), period_diff(0, 0), period_diff(191, 191);`)
-	result.Check(testkit.Rows("101 -2213609288845122103 0 0"))
-	result = tk.MustQuery(`SELECT period_diff(NULL, 2), period_diff(-191, NULL), period_diff(NULL, NULL), period_diff(12.09, 2), period_diff("21aa", "11aa"), period_diff("", "");`)
-	result.Check(testkit.Rows("<nil> <nil> <nil> 10 10 0"))
+	result = tk.MustQuery(`SELECT period_diff(200807, 200705), period_diff(200807, 200908);`)
+	result.Check(testkit.Rows("14 -13"))
+	result = tk.MustQuery(`SELECT period_diff(NULL, 2), period_diff(-191, NULL), period_diff(NULL, NULL), period_diff(12.09, 2), period_diff("12aa", "11aa");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> 10 1"))
+	for _, errPeriod := range []string{
+		"period_diff(-00013,1)", "period_diff(00013,1)", "period_diff(0, 0)", "period_diff(200013, 1)", "period_diff(5612, 4513)", "period_diff('', '')",
+	} {
+		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
+		c.Assert(err.Error(), Equals, "[expression:1210]Incorrect arguments to period_diff")
+	}
 
 	// TODO: fix `CAST(xx as duration)` and release the test below:
 	// result = tk.MustQuery(`SELECT hour("aaa"), hour(123456), hour(1234567);`)
@@ -1464,6 +1498,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%r');")
+	result.Check(testkit.Rows("12:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('25:00:00', '%r');")
+	result.Check(testkit.Rows("01:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('24:00:00', '%l %p');")
+	result.Check(testkit.Rows("12 AM"))
 
 	// for date_format
 	result = tk.MustQuery(`SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');`)
@@ -1768,7 +1808,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 		{"\"2011-11-11 00:00:00\"", "10", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
 		{"\"2011-11-11 00:00:00\"", "10", "SECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50"},
 
-		{"\"2011-11-11\"", "\"abc1000\"", "MICROSECOND", "<nil>", "<nil>"},
+		{"\"2011-11-11\"", "\"abc1000\"", "MICROSECOND", "2011-11-11 00:00:00", "2011-11-11 00:00:00"},
 		{"\"20111111 10:10:10\"", "\"1\"", "DAY", "<nil>", "<nil>"},
 		{"\"2011-11-11\"", "\"10\"", "SECOND_MICROSECOND", "2011-11-11 00:00:00.100000", "2011-11-10 23:59:59.900000"},
 		{"\"2011-11-11\"", "\"10.0000\"", "MINUTE_MICROSECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50"},
@@ -3895,6 +3935,55 @@ where
 	tk.MustQuery(q)
 }
 
+func (s *testIntegrationSuite) TestIssue9727(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{`SELECT "1900-01-01 00:00:00" + INTERVAL "100000000:214748364700" MINUTE_SECOND;`, "8895-03-27 22:11:40"},
+		{`SELECT "1900-01-01 00:00:00" + INTERVAL 1 << 37 SECOND;`, "6255-04-08 15:04:32"},
+		{`SELECT "1900-01-01 00:00:00" + INTERVAL 1 << 31 MINUTE;`, "5983-01-24 02:08:00"},
+		{`SELECT "1900-01-01 00:00:00" + INTERVAL 1 << 38 SECOND;`, "<nil>"},
+		{`SELECT "1900-01-01 00:00:00" + INTERVAL 1 << 33 MINUTE;`, "<nil>"},
+		{`SELECT "1900-01-01 00:00:00" + INTERVAL 1 << 30 HOUR;`, "<nil>"},
+		{`SELECT "1900-01-01 00:00:00" + INTERVAL "1000000000:214748364700" MINUTE_SECOND;`, "<nil>"},
+		{`SELECT 19000101000000 + INTERVAL "100000000:214748364700" MINUTE_SECOND;`, "8895-03-27 22:11:40"},
+		{`SELECT 19000101000000 + INTERVAL 1 << 37 SECOND;`, "6255-04-08 15:04:32"},
+		{`SELECT 19000101000000 + INTERVAL 1 << 31 MINUTE;`, "5983-01-24 02:08:00"},
+
+		{`SELECT "8895-03-27 22:11:40" - INTERVAL "100000000:214748364700" MINUTE_SECOND;`, "1900-01-01 00:00:00"},
+		{`SELECT "6255-04-08 15:04:32" - INTERVAL 1 << 37 SECOND;`, "1900-01-01 00:00:00"},
+		{`SELECT "5983-01-24 02:08:00" - INTERVAL 1 << 31 MINUTE;`, "1900-01-01 00:00:00"},
+		{`SELECT "9999-01-01 00:00:00" - INTERVAL 1 << 39 SECOND;`, "<nil>"},
+		{`SELECT "9999-01-01 00:00:00" - INTERVAL 1 << 33 MINUTE;`, "<nil>"},
+		{`SELECT "9999-01-01 00:00:00" - INTERVAL 1 << 30 HOUR;`, "<nil>"},
+		{`SELECT "9999-01-01 00:00:00" - INTERVAL "10000000000:214748364700" MINUTE_SECOND;`, "<nil>"},
+		{`SELECT 88950327221140 - INTERVAL "100000000:214748364700" MINUTE_SECOND ;`, "1900-01-01 00:00:00"},
+		{`SELECT 62550408150432 - INTERVAL 1 << 37 SECOND;`, "1900-01-01 00:00:00"},
+		{`SELECT 59830124020800 - INTERVAL 1 << 31 MINUTE;`, "1900-01-01 00:00:00"},
+
+		{`SELECT 10000101000000 + INTERVAL "111111111111111111" MICROSECOND;`, `4520-12-21 05:31:51.111111`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111.111111" SECOND;`, `4520-12-21 05:31:51.111111`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111.111111111" SECOND;`, `4520-12-21 05:31:51.111111`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111.111" SECOND;`, `4520-12-21 05:31:51.111000`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111." SECOND;`, `4520-12-21 05:31:51`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111111111.5" MICROSECOND;`, `4520-12-21 05:31:51.111112`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111111112.5" MICROSECOND;`, `4520-12-21 05:31:51.111113`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111111111.500000" MICROSECOND;`, `4520-12-21 05:31:51.111112`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111111111.50000000" MICROSECOND;`, `4520-12-21 05:31:51.111112`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111111111.6" MICROSECOND;`, `4520-12-21 05:31:51.111112`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111111111.499999" MICROSECOND;`, `4520-12-21 05:31:51.111111`},
+		{`SELECT 10000101000000 + INTERVAL "111111111111111111.499999999999" MICROSECOND;`, `4520-12-21 05:31:51.111111`},
+	}
+
+	for _, c := range cases {
+		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
+	}
+}
+
 func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3907,4 +3996,55 @@ func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
 		"  └─TableScan_43 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`select * from t where b = (select max(b) from t)`).Check(testkit.Rows(`1 2019-04-29 11:56:12`))
+}
+
+func (s *testIntegrationSuite) TestDateTimeAddReal(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{`SELECT "1900-01-01 00:00:00" + INTERVAL 1.123456789e3 SECOND;`, "1900-01-01 00:18:43.456789"},
+		{`SELECT 19000101000000 + INTERVAL 1.123456789e3 SECOND;`, "1900-01-01 00:18:43.456789"},
+		{`select date("1900-01-01") + interval 1.123456789e3 second;`, "1900-01-01 00:18:43.456789"},
+		{`SELECT "1900-01-01 00:18:43.456789" - INTERVAL 1.123456789e3 SECOND;`, "1900-01-01 00:00:00"},
+		{`SELECT 19000101001843.456789 - INTERVAL 1.123456789e3 SECOND;`, "1900-01-01 00:00:00"},
+		{`select date("1900-01-01") - interval 1.123456789e3 second;`, "1899-12-31 23:41:16.543211"},
+		{`select 19000101000000 - interval 1.123456789e3 second;`, "1899-12-31 23:41:16.543211"},
+	}
+
+	for _, c := range cases {
+		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue9710(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	getSAndMS := func(str string) (int, int) {
+		results := strings.Split(str, ":")
+		SAndMS := strings.Split(results[len(results)-1], ".")
+		var s, ms int
+		s, _ = strconv.Atoi(SAndMS[0])
+		if len(SAndMS) > 1 {
+			ms, _ = strconv.Atoi(SAndMS[1])
+		}
+		return s, ms
+	}
+
+	for {
+		rs := tk.MustQuery("select now(), now(6), unix_timestamp(), unix_timestamp(now())")
+		s, ms := getSAndMS(rs.Rows()[0][1].(string))
+		if ms < 500000 {
+			time.Sleep(time.Second / 10)
+			continue
+		}
+
+		s1, _ := getSAndMS(rs.Rows()[0][0].(string))
+		c.Assert(s, Equals, s1) // now() will truncate the result instead of rounding it
+
+		c.Assert(rs.Rows()[0][2], Equals, rs.Rows()[0][3]) // unix_timestamp() will truncate the result
+		break
+	}
 }
