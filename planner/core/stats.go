@@ -98,10 +98,10 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 		StatsVersion: ds.statisticTable.Version,
 	}
 	if ds.statisticTable.Pseudo {
-		profile.StatsVersion = statistics.PseudoVersion
+		tableStats.StatsVersion = statistics.PseudoVersion
 	}
 	for i, col := range ds.Columns {
-		profile.Cardinality[i] = ds.getColumnNDV(col.ID)
+		tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}
 	ds.tableStats = tableStats
 	selectivity, nodes, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
