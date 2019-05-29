@@ -16,11 +16,14 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"sort"
 	"time"
 
@@ -300,6 +303,15 @@ func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.
 	return v, nil
 }
 
+type MemIndexReaderExecutor struct {
+	table           table.Table
+	index           *model.IndexInfo
+	physicalTableID int64
+	keepOrder       bool
+	desc            bool
+	ranges          []*ranger.Range
+}
+
 func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) error {
 	condition := us.conditions
 	if len(e.plans) > 1 {
@@ -318,8 +330,32 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 		return err
 	}
 
+	//colsLen := len(e.index.Columns)
+	tps := make([]*types.FieldType, 0, len(e.index.Columns)+1)
+	cols := e.table.Meta().Columns
+	for _, col := range e.index.Columns {
+		tps = append(tps, &cols[col.Offset].FieldType)
+	}
+	if e.table.Meta().PKIsHandle {
+		for _, col := range e.table.Meta().Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				tps = append(tps, &col.FieldType)
+				break
+			}
+		}
+	} else {
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		tps = append(tps, tp)
+	}
+	chk := chunk.NewChunkWithCapacity(tps, e.maxChunkSize)
+	decoder := codec.NewDecoder(chk, time.UTC)
 	prefix := tablecodec.EncodeTableIndexPrefix(e.physicalTableID, e.index.ID)
+
+	idLen := 8
+	prefixLen := 1 + idLen /*tableID*/ + 2
+	rowindex := 0
 	for _, rg := range kvRanges {
+		// todo: consider desc scan.
 		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
 		if err != nil {
 			return err
@@ -330,14 +366,55 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 			if !bytes.Contains(key, prefix) {
 				continue
 			}
-			key = key[len(prefix):]
-			fmt.Printf("\n\nkey: %v, value: %v\n\n------------------\n", key, value)
 
-			ds, err := codec.Decode(key, len(e.index.Columns)+1)
-			if err != nil {
-				return err
+			key = key[prefixLen+idLen:]
+			//values,b, err := tablecodec.CutIndexKeyNew(key, colsLen)
+
+			//if len(b) > 0 {
+			//	values = append(values, b)
+			//}
+			//if len(value) > 0 {
+			//	values = append(values,value)
+			//}
+			for i := range tps {
+				key, err = decoder.DecodeOne(key, i, tps[i])
+				if err != nil {
+					return err
+				}
+				if len(key) == 0 {
+					break
+				}
 			}
-			fmt.Printf("\n\nds %#v\n\n------------------\n", ds)
+			if len(value) >= 8 {
+				h, err := decodeHandle(value)
+				if err != nil {
+					return err
+				}
+				chk.AppendInt64(len(tps)-1, h)
+			}
+
+			str := ""
+			for i, tp := range tps {
+				v := chk.GetRow(rowindex).GetDatum(i, tp)
+				s, err := v.ToString()
+				if err != nil {
+					return err
+				}
+				if i > 0 {
+					str += ", "
+				}
+				str += s
+			}
+			rowindex++
+			fmt.Printf("\ndecode index values: %v\n\n", str)
+
+			//fmt.Printf("\n\nkey: %v, value: %v\n\n------------------\n", key, value)
+
+			//ds, err := codec.Decode(key, len(e.index.Columns)+1)
+			//if err != nil {
+			//	return err
+			//}
+			//fmt.Printf("\n\nds %#v\n\n------------------\n", ds)
 
 			err = iter.Next()
 			if err != nil {
@@ -346,6 +423,13 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 		}
 	}
 	return nil
+}
+
+func decodeHandle(data []byte) (int64, error) {
+	var h int64
+	buf := bytes.NewBuffer(data)
+	err := binary.Read(buf, binary.BigEndian, &h)
+	return h, errors.Trace(err)
 }
 
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
