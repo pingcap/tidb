@@ -227,8 +227,10 @@ import (
 	show			"SHOW"
 	smallIntType		"SMALLINT"
 	sql			"SQL"
+	sqlBigResult		"SQL_BIG_RESULT"
 	sqlCalcFoundRows	"SQL_CALC_FOUND_ROWS"
-	ssl	            	"SSL"
+	sqlSmallResult		"SQL_SMALL_RESULT"
+	ssl			"SSL"
 	starting		"STARTING"
 	straightJoin		"STRAIGHT_JOIN"
 	tableKwd		"TABLE"
@@ -416,6 +418,7 @@ import (
 	slave		"SLAVE"
 	slow		"SLOW"
 	snapshot	"SNAPSHOT"
+	sqlBufferResult	"SQL_BUFFER_RESULT"
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
@@ -830,7 +833,10 @@ import (
 	RowValue			"Row value"
 	SelectLockOpt			"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmtCalcFoundRows		"SELECT statement optional SQL_CALC_FOUND_ROWS"
+	SelectStmtSQLBigResult		"SELECT statement optional SQL_BIG_RESULT"
+	SelectStmtSQLBufferResult	"SELECT statement optional SQL_BUFFER_RESULT"
 	SelectStmtSQLCache		"SELECT statement optional SQL_CAHCE/SQL_NO_CACHE"
+	SelectStmtSQLSmallResult	"SELECT statement optional SQL_SMALL_RESULT"
 	SelectStmtStraightJoin		"SELECT statement optional STRAIGHT_JOIN"
 	SelectStmtFieldList		"SELECT statement field list"
 	SelectStmtLimit			"SELECT statement optional LIMIT clause"
@@ -1017,6 +1023,9 @@ import (
 
 %precedence empty
 
+%precedence sqlBufferResult
+%precedence sqlBigResult
+%precedence sqlSmallResult
 %precedence sqlCache sqlNoCache
 %precedence lowerThanIntervalKeyword
 %precedence interval
@@ -3317,10 +3326,8 @@ UnReservedKeyword:
 | "NONE" | "NULLS" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILE" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "PRECEDING" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "SLOW" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
-| "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE" | "TRADITIONAL"
-
-
-
+| "RECOVER" | "CIPHER" | "SUBJECT" | "ISSUER" | "X509" | "NEVER" | "EXPIRE" | "ACCOUNT" | "INCREMENTAL" | "CPU" | "MEMORY" | "BLOCK" | "IO" | "CONTEXT" | "SWITCHES" | "PAGE" | "FAULTS" | "IPC" | "SWAPS" | "SOURCE"
+| "TRADITIONAL" | "SQL_BUFFER_RESULT"
 
 
 TiDBKeyword:
@@ -5503,7 +5510,7 @@ SelectStmtLimit:
 
 
 SelectStmtOpts:
-	TableOptimizerHints DefaultFalseDistinctOpt PriorityOpt SelectStmtSQLCache SelectStmtCalcFoundRows SelectStmtStraightJoin
+	TableOptimizerHints DefaultFalseDistinctOpt PriorityOpt SelectStmtSQLSmallResult SelectStmtSQLBigResult SelectStmtSQLBufferResult SelectStmtSQLCache SelectStmtCalcFoundRows SelectStmtStraightJoin
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
@@ -5516,13 +5523,22 @@ SelectStmtOpts:
 			opt.Priority = $3.(mysql.PriorityEnum)
 		}
 		if $4 != nil {
-			opt.SQLCache = $4.(bool)
+			opt.SQLSmallResult = $4.(bool)
 		}
 		if $5 != nil {
-			opt.CalcFoundRows = $5.(bool)
+			opt.SQLBigResult = $5.(bool)
 		}
 		if $6 != nil {
-			opt.StraightJoin = $6.(bool)
+			opt.SQLBufferResult = $6.(bool)
+		}
+		if $7 != nil {
+			opt.SQLCache = $7.(bool)
+		}
+		if $8 != nil {
+			opt.CalcFoundRows = $8.(bool)
+		}
+		if $9 != nil {
+			opt.StraightJoin = $9.(bool)
 		}
 
 		$$ = opt
@@ -5590,6 +5606,24 @@ SelectStmtCalcFoundRows:
 	{
 		$$ = true
 	}
+SelectStmtSQLBigResult:
+	%prec empty
+	{
+		$$ = false
+	}
+|	"SQL_BIG_RESULT"
+	{
+		$$ = true
+	}
+SelectStmtSQLBufferResult:
+	%prec empty
+	{
+		$$ = false
+	}
+|	"SQL_BUFFER_RESULT"
+	{
+		$$ = true
+	}
 SelectStmtSQLCache:
 	%prec empty
 	{
@@ -5602,6 +5636,15 @@ SelectStmtSQLCache:
 |	"SQL_NO_CACHE"
 	{
 		$$ = false
+	}
+SelectStmtSQLSmallResult:
+	%prec empty
+	{
+		$$ = false
+	}
+|	"SQL_SMALL_RESULT"
+	{
+		$$ = true
 	}
 SelectStmtStraightJoin:
 	%prec empty

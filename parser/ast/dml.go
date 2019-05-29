@@ -777,6 +777,18 @@ func (n *SelectStmt) Restore(ctx *RestoreCtx) error {
 		ctx.WritePlain(" ")
 	}
 
+	if n.SelectStmtOpts.SQLSmallResult {
+		ctx.WriteKeyWord("SQL_SMALL_RESULT ")
+	}
+
+	if n.SelectStmtOpts.SQLBigResult {
+		ctx.WriteKeyWord("SQL_BIG_RESULT ")
+	}
+
+	if n.SelectStmtOpts.SQLBufferResult {
+		ctx.WriteKeyWord("SQL_BUFFER_RESULT ")
+	}
+
 	if !n.SelectStmtOpts.SQLCache {
 		ctx.WriteKeyWord("SQL_NO_CACHE ")
 	}
