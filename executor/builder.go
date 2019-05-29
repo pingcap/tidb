@@ -789,7 +789,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows(x.table)
+		if us.checkBypassAddedRowsByTableReader(x) {
+			us.addedRows = make([][]types.Datum, 0)
+		} else {
+			err = us.buildAndSortAddedRows(x.table)
+		}
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -804,11 +808,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAddedRowsFromIndexReader(x)
-		if err != nil {
-			return nil, err
+		if us.checkBypassAddedRowsByIndexReader(x) {
+			us.addedRows = make([][]types.Datum, 0)
+		} else {
+			err = us.buildAndSortAddedRows(x.table)
 		}
-		err = us.buildAndSortAddedRows(x.table)
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
