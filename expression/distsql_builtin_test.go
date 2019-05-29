@@ -699,6 +699,36 @@ func (s *testEvalSuite) TestEval(c *C) {
 				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewFloat64Datum(1))),
 			types.NewFloat64Datum(1),
 		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewFloat64Datum(1))),
+			types.NewFloat64Datum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceDecimal,
+				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
+			types.NewDecimalDatum(newMyDecimal(c, "1")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceString,
+				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewStringDatum("1"))),
+			types.NewStringDatum("1"),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceDuration,
+				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second)))),
+			types.NewDurationDatum(newDuration(time.Second)),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceTime,
+				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewTimeDatum(newDateTime(c, "2000-01-01")))),
+			types.NewTimeDatum(newDateTime(c, "2000-01-01")),
+		},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
