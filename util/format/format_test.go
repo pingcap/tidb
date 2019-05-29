@@ -57,4 +57,7 @@ z
 	f = FlatFormatter(buf)
 	expect = "abc3%e x y z\n "
 	checkFormat(c, f, buf, str, expect)
+
+	str2 := OutputFormat(`\'\000abc\n\rdef`)
+	c.Assert(str2, Equals, "\\''\\000abc\\n\\rdef")
 }
