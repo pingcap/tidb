@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"math"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -27,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testleak"
+	"math"
 )
 
 func (s *testEvaluatorSuite) TestDatabase(c *C) {
@@ -42,6 +41,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	d, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 
 	// Test case for schema().
 	fc = funcs[ast.Schema]
@@ -51,6 +51,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	d, err = evalBuiltinFunc(f, chunk.MutRowFromDatums(types.MakeDatums()).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
@@ -79,6 +80,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
@@ -93,6 +95,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestCurrentRole(c *C) {
@@ -109,6 +112,7 @@ func (s *testEvaluatorSuite) TestCurrentRole(c *C) {
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "`r_1`@`%`,`r_2`@`localhost`")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestConnectionID(c *C) {
@@ -123,6 +127,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(1))
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestVersion(c *C) {
@@ -133,6 +138,7 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 func (s *testEvaluatorSuite) TestBenchMark(c *C) {
@@ -213,6 +219,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
 	c.Assert(intResult, Equals, int64(10))
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
 }
 
 // TestTiDBVersion for tidb_server().
