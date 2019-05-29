@@ -674,6 +674,31 @@ func (s *testEvalSuite) TestEval(c *C) {
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
 			types.NewIntDatum(1),
 		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CeilReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewFloat64Datum(1))),
+			types.NewFloat64Datum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_FloorIntToInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_FloorIntToDec,
+				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewIntDatum(1))),
+			types.NewDecimalDatum(newMyDecimal(c, "1")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_FloorDecToInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_FloorReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewFloat64Datum(1))),
+			types.NewFloat64Datum(1),
+		},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
