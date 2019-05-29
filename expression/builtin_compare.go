@@ -379,8 +379,8 @@ func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.Ev
 	return
 }
 
-// getCmpTp4MinMax gets compare type for GREATEST and LEAST.
-func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
+// GetCmpTp4MinMax gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
+func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	datetimeFound, isAllStr := false, true
 	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
 	if !isStr {
@@ -421,7 +421,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
+	tp, cmpAsDatetime := GetCmpTp4MinMax(args), false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
 		tp = types.ETString
@@ -615,7 +615,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
+	tp, cmpAsDatetime := GetCmpTp4MinMax(args), false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
 		tp = types.ETString

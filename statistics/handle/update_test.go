@@ -545,7 +545,7 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -615,7 +615,7 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -708,7 +708,7 @@ func (s *testStatsSuite) TestSplitRange(c *C) {
 				HighExclude: t.exclude[i+1],
 			})
 		}
-		ranges = h.SplitRange(nil, ranges, false)
+		ranges, _ = h.SplitRange(nil, ranges, false)
 		var ranStrs []string
 		for _, ran := range ranges {
 			ranStrs = append(ranStrs, ran.String())
@@ -733,7 +733,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	tests := []struct {
 		sql     string
 		hist    string
@@ -799,7 +799,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	}
 
 	// Test collect feedback by probability.
-	statistics.FeedbackProbability = 0
+	statistics.FeedbackProbability.Store(0)
 	statistics.MaxNumberOfRanges = oriNumber
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
@@ -809,7 +809,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	}
 
 	// Test that after drop stats, the feedback won't cause panic.
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
 	}
@@ -845,7 +845,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 		statistics.FeedbackProbability = oriProbability
 	}()
 	h := s.do.StatsHandle()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	tests := []struct {
 		sql     string
 		hist    string
@@ -969,7 +969,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1022,7 +1022,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1094,7 +1094,7 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 		s.do.StatsHandle().Lease = oriLease
 		log.SetLevel(oriLevel)
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 	handle.MinLogScanCount = 0
 	handle.MinLogErrorRate = 0
 	s.do.StatsHandle().Lease = 1
@@ -1264,7 +1264,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), index idx_ab(a,b), index idx_ac(a,c), index idx_b(b))")
@@ -1341,7 +1341,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx_ab(a,b))")
@@ -1410,7 +1410,7 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a tinyint, b tinyint, primary key(a), index idx(a, b))")
@@ -1479,23 +1479,28 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
-	statistics.FeedbackProbability = 1
+	statistics.FeedbackProbability.Store(1)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")
+	testKit.MustExec("create table t1 (a bigint unsigned, primary key(a))")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
 	}
 	h.HandleDDLEvent(<-h.DDLEventCh())
+	h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	testKit.MustExec("analyze table t with 3 buckets")
+	testKit.MustExec("analyze table t, t1 with 3 buckets")
 	for i := 30; i < 40; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
 	}
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	tests := []struct {
-		sql  string
-		hist string
+		sql     string
+		hist    string
+		tblName string
 	}{
 		{
 			sql: "select * from t where a <= 50",
@@ -1503,6 +1508,7 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
 				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
 				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+			tblName: "t",
 		},
 		{
 			sql: "select count(*) from t",
@@ -1510,11 +1516,29 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
 				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
 				"num: 14 lower_bound: 16 upper_bound: 255 repeats: 0",
+			tblName: "t",
+		},
+		{
+			sql: "select * from t1 where a <= 50",
+			hist: "column:1 ndv:30 totColSize:0\n" +
+				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+			tblName: "t1",
+		},
+		{
+			sql: "select count(*) from t1",
+			hist: "column:1 ndv:30 totColSize:0\n" +
+				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 18446744073709551615 repeats: 0",
+			tblName: "t1",
 		},
 	}
 	is := s.do.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	for i, t := range tests {
+		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(t.tblName))
+		c.Assert(err, IsNil)
 		testKit.MustQuery(t.sql)
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)

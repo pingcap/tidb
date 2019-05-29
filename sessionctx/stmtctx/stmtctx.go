@@ -54,6 +54,7 @@ type StatementContext struct {
 	InDeleteStmt           bool
 	InSelectStmt           bool
 	InLoadDataStmt         bool
+	InExplainStmt          bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	DupKeyAsWarning        bool

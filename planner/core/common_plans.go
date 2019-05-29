@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -427,20 +428,21 @@ type analyzeInfo struct {
 	PartitionName string
 	// PhysicalTableID is the id for a partition or a table.
 	PhysicalTableID int64
-	PKInfo          *model.ColumnInfo
-	ColsInfo        []*model.ColumnInfo
+	Incremental     bool
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
 	PKInfo   *model.ColumnInfo
 	ColsInfo []*model.ColumnInfo
+	TblInfo  *model.TableInfo
 	analyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	IndexInfo *model.IndexInfo
+	TblInfo   *model.TableInfo
 	analyzeInfo
 }
 
@@ -458,6 +460,7 @@ type LoadData struct {
 	baseSchemaProducer
 
 	IsLocal     bool
+	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Table       *ast.TableName
 	Columns     []*ast.ColumnName
@@ -473,6 +476,15 @@ type LoadStats struct {
 	baseSchemaProducer
 
 	Path string
+}
+
+// SplitIndexRegion represents a split index regions plan.
+type SplitIndexRegion struct {
+	baseSchemaProducer
+
+	Table      table.Table
+	IndexInfo  *model.IndexInfo
+	ValueLists [][]types.Datum
 }
 
 // DDL represents a DDL statement plan.
