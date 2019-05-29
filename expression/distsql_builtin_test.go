@@ -729,6 +729,56 @@ func (s *testEvalSuite) TestEval(c *C) {
 				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewTimeDatum(newDateTime(c, "2000-01-01")))),
 			types.NewTimeDatum(newDateTime(c, "2000-01-01")),
 		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenInt,
+				toPBFieldType(newIntFieldType())),
+			types.NewDatum(nil),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenReal,
+				toPBFieldType(newRealFieldType())),
+			types.NewDatum(nil),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenDecimal,
+				toPBFieldType(newDecimalFieldType())),
+			types.NewDatum(nil),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenDuration,
+				toPBFieldType(newDurFieldType())),
+			types.NewDatum(nil),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenTime,
+				toPBFieldType(newDateFieldType())),
+			types.NewDatum(nil),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenJson,
+				toPBFieldType(newJSONFieldType())),
+			types.NewDatum(nil),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_RealIsFalse,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(1))),
+			types.NewIntDatum(0),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_DecimalIsFalse,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
+			types.NewIntDatum(0),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_RealIsTrue,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(1))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_DecimalIsTrue,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
+			types.NewIntDatum(1),
+		},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
