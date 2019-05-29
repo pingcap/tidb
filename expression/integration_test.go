@@ -1392,6 +1392,13 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 		"c), addtime(c,a), addtime(c,b)" +
 		" from t;")
 	result.Check(testkit.Rows("<nil> <nil> <nil> 2017-01-01 13:31:32 2017-01-01 13:31:32 <nil> <nil>"))
+	result = tk.MustQuery("select addtime('01:01:11', cast('1' as time))")
+	result.Check(testkit.Rows("01:01:12"))
+	tk.MustQuery("select addtime(cast(null as char(20)), cast('1' as time))").Check(testkit.Rows("<nil>"))
+	c.Assert(tk.QueryToErr(`select addtime("01:01:11", cast('sdf' as time))`), NotNil)
+	tk.MustQuery(`select addtime("01:01:11", cast(null as char(20)))`).Check(testkit.Rows("<nil>"))
+
+
 
 	// for SUBTIME
 	result = tk.MustQuery("select subtime('01:01:11', '00:00:01.013'), subtime('01:01:11.00', '00:00:01'), subtime" +
