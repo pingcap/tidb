@@ -14,10 +14,13 @@
 package expression
 
 import (
+	"fmt"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"reflect"
 	"testing"
 
 	"github.com/pingcap/check"
@@ -31,6 +34,27 @@ import (
 var _ = check.Suite(&testUtilSuite{})
 
 type testUtilSuite struct {
+}
+
+func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {
+	col := &Column{RetType: newIntFieldType()}
+	c.Assert(setExprColumnInOperand(col).(*Column).InOperand, check.IsTrue)
+
+	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
+	c.Assert(err, check.IsNil)
+	fun := &ScalarFunction{Function: f}
+	setExprColumnInOperand(fun)
+	c.Assert(f.getArgs()[0].(*Column).InOperand, check.IsTrue)
+}
+
+func (s testUtilSuite) TestPopRowFirstArg(c *check.C) {
+	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
+	f, err := funcs[ast.RowFunc].getFunction(mock.NewContext(), []Expression{c1, c2, c3})
+	c.Assert(err, check.IsNil)
+	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
+	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
+	c.Assert(err, check.IsNil)
+	c.Assert(len(fun2.(*ScalarFunction).GetArgs()), check.Equals, 2)
 }
 
 func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
