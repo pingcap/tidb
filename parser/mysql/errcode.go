@@ -882,6 +882,7 @@ const (
 	ErrMustChangePasswordLogin                                      = 1862
 	ErrRowInWrongPartition                                          = 1863
 	ErrErrorLast                                                    = 1863
+	ErrMaxExecTimeExceeded                                          = 1907
 	ErrInvalidJSONData                                              = 3069
 	ErrGeneratedColumnFunctionIsNotAllowed                          = 3102
 	ErrBadGeneratedColumn                                           = 3105
