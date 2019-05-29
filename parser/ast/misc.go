@@ -1974,12 +1974,15 @@ func (i Ident) String() string {
 
 // SelectStmtOpts wrap around select hints and switches
 type SelectStmtOpts struct {
-	Distinct      bool
-	SQLCache      bool
-	CalcFoundRows bool
-	StraightJoin  bool
-	Priority      mysql.PriorityEnum
-	TableHints    []*TableOptimizerHint
+	Distinct        bool
+	SQLBigResult    bool
+	SQLBufferResult bool
+	SQLCache        bool
+	SQLSmallResult  bool
+	CalcFoundRows   bool
+	StraightJoin    bool
+	Priority        mysql.PriorityEnum
+	TableHints      []*TableOptimizerHint
 }
 
 // TableOptimizerHint is Table level optimizer hint
