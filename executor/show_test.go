@@ -730,6 +730,12 @@ func (s *testSuite) TestShowSlow(c *C) {
 	tk.MustQuery(`admin show slow top all 3`)
 }
 
+func (s *testSuite) TestShowOpenTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("show open tables")
+	tk.MustQuery("show open tables in test")
+}
+
 func (s *testSuite) TestShowCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -742,7 +748,6 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 			"  `ch2` varbinary(10) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
-
 }
 
 func (s *testSuite) TestShowEscape(c *C) {

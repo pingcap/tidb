@@ -665,6 +665,10 @@ func (b *planBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
 	for _, col := range tbl.Columns {
+		// The virtual column will not store any data in TiKV, so it should be ignored when collect statistics
+		if col.IsGenerated() && !col.GeneratedStored {
+			continue
+		}
 		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			pkCol = col
 		} else {
@@ -1634,6 +1638,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowDatabases:
 		names = []string{"Database"}
+	case ast.ShowOpenTables:
+		names = []string{"Database", "Table", "In_use", "Name_locked"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeLong}
 	case ast.ShowTables:
 		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
 		if s.Full {
