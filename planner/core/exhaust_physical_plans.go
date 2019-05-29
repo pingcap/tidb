@@ -594,7 +594,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		countAfterAccess: rowCount,
 	}
 	if len(indexConds) > 0 {
-		selectivity, _, err := ds.stats.HistColl.Selectivity(ds.ctx, indexConds)
+		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds)
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("calculate selectivity faild, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
