@@ -55,6 +55,33 @@ func (s testUtilSuite) TestPopRowFirstArg(c *check.C) {
 	c.Assert(len(fun2.(*ScalarFunction).GetArgs()), check.Equals, 2)
 }
 
+func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
+	col := &Column{}
+	_, _, err := GetStringFromConstant(mock.NewContext(), col)
+	c.Assert(err, check.NotNil)
+
+	con := &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
+	_, isNull, err := GetStringFromConstant(mock.NewContext(), con)
+	c.Assert(err, check.IsNil)
+	c.Assert(isNull, check.IsTrue)
+
+	con = &Constant{RetType: newIntFieldType(), Value: types.NewIntDatum(1)}
+	ret, _, _ := GetStringFromConstant(mock.NewContext(), con)
+	c.Assert(ret, check.Equals, "1")
+
+	con = &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
+	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
+	c.Assert(isNull, check.IsTrue)
+
+	con = &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("abc")}
+	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
+	c.Assert(isNull, check.IsTrue)
+
+	con = &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("123")}
+	num, _, _ := GetIntFromConstant(mock.NewContext(), con)
+	c.Assert(num, check.Equals, 123)
+}
+
 func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
