@@ -434,6 +434,31 @@ func (s *testEvalSuite) TestEval(c *C) {
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(0))),
 			types.NewIntDatum(-1),
 		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_InReal,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(1)), datumExpr(c, types.NewFloat64Datum(1))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_InDecimal,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1"))), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_InString,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("1")), datumExpr(c, types.NewStringDatum("1"))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_InTime,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewTimeDatum(types.ZeroDate)), datumExpr(c, types.NewTimeDatum(types.ZeroDate))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_InDuration,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second))), datumExpr(c, types.NewDurationDatum(newDuration(time.Second)))),
+			types.NewIntDatum(1),
+		},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
