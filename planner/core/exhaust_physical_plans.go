@@ -588,7 +588,19 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)
-	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
+	path := &accessPath{
+		indexFilters:     indexConds,
+		tableFilters:     tblConds,
+		countAfterAccess: rowCount,
+	}
+	if len(indexConds) > 0 {
+		selectivity, _, err := ds.stats.HistColl.Selectivity(ds.ctx, indexConds)
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("calculate selectivity faild, use selection factor", zap.Error(err))
+			selectivity = selectionFactor
+		}
+		path.countAfterIndex = rowCount * selectivity
+	}
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
 	t := finishCopTask(ds.ctx, cop)
 	reader := t.plan()

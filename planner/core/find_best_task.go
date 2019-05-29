@@ -575,11 +575,11 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
-		count := path.countAfterAccess
-		if count >= 1.0 {
-			selectivity := path.countAfterIndex / path.countAfterAccess
-			count = is.stats.RowCount * selectivity
+		var selectivity float64
+		if path.countAfterAccess > 0 {
+			selectivity = path.countAfterIndex / path.countAfterAccess
 		}
+		count := is.stats.RowCount * selectivity
 		stats := &property.StatsInfo{RowCount: count}
 		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats)
 		indexSel.SetChildren(is)
