@@ -33,7 +33,7 @@ import (
 // ResolvedCacheSize is max number of cached txn status.
 const ResolvedCacheSize = 2048
 
-// Transaction which involve keys exceed this threshold can treat as `Big Transaction`.
+// BigTxnThreshold: transaction involves keys exceed this threshold can be treated as `big transaction`.
 const BigTxnThreshold = 256
 
 var (
