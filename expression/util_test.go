@@ -14,13 +14,11 @@
 package expression
 
 import (
-	"fmt"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"reflect"
 	"testing"
 
 	"github.com/pingcap/check"
