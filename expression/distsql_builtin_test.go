@@ -614,6 +614,66 @@ func (s *testEvalSuite) TestEval(c *C) {
 				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewStringDatum("20000101"))),
 			types.NewTimeDatum(newDateTime(c, "2000-01-01")),
 		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_PlusInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(2))),
+			types.NewIntDatum(3),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_PlusDecimal,
+				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1"))), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2")))),
+			types.NewDecimalDatum(newMyDecimal(c, "3")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_PlusReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewFloat64Datum(1)), datumExpr(c, types.NewFloat64Datum(2))),
+			types.NewFloat64Datum(3),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MinusInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(2))),
+			types.NewIntDatum(-1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MinusDecimal,
+				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1"))), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2")))),
+			types.NewDecimalDatum(newMyDecimal(c, "-1")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MinusReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewFloat64Datum(1)), datumExpr(c, types.NewFloat64Datum(2))),
+			types.NewFloat64Datum(-1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MultiplyInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(2))),
+			types.NewIntDatum(2),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MultiplyDecimal,
+				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1"))), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2")))),
+			types.NewDecimalDatum(newMyDecimal(c, "2")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MultiplyReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewFloat64Datum(1)), datumExpr(c, types.NewFloat64Datum(2))),
+			types.NewFloat64Datum(2),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CeilIntToInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CeilIntToDec,
+				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewIntDatum(1))),
+			types.NewDecimalDatum(newMyDecimal(c, "1")),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CeilDecToInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
+			types.NewIntDatum(1),
+		},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
