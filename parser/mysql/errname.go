@@ -914,6 +914,7 @@ var MySQLErrName = map[uint16]string{
 	ErrWindowExplainJson:                                     "To get information about window functions use EXPLAIN FORMAT=JSON",
 	ErrWindowFunctionIgnoresFrame:                            "Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition",
 	ErrRoleNotGranted:                                        "%s is is not granted to %s",
+	ErrMaxExecTimeExceeded:                                   "Query execution was interrupted, max_execution_time exceeded.",
 
 	// TiDB errors.
 	ErrMemExceedThreshold:         "%s holds %dB memory, exceeds threshold %dB.%s",
