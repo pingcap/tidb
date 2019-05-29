@@ -351,73 +351,74 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {
 	defer testleak.AfterTest(c)()
 	m := &MockExpr{}
-	cst := &Constant{DeferredExpr: m}
+	ctx := mock.NewContext()
+	cst := &Constant{DeferredExpr: m, RetType: newIntFieldType()}
 	m.i, m.err = nil, fmt.Errorf("ERROR")
-	_, _, err := cst.EvalInt(nil, chunk.Row{})
+	_, _, err := cst.EvalInt(ctx, chunk.Row{})
 	c.Assert(err, NotNil)
-	_, _, err = cst.EvalReal(nil, chunk.Row{})
+	_, _, err = cst.EvalReal(ctx, chunk.Row{})
 	c.Assert(err, NotNil)
-	_, _, err = cst.EvalDecimal(nil, chunk.Row{})
+	_, _, err = cst.EvalDecimal(ctx, chunk.Row{})
 	c.Assert(err, NotNil)
-	_, _, err = cst.EvalString(nil, chunk.Row{})
+	_, _, err = cst.EvalString(ctx, chunk.Row{})
 	c.Assert(err, NotNil)
-	_, _, err = cst.EvalTime(nil, chunk.Row{})
+	_, _, err = cst.EvalTime(ctx, chunk.Row{})
 	c.Assert(err, NotNil)
-	_, _, err = cst.EvalDuration(nil, chunk.Row{})
+	_, _, err = cst.EvalDuration(ctx, chunk.Row{})
 	c.Assert(err, NotNil)
-	_, _, err = cst.EvalJSON(nil, chunk.Row{})
+	_, _, err = cst.EvalJSON(ctx, chunk.Row{})
 	c.Assert(err, NotNil)
 
 	m.i, m.err = nil, nil
-	_, isNull, err := cst.EvalInt(nil, chunk.Row{})
+	_, isNull, err := cst.EvalInt(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsTrue)
-	_, isNull, err = cst.EvalReal(nil, chunk.Row{})
+	_, isNull, err = cst.EvalReal(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsTrue)
-	_, isNull, err = cst.EvalDecimal(nil, chunk.Row{})
+	_, isNull, err = cst.EvalDecimal(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsTrue)
-	_, isNull, err = cst.EvalString(nil, chunk.Row{})
+	_, isNull, err = cst.EvalString(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsTrue)
-	_, isNull, err = cst.EvalTime(nil, chunk.Row{})
+	_, isNull, err = cst.EvalTime(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsTrue)
-	_, isNull, err = cst.EvalDuration(nil, chunk.Row{})
+	_, isNull, err = cst.EvalDuration(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsTrue)
-	_, isNull, err = cst.EvalJSON(nil, chunk.Row{})
+	_, isNull, err = cst.EvalJSON(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsTrue)
 
 	m.i = int64(2333)
-	xInt, _, _ := cst.EvalInt(nil, chunk.Row{})
+	xInt, _, _ := cst.EvalInt(ctx, chunk.Row{})
 	c.Assert(xInt, Equals, int64(2333))
 
 	m.i = float64(123.45)
-	xFlo, _, _ := cst.EvalReal(nil, chunk.Row{})
+	xFlo, _, _ := cst.EvalReal(ctx, chunk.Row{})
 	c.Assert(xFlo, Equals, float64(123.45))
 
 	m.i = "abc"
-	xStr, _, _ := cst.EvalString(nil, chunk.Row{})
+	xStr, _, _ := cst.EvalString(ctx, chunk.Row{})
 	c.Assert(xStr, Equals, "abc")
 
 	m.i = &types.MyDecimal{}
-	xDec, _, _ := cst.EvalDecimal(nil, chunk.Row{})
-	c.Assert(xDec, Equals, m.i)
+	xDec, _, _ := cst.EvalDecimal(ctx, chunk.Row{})
+	c.Assert(xDec.Compare(m.i.(*types.MyDecimal)), Equals, 0)
 
 	m.i = types.Time{}
-	xTim, _, _ := cst.EvalTime(nil, chunk.Row{})
-	c.Assert(m.i, Equals, xTim)
+	xTim, _, _ := cst.EvalTime(ctx, chunk.Row{})
+	c.Assert(xTim.Compare(m.i.(types.Time)), Equals, 0)
 
 	m.i = types.Duration{}
-	xDur, _, _ := cst.EvalDuration(nil, chunk.Row{})
-	c.Assert(m.i, Equals, xDur)
+	xDur, _, _ := cst.EvalDuration(ctx, chunk.Row{})
+	c.Assert(xDur.Compare(m.i.(types.Duration)), Equals, 0)
 
 	m.i = json.BinaryJSON{}
-	xJsn, _, _ := cst.EvalJSON(nil, chunk.Row{})
-	c.Assert(m.i, Equals, xJsn)
+	xJsn, _, _ := cst.EvalJSON(ctx, chunk.Row{})
+	c.Assert(m.i.(json.BinaryJSON).String(), Equals, xJsn.String())
 
 	cln := cst.Clone().(*Constant)
 	c.Assert(cln.DeferredExpr, Equals, cst.DeferredExpr)
