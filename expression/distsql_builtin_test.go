@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"time"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -25,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	"time"
 )
 
 var _ = Suite(&testEvalSuite{})
@@ -119,6 +118,91 @@ func (s *testEvalSuite) TestEval(c *C) {
 				datumExpr(c, types.NewBytesDatum([]byte(`$**.k`))),
 			),
 			newJSONDatum(c, `"$[1][0].k"`),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(2333))),
+			types.NewIntDatum(2333),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(2333))),
+			types.NewIntDatum(2333),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("2333"))),
+			types.NewIntDatum(2333),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewIntDatum(2333))),
+			types.NewFloat64Datum(2333),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewFloat64Datum(2333))),
+			types.NewFloat64Datum(2333),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsReal,
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewStringDatum("2333"))),
+			types.NewFloat64Datum(2333),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsString,
+				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewStringDatum("2333"))),
+			types.NewStringDatum("2333"),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsString,
+				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewIntDatum(2333))),
+			types.NewStringDatum("2333"),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsString,
+				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewFloat64Datum(2333))),
+			types.NewStringDatum("2333"),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_GEInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(2)), datumExpr(c, types.NewIntDatum(1))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LEInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(2))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_NEInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(2))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQInt,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewDatum(nil))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_GEReal,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(2)), datumExpr(c, types.NewFloat64Datum(1))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LEReal,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(1)), datumExpr(c, types.NewFloat64Datum(2))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_NEReal,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(1)), datumExpr(c, types.NewFloat64Datum(2))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQReal,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewDatum(nil))),
+			types.NewIntDatum(1),
 		},
 	}
 	sc := new(stmtctx.StatementContext)
@@ -226,6 +310,20 @@ func newIntFieldType() *types.FieldType {
 		Flen:    mysql.MaxIntWidth,
 		Decimal: 0,
 		Flag:    mysql.BinaryFlag,
+	}
+}
+
+func newStringFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:   mysql.TypeVarString,
+		Flen: types.UnspecifiedLength,
+	}
+}
+
+func newRealFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:   mysql.TypeFloat,
+		Flen: types.UnspecifiedLength,
 	}
 }
 
