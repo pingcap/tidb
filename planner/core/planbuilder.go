@@ -665,6 +665,10 @@ func (b *planBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
 	for _, col := range tbl.Columns {
+		// The virtual column will not store any data in TiKV, so it should be ignored when collect statistics
+		if col.IsGenerated() && !col.GeneratedStored {
+			continue
+		}
 		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			pkCol = col
 		} else {
