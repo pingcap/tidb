@@ -42,7 +42,7 @@ func (s *testEvalSuite) allocColID() int64 {
 	return s.colID
 }
 
-func (s *testEvalSuite) TestPBToExprOnInvalidVal(c *C) {
+func (s *testEvalSuite) TestPBToExpr(c *C) {
 	sc := new(stmtctx.StatementContext)
 	fieldTps := make([]*types.FieldType, 1)
 	ds := []types.Datum{types.NewIntDatum(1), types.NewUintDatum(1), types.NewFloat64Datum(1),
@@ -54,6 +54,45 @@ func (s *testEvalSuite) TestPBToExprOnInvalidVal(c *C) {
 		_, err := PBToExpr(expr, fieldTps, sc)
 		c.Assert(err, NotNil)
 	}
+
+	expr := &tipb.Expr{
+		Tp: tipb.ExprType_ScalarFunc,
+		Children: []*tipb.Expr{
+			{
+				Tp: tipb.ExprType_ValueList,
+			},
+		},
+	}
+	_, err := PBToExpr(expr, fieldTps, sc)
+	c.Assert(err, IsNil)
+
+	val := make([]byte, 0, 32)
+	val = codec.EncodeInt(val, 1)
+	expr = &tipb.Expr{
+		Tp: tipb.ExprType_ScalarFunc,
+		Children: []*tipb.Expr{
+			{
+				Tp:  tipb.ExprType_ValueList,
+				Val: val[:len(val)/2],
+			},
+		},
+	}
+	_, err = PBToExpr(expr, fieldTps, sc)
+	c.Assert(err, NotNil)
+
+	expr = &tipb.Expr{
+		Tp: tipb.ExprType_ScalarFunc,
+		Children: []*tipb.Expr{
+			{
+				Tp:  tipb.ExprType_ValueList,
+				Val: val,
+			},
+		},
+		Sig:       tipb.ScalarFuncSig_AbsInt,
+		FieldType: ToPBFieldType(newIntFieldType()),
+	}
+	_, err = PBToExpr(expr, fieldTps, sc)
+	c.Assert(err, NotNil)
 }
 
 // TestEval test expr.Eval().
