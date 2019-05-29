@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	"time"
 )
 
 var _ = Suite(&testEvalSuite{})
@@ -50,74 +51,74 @@ func (s *testEvalSuite) TestEval(c *C) {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
-		//// Datums.
-		//{
-		//	datumExpr(c, types.NewFloat32Datum(1.1)),
-		//	types.NewFloat32Datum(1.1),
-		//},
-		//{
-		//	datumExpr(c, types.NewFloat64Datum(1.1)),
-		//	types.NewFloat64Datum(1.1),
-		//},
-		//{
-		//	datumExpr(c, types.NewIntDatum(1)),
-		//	types.NewIntDatum(1),
-		//},
-		//{
-		//	datumExpr(c, types.NewUintDatum(1)),
-		//	types.NewUintDatum(1),
-		//},
-		//{
-		//	datumExpr(c, types.NewBytesDatum([]byte("abc"))),
-		//	types.NewBytesDatum([]byte("abc")),
-		//},
-		//{
-		//	datumExpr(c, types.NewStringDatum("abc")),
-		//	types.NewStringDatum("abc"),
-		//},
-		//{
-		//	datumExpr(c, types.Datum{}),
-		//	types.Datum{},
-		//},
-		//{
-		//	datumExpr(c, types.NewDurationDatum(types.Duration{Duration: time.Hour})),
-		//	types.NewDurationDatum(types.Duration{Duration: time.Hour}),
-		//},
-		//{
-		//	datumExpr(c, types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
-		//	types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1)),
-		//},
-		//// Columns.
-		//{
-		//	columnExpr(0),
-		//	types.NewIntDatum(100),
-		//},
-		//// Scalar Functions.
-		//{
-		//	scalarFunctionExpr(tipb.ScalarFuncSig_JsonDepthSig,
-		//		toPBFieldType(newIntFieldType()),
-		//		jsonDatumExpr(c, `true`),
-		//	),
-		//	types.NewIntDatum(1),
-		//},
-		//{
-		//	scalarFunctionExpr(tipb.ScalarFuncSig_JsonDepthSig,
-		//		toPBFieldType(newIntFieldType()),
-		//		jsonDatumExpr(c, `[10, {"a": 20}]`),
-		//	),
-		//	types.NewIntDatum(3),
-		//},
-		//{
-		//	scalarFunctionExpr(tipb.ScalarFuncSig_JsonSearchSig,
-		//		toPBFieldType(newJSONFieldType()),
-		//		jsonDatumExpr(c, `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`),
-		//		datumExpr(c, types.NewBytesDatum([]byte(`all`))),
-		//		datumExpr(c, types.NewBytesDatum([]byte(`10`))),
-		//		datumExpr(c, types.NewBytesDatum([]byte(`\`))),
-		//		datumExpr(c, types.NewBytesDatum([]byte(`$**.k`))),
-		//	),
-		//	newJSONDatum(c, `"$[1][0].k"`),
-		//},
+		// Datums.
+		{
+			datumExpr(c, types.NewFloat32Datum(1.1)),
+			types.NewFloat32Datum(1.1),
+		},
+		{
+			datumExpr(c, types.NewFloat64Datum(1.1)),
+			types.NewFloat64Datum(1.1),
+		},
+		{
+			datumExpr(c, types.NewIntDatum(1)),
+			types.NewIntDatum(1),
+		},
+		{
+			datumExpr(c, types.NewUintDatum(1)),
+			types.NewUintDatum(1),
+		},
+		{
+			datumExpr(c, types.NewBytesDatum([]byte("abc"))),
+			types.NewBytesDatum([]byte("abc")),
+		},
+		{
+			datumExpr(c, types.NewStringDatum("abc")),
+			types.NewStringDatum("abc"),
+		},
+		{
+			datumExpr(c, types.Datum{}),
+			types.Datum{},
+		},
+		{
+			datumExpr(c, types.NewDurationDatum(types.Duration{Duration: time.Hour})),
+			types.NewDurationDatum(types.Duration{Duration: time.Hour}),
+		},
+		{
+			datumExpr(c, types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
+			types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1)),
+		},
+		// Columns.
+		{
+			columnExpr(0),
+			types.NewIntDatum(100),
+		},
+		// Scalar Functions.
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_JsonDepthSig,
+				toPBFieldType(newIntFieldType()),
+				jsonDatumExpr(c, `true`),
+			),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_JsonDepthSig,
+				toPBFieldType(newIntFieldType()),
+				jsonDatumExpr(c, `[10, {"a": 20}]`),
+			),
+			types.NewIntDatum(3),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_JsonSearchSig,
+				toPBFieldType(newJSONFieldType()),
+				jsonDatumExpr(c, `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`),
+				datumExpr(c, types.NewBytesDatum([]byte(`all`))),
+				datumExpr(c, types.NewBytesDatum([]byte(`10`))),
+				datumExpr(c, types.NewBytesDatum([]byte(`\`))),
+				datumExpr(c, types.NewBytesDatum([]byte(`$**.k`))),
+			),
+			newJSONDatum(c, `"$[1][0].k"`),
+		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsInt,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(2333))),
@@ -258,6 +259,26 @@ func (s *testEvalSuite) TestEval(c *C) {
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewDatum(nil))),
 			types.NewIntDatum(1),
 		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_GEDuration,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second*2))), datumExpr(c, types.NewDurationDatum(newDuration(time.Second)))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LEDuration,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second))), datumExpr(c, types.NewDurationDatum(newDuration(time.Second*2)))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_NEDuration,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDurationDatum(newDuration(time.Second))), datumExpr(c, types.NewDurationDatum(newDuration(time.Second*2)))),
+			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQDuration,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewDatum(nil))),
+			types.NewIntDatum(1),
+		},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
@@ -364,12 +385,26 @@ func newMyDecimal(c *C, s string) *types.MyDecimal {
 	return d
 }
 
+func newDuration(dur time.Duration) types.Duration {
+	return types.Duration{
+		Duration: dur,
+		Fsp:      types.DefaultFsp,
+	}
+}
+
 func newIntFieldType() *types.FieldType {
 	return &types.FieldType{
 		Tp:      mysql.TypeLonglong,
 		Flen:    mysql.MaxIntWidth,
 		Decimal: 0,
 		Flag:    mysql.BinaryFlag,
+	}
+}
+
+func newDurFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:   mysql.TypeDuration,
+		Flag: types.DefaultFsp,
 	}
 }
 
