@@ -336,7 +336,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TmpTableSize:
 		return checkUInt64SystemVar(name, value, 1024, math.MaxUint64, vars)
 	case WaitTimeout:
-		return checkUInt64SystemVar(name, value, 1, 31536000, vars)
+		return checkUInt64SystemVar(name, value, 0, 31536000, vars)
 	case MaxPreparedStmtCount:
 		return checkInt64SystemVar(name, value, -1, 1048576, vars)
 	case TimeZone:
@@ -417,7 +417,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
-		TiDBCheckMb4ValueInUTF8:
+		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}

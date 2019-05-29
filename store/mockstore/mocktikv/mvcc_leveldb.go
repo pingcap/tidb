@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -617,7 +616,11 @@ func checkConflictValue(iter *Iterator, key []byte, startTS uint64) error {
 	}
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if ok && dec.value.commitTS >= startTS {
-		return ErrRetryable(tidbutil.WriteConflictMarker)
+		return &ErrConflict{
+			StartTS:    startTS,
+			ConflictTS: dec.value.commitTS,
+			Key:        key,
+		}
 	}
 	return nil
 }
@@ -649,18 +652,6 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		if err != nil {
 			return err
 		}
-	}
-
-	dec1 := valueDecoder{
-		expectKey: mutation.Key,
-	}
-	ok, err = dec1.Decode(iter)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Note that it's a write conflict here, even if the value is a rollback one.
-	if ok && dec1.value.commitTS >= startTS {
-		return ErrRetryable(tidbutil.WriteConflictMarker)
 	}
 
 	op := mutation.GetOp()

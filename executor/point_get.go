@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
@@ -45,6 +46,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		idxVals: p.IndexValues,
 		handle:  p.Handle,
 		startTS: startTS,
+		done:    p.UnsignedHandle && p.Handle < 0,
 	}
 }
 
@@ -86,7 +88,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 	}
 	if e.idxInfo != nil {
 		idxKey, err1 := e.encodeIndexKey()
-		if err1 != nil {
+		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
 
@@ -132,16 +134,21 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) err
 	return e.decodeRowValToChunk(val, req.Chunk)
 }
 
-func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {
+func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for i := range e.idxVals {
 		colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
-		casted, err := table.CastValue(e.ctx, e.idxVals[i], colInfo)
+		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
+			e.idxVals[i], err = ranger.HandlePadCharToFullLength(sc, &colInfo.FieldType, e.idxVals[i])
+		} else {
+			e.idxVals[i], err = table.CastValue(e.ctx, e.idxVals[i], colInfo)
+		}
 		if err != nil {
 			return nil, err
 		}
-		e.idxVals[i] = casted
 	}
-	encodedIdxVals, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
+
+	encodedIdxVals, err := codec.EncodeKey(sc, nil, e.idxVals...)
 	if err != nil {
 		return nil, err
 	}

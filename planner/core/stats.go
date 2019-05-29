@@ -352,10 +352,13 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo) (*property
 		RowCount:    childProfile.RowCount,
 		Cardinality: make([]float64, p.schema.Len()),
 	}
-	for i := 0; i < p.schema.Len()-1; i++ {
+	childLen := p.schema.Len() - len(p.WindowFuncDescs)
+	for i := 0; i < childLen; i++ {
 		colIdx := p.children[0].Schema().ColumnIndex(p.schema.Columns[i])
 		p.stats.Cardinality[i] = childProfile.Cardinality[colIdx]
 	}
-	p.stats.Cardinality[p.schema.Len()-1] = childProfile.RowCount
+	for i := childLen; i < p.schema.Len(); i++ {
+		p.stats.Cardinality[i] = childProfile.RowCount
+	}
 	return p.stats, nil
 }

@@ -535,6 +535,7 @@ func (do *Domain) mustReload() (exitLoop bool) {
 
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
+	startTime := time.Now()
 	if do.ddl != nil {
 		terror.Log(do.ddl.Stop())
 	}
@@ -548,7 +549,7 @@ func (do *Domain) Close() {
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
 	do.wg.Wait()
-	logutil.Logger(context.Background()).Info("domain closed")
+	logutil.Logger(context.Background()).Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
 type ddlCallback struct {
@@ -1051,7 +1052,8 @@ var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
 	ErrInfoSchemaExpired = terror.ClassDomain.New(codeInfoSchemaExpired, "Information schema is out of date.")
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged, "Information schema is changed.")
+	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged,
+		"Information schema is changed. "+kv.TxnRetryableMark)
 )
 
 func init() {

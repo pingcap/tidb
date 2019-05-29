@@ -106,6 +106,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	c.Assert(err, IsNil)
 	fp.Write(js)
 	ds.checkData(c, path)
+	ds.checkCorrelation(c)
 
 	// sleep for 1 seconds to ensure the existence of tidb.test
 	time.Sleep(time.Second)
@@ -177,6 +178,34 @@ func (ds *testDumpStatsSuite) prepare4DumpHistoryStats(c *C) {
 
 	dbt.mustExec("drop table tidb.test")
 	dbt.mustExec("create table tidb.test (a int, b varchar(20))")
+}
+
+func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
+	db, err := sql.Open("mysql", getDSN(nil))
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	dbt := &DBTest{c, db}
+	defer db.Close()
+
+	dbt.mustExec("use tidb")
+	rows := dbt.mustQuery("SELECT tidb_table_id FROM information_schema.tables WHERE table_name = 'test' AND table_schema = 'tidb'")
+	var tableID int64
+	if rows.Next() {
+		rows.Scan(&tableID)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+	} else {
+		dbt.Error("no data")
+	}
+	rows.Close()
+	rows = dbt.mustQuery("select correlation from mysql.stats_histograms where table_id = ? and hist_id = 1 and is_index = 0", tableID)
+	if rows.Next() {
+		var corr float64
+		rows.Scan(&corr)
+		dbt.Check(corr, Equals, float64(1))
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+	} else {
+		dbt.Error("no data")
+	}
+	rows.Close()
 }
 
 func (ds *testDumpStatsSuite) checkData(c *C, path string) {
