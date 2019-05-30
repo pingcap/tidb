@@ -428,8 +428,7 @@ func (s *schemaVersionSyncer) StartCleanWork() {
 					continue
 				}
 
-				isFinished := s.doCleanExpirePaths(resp.Leases)
-				if isFinished {
+				if isFinished := s.doCleanExpirePaths(resp.Leases); isFinished {
 					break
 				}
 				time.Sleep(opRetryInterval)
@@ -458,7 +457,6 @@ func (s *schemaVersionSyncer) NotifyCleanExpiredPaths() {
 }
 
 func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) bool {
-	ctx := context.Background()
 	failedGetIDs := 0
 	failedRevokeIDs := 0
 	startTime := time.Now()
@@ -471,7 +469,7 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 		// The DDL owner key uses '%x', so here print it too.
 		leaseID := fmt.Sprintf("%x, %d", lease.ID, lease.ID)
 		childCtx, cancelFunc := context.WithTimeout(context.Background(), opDefaultTimeout)
-		ttlResp, err := s.etcdCli.TimeToLive(ctx, lease.ID)
+		ttlResp, err := s.etcdCli.TimeToLive(childCtx, lease.ID)
 		cancelFunc()
 		if err != nil {
 			logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, failed to get TTL.", zap.String("leaseID", leaseID), zap.Error(err))
