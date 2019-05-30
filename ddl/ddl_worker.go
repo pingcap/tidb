@@ -103,9 +103,10 @@ func (w *worker) String() string {
 }
 
 func (w *worker) close() {
+	startTime := time.Now()
 	close(w.quitCh)
 	w.wg.Wait()
-	logutil.Logger(w.logCtx).Info("[ddl] close DDL worker")
+	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
 // start is used for async online schema changing, it will try to become the owner firstly,
@@ -637,7 +638,10 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 			return
 		}
 	}
-	logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version changed", zap.Int64("ver", latestSchemaVersion), zap.Duration("takeTime", time.Since(timeStart)), zap.String("job", job.String()))
+	logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version changed",
+		zap.Int64("ver", latestSchemaVersion),
+		zap.Duration("take time", time.Since(timeStart)),
+		zap.String("job", job.String()))
 }
 
 // waitSchemaSynced handles the following situation:
