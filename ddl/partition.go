@@ -165,10 +165,10 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 
 // For partition tables, mysql do not support Constant, random or timezone-dependent expressions
 // Based on mysql code to check whether field is valid, every time related type has check_valid_arguments_processor function.
-// Mode detail in  https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc
+// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc
 type isTimezoneDependentProcessor func(columns []*expression.Column) bool
 
-// Mysql code - https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L387
+// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L387
 func hasTimestampField(columns []*expression.Column) bool {
 	for _, c := range columns {
 		if c.GetType().Tp == mysql.TypeTimestamp {
@@ -179,7 +179,7 @@ func hasTimestampField(columns []*expression.Column) bool {
 	return false
 }
 
-// Mysql code - https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L399
+// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L399
 func hasDateField(columns []*expression.Column) bool {
 	for _, c := range columns {
 		if c.GetType().Tp == mysql.TypeDate || c.GetType().Tp == mysql.TypeDatetime {
@@ -190,7 +190,7 @@ func hasDateField(columns []*expression.Column) bool {
 	return false
 }
 
-// Mysql code - https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L412
+// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L412
 func hasTimeField(columns []*expression.Column) bool {
 	for _, c := range columns {
 		if c.GetType().Tp == mysql.TypeDatetime {
@@ -207,6 +207,7 @@ func hasTimeField(columns []*expression.Column) bool {
 // The only exception is UNIX_TIMESTAMP() which returns the internal
 // representation of a TIMESTAMP argument verbatim, and thus does not depend on
 // the timezone.
+// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L445
 func defaultTimezoneDependent(columns []*expression.Column) bool {
 	return !hasTimestampField(columns)
 }
@@ -263,7 +264,7 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 			// arguments as a (sub)partitioning function,
 			// but we want to allow such expressions when opening existing tables for
 			// easier maintenance. This exception should be deprecated at some point in future so that we always throw an error.
-			// More detail in https://github.com/mysql/mysql-server/blob/5.7/sql/sql_partition.cc#L1072
+			// See https://github.com/mysql/mysql-server/blob/5.7/sql/sql_partition.cc#L1072
 			if !f(partCols) {
 				return errors.Trace(errWrongExprInPartitionFunc)
 			}
