@@ -252,6 +252,9 @@ type IndexReaderExecutor struct {
 	colLens        []int
 	plans          []plannercore.PhysicalPlan
 
+	// for union scan
+	outputColumns []*expression.Column
+
 	selectResultHook // for testing
 }
 

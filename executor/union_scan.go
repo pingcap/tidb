@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"sort"
 	"time"
@@ -330,7 +329,7 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 		return err
 	}
 
-	//colsLen := len(e.index.Columns)
+	colsLen := len(e.index.Columns)
 	tps := make([]*types.FieldType, 0, len(e.index.Columns)+1)
 	cols := e.table.Meta().Columns
 	for _, col := range e.index.Columns {
@@ -347,12 +346,18 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 		tp := types.NewFieldType(mysql.TypeLonglong)
 		tps = append(tps, tp)
 	}
-	chk := chunk.NewChunkWithCapacity(tps, e.maxChunkSize)
-	decoder := codec.NewDecoder(chk, time.UTC)
+
+	outputOffset := make([]int, 0, len(us.columns))
+	for _, col := range e.outputColumns {
+		outputOffset = append(outputOffset, col.Index)
+	}
+
+	//chk := chunk.NewChunkWithCapacity(tps, e.maxChunkSize)
+	//decoder := codec.NewDecoder(chk, time.UTC)
 	prefix := tablecodec.EncodeTableIndexPrefix(e.physicalTableID, e.index.ID)
 
-	idLen := 8
-	prefixLen := 1 + idLen /*tableID*/ + 2
+	//idLen := 8
+	//prefixLen := 1 + idLen /*tableID*/ + 2
 	rowindex := 0
 	for _, rg := range kvRanges {
 		// todo: consider desc scan.
@@ -362,41 +367,25 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 		}
 		for iter.Valid() {
 			key := iter.Key()
-			value := iter.Value()
 			if !bytes.Contains(key, prefix) {
 				continue
 			}
 
-			key = key[prefixLen+idLen:]
-			//values,b, err := tablecodec.CutIndexKeyNew(key, colsLen)
-
-			//if len(b) > 0 {
-			//	values = append(values, b)
-			//}
-			//if len(value) > 0 {
-			//	values = append(values,value)
-			//}
-			for i := range tps {
-				key, err = decoder.DecodeOne(key, i, tps[i])
-				if err != nil {
-					return err
-				}
-				if len(key) == 0 {
-					break
-				}
-			}
-			if len(value) >= 8 {
-				h, err := decodeHandle(value)
-				if err != nil {
-					return err
-				}
-				chk.AppendInt64(len(tps)-1, h)
+			values, b, err := tablecodec.CutIndexKeyNew(key, colsLen)
+			if len(b) > 0 {
+				values = append(values, b)
+			} else if len(iter.Value()) >= 8 {
+				values = append(values, iter.Value())
 			}
 
 			str := ""
-			for i, tp := range tps {
-				v := chk.GetRow(rowindex).GetDatum(i, tp)
-				s, err := v.ToString()
+			row := make([]types.Datum, len(values))
+			for i, offset := range outputOffset {
+				row[offset], err = tablecodec.DecodeColumnValue(values[offset], tps[offset], e.ctx.GetSessionVars().TimeZone)
+				if err != nil {
+					return err
+				}
+				s, err := row[offset].ToString()
 				if err != nil {
 					return err
 				}
@@ -405,6 +394,37 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 				}
 				str += s
 			}
+
+			//key = key[prefixLen+idLen:]
+			//for i := range tps {
+			//	key, err = decoder.DecodeOne(key, i, tps[i])
+			//	if err != nil {
+			//		return err
+			//	}
+			//	if len(key) == 0 {
+			//		break
+			//	}
+			//}
+			//if len(iter.Value()) >= 8 {
+			//	h, err := decodeHandle(iter.Value())
+			//	if err != nil {
+			//		return err
+			//	}
+			//	chk.AppendInt64(len(tps)-1, h)
+			//}
+
+			//str := ""
+			//for i, tp := range tps {
+			//	v := chk.GetRow(rowindex).GetDatum(i, tp)
+			//	s, err := v.ToString()
+			//	if err != nil {
+			//		return err
+			//	}
+			//	if i > 0 {
+			//		str += ", "
+			//	}
+			//	str += s
+			//}
 			rowindex++
 			fmt.Printf("\ndecode index values: %v\n\n", str)
 
