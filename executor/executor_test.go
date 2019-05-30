@@ -2027,7 +2027,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
-	safePointValue := "20060102-15:04:05 -0700 MST"
+	safePointValue := "20060102-15:04:05 -0700"
 	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
 	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
