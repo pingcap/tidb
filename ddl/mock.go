@@ -34,12 +34,11 @@ type MockSchemaSyncer struct {
 	selfSchemaVersion int64
 	globalVerCh       chan clientv3.WatchResponse
 	mockSession       chan struct{}
-	mockQuiteCh       chan struct{}
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
 func NewMockSchemaSyncer() SchemaSyncer {
-	return &MockSchemaSyncer{mockQuiteCh: make(chan struct{})}
+	return &MockSchemaSyncer{}
 }
 
 // Init implements SchemaSyncer.Init interface.
@@ -114,18 +113,14 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 	}
 }
 
+// NotifyCleanExpiredPaths implements SchemaSyncer.NotifyCleanExpiredPaths interface.
 func (s *MockSchemaSyncer) NotifyCleanExpiredPaths() {}
 
-func (s *MockSchemaSyncer) StartCleanWork() {
-	for {
-		select {
-		case <-s.mockQuiteCh:
-			return
-		}
-	}
-}
+// StartCleanWork implements SchemaSyncer.StartCleanWork interface.
+func (s *MockSchemaSyncer) StartCleanWork() {}
 
-func (s *MockSchemaSyncer) CloseCleanWork() { close(s.mockQuiteCh) }
+// CloseCleanWork implements SchemaSyncer.CloseCleanWork interface.
+func (s *MockSchemaSyncer) CloseCleanWork() {}
 
 type mockDelRange struct {
 }

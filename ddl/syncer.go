@@ -88,9 +88,11 @@ type SchemaSyncer interface {
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
 	// It returns until all servers' versions are equal to the latest version or the ctx is done.
 	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
-	// TODO: Add comments.
+	// NotifyCleanExpiredPaths informs to clean up expired paths.
 	NotifyCleanExpiredPaths()
+	// StartCleanWork starts to clean up tasks.
 	StartCleanWork()
+	// CloseCleanWork ends cleanup tasks.
 	CloseCleanWork()
 }
 
@@ -402,9 +404,10 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 const (
 	opDefaultRetryCnt = 10
 	failedGetTTLLimit = 20
-	neededCleanTTL    = -60
 	opDefaultTimeout  = 3 * time.Second
 	opRetryInterval   = 500 * time.Millisecond
+	// NeededCleanTTL is exported for testing.
+	NeededCleanTTL = -60
 )
 
 func (s *schemaVersionSyncer) StartCleanWork() {
@@ -440,6 +443,7 @@ func (s *schemaVersionSyncer) StartCleanWork() {
 
 func (s *schemaVersionSyncer) CloseCleanWork() {
 	close(s.quiteCh)
+	logutil.Logger(context.Background()).Info("")
 }
 
 func (s *schemaVersionSyncer) NotifyCleanExpiredPaths() {
@@ -457,9 +461,12 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 	ctx := context.Background()
 	failedGetIDs := 0
 	failedRevokeIDs := 0
+	startTime := time.Now()
 
-	// TODO: Now LeaseStatus only has lease ID
-	// TODO: Add metrics.
+	defer func() {
+		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerCleanExpirePaths, metrics.RetLabel(nil)).Observe(time.Since(startTime).Seconds())
+	}()
+	// TODO: Now LeaseStatus only has lease ID.
 	for _, lease := range leases {
 		// The DDL owner key uses '%x', so here print it too.
 		leaseID := fmt.Sprintf("%x, %d", lease.ID, lease.ID)
@@ -475,13 +482,11 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 		if failedGetIDs > failedGetTTLLimit {
 			return false
 		}
-		if ttlResp.TTL >= neededCleanTTL {
-			// TODO: Remove this log.
-			logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, no need to revoke lease.",
-				zap.String("leaseID", leaseID), zap.Int64("TTL", ttlResp.TTL), zap.Error(err))
+		if ttlResp.TTL >= NeededCleanTTL {
 			continue
 		}
 
+		st := time.Now()
 		childCtx, cancelFunc = context.WithTimeout(context.Background(), opDefaultTimeout)
 		_, err = s.etcdCli.Revoke(childCtx, lease.ID)
 		cancelFunc()
@@ -491,6 +496,7 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 			failedRevokeIDs++
 		}
 		logutil.Logger(ddlLogCtx).Warn("[ddl] syncer clean expired paths,", zap.String("leaseID", leaseID), zap.Int64("TTL", ttlResp.TTL))
+		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerCleanOneExpirePath, metrics.RetLabel(err)).Observe(time.Since(st).Seconds())
 	}
 
 	if failedGetIDs == 0 && failedRevokeIDs == 0 {

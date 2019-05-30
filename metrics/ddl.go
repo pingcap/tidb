@@ -68,7 +68,9 @@ var (
 	OwnerUpdateGlobalVersion    = "update_global_version"
 	OwnerGetGlobalVersion       = "get_global_version"
 	OwnerCheckAllVersions       = "check_all_versions"
-	OwnerNotifyCleanExpirePaths = "clean_expire_paths"
+	OwnerNotifyCleanExpirePaths = "notify_clean_expire_paths"
+	OwnerCleanExpirePaths       = "clean_expire_paths"
+	OwnerCleanOneExpirePath     = "clean_an_expire_path"
 	OwnerHandleSyncerHistogram  = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
