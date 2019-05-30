@@ -34,7 +34,7 @@ import (
 const ResolvedCacheSize = 2048
 
 // BigTxnThreshold : transaction involves keys exceed this threshold can be treated as `big transaction`.
-const BigTxnThreshold = 256
+const BigTxnThreshold = 64
 
 var (
 	tikvLockResolverCountWithBatchResolve             = metrics.TiKVLockResolverCounter.WithLabelValues("batch_resolve")
