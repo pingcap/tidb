@@ -163,32 +163,113 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 	return nil
 }
 
+// For partition tables, mysql do not support Constant, random or timezone-dependent expressions
+// Based on mysql code to check whether field is valid, every time related type has check_valid_arguments_processor function.
+// Mode detail in  https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc
+type isTimezoneDependentProcessor func(columns []*expression.Column) bool
+
+// Mysql code - https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L387
+func hasTimestampField(columns []*expression.Column) bool {
+	for _, c := range columns {
+		if c.GetType().Tp == mysql.TypeTimestamp {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Mysql code - https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L399
+func hasDateField(columns []*expression.Column) bool {
+	for _, c := range columns {
+		if c.GetType().Tp == mysql.TypeDate || c.GetType().Tp == mysql.TypeDatetime {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Mysql code - https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L412
+func hasTimeField(columns []*expression.Column) bool {
+	for _, c := range columns {
+		if c.GetType().Tp == mysql.TypeDatetime {
+			return true
+		}
+	}
+
+	return false
+}
+
+// We assume the result of any function that has a TIMESTAMP argument to be
+// timezone-dependent, since a TIMESTAMP value in both numeric and string
+// contexts is interpreted according to the current timezone.
+// The only exception is UNIX_TIMESTAMP() which returns the internal
+// representation of a TIMESTAMP argument verbatim, and thus does not depend on
+// the timezone.
+func defaultTimezoneDependent(columns []*expression.Column) bool {
+	return !hasTimestampField(columns)
+}
+
+var (
+	funcCallExprMap = map[string]isTimezoneDependentProcessor {
+		ast.Abs: isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.Ceiling: isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.DateDiff: isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.Day: isTimezoneDependentProcessor(hasDateField),
+		ast.DayOfMonth: isTimezoneDependentProcessor(hasDateField),
+		ast.DayOfWeek: isTimezoneDependentProcessor(hasDateField),
+		ast.DayOfYear: isTimezoneDependentProcessor(hasDateField),
+		ast.Extract: isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.Floor: isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.Hour: isTimezoneDependentProcessor(hasTimeField),
+		ast.MicroSecond: isTimezoneDependentProcessor(hasTimeField),
+		ast.Minute: isTimezoneDependentProcessor(hasTimeField),
+		ast.Mod: isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.Month: isTimezoneDependentProcessor(hasDateField),
+		ast.Quarter: isTimezoneDependentProcessor(hasDateField),
+		ast.Second: isTimezoneDependentProcessor(hasTimeField),
+		ast.TimeToSec: isTimezoneDependentProcessor(hasTimeField),
+		ast.ToDays: isTimezoneDependentProcessor(hasDateField),
+		ast.ToSeconds: isTimezoneDependentProcessor(hasDateField),
+		ast.Weekday: isTimezoneDependentProcessor(hasDateField),
+		ast.Year: isTimezoneDependentProcessor(hasDateField),
+		ast.YearWeek: isTimezoneDependentProcessor(hasDateField),
+		ast.UnixTimestamp: isTimezoneDependentProcessor(hasTimestampField),
+	}
+)
+
 // checkPartitionFuncValid checks partition function validly.
 func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
+	buf := new(bytes.Buffer)
+	expr.Format(buf)
+	partCols, err := extractPartitionColumns(ctx, buf.String(), tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(partCols) == 0 {
+		return errors.Trace(errWrongExprInPartitionFunc)
+	}
+
 	switch v := expr.(type) {
 	case *ast.FuncCastExpr, *ast.CaseExpr:
 		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.FuncCallExpr:
 		// check function which allowed in partitioning expressions
 		// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
-		switch v.FnName.L {
-		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Extract, ast.Floor,
-			ast.Hour, ast.MicroSecond, ast.Minute, ast.Mod, ast.Month, ast.Quarter, ast.Second, ast.TimeToSec, ast.ToDays,
-			ast.ToSeconds, ast.Weekday, ast.Year, ast.YearWeek:
-			return nil
-		case ast.UnixTimestamp:
-			if len(v.Args) == 1 {
-				col, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, v.Args[0])
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if col.GetType().Tp != mysql.TypeTimestamp {
-					return errors.Trace(errWrongExprInPartitionFunc)
-				}
-				return nil
+		if f, ok := funcCallExprMap[v.FnName.L]; ok {
+			// Mysql don't allow creating partitions with expressions with non matching
+			// arguments as a (sub)partitioning function,
+			// but we want to allow such expressions when opening existing tables for
+			// easier maintenance. This exception should be deprecated at some point in future so that we always throw an error.
+			// More detail in https://github.com/mysql/mysql-server/blob/5.7/sql/sql_partition.cc#L1072
+			if !f(partCols) {
+				return errors.Trace(errWrongExprInPartitionFunc)
 			}
+		}else {
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
-		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.BinaryOperationExpr:
 		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
 		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
