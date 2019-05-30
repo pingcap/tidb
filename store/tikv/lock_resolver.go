@@ -46,6 +46,7 @@ var (
 	tikvLockResolverCountWithQueryTxnStatusCommitted  = metrics.TiKVLockResolverCounter.WithLabelValues("query_txn_status_committed")
 	tikvLockResolverCountWithQueryTxnStatusRolledBack = metrics.TiKVLockResolverCounter.WithLabelValues("query_txn_status_rolled_back")
 	tikvLockResolverCountWithResolveLocks             = metrics.TiKVLockResolverCounter.WithLabelValues("query_resolve_locks")
+	tikvLockResolverCountWithResolveLockLite          = metrics.TiKVLockResolverCounter.WithLabelValues("query_resolve_lock_lite")
 )
 
 // LockResolver resolves locks and also caches resolved txn status.
@@ -415,6 +416,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		if l.TxnSize < BigTxnThreshold {
 			// Only resolve specified keys when it is a small transaction,
 			// prevent from scanning the whole region in this case.
+			tikvLockResolverCountWithResolveLockLite.Inc()
 			cleanWholeRegion = false
 			req.ResolveLock.Keys = [][]byte{l.Key}
 		}
