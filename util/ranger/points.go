@@ -251,7 +251,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	}
 
 	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
-	if isValidRange == false {
+	if !isValidRange {
 		return nil
 	}
 
@@ -360,11 +360,10 @@ func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (type
 	if op == ast.GT || op == ast.GE || op == ast.NE {
 		op = ast.GE
 		val.SetUint64(0)
-	} else {
-		return val, op, false
+		return val, op, true
 	}
 
-	return val, op, true
+	return val, op, false
 }
 
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {
