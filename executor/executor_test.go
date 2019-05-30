@@ -294,9 +294,20 @@ func (s *testSuite) TestAdmin(c *C) {
 	m := meta.NewMeta(txn)
 	startKey := meta.DDLJobHistoryKey(m, 0)
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
-	s.cluster.SplitKeys(s.mvccStore, startKey, endKey, int(historyJobs[0].ID/2))
+	s.cluster.SplitKeys(s.mvccStore, startKey, endKey, int(historyJobs[0].ID/5))
+	id := make([]int64, 0, len(historyJobs))
+	for _, job := range historyJobs {
+		id = append(id, job.ID)
+
+	}
 
 	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
+	id2 := make([]int64, 0, len(historyJobs))
+	for _, job := range historyJobs2 {
+		id2 = append(id2, job.ID)
+	}
+	fmt.Printf("id-----------------------\n\n%v\n%v\n\n\n", id, id2)
+	c.Assert(id, DeepEquals, id2)
 	c.Assert(err, IsNil)
 	c.Assert(historyJobs, DeepEquals, historyJobs2)
 }

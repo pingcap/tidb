@@ -37,7 +37,7 @@ var (
 )
 
 const (
-	scanBatchSize = 256
+	scanBatchSize = 1
 	batchGetSize  = 5120
 )
 
