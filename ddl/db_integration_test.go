@@ -92,10 +92,8 @@ func tearDownIntegrationSuiteTest(s *testIntegrationSuite, c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
-	tbls := make([]string, 0, len(r.Rows()))
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
-		tbls = append(tbls, fmt.Sprintf("%v", tableName))
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
 }
