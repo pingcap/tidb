@@ -564,6 +564,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			return 0, errors.Trace(err)
 		}
 		val := types.NewBytesDatum(bytes)
+		logutil.Logger(context.Background()).Info("index row count", zap.String("index info", idx.Info.Name.O), zap.String("lowval", fmt.Sprintf("%s", ran)), zap.Int("range pos", rangePosition), zap.Bool("out of range", idx.outOfRange(val)))
 		if idx.outOfRange(val) {
 			// When the value is out of range, we could not found this value in the CM Sketch,
 			// so we use heuristic methods to estimate the selectivity.
@@ -577,6 +578,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		} else {
 			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.totalRowCount())
 		}
+		logutil.Logger(context.Background()).Info("select", zap.Uint32("cm sketch row", idx.CMSketch.QueryBytes(bytes)), zap.Float64("total row count", idx.totalRowCount()))
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {
 			rang := ranger.Range{

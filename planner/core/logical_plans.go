@@ -493,7 +493,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters, ds.stats.StatsVersion)
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("calculate selectivity faild, use selection factor", zap.Error(err))
 			selectivity = selectionFactor

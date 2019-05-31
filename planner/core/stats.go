@@ -91,7 +91,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.Stat
 		profile.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}
 	ds.stats = profile
-	selectivity, err := profile.HistColl.Selectivity(ds.ctx, conds)
+	selectivity, err := profile.HistColl.Selectivity(ds.ctx, conds, profile.StatsVersion)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("an error happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor

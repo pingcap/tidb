@@ -14,6 +14,10 @@
 package statistics
 
 import (
+	"context"
+	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -144,7 +148,11 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // Currently the time complexity is o(n^2).
-func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Expression) (float64, error) {
+func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Expression, version uint64) (res float64, err error) {
+	defer func() {
+		logutil.Logger(context.Background()).Info("selectivity result", zap.Uint64("version", version), zap.String("exprs", fmt.Sprintf("%s", exprs)), zap.Int64("total count", coll.Count),
+			zap.Float64("result", res*float64(coll.Count)), zap.Error(err))
+	}()
 	// If table's count is zero or conditions are empty, we should return 100% selectivity.
 	if coll.Count == 0 || len(exprs) == 0 {
 		return 1, nil
@@ -221,6 +229,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		logutil.Logger(context.Background()).Info("greedy set", zap.Int("type", set.tp), zap.Float64("row count", rowCount), zap.String("ranges", fmt.Sprintf("%s", set.ranges)))
 		ret *= rowCount / float64(coll.Count)
 		// If `partCover` is true, it means that the conditions are in DNF form, and only part
 		// of the DNF expressions are extracted as access conditions, so besides from the selectivity
@@ -232,6 +241,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	}
 	// If there's still conditions which cannot be calculated, we will multiply a selectionFactor.
 	if mask > 0 {
+		fmt.Printf("remaining conditions")
 		ret *= selectionFactor
 	}
 	return ret, nil

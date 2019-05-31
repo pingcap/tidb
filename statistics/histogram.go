@@ -16,6 +16,8 @@ package statistics
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"strings"
 	"time"
@@ -756,6 +758,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 // getColumnRowCount estimates the row count by a slice of Range.
 func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64) (float64, error) {
 	var rowCount float64
+	logutil.Logger(context.Background()).Info("column row", zap.String("col name", c.Info.Name.O), zap.String("%s", fmt.Sprintf("%s", ranges)), zap.Bool("has cm sketch", c.CMSketch != nil))
 	for _, rg := range ranges {
 		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
 		if err != nil {
