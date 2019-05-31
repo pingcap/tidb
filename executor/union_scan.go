@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"sort"
 	"time"
@@ -348,17 +349,27 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 	}
 
 	outputOffset := make([]int, 0, len(us.columns))
+	fmt.Printf("\n-----------\nus.columns:\n")
+	for _, col := range us.columns {
+		fmt.Printf("\t%v", col.Name.L)
+	}
+	fmt.Printf("\n\n\n")
+
+	fmt.Printf("\n-----------\nindex.output column:\n")
+	for _, col := range e.outputColumns {
+		fmt.Printf("\t%v(%v)", col.ColName.L, col.Index)
+	}
+	fmt.Printf("\n\n\n")
+
 	for _, col := range e.outputColumns {
 		outputOffset = append(outputOffset, col.Index)
 	}
 
-	//chk := chunk.NewChunkWithCapacity(tps, e.maxChunkSize)
-	//decoder := codec.NewDecoder(chk, time.UTC)
 	prefix := tablecodec.EncodeTableIndexPrefix(e.physicalTableID, e.index.ID)
 
-	//idLen := 8
-	//prefixLen := 1 + idLen /*tableID*/ + 2
 	rowindex := 0
+	var handleDatum types.Datum
+	var handleByte = make([]byte, 0, 16)
 	for _, rg := range kvRanges {
 		// todo: consider desc scan.
 		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
@@ -367,19 +378,35 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 		}
 		for iter.Valid() {
 			key := iter.Key()
+			// remove this?
 			if !bytes.Contains(key, prefix) {
 				continue
 			}
 
+			row := make([]types.Datum, len(tps))
+			// this is from indexScanExec decodeIndexKV method.
 			values, b, err := tablecodec.CutIndexKeyNew(key, colsLen)
 			if len(b) > 0 {
 				values = append(values, b)
 			} else if len(iter.Value()) >= 8 {
-				values = append(values, iter.Value())
+				handle, err := decodeHandle(iter.Value())
+				fmt.Printf("decode handle: %v\n------------\n\n", handle)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
+					handleDatum = types.NewUintDatum(uint64(handle))
+				} else {
+					handleDatum = types.NewIntDatum(handle)
+				}
+				handleBytes, err := codec.EncodeValue(us.ctx.GetSessionVars().StmtCtx, handleByte[:0], handleDatum)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				values = append(values, handleBytes)
 			}
 
 			str := ""
-			row := make([]types.Datum, len(values))
 			for i, offset := range outputOffset {
 				row[offset], err = tablecodec.DecodeColumnValue(values[offset], tps[offset], e.ctx.GetSessionVars().TimeZone)
 				if err != nil {
@@ -394,48 +421,8 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 				}
 				str += s
 			}
-
-			//key = key[prefixLen+idLen:]
-			//for i := range tps {
-			//	key, err = decoder.DecodeOne(key, i, tps[i])
-			//	if err != nil {
-			//		return err
-			//	}
-			//	if len(key) == 0 {
-			//		break
-			//	}
-			//}
-			//if len(iter.Value()) >= 8 {
-			//	h, err := decodeHandle(iter.Value())
-			//	if err != nil {
-			//		return err
-			//	}
-			//	chk.AppendInt64(len(tps)-1, h)
-			//}
-
-			//str := ""
-			//for i, tp := range tps {
-			//	v := chk.GetRow(rowindex).GetDatum(i, tp)
-			//	s, err := v.ToString()
-			//	if err != nil {
-			//		return err
-			//	}
-			//	if i > 0 {
-			//		str += ", "
-			//	}
-			//	str += s
-			//}
 			rowindex++
 			fmt.Printf("\ndecode index values: %v\n\n", str)
-
-			//fmt.Printf("\n\nkey: %v, value: %v\n\n------------------\n", key, value)
-
-			//ds, err := codec.Decode(key, len(e.index.Columns)+1)
-			//if err != nil {
-			//	return err
-			//}
-			//fmt.Printf("\n\nds %#v\n\n------------------\n", ds)
-
 			err = iter.Next()
 			if err != nil {
 				return err
