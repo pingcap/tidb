@@ -328,6 +328,10 @@ type batchCommandsEntry struct {
 	err      error
 }
 
+func (b *batchCommandsEntry) isCanceled() bool {
+	return atomic.LoadInt32(&b.canceled) == 1
+}
+
 // fetchAllPendingRequests fetches all pending requests from the channel.
 func fetchAllPendingRequests(
 	ch chan *batchCommandsEntry,
@@ -454,6 +458,10 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			bestBatchWaitSize += 1
 		}
 
+		length = removeCanceledRequests(&entries, &requests)
+		if length == 0 {
+			continue // All requests are canceled.
+		}
 		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
 		for i := 0; i < length; i++ {
 			requestID := uint64(i) + maxBatchID - uint64(length)
@@ -482,6 +490,23 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			batchCommandsClient.failPendingRequests(err)
 		}
 	}
+}
+
+// removeCanceledRequests removes canceled requests before sending.
+func removeCanceledRequests(
+	entries *[]*batchCommandsEntry,
+	requests *[]*tikvpb.BatchCommandsRequest_Request) int {
+	validEntries := (*entries)[:0]
+	validRequets := (*requests)[:0]
+	for _, e := range *entries {
+		if !e.isCanceled() {
+			validEntries = append(validEntries, e)
+			validRequets = append(validRequets, e.req)
+		}
+	}
+	*entries = validEntries
+	*requests = validRequets
+	return len(*entries)
 }
 
 // rpcClient is RPC client struct.
