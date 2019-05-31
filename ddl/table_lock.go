@@ -51,8 +51,6 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 				return ver, errors.Trace(err)
 			}
 		}
-		// Set job.schemaState to StateDeleteOnly just want to indicate this job was in running.
-		job.SchemaState = model.StateDeleteOnly
 	}
 
 	// Lock tables.
@@ -185,7 +183,6 @@ func unlockTables(t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, 
 	}
 	arg.IndexOfUnlock++
 	job.Args = []interface{}{arg}
-	job.SchemaState = model.StateDeleteOnly
 	return ver, nil
 }
 
