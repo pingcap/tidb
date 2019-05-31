@@ -214,7 +214,7 @@ func (s *testLogSuite) TestZapLoggerWithKeys(c *C) {
 	os.Remove(fileCfg.Filename)
 }
 
-func (s *testLogSuite) testZapLogger(c *C, ctx context.Context, fileName, pattern string) {
+func (s *testLogSuite) testZapLogger(ctx context.Context, c *C, fileName, pattern string) {
 	Logger(ctx).Debug("debug msg", zap.String("test with key", "true"))
 	Logger(ctx).Info("info msg", zap.String("test with key", "true"))
 	Logger(ctx).Warn("warn msg", zap.String("test with key", "true"))
