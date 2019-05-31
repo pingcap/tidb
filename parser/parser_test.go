@@ -261,6 +261,38 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(vExpr.Kind(), Equals, types.KindUint64)
 }
 
+func (s *testParserSuite) TestSpecialComments(c *C) {
+	parser := parser.New()
+
+	// 1. Make sure /*! ... */ respects the same SQL mode.
+	_, err := parser.ParseOneStmt(`SELECT /*! '\' */;`, "", "")
+	c.Assert(err, NotNil)
+
+	parser.SetSQLMode(mysql.ModeNoBackslashEscapes)
+	st, err := parser.ParseOneStmt(`SELECT /*! '\' */;`, "", "")
+	c.Assert(err, IsNil)
+	c.Assert(st, FitsTypeOf, &ast.SelectStmt{})
+
+	// 2. Make sure multiple statements inside /*! ... */ will not crash
+	// (this is issue #330)
+	stmts, _, err := parser.Parse("/*! SET x = 1; SELECT 2 */", "", "")
+	c.Assert(err, IsNil)
+	c.Assert(stmts, HasLen, 2)
+	c.Assert(stmts[0], FitsTypeOf, &ast.SetStmt{})
+	c.Assert(stmts[0].Text(), Equals, "SET x = 1;")
+	c.Assert(stmts[1], FitsTypeOf, &ast.SelectStmt{})
+	c.Assert(stmts[1].Text(), Equals, "/*! SET x = 1; SELECT 2 */")
+	// ^ not sure if correct approach; having multiple statements in MySQL is a syntax error.
+
+	// 3. Make sure invalid text won't cause infinite loop
+	// (this is issue #336)
+	st, err = parser.ParseOneStmt("SELECT /*+ 😅 */ SLEEP(1);", "", "")
+	c.Assert(err, IsNil)
+	sel, ok := st.(*ast.SelectStmt)
+	c.Assert(ok, IsTrue)
+	c.Assert(sel.TableHints, HasLen, 0)
+}
+
 type testCase struct {
 	src     string
 	ok      bool
