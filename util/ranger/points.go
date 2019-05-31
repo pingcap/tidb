@@ -17,12 +17,15 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -208,11 +211,19 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		op    string
 		value types.Datum
 		err   error
+		ft    *types.FieldType
 	)
-	if _, ok := expr.GetArgs()[0].(*expression.Column); ok {
+	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
 		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
 		op = expr.FuncName.L
+		ft = col.RetType
 	} else {
+		col, ok := expr.GetArgs()[1].(*expression.Column)
+		if !ok {
+			return nil
+		}
+		ft = col.RetType
+
 		value, err = expr.GetArgs()[0].Eval(chunk.Row{})
 		switch expr.FuncName.L {
 		case ast.GE:
@@ -231,6 +242,16 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 	if value.IsNull() {
+		return nil
+	}
+
+	value, err = HandlePadCharToFullLength(r.sc, ft, value)
+	if err != nil {
+		return nil
+	}
+
+	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
+	if !isValidRange {
 		return nil
 	}
 
@@ -263,6 +284,87 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return []point{startPoint, endPoint}
 	}
 	return nil
+}
+
+// HandlePadCharToFullLength handles the "PAD_CHAR_TO_FULL_LENGTH" sql mode for
+// CHAR[N] index columns.
+// NOTE: kv.ErrNotExist is returned to indicate that this value can not match
+//		 any (key, value) pair in tikv storage. This error should be handled by
+//		 the caller.
+func HandlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum) (types.Datum, error) {
+	isChar := (ft.Tp == mysql.TypeString)
+	isBinary := (isChar && ft.Collate == charset.CollationBin)
+	isVarchar := (ft.Tp == mysql.TypeVarString || ft.Tp == mysql.TypeVarchar)
+	isVarBinary := (isVarchar && ft.Collate == charset.CollationBin)
+
+	if !isChar && !isVarchar && !isBinary && !isVarBinary {
+		return val, nil
+	}
+
+	hasBinaryFlag := mysql.HasBinaryFlag(ft.Flag)
+	targetStr, err := val.ToString()
+	if err != nil {
+		return val, err
+	}
+
+	switch {
+	case isBinary || isVarBinary:
+		val.SetString(targetStr)
+		return val, nil
+	case isVarchar && hasBinaryFlag:
+		noTrailingSpace := strings.TrimRight(targetStr, " ")
+		if numSpacesToFill := ft.Flen - len(noTrailingSpace); numSpacesToFill > 0 {
+			noTrailingSpace += strings.Repeat(" ", numSpacesToFill)
+		}
+		val.SetString(noTrailingSpace)
+		return val, nil
+	case isVarchar && !hasBinaryFlag:
+		val.SetString(targetStr)
+		return val, nil
+	case isChar && hasBinaryFlag:
+		noTrailingSpace := strings.TrimRight(targetStr, " ")
+		val.SetString(noTrailingSpace)
+		return val, nil
+	case isChar && !hasBinaryFlag && !sc.PadCharToFullLength:
+		val.SetString(targetStr)
+		return val, nil
+	case isChar && !hasBinaryFlag && sc.PadCharToFullLength:
+		if len(targetStr) != ft.Flen {
+			// return kv.ErrNotExist to indicate that this value can not match any
+			// (key, value) pair in tikv storage.
+			return val, kv.ErrNotExist
+		}
+		// Trailing spaces of data typed "CHAR[N]" is trimed in the storage, we
+		// need to trim these trailing spaces as well.
+		noTrailingSpace := strings.TrimRight(targetStr, " ")
+		val.SetString(noTrailingSpace)
+		return val, nil
+	default:
+		return val, nil
+	}
+}
+
+// handleUnsignedIntCol handles the case when unsigned column meets negative integer value.
+// The three returned values are: fixed constant value, fixed operator, and a boolean
+// which indicates whether the range is valid or not.
+func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+	isIntegerType := mysql.IsIntegerType(ft.Tp)
+	isNegativeInteger := (val.Kind() == types.KindInt64 && val.GetInt64() < 0)
+
+	if !isUnsigned || !isIntegerType || !isNegativeInteger {
+		return val, op, true
+	}
+
+	// If the operator is GT, GE or NE, the range should be [0, +inf].
+	// Otherwise the value is out of valid range.
+	if op == ast.GT || op == ast.GE || op == ast.NE {
+		op = ast.GE
+		val.SetUint64(0)
+		return val, op, true
+	}
+
+	return val, op, false
 }
 
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {

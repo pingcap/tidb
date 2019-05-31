@@ -376,19 +376,21 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	path.tableFilters = ds.pushedDownConds
 	var pkCol *expression.Column
 	columnLen := len(ds.schema.Columns)
-	if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
-		pkCol = ds.schema.Columns[columnLen-1]
-	} else if ds.tableInfo.PKIsHandle {
+	isUnsigned := false
+	if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
+	} else if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
+		pkCol = ds.schema.Columns[columnLen-1]
 	}
 	if pkCol == nil {
-		path.ranges = ranger.FullIntRange(false)
+		path.ranges = ranger.FullIntRange(isUnsigned)
 		return false, nil
 	}
 
-	path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
+	path.ranges = ranger.FullIntRange(isUnsigned)
 	if len(ds.pushedDownConds) == 0 {
 		return false, nil
 	}
@@ -684,15 +686,15 @@ type FrameBound struct {
 type LogicalWindow struct {
 	logicalSchemaProducer
 
-	WindowFuncDesc *aggregation.WindowFuncDesc
-	PartitionBy    []property.Item
-	OrderBy        []property.Item
-	Frame          *WindowFrame
+	WindowFuncDescs []*aggregation.WindowFuncDesc
+	PartitionBy     []property.Item
+	OrderBy         []property.Item
+	Frame           *WindowFrame
 }
 
-// GetWindowResultColumn returns the column storing the result of the window function.
-func (p *LogicalWindow) GetWindowResultColumn() *expression.Column {
-	return p.schema.Columns[p.schema.Len()-1]
+// GetWindowResultColumns returns the columns storing the result of the window function.
+func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
+	return p.schema.Columns[p.schema.Len()-len(p.WindowFuncDescs):]
 }
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
