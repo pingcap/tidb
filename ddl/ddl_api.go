@@ -1400,10 +1400,10 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 
 func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
 	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
-		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption, Cols: s.SelectSchema}
-	var tableColumns = make([]*table.Column, len(s.SelectSchema))
+		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption, Cols: s.SchemaCols}
+	var tableColumns = make([]*table.Column, len(s.SchemaCols))
 	if s.Cols == nil {
-		for i, v := range s.SelectSchema {
+		for i, v := range s.SchemaCols {
 			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
 				Name:    v,
 				ID:      int64(i),

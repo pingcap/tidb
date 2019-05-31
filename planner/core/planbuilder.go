@@ -1750,9 +1750,9 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		if v.Cols != nil && len(v.Cols) != schema.Len() {
 			return nil, ddl.ErrViewWrongList
 		}
-		v.SelectSchema = make([]model.CIStr, schema.Len())
+		v.SchemaCols = make([]model.CIStr, schema.Len())
 		for i, col := range schema.Columns {
-			v.SelectSchema[i] = col.ColName
+			v.SchemaCols[i] = col.ColName
 		}
 		if _, ok := plan.(LogicalPlan); ok {
 			if b.ctx.GetSessionVars().User != nil {
