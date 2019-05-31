@@ -85,11 +85,10 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer) (SelectResult, error) {
 	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)
-	if err != nil {
-		return sr, err
-	}
-	if selectResult, ok := sr.(*selectResult); ok {
-		selectResult.copPlanIDs = copPlanIDs
+	if err == nil {
+		if selectResult, ok := sr.(*selectResult); ok {
+			selectResult.copPlanIDs = copPlanIDs
+		}
 	}
 	return sr, err
 }
