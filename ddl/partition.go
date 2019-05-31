@@ -213,29 +213,29 @@ func defaultTimezoneDependent(columns []*expression.Column) bool {
 }
 
 var (
-	funcCallExprMap = map[string]isTimezoneDependentProcessor {
-		ast.Abs: isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.Ceiling: isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.DateDiff: isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.Day: isTimezoneDependentProcessor(hasDateField),
-		ast.DayOfMonth: isTimezoneDependentProcessor(hasDateField),
-		ast.DayOfWeek: isTimezoneDependentProcessor(hasDateField),
-		ast.DayOfYear: isTimezoneDependentProcessor(hasDateField),
-		ast.Extract: isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.Floor: isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.Hour: isTimezoneDependentProcessor(hasTimeField),
-		ast.MicroSecond: isTimezoneDependentProcessor(hasTimeField),
-		ast.Minute: isTimezoneDependentProcessor(hasTimeField),
-		ast.Mod: isTimezoneDependentProcessor(defaultTimezoneDependent),
-		ast.Month: isTimezoneDependentProcessor(hasDateField),
-		ast.Quarter: isTimezoneDependentProcessor(hasDateField),
-		ast.Second: isTimezoneDependentProcessor(hasTimeField),
-		ast.TimeToSec: isTimezoneDependentProcessor(hasTimeField),
-		ast.ToDays: isTimezoneDependentProcessor(hasDateField),
-		ast.ToSeconds: isTimezoneDependentProcessor(hasDateField),
-		ast.Weekday: isTimezoneDependentProcessor(hasDateField),
-		ast.Year: isTimezoneDependentProcessor(hasDateField),
-		ast.YearWeek: isTimezoneDependentProcessor(hasDateField),
+	funcCallExprMap = map[string]isTimezoneDependentProcessor{
+		ast.Abs:           isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.Ceiling:       isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.DateDiff:      isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.Day:           isTimezoneDependentProcessor(hasDateField),
+		ast.DayOfMonth:    isTimezoneDependentProcessor(hasDateField),
+		ast.DayOfWeek:     isTimezoneDependentProcessor(hasDateField),
+		ast.DayOfYear:     isTimezoneDependentProcessor(hasDateField),
+		ast.Extract:       isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.Floor:         isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.Hour:          isTimezoneDependentProcessor(hasTimeField),
+		ast.MicroSecond:   isTimezoneDependentProcessor(hasTimeField),
+		ast.Minute:        isTimezoneDependentProcessor(hasTimeField),
+		ast.Mod:           isTimezoneDependentProcessor(defaultTimezoneDependent),
+		ast.Month:         isTimezoneDependentProcessor(hasDateField),
+		ast.Quarter:       isTimezoneDependentProcessor(hasDateField),
+		ast.Second:        isTimezoneDependentProcessor(hasTimeField),
+		ast.TimeToSec:     isTimezoneDependentProcessor(hasTimeField),
+		ast.ToDays:        isTimezoneDependentProcessor(hasDateField),
+		ast.ToSeconds:     isTimezoneDependentProcessor(hasDateField),
+		ast.Weekday:       isTimezoneDependentProcessor(hasDateField),
+		ast.Year:          isTimezoneDependentProcessor(hasDateField),
+		ast.YearWeek:      isTimezoneDependentProcessor(hasDateField),
 		ast.UnixTimestamp: isTimezoneDependentProcessor(hasTimestampField),
 	}
 )
@@ -268,7 +268,7 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 			if !f(partCols) {
 				return errors.Trace(errWrongExprInPartitionFunc)
 			}
-		}else {
+		} else {
 			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
 	case *ast.BinaryOperationExpr:
