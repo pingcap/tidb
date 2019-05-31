@@ -708,3 +708,13 @@ func (s *testSuite) TestIssue10098(c *C) {
 	tk.MustExec("insert into t values('1', '222'), ('12', '22')")
 	tk.MustQuery("select group_concat(distinct a, b) from t").Check(testkit.Rows("1222,1222"))
 }
+
+func (s *testSuite) TestIssue10608(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t, s;`)
+	tk.MustExec("CREATE TABLE t (id int(11) NOT NULL,PRIMARY KEY (id)) ;")
+	tk.MustExec("CREATE TABLE s (id int(11) NOT NULL,b int(11) NOT NULL,PRIMARY KEY (id)) ")
+	tk.MustExec("INSERT INTO t VALUES (508931),(508932);	")
+	tk.MustExec("INSERT INTO s VALUES (100292, 508931),(120002, 508932);")
+	tk.MustQuery("select (select group_concat(concat(123,'-')) from t where t.id = b group by t.id)  from s;").Check(testkit.Rows("123-", "123-"))
+}
