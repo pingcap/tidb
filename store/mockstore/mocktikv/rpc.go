@@ -245,14 +245,32 @@ func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 }
 
 func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanResponse {
-	if !h.checkKeyInRegion(req.GetStartKey()) {
-		panic("KvScan: startKey not in region")
-	}
 	endKey := MvccKey(h.endKey).Raw()
-	if len(req.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.EndKey), h.endKey) < 0) {
-		endKey = req.EndKey
+	var pairs []Pair
+	if !req.Reverse {
+		if !h.checkKeyInRegion(req.GetStartKey()) {
+			panic("KvScan: startKey not in region")
+		}
+		if len(req.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.EndKey), h.endKey) < 0) {
+			endKey = req.EndKey
+		}
+		pairs = h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+	} else {
+		// TiKV use range [end_key, start_key) for reverse scan.
+		// Should use the req.EndKey to check in region.
+		if !h.checkKeyInRegion(req.GetEndKey()) {
+			panic("KvScan: startKey not in region")
+		}
+
+		// TiKV use range [end_key, start_key) for reverse scan.
+		// So the req.StartKey actually is the end_key.
+		if len(req.StartKey) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.StartKey), h.endKey) < 0) {
+			endKey = req.StartKey
+		}
+
+		pairs = h.mvccStore.ReverseScan(req.EndKey, endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
 	}
-	pairs := h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+
 	return &kvrpcpb.ScanResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
