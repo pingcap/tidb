@@ -38,13 +38,14 @@ const (
 )
 
 var (
-	tikvRegionCacheCounterWithDropRegionFromCacheOK = metrics.TiKVRegionCacheCounter.WithLabelValues("drop_region_from_cache", "ok")
-	tikvRegionCacheCounterWithGetRegionByIDOK       = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region_by_id", "ok")
-	tikvRegionCacheCounterWithGetRegionByIDError    = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region_by_id", "err")
-	tikvRegionCacheCounterWithGetRegionOK           = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", "ok")
-	tikvRegionCacheCounterWithGetRegionError        = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", "err")
-	tikvRegionCacheCounterWithGetStoreOK            = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "ok")
-	tikvRegionCacheCounterWithGetStoreError         = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "err")
+	tikvRegionCacheCounterWithInvalidateRegionFromCacheOK = metrics.TiKVRegionCacheCounter.WithLabelValues("invalidate_region_from_cache", "ok")
+	tikvRegionCacheCounterWithSendFail                    = metrics.TiKVRegionCacheCounter.WithLabelValues("send_fail", "ok")
+	tikvRegionCacheCounterWithGetRegionByIDOK             = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region_by_id", "ok")
+	tikvRegionCacheCounterWithGetRegionByIDError          = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region_by_id", "err")
+	tikvRegionCacheCounterWithGetRegionOK                 = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", "ok")
+	tikvRegionCacheCounterWithGetRegionError              = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", "err")
+	tikvRegionCacheCounterWithGetStoreOK                  = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "ok")
+	tikvRegionCacheCounterWithGetStoreError               = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "err")
 )
 
 const (
@@ -121,6 +122,7 @@ func (r *Region) checkRegionCacheTTL(ts int64) bool {
 
 // invalidate invalidates a region, next time it will got null result.
 func (r *Region) invalidate() {
+	tikvRegionCacheCounterWithInvalidateRegionFromCacheOK.Inc()
 	atomic.StoreInt64(&r.lastAccess, invalidatedLastAccessTime)
 }
 
@@ -359,13 +361,18 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 }
 
 // OnSendFail handles send request fail logic.
-func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool) {
+func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
+	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
 		c.switchNextPeer(r, ctx.PeerIdx)
 		if scheduleReload {
 			r.scheduleReload()
 		}
+		logutil.Logger(bo.ctx).Info("switch region peer to next due to send request fail",
+			zap.Stringer("current", ctx),
+			zap.Bool("needReload", scheduleReload),
+			zap.Error(err))
 	}
 }
 
@@ -457,7 +464,6 @@ func (c *RegionCache) InvalidateCachedRegion(id RegionVerID) {
 	if cachedRegion == nil {
 		return
 	}
-	tikvRegionCacheCounterWithDropRegionFromCacheOK.Inc()
 	cachedRegion.invalidate()
 }
 
@@ -473,14 +479,23 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 
 	if leaderStoreID == 0 {
 		c.switchNextPeer(r, currentPeerIdx)
+		logutil.Logger(context.Background()).Info("switch region peer to next due to NotLeader with NULL leader",
+			zap.Int("currIdx", currentPeerIdx),
+			zap.Uint64("regionID", regionID.GetID()))
 		return
 	}
 
 	if !c.switchToPeer(r, leaderStoreID) {
-		logutil.Logger(context.Background()).Debug("regionCache: cannot find peer when updating leader",
+		logutil.Logger(context.Background()).Info("invalidate region cache due to cannot find peer when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
+			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		r.invalidate()
+	} else {
+		logutil.Logger(context.Background()).Info("switch region leader to specific leader due to kv return NotLeader",
+			zap.Uint64("regionID", regionID.GetID()),
+			zap.Int("currIdx", currentPeerIdx),
+			zap.Uint64("leaderStoreID", leaderStoreID))
 	}
 }
 
@@ -712,7 +727,6 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 	if needInvalidateOld {
 		cachedRegion, ok := c.mu.regions[ctx.Region]
 		if ok {
-			tikvRegionCacheCounterWithDropRegionFromCacheOK.Inc()
 			cachedRegion.invalidate()
 		}
 	}
