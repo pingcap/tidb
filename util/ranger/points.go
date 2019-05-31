@@ -250,6 +250,11 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
+	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
+	if !isValidRange {
+		return nil
+	}
+
 	switch op {
 	case ast.EQ:
 		startPoint := point{value: value, start: true}
@@ -337,6 +342,29 @@ func HandlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType
 	default:
 		return val, nil
 	}
+}
+
+// handleUnsignedIntCol handles the case when unsigned column meets negative integer value.
+// The three returned values are: fixed constant value, fixed operator, and a boolean
+// which indicates whether the range is valid or not.
+func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+	isIntegerType := mysql.IsIntegerType(ft.Tp)
+	isNegativeInteger := (val.Kind() == types.KindInt64 && val.GetInt64() < 0)
+
+	if !isUnsigned || !isIntegerType || !isNegativeInteger {
+		return val, op, true
+	}
+
+	// If the operator is GT, GE or NE, the range should be [0, +inf].
+	// Otherwise the value is out of valid range.
+	if op == ast.GT || op == ast.GE || op == ast.NE {
+		op = ast.GE
+		val.SetUint64(0)
+		return val, op, true
+	}
+
+	return val, op, false
 }
 
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {
