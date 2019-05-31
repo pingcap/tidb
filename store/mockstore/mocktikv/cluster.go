@@ -341,7 +341,7 @@ func (c *Cluster) SplitIndex(mvccStore MVCCStore, tableID, indexID int64, count 
 	c.splitRange(mvccStore, NewMvccKey(indexStart), NewMvccKey(indexEnd), count)
 }
 
-// SplitKeys evenly splits the start, end key into count regions.
+// SplitKeys evenly splits the start, end key into "count" regions.
 // Only works for single store.
 func (c *Cluster) SplitKeys(mvccStore MVCCStore, start, end kv.Key, count int) {
 	c.splitRange(mvccStore, NewMvccKey(start), NewMvccKey(end), count)
