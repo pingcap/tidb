@@ -202,7 +202,7 @@ func (s *testLogSuite) TestZapLoggerWithKeys(c *C) {
 	c.Assert(err, IsNil)
 	connID := uint32(123)
 	ctx := WithConnID(context.Background(), connID)
-	s.testZapLogger(c, ctx, fileCfg.Filename, zapLogWithConnIDPattern)
+	s.testZapLogger(ctx, c, fileCfg.Filename, zapLogWithConnIDPattern)
 	os.Remove(fileCfg.Filename)
 
 	err = InitZapLogger(conf)
@@ -210,7 +210,7 @@ func (s *testLogSuite) TestZapLoggerWithKeys(c *C) {
 	key := "ctxKey"
 	val := "ctxValue"
 	ctx1 := WithKeyValue(context.Background(), key, val)
-	s.testZapLogger(c, ctx1, fileCfg.Filename, zapLogWithKeyValPattern)
+	s.testZapLogger(ctx1, c, fileCfg.Filename, zapLogWithKeyValPattern)
 	os.Remove(fileCfg.Filename)
 }
 
