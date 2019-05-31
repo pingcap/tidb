@@ -84,7 +84,7 @@ type testDBSuite struct {
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
-	s.lease = 10 * time.Millisecond
+	s.lease = 100 * time.Millisecond
 	session.SetSchemaLease(s.lease)
 	session.SetStatsLease(0)
 	s.schemaName = "test_db"

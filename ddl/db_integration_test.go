@@ -70,7 +70,7 @@ type testIntegrationSuite struct {
 
 func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	var err error
-	s.lease = 10 * time.Millisecond
+	s.lease = 50 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 0
 
 	s.cluster = mocktikv.NewCluster()
