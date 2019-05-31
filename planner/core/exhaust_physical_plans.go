@@ -593,15 +593,18 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		tableFilters:     tblConds,
 		countAfterAccess: rowCount,
 	}
+	// Assume equal conditions used by index join and other conditions are independent.
 	if len(indexConds) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds)
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("calculate selectivity faild, use selection factor", zap.Error(err))
+			logutil.Logger(context.Background()).Warn("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = rowCount * selectivity
 	}
-	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
+	selectivity := ds.stats.RowCount / ds.tableStats.RowCount
+	finalStats := ds.stats.ScaleByExpectCnt(selectivity * rowCount)
+	is.addPushedDownSelection(cop, ds, path, finalStats)
 	t := finishCopTask(ds.ctx, cop)
 	reader := t.plan()
 	return p.constructInnerUnionScan(us, reader)
