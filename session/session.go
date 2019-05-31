@@ -187,6 +187,7 @@ type session struct {
 	ddlOwnerChecker owner.DDLOwnerChecker
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables struct {
+		// TODO: use double-checked locking to optimize performance.
 		sync.Mutex
 		holdLocks map[int64]model.TableLockTpInfo
 	}
