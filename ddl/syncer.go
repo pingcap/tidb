@@ -365,7 +365,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 			return err
 		}
 
-		resp, err := s.etcdCli.Get(ctx, DDLAllSchemaVersions)
+		resp, err := s.etcdCli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		if err != nil {
 			logutil.Logger(ddlLogCtx).Info("[ddl] syncer check all versions failed, continue checking.", zap.Error(err))
 			continue
@@ -402,17 +402,18 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 }
 
 const (
-	opDefaultRetryCnt = 10
-	failedGetTTLLimit = 20
-	opDefaultTimeout  = 3 * time.Second
-	opRetryInterval   = 500 * time.Millisecond
+	opDefaultRetryCnt     = 10
+	failedGetTTLLimit     = 20
+	checkCleanJobInterval = 1 * time.Second
+	opDefaultTimeout      = 3 * time.Second
+	opRetryInterval       = 500 * time.Millisecond
 	// NeededCleanTTL is exported for testing.
 	NeededCleanTTL = -60
 )
 
 func (s *schemaVersionSyncer) StartCleanWork() {
 	for {
-		time.Sleep(time.Second * 1)
+		time.Sleep(checkCleanJobInterval)
 		if !s.ownerChecker.IsOwner() {
 			continue
 		}
