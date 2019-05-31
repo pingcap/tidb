@@ -165,6 +165,22 @@ func (*testSuite) TestT(c *C) {
 	counter.Write(pb)
 	c.Assert(pb.GetCounter().GetValue(), Equals, float64(2))
 
+	// For schema check, it tests for getting the result of "ResultUnknown".
+	schemaChecker := NewSchemaChecker(dom, is.SchemaMetaVersion(), nil)
+	originalRetryTime := SchemaOutOfDateRetryTimes
+	originalRetryInterval := SchemaOutOfDateRetryInterval
+	// Make sure it will retry one time and doesn't take a long time.
+	SchemaOutOfDateRetryTimes = 1
+	SchemaOutOfDateRetryInterval = int64(time.Millisecond * 1)
+	defer func() {
+		SchemaOutOfDateRetryTimes = originalRetryTime
+		SchemaOutOfDateRetryInterval = originalRetryInterval
+	}()
+	dom.SchemaValidator.Stop()
+	err = schemaChecker.Check(uint64(123456))
+	c.Assert(err.Error(), Equals, ErrInfoSchemaExpired.Error())
+	dom.SchemaValidator.Reset()
+
 	err = store.Close()
 	c.Assert(err, IsNil)
 }
