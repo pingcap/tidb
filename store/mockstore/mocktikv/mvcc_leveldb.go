@@ -883,7 +883,6 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	mvcc.deadlockDetector.CleanUp(startTS)
 	return mvcc.db.Write(batch, nil)
 }
 
