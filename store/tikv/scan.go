@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -56,10 +55,6 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSiz
 		reverse:      reverse,
 		nextEndKey:   endKey,
 	}
-	if scanner.reverse {
-		fmt.Printf("scanner start--------------------------------------------------------------------------------------------------------\n\n")
-	}
-
 	err := scanner.Next()
 	if kv.IsErrNotFound(err) {
 		return scanner, nil
@@ -269,7 +264,6 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// may get an empty response if the Region in fact does not have
 		// more data.
 		lastKey := kvPairs[len(kvPairs)-1].GetKey()
-		fmt.Printf("laster key: \n%v\n\n----------\n\n", lastKey)
 		if !s.reverse {
 			s.nextStartKey = kv.Key(lastKey).Next()
 		} else {

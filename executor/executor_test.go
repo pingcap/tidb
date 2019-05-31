@@ -306,7 +306,6 @@ func (s *testSuite) TestAdmin(c *C) {
 	for _, job := range historyJobs2 {
 		id2 = append(id2, job.ID)
 	}
-	fmt.Printf("id-----------------------\n\n%v\n%v\n\n\n", id, id2)
 	c.Assert(id, DeepEquals, id2)
 	c.Assert(err, IsNil)
 	c.Assert(historyJobs, DeepEquals, historyJobs2)
