@@ -264,12 +264,11 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 
 		// TiKV use range [end_key, start_key) for reverse scan.
 		// So the req.StartKey actually is the end_key.
-		if len(req.GetStartKey()) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.GetStartKey()), h.endKey) < 0) {
-			endKey = req.GetStartKey()
+		if len(req.StartKey) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.StartKey), h.endKey) < 0) {
+			endKey = req.StartKey
 		}
 
 		pairs = h.mvccStore.ReverseScan(req.EndKey, endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
-		//fmt.Printf("%v h.start key\n%v h.endkey \n%v h.rawstart \n%v h.raw end \n%v req start\n%v req end key\n%v end key\n%v len\n%v pair[0] key\n\n-----------\n\n", h.startKey, h.endKey, h.rawStartKey, h.rawEndKey, req.StartKey, req.EndKey, endKey, len(pairs), pairs[0].Key)
 	}
 
 	return &kvrpcpb.ScanResponse{
