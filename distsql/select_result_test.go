@@ -39,20 +39,17 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	}
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()) != len(sr.copPlanIDs), IsTrue)
 	sr.updateCopRuntimeStats("callee")
+	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats("callee"), IsFalse)
 
 	sr.copPlanIDs = []fmt.Stringer{copPlan{}}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, NotNil)
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()), Equals, len(sr.copPlanIDs))
 	sr.updateCopRuntimeStats("callee")
-	for _, execSum := range sr.selectResp.GetExecutionSummaries() {
-		c.Assert(*execSum.NumIterations, Equals, uint64(1))
-		c.Assert(*execSum.NumProducedRows, Equals, uint64(1))
-		c.Assert(*execSum.TimeProcessedNs, Equals, uint64(1))
-	}
+	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats("callee").String(), Equals, "time:1ns, loops:1, rows:1")
 }
 
 type copPlan struct{}
 
 func (p copPlan) String() string {
-	return "copPlan"
+	return "callee"
 }
