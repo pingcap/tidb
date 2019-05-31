@@ -3238,7 +3238,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	// Check whether the table was already locked by other.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
-		if tb.Schema.L == strings.ToLower(infoschema.Name) || tb.Schema.L == "performance_schema" || tb.Schema.L == mysql.SystemDB {
+		if tb.Schema.L == infoschema.LowerName || tb.Schema.L == "performance_schema" || tb.Schema.L == mysql.SystemDB {
 			if ctx.GetSessionVars().User != nil {
 				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
 			}
@@ -3252,12 +3252,12 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		if err != nil {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(tb.Schema, tb.Name)
 		}
+		if t.Meta().IsView() {
+			return table.ErrUnsupportedOp.GenWithStackByArgs()
+		}
 		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
 		if err != nil {
 			return err
-		}
-		if t.Meta().IsView() {
-			return table.ErrUnsupportedOp.GenWithStackByArgs()
 		}
 		if _, ok := uniqueTableID[t.Meta().ID]; ok {
 			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)

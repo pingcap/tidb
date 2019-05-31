@@ -187,7 +187,7 @@ type session struct {
 	ddlOwnerChecker owner.DDLOwnerChecker
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables struct {
-		sync.RWMutex
+		sync.Mutex
 		holdLocks map[int64]model.TableLockTpInfo
 	}
 }
@@ -221,32 +221,33 @@ func (s *session) ReleaseTableLockByTableIDs(tableIDs []int64) {
 
 // CheckTableLocked checks the table lock.
 func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
-	s.lockedTables.RLock()
-	defer s.lockedTables.RUnlock()
+	s.lockedTables.Lock()
 	lt, ok := s.lockedTables.holdLocks[tblID]
 	if !ok {
+		s.lockedTables.Unlock()
 		return false, model.TableLockNone
 	}
+	s.lockedTables.Unlock()
 	return true, lt.Tp
 }
 
 // GetAllTableLocks gets all table locks table id and db id hold by the session.
 func (s *session) GetAllTableLocks() []model.TableLockTpInfo {
-	s.lockedTables.RLock()
+	s.lockedTables.Lock()
 	lockTpInfo := make([]model.TableLockTpInfo, 0, len(s.lockedTables.holdLocks))
 	for _, tl := range s.lockedTables.holdLocks {
 		lockTpInfo = append(lockTpInfo, tl)
 	}
-	s.lockedTables.RUnlock()
+	s.lockedTables.Unlock()
 	return lockTpInfo
 }
 
 // HasLockedTables uses to check whether this session locked any tables.
 // If so, the session can only visit the table which locked by self.
 func (s *session) HasLockedTables() bool {
-	s.lockedTables.RLock()
+	s.lockedTables.Lock()
 	b := len(s.lockedTables.holdLocks) > 0
-	s.lockedTables.RUnlock()
+	s.lockedTables.Unlock()
 	return b
 }
 
@@ -1356,7 +1357,7 @@ func (s *session) ClearValue(key fmt.Stringer) {
 func (s *session) Close() {
 	// TODO: do clean table locks when session exited without execute Close.
 	// TODO: do clean table locks when tidb-server was `kill -9`.
-	if s.HasLockedTables() {
+	if config.GetGlobalConfig().EnableTableLock && s.HasLockedTables() {
 		lockedTables := s.GetAllTableLocks()
 		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
 		if err != nil {

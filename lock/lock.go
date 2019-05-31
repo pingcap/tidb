@@ -14,8 +14,6 @@
 package lock
 
 import (
-	"strings"
-
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
@@ -40,7 +38,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 	// Below database are not support table lock.
-	if db == strings.ToLower(infoschema.Name) || db == strings.ToLower(perfschema.Name) || db == mysql.SystemDB {
+	if db == infoschema.LowerName || db == perfschema.LowerName || db == mysql.SystemDB {
 		return nil
 	}
 	switch privilege {

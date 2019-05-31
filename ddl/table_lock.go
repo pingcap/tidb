@@ -44,6 +44,9 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 			}
 			err = checkTableLocked(tbInfo, arg.LockTables[i].Tp, arg.SessionInfo)
 			if err != nil {
+				// If any request table was locked by other session, just cancel this job.
+				// No need to rolling back the unlocked tables, MySQL will release the lock first
+				// and block if the request table was locked by other.
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
@@ -94,8 +97,8 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, err
 }
 
-// indexOfLockHolder gets the index of sessionInfo in the sessions. return -1 if sessions doesn't contain sessionInfo.
-func indexOfLockHolder(sessions []model.SessionInfo, sessionInfo model.SessionInfo) int {
+// findSessionInfoIndex gets the index of sessionInfo in the sessions. return -1 if sessions doesn't contain the sessionInfo.
+func findSessionInfoIndex(sessions []model.SessionInfo, sessionInfo model.SessionInfo) int {
 	for i := range sessions {
 		if sessions[i].ServerID == sessionInfo.ServerID && sessions[i].SessionID == sessionInfo.SessionID {
 			return i
@@ -106,7 +109,7 @@ func indexOfLockHolder(sessions []model.SessionInfo, sessionInfo model.SessionIn
 
 // checkAndLockTable uses to check table locked and acquire the table lock for the request session.
 func checkAndLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
-	if tbInfo.Lock == nil || len(tbInfo.Lock.Sessions) == 0 {
+	if !tbInfo.IsLocked() {
 		tbInfo.Lock = &model.TableLockInfo{
 			Tp: arg.LockTables[idx].Tp,
 		}
@@ -117,7 +120,7 @@ func checkAndLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) err
 		return nil
 	}
 	if tbInfo.Lock.Tp == model.TableLockRead && arg.LockTables[idx].Tp == model.TableLockRead {
-		sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg.SessionInfo)
+		sessionIndex := findSessionInfoIndex(tbInfo.Lock.Sessions, arg.SessionInfo)
 		// repeat lock.
 		if sessionIndex >= 0 {
 			return nil
@@ -125,14 +128,15 @@ func checkAndLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) err
 		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, arg.SessionInfo)
 		return nil
 	}
-	// Unlock tables should execute before lock tables, so arg.SessionInfo in tbInfo.Lock.Sessions here is impossible.
 
+	// Unlock tables should execute before lock tables.
+	// Normally execute to here is impossible.
 	return infoschema.ErrTableLocked.GenWithStackByArgs(tbInfo.Name.L, tbInfo.Lock.Tp, tbInfo.Lock.Sessions[0])
 }
 
 // checkTableLocked uses to check whether table was locked.
 func checkTableLocked(tbInfo *model.TableInfo, lockTp model.TableLockType, sessionInfo model.SessionInfo) error {
-	if tbInfo.Lock == nil || len(tbInfo.Lock.Sessions) == 0 {
+	if !tbInfo.IsLocked() {
 		return nil
 	}
 	if tbInfo.Lock.State == model.TableLockStatePreLock {
@@ -141,12 +145,13 @@ func checkTableLocked(tbInfo *model.TableInfo, lockTp model.TableLockType, sessi
 	if tbInfo.Lock.Tp == model.TableLockRead && lockTp == model.TableLockRead {
 		return nil
 	}
-	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, sessionInfo)
-	// repeat lock.
+	sessionIndex := findSessionInfoIndex(tbInfo.Lock.Sessions, sessionInfo)
+	// If the request session already locked the table before, In other words, repeat lock.
 	if sessionIndex >= 0 {
 		if tbInfo.Lock.Tp == lockTp {
 			return nil
 		}
+		// If no other session locked this table.
 		if len(tbInfo.Lock.Sessions) == 1 {
 			return nil
 		}
@@ -169,16 +174,11 @@ func unlockTables(t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, 
 			job.Args = []interface{}{arg}
 			return ver, nil
 		} else {
-			job.State = model.JobStateCancelled
 			return ver, err
 		}
 	}
 
-	err = unlockTable(tbInfo, arg)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
+	unlockTable(tbInfo, arg)
 	ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -190,15 +190,15 @@ func unlockTables(t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, 
 }
 
 // unlockTable uses to unlock table lock that hold by the session.
-func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) error {
-	if tbInfo.Lock == nil {
-		return nil
+func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) {
+	if !tbInfo.IsLocked() {
+		return
 	}
-	sessionIndex := indexOfLockHolder(tbInfo.Lock.Sessions, arg.SessionInfo)
+	sessionIndex := findSessionInfoIndex(tbInfo.Lock.Sessions, arg.SessionInfo)
 	if sessionIndex < 0 {
 		// When session clean table lock, session maybe send unlock table even the table lock maybe not hold by the session.
 		// so just return nil here.
-		return nil
+		return
 	}
 	oldSessionInfo := tbInfo.Lock.Sessions
 	tbInfo.Lock.Sessions = oldSessionInfo[:sessionIndex]
@@ -206,7 +206,6 @@ func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) error {
 	if len(tbInfo.Lock.Sessions) == 0 {
 		tbInfo.Lock = nil
 	}
-	return nil
 }
 
 func onUnlockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {

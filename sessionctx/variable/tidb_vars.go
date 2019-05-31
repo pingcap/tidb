@@ -141,9 +141,6 @@ const (
 
 	// TiDBLowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
 	TiDBLowResolutionTSO = "tidb_low_resolution_tso"
-
-	// tidb_enable_table_lock is used to control table lock feature.
-	TiDBEnableTableLock = "tidb_enable_table_lock"
 )
 
 // TiDB system variable names that both in session and global scope.

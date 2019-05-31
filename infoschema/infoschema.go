@@ -96,7 +96,8 @@ type InfoSchema interface {
 
 // Information Schema Name.
 const (
-	Name = "INFORMATION_SCHEMA"
+	Name      = "INFORMATION_SCHEMA"
+	LowerName = "information_schema"
 )
 
 type sortedTables []table.Table

@@ -2770,13 +2770,15 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 
 	// recover table lock config.
 	originValue := config.GetGlobalConfig().EnableTableLock
-	defer tk.MustExec(fmt.Sprintf("set @@tidb_enable_table_lock=%v", originValue))
+	defer func() {
+		config.GetGlobalConfig().EnableTableLock = originValue
+	}()
 
 	// Test for enable table lock config.
-	tk.MustExec("set @@tidb_enable_table_lock=0")
+	config.GetGlobalConfig().EnableTableLock = false
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-	tk.MustExec("set @@tidb_enable_table_lock=1")
+	config.GetGlobalConfig().EnableTableLock = true
 
 	// Test lock 1 table.
 	tk.MustExec("lock tables t1 write")
@@ -2950,10 +2952,12 @@ func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
 
 	// recover table lock config.
 	originValue := config.GetGlobalConfig().EnableTableLock
-	defer tk.MustExec(fmt.Sprintf("set @@tidb_enable_table_lock=%v", originValue))
+	defer func() {
+		config.GetGlobalConfig().EnableTableLock = originValue
+	}()
 
 	// Test for enable table lock config.
-	tk.MustExec("set @@tidb_enable_table_lock=1")
+	config.GetGlobalConfig().EnableTableLock = true
 
 	// Test concurrent lock tables read.
 	sql1 := "lock tables t1 read"
