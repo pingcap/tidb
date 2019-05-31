@@ -58,6 +58,7 @@ type Scanner struct {
 }
 
 type specialCommentScanner interface {
+	stmtTexter
 	scan() (tok int, pos Pos, lit string)
 }
 
@@ -85,11 +86,18 @@ func (s *optimizerHintScanner) scan() (tok int, pos Pos, lit string) {
 	pos.Line += s.Pos.Line
 	pos.Col += s.Pos.Col
 	pos.Offset += s.Pos.Offset
-	if tok == 0 {
+	switch tok {
+	case 0:
 		if !s.end {
 			tok = hintEnd
 			s.end = true
 		}
+	case invalid:
+		// an optimizer hint is allowed to contain invalid characters, the
+		// remaining hints are just ignored.
+		// force advance the lexer even when encountering an invalid character
+		// to prevent infinite parser loop. (see issue #336)
+		s.r.inc()
 	}
 	return
 }
@@ -110,6 +118,10 @@ func (s *Scanner) reset(sql string) {
 }
 
 func (s *Scanner) stmtText() string {
+	if s.specialComment != nil {
+		return s.specialComment.stmtText()
+	}
+
 	endPos := s.r.pos().Offset
 	if s.r.s[endPos-1] == '\n' {
 		endPos = endPos - 1 // trim new line
@@ -218,6 +230,15 @@ func (s *Scanner) GetSQLMode() mysql.SQLMode {
 // EnableWindowFunc controls whether the scanner recognize the keywords of window function.
 func (s *Scanner) EnableWindowFunc(val bool) {
 	s.supportWindowFunc = val
+}
+
+// InheritScanner returns a new scanner object which inherits configurations from the parent scanner.
+func (s *Scanner) InheritScanner(sql string) *Scanner {
+	return &Scanner{
+		r:                 reader{s: sql},
+		sqlMode:           s.sqlMode,
+		supportWindowFunc: s.supportWindowFunc,
+	}
 }
 
 // NewScanner returns a new scanner object.
@@ -396,7 +417,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 			end := len(comment) - 2
 			sql := comment[begin:end]
 			s.specialComment = &optimizerHintScanner{
-				Scanner: NewScanner(sql),
+				Scanner: s.InheritScanner(sql),
 				Pos: Pos{
 					pos.Line,
 					pos.Col,
@@ -413,7 +434,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		if strings.HasPrefix(comment, "/*!") {
 			sql := specCodePattern.ReplaceAllStringFunc(comment, TrimComment)
 			s.specialComment = &mysqlSpecificCodeScanner{
-				Scanner: NewScanner(sql),
+				Scanner: s.InheritScanner(sql),
 				Pos: Pos{
 					pos.Line,
 					pos.Col,
