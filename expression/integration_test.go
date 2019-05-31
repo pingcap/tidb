@@ -148,6 +148,10 @@ func (s *testIntegrationSuite) TestModifyBinaryLength(c *C) {
 	tk.MustExec("alter table t modify c varbinary(20);")
 	tk.MustQuery("select length(b), length(c) from t;").Check(testkit.Rows("33 4"))
 	tk.MustQuery("select length(concat(b, '|')), length(concat(c, '|')) from t;").Check(testkit.Rows("34 5"))
+
+	// for chinese characters
+	tk.MustExec("insert into t set b='中文', c='中文';")
+	tk.MustQuery("select length(concat(b, '|')), length(concat(c, '|')) from t;").Check(testkit.Rows("34 5", "34 7"))
 }
 
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {

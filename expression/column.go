@@ -253,7 +253,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 	// See #3644.
 	// Binary type column value will changed after modify the column length.
 	if (ctx.GetSessionVars().StmtCtx.PadCharToFullLength || (mysql.HasBinaryFlag(uint(col.GetType().Tp)) && col.GetType().Charset == charset.CharsetBin)) && col.GetType().Tp == mysql.TypeString {
-		valLen := len([]rune(val))
+		valLen := len(val)
 		if valLen < col.RetType.Flen {
 			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
 		}
