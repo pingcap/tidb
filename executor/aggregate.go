@@ -197,7 +197,7 @@ func (e *HashAggExec) Close() error {
 		e.childResult = nil
 		e.groupSet = nil
 		e.partialResultMap = nil
-		return nil
+		return e.baseExecutor.Close()
 	}
 	// `Close` may be called after `Open` without calling `Next` in test.
 	if !e.prepared {
@@ -214,7 +214,7 @@ func (e *HashAggExec) Close() error {
 	}
 	for range e.finalOutputCh {
 	}
-	return errors.Trace(e.baseExecutor.Close())
+	return e.baseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.
