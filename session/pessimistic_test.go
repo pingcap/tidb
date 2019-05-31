@@ -18,6 +18,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -164,4 +167,30 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 		c.Check(tk.Se.GetSessionVars().TxnCtx.IsPessimistic, Equals, tt.isPessimistic)
 		tk.MustExec("rollback")
 	}
+}
+
+func (s *testPessimisticSuite) TestDeadlock(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists deadlock")
+	tk.MustExec("create table deadlock (k int primary key, v int)")
+	tk.MustExec("insert into deadlock values (1, 1), (2, 1)")
+
+	syncCh := make(chan struct{})
+	go func() {
+		tk1 := testkit.NewTestKitWithInit(c, s.store)
+		tk1.MustExec("begin pessimistic")
+		tk1.MustExec("update deadlock set v = v + 1 where k = 2")
+		<-syncCh
+		tk1.MustExec("update deadlock set v = v + 1 where k = 1")
+		<-syncCh
+	}()
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update deadlock set v = v + 1 where k = 1")
+	syncCh <- struct{}{}
+	time.Sleep(time.Millisecond * 10)
+	_, err := tk.Exec("update deadlock set v = v + 1 where k = 2")
+	e, ok := errors.Cause(err).(*terror.Error)
+	c.Assert(ok, IsTrue)
+	c.Assert(int(e.Code()), Equals, mysql.ErrLockDeadlock)
+	syncCh <- struct{}{}
 }
