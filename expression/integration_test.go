@@ -132,6 +132,24 @@ func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
 	result.Check(testkit.Rows("<nil> <nil>"))
 }
 
+func (s *testIntegrationSuite) TestModifyBinaryLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustExec(`USE test;`)
+	tk.MustExec("drop table if exists t")
+
+	// for #3644, #3745
+	tk.MustExec("create table t(b binary(22), c varbinary(10));")
+	tk.MustExec("insert into t set b='test', c='test';")
+	tk.MustQuery("select length(b), length(c) from t;").Check(testkit.Rows("22 4"))
+	tk.MustQuery("select length(concat(b, '|')), length(concat(c, '|')) from t;").Check(testkit.Rows("23 5"))
+	tk.MustExec("alter table t modify b binary(33);")
+	tk.MustExec("alter table t modify c varbinary(20);")
+	tk.MustQuery("select length(b), length(c) from t;").Check(testkit.Rows("33 4"))
+	tk.MustQuery("select length(concat(b, '|')), length(concat(c, '|')) from t;").Check(testkit.Rows("34 5"))
+}
+
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	ctx := context.Background()
 	defer s.cleanEnv(c)
@@ -4192,11 +4210,11 @@ func (s *testIntegrationSuite) TestIssue9710(c *C) {
 	}
 }
 
-// for issue #9770
 func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
 
+	// for issue #9770
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime(6), b timestamp)")
