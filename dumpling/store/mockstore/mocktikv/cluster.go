@@ -22,6 +22,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 )
 
@@ -338,6 +339,12 @@ func (c *Cluster) SplitIndex(mvccStore MVCCStore, tableID, indexID int64, count 
 	indexStart := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	indexEnd := indexStart.PrefixNext()
 	c.splitRange(mvccStore, NewMvccKey(indexStart), NewMvccKey(indexEnd), count)
+}
+
+// SplitKeys evenly splits the start, end key into "count" regions.
+// Only works for single store.
+func (c *Cluster) SplitKeys(mvccStore MVCCStore, start, end kv.Key, count int) {
+	c.splitRange(mvccStore, NewMvccKey(start), NewMvccKey(end), count)
 }
 
 func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int) {
