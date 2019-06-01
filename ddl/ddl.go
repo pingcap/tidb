@@ -192,8 +192,6 @@ var (
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type.
 	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeErrFieldTypeNotAllowedAsPartitionField, mysql.MySQLErrName[mysql.ErrFieldTypeNotAllowedAsPartitionField])
-	// ErrPartitionsMustBeDefined returns each partition must be defined.
-	ErrPartitionsMustBeDefined = terror.ClassDDL.New(codePartitionsMustBeDefined, "For RANGE partitions each partition must be defined")
 	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
 	ErrPartitionMgmtOnNonpartitioned = terror.ClassDDL.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
 	// ErrDropPartitionNonExistent returns error in list of partition.
@@ -204,14 +202,10 @@ var (
 	ErrRangeNotIncreasing = terror.ClassDDL.New(codeRangeNotIncreasing, "VALUES LESS THAN value must be strictly increasing for each partition")
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
 	ErrPartitionMaxvalue = terror.ClassDDL.New(codePartitionMaxvalue, "MAXVALUE can only be used in last partition definition")
-	// ErrTooManyValues returns cannot have more than one value for this type of partitioning.
-	ErrTooManyValues = terror.ClassDDL.New(codeErrTooManyValues, mysql.MySQLErrName[mysql.ErrTooManyValues])
 	//ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
 	ErrDropLastPartition = terror.ClassDDL.New(codeDropLastPartition, mysql.MySQLErrName[mysql.ErrDropLastPartition])
 	//ErrTooManyPartitions returns too many partitions were defined.
 	ErrTooManyPartitions = terror.ClassDDL.New(codeTooManyPartitions, mysql.MySQLErrName[mysql.ErrTooManyPartitions])
-	//ErrNoParts returns no partition were defined.
-	ErrNoParts = terror.ClassDDL.New(codeNoParts, mysql.MySQLErrName[mysql.ErrNoParts])
 	//ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
 	ErrPartitionFunctionIsNotAllowed = terror.ClassDDL.New(codePartitionFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFunctionIsNotAllowed])
 	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.
@@ -233,8 +227,6 @@ var (
 	ErrTableCantHandleFt = terror.ClassDDL.New(codeErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
 	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
 	ErrFieldNotFoundPart = terror.ClassDDL.New(codeFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
-	// ErrPartitionColumnList returns "Inconsistency in usage of column lists for partitioning".
-	ErrPartitionColumnList = terror.ClassDDL.New(codePartitionColumnList, mysql.MySQLErrName[mysql.ErrPartitionColumnList])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -731,6 +723,14 @@ const (
 	codeNotSupportedAlterOperation             = terror.ErrCode(mysql.ErrAlterOperationNotSupportedReason)
 	codeFieldNotFoundPart                      = terror.ErrCode(mysql.ErrFieldNotFoundPart)
 	codePartitionColumnList                    = terror.ErrCode(mysql.ErrPartitionColumnList)
+	codePartitionRequiresValues                = terror.ErrCode(mysql.ErrPartitionRequiresValues)
+	codePartitionWrongNoPart                   = terror.ErrCode(mysql.ErrPartitionWrongNoPart)
+	codePartitionWrongNoSubpart                = terror.ErrCode(mysql.ErrPartitionWrongNoSubpart)
+	codePartitionWrongValues                   = terror.ErrCode(mysql.ErrPartitionWrongValues)
+	codeRowSinglePartitionField                = terror.ErrCode(mysql.ErrRowSinglePartitionField)
+	codeSubpartition                           = terror.ErrCode(mysql.ErrSubpartition)
+	codeSystemVersioningWrongPartitions        = terror.ErrCode(mysql.ErrSystemVersioningWrongPartitions)
+	codeWrongPartitionTypeExpectedSystemTime   = terror.ErrCode(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 )
 
 func init() {
@@ -793,6 +793,14 @@ func init() {
 		codePartitionColumnList:                    mysql.ErrPartitionColumnList,
 		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
 		codeErrGeneratedColumnRefAutoInc:           mysql.ErrGeneratedColumnRefAutoInc,
+		codePartitionRequiresValues:                mysql.ErrPartitionRequiresValues,
+		codePartitionWrongNoPart:                   mysql.ErrPartitionWrongNoPart,
+		codePartitionWrongNoSubpart:                mysql.ErrPartitionWrongNoSubpart,
+		codePartitionWrongValues:                   mysql.ErrPartitionWrongValues,
+		codeRowSinglePartitionField:                mysql.ErrRowSinglePartitionField,
+		codeSubpartition:                           mysql.ErrSubpartition,
+		codeSystemVersioningWrongPartitions:        mysql.ErrSystemVersioningWrongPartitions,
+		codeWrongPartitionTypeExpectedSystemTime:   mysql.ErrWrongPartitionTypeExpectedSystemTime,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
