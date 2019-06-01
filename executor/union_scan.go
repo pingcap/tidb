@@ -353,25 +353,10 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 	}
 
 	outputOffset := make([]int, 0, len(us.columns))
-	fmt.Printf("\n-----------\nus.columns:\n")
-	for _, col := range us.columns {
-		fmt.Printf("\t%v", col.Name.L)
-	}
-	fmt.Printf("\n\n\n")
-
-	fmt.Printf("\n-----------\nindex.output column:\n")
-	for _, col := range e.outputColumns {
-		fmt.Printf("\t%v(%v)", col.ColName.L, col.Index)
-	}
-	fmt.Printf("\n\n\n")
-
 	for _, col := range e.outputColumns {
 		outputOffset = append(outputOffset, col.Index)
 	}
 
-	prefix := tablecodec.EncodeTableIndexPrefix(e.physicalTableID, e.index.ID)
-
-	rowindex := 0
 	var handleDatum types.Datum
 	var handleByte = make([]byte, 0, 16)
 	for _, rg := range kvRanges {
@@ -389,11 +374,6 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 			if len(iter.Value()) == 0 {
 				continue
 			}
-			// remove this?
-			if !bytes.Contains(key, prefix) {
-				continue
-			}
-
 			row := make([]types.Datum, len(tps))
 			// this is from indexScanExec decodeIndexKV method.
 			values, b, err := tablecodec.CutIndexKeyNew(key, colsLen)
@@ -401,7 +381,6 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 				values = append(values, b)
 			} else if len(iter.Value()) >= 8 {
 				handle, err := decodeHandle(iter.Value())
-				fmt.Printf("decode handle: %v\n------------\n\n", handle)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -417,31 +396,18 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 				values = append(values, handleBytes)
 			}
 
-			str := ""
 			for i, offset := range outputOffset {
 				row[offset], err = tablecodec.DecodeColumnValue(values[offset], tps[offset], e.ctx.GetSessionVars().TimeZone)
 				if err != nil {
 					return err
 				}
 				mutableRow.SetDatum(i, row[offset])
-
-				s, err := row[offset].ToString()
-				if err != nil {
-					return err
-				}
-				if i > 0 {
-					str += ", "
-				}
-				str += s
 			}
 
-			rowindex++
-			fmt.Printf("\ndecode index values: %v\n\n", str)
 			matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
-			fmt.Printf("\n----------\n match: %v\n----------\n\n", matched)
 			if !matched {
 				continue
 			}
