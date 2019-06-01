@@ -789,7 +789,13 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows(x.table)
+
+		mTblReader, err := buildMemTableReader(us, x)
+		if err != nil {
+			return nil, err
+		}
+		us.addedRows, err = mTblReader.getMemRows()
+		//err = us.buildAndSortAddedRows(x.table)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {

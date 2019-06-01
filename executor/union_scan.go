@@ -14,9 +14,7 @@
 package executor
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"sort"
 	"time"
@@ -24,19 +22,12 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.
@@ -302,165 +293,6 @@ func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.
 		return nil, err
 	}
 	return v, nil
-}
-
-type memIndexReader struct {
-	baseExecutor
-	index         *model.IndexInfo
-	table         *model.TableInfo
-	kvRanges      []kv.KeyRange
-	desc          bool
-	conditions    []expression.Expression
-	addedRows     [][]types.Datum
-	retFieldTypes []*types.FieldType
-	outputOffset  []int
-	// use for handle decode.
-	handleBytes []byte
-}
-
-func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) (*memIndexReader, error) {
-	ranges := idxReader.ranges
-	var err error
-	// TODO: remove this.
-	if idxReader.corColInAccess {
-		ranges, err = rebuildIndexRanges(idxReader.ctx, idxReader.plans[0].(*core.PhysicalIndexScan), idxReader.idxCols, idxReader.colLens)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if len(ranges) == 0 {
-		ranges = ranger.FullRange()
-	}
-	kvRanges, err := distsql.IndexRangesToKVRanges(idxReader.ctx.GetSessionVars().StmtCtx, idxReader.physicalTableID, idxReader.index.ID, ranges, idxReader.feedback)
-	if err != nil {
-		return nil, err
-	}
-
-	outputOffset := make([]int, 0, len(us.columns))
-	for _, col := range idxReader.outputColumns {
-		outputOffset = append(outputOffset, col.Index)
-	}
-	return &memIndexReader{
-		baseExecutor:  us.baseExecutor,
-		index:         idxReader.index,
-		table:         idxReader.table.Meta(),
-		kvRanges:      kvRanges,
-		desc:          us.desc,
-		conditions:    us.conditions,
-		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
-		retFieldTypes: us.retTypes(),
-		outputOffset:  outputOffset,
-		handleBytes:   make([]byte, 0, 16),
-	}, nil
-}
-
-func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
-	// todo: fix corSubquery.
-	tps := make([]*types.FieldType, 0, len(m.index.Columns)+1)
-	cols := m.table.Columns
-	for _, col := range m.index.Columns {
-		tps = append(tps, &cols[col.Offset].FieldType)
-	}
-	if m.table.PKIsHandle {
-		for _, col := range m.table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				tps = append(tps, &col.FieldType)
-				break
-			}
-		}
-	} else {
-		tp := types.NewFieldType(mysql.TypeLonglong)
-		tps = append(tps, tp)
-	}
-
-	txn, err := m.ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
-	for _, rg := range m.kvRanges {
-		// todo: consider desc scan.
-		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
-		if err != nil {
-			return nil, err
-		}
-		for ; iter.Valid(); err = iter.Next() {
-			if err != nil {
-				return nil, err
-			}
-			// check whether the key was been deleted.
-			if len(iter.Value()) == 0 {
-				continue
-			}
-			err = m.decodeIndexKeyValue(iter.Key(), iter.Value(), tps, &mutableRow)
-			if err != nil {
-				return nil, err
-			}
-
-			matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
-			if err != nil {
-				return nil, err
-			}
-			if !matched {
-				continue
-			}
-			newData := make([]types.Datum, len(m.outputOffset))
-			for i := range m.outputOffset {
-				newData[i] = mutableRow.ToRow().GetDatum(i, m.retFieldTypes[i])
-			}
-			m.addedRows = append(m.addedRows, newData)
-		}
-	}
-	// TODO: After refine `IterReverse`, remove below logic and use `IterReverse` when do reverse scan.
-	if m.desc {
-		for i, j := 0, len(m.addedRows)-1; i < j; i, j = i+1, j-1 {
-			m.addedRows[i], m.addedRows[j] = m.addedRows[j], m.addedRows[i]
-		}
-	}
-	return m.addedRows, nil
-}
-
-func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType, mutableRow *chunk.MutRow) error {
-	// this is from indexScanExec decodeIndexKV method.
-	values, b, err := tablecodec.CutIndexKeyNew(key, len(m.index.Columns))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(b) > 0 {
-		values = append(values, b)
-	} else if len(value) >= 8 {
-		handle, err := decodeHandle(value)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		var handleDatum types.Datum
-		if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
-			handleDatum = types.NewUintDatum(uint64(handle))
-		} else {
-			handleDatum = types.NewIntDatum(handle)
-		}
-		m.handleBytes, err = codec.EncodeValue(m.ctx.GetSessionVars().StmtCtx, m.handleBytes[:0], handleDatum)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		values = append(values, m.handleBytes)
-	}
-
-	for i, offset := range m.outputOffset {
-		d, err := tablecodec.DecodeColumnValue(values[offset], tps[offset], m.ctx.GetSessionVars().TimeZone)
-		if err != nil {
-			return err
-		}
-		mutableRow.SetDatum(i, d)
-	}
-	return nil
-}
-
-func decodeHandle(data []byte) (int64, error) {
-	var h int64
-	buf := bytes.NewBuffer(data)
-	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, errors.Trace(err)
 }
 
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
