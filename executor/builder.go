@@ -805,10 +805,12 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		err = us.buildAddedRowsFromIndexReader(x)
-		if err != nil {
-			return nil, err
-		}
-		err = us.buildAndSortAddedRows(x.table)
+		//fmt.Printf("\nlen us add rows: %v\n------------\n\n", len(us.addedRows))
+		//if err != nil {
+		//	return nil, err
+		//}
+		//err = us.buildAndSortAddedRows(x.table)
+		//fmt.Printf("\nlen us add rows2: %v\n------------\n\n", len(us.addedRows))
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -2040,6 +2042,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
+	e.ranges = indexRanges
 	kvRanges, err := buildKvRangesForIndexJoin(e.ctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 	if err != nil {
 		return nil, err

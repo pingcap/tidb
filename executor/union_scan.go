@@ -313,14 +313,18 @@ type MemIndexReaderExecutor struct {
 }
 
 func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) error {
-	condition := us.conditions
-	if len(e.plans) > 1 {
-		if sel, ok := e.plans[1].(*core.PhysicalSelection); ok {
-			condition = sel.Conditions
+	// todo: fix corSubquery.
+	ranges := e.ranges
+	var err error
+	if e.corColInAccess {
+		ranges, err = rebuildIndexRanges(e.ctx, e.plans[0].(*core.PhysicalIndexScan), e.idxCols, e.colLens)
+		if err != nil {
+			return err
 		}
 	}
-	_ = condition
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, ranges, e.feedback)
+	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
+	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	if err != nil {
 		return err
 	}
@@ -376,8 +380,15 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 		if err != nil {
 			return err
 		}
-		for iter.Valid() {
+		for ; iter.Valid(); err = iter.Next() {
+			if err != nil {
+				return err
+			}
 			key := iter.Key()
+			// check whether the key was been deleted.
+			if len(iter.Value()) == 0 {
+				continue
+			}
 			// remove this?
 			if !bytes.Contains(key, prefix) {
 				continue
@@ -412,6 +423,8 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 				if err != nil {
 					return err
 				}
+				mutableRow.SetDatum(i, row[offset])
+
 				s, err := row[offset].ToString()
 				if err != nil {
 					return err
@@ -421,12 +434,28 @@ func (us *UnionScanExec) buildAddedRowsFromIndexReader(e *IndexReaderExecutor) e
 				}
 				str += s
 			}
+
 			rowindex++
 			fmt.Printf("\ndecode index values: %v\n\n", str)
-			err = iter.Next()
+			matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
+			fmt.Printf("\n----------\n match: %v\n----------\n\n", matched)
+			if !matched {
+				continue
+			}
+			newData := make([]types.Datum, len(outputOffset))
+			for i, offset := range outputOffset {
+				newData[i] = row[offset]
+			}
+			us.addedRows = append(us.addedRows, newData)
+		}
+	}
+	// TODO: After refine `IterReverse`, remove below logic and use `IterReverse` when do reverse scan.
+	if us.desc {
+		for i, j := 0, len(us.addedRows)-1; i < j; i, j = i+1, j-1 {
+			us.addedRows[i], us.addedRows[j] = us.addedRows[j], us.addedRows[i]
 		}
 	}
 	return nil
