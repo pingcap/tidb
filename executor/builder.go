@@ -795,7 +795,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 			return nil, err
 		}
 		us.addedRows, err = mTblReader.getMemRows()
-		//err = us.buildAndSortAddedRows(x.table)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -816,7 +815,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 			return nil, err
 		}
 		us.addedRows, err = mIdxReader.getMemRows()
-		//err = us.buildAndSortAddedRows(x.table)
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {

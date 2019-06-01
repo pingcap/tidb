@@ -45,7 +45,7 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) (*me
 	if len(ranges) == 0 {
 		ranges = ranger.FullRange()
 	}
-	kvRanges, err := distsql.IndexRangesToKVRanges(idxReader.ctx.GetSessionVars().StmtCtx, idxReader.physicalTableID, idxReader.index.ID, ranges, idxReader.feedback)
+	kvRanges, err := distsql.IndexRangesToKVRanges(idxReader.ctx.GetSessionVars().StmtCtx, idxReader.physicalTableID, idxReader.index.ID, ranges, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +265,11 @@ func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
 		for ; iter.Valid(); err = iter.Next() {
 			if err != nil {
 				return nil, err
+			}
+
+			// check whether the key was been deleted.
+			if len(iter.Value()) == 0 {
+				continue
 			}
 
 			err = m.decodeRecordKeyValue(iter.Key(), iter.Value(), &mutableRow)
