@@ -133,11 +133,48 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 	return m.addedRows, nil
 }
 
-func reverseDatumSlice(rows [][]types.Datum) {
-	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
-		rows[i], rows[j] = rows[j], rows[i]
+func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
+	pkTp := types.NewFieldType(mysql.TypeLonglong)
+	if m.table.PKIsHandle {
+		for _, col := range m.table.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkTp = &col.FieldType
+				break
+			}
+		}
 	}
+	handles := make([]int64, 0, cap(m.addedRows))
+	txn, err := m.ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	for _, rg := range m.kvRanges {
+		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
+		if err != nil {
+			return nil, err
+		}
+		for ; iter.Valid(); err = iter.Next() {
+			if err != nil {
+				return nil, err
+			}
+			// check whether the key was been deleted.
+			if len(iter.Value()) == 0 {
+				continue
+			}
 
+			handle, err := m.decodeIndexHandle(iter.Key(), iter.Value(), pkTp)
+			if err != nil {
+				return nil, err
+			}
+			handles = append(handles, handle)
+		}
+	}
+	if m.desc {
+		for i, j := 0, len(handles)-1; i < j; i, j = i+1, j-1 {
+			handles[i], handles[j] = handles[j], handles[i]
+		}
+	}
+	return handles, nil
 }
 
 func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType, mutableRow *chunk.MutRow) error {
@@ -174,6 +211,26 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		mutableRow.SetDatum(i, d)
 	}
 	return nil
+}
+
+func (m *memIndexReader) decodeIndexHandle(key, value []byte, pkTp *types.FieldType) (int64, error) {
+	// this is from indexScanExec decodeIndexKV method.
+	_, b, err := tablecodec.CutIndexKeyNew(key, len(m.index.Columns))
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		d, err := tablecodec.DecodeColumnValue(b, pkTp, m.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return d.GetInt64(), nil
+
+	} else if len(value) >= 8 {
+		return decodeHandle(value)
+	}
+
+	return 0, errors.New("no handle in index kv")
 }
 
 func decodeHandle(data []byte) (int64, error) {
@@ -426,14 +483,9 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 }
 
 func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
-	handleRows, err := m.idxReader.getMemRows()
-	if err != nil || len(handleRows) == 0 {
+	handles, err := m.idxReader.getMemRowsHandle()
+	if err != nil || len(handles) == 0 {
 		return nil, err
-	}
-
-	handles := make([]int64, len(handleRows))
-	for i := range handleRows {
-		handles[i] = handleRows[i][0].GetInt64()
 	}
 
 	tblKvRanges := distsql.TableHandlesToKVRanges(getPhysicalTableID(m.table), handles)
@@ -455,4 +507,10 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 	}
 
 	return memTblReader.getMemRows()
+}
+
+func reverseDatumSlice(rows [][]types.Datum) {
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i]
+	}
 }
