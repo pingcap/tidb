@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -227,10 +228,6 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) (*me
 	ranges = append(ranges, secondPartRanges...)
 
 	kvRanges := distsql.TableRangesToKVRanges(getPhysicalTableID(tblReader.table), ranges, nil)
-	if err != nil {
-		return nil, err
-	}
-
 	colIDs := make(map[int64]int)
 	for i, col := range tblReader.columns {
 		colIDs[col.ID] = i
@@ -367,4 +364,95 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 		return true
 	}
 	return false
+}
+
+type memIndexLookUpReader struct {
+	baseExecutor
+	index         *model.IndexInfo
+	columns       []*model.ColumnInfo
+	table         table.Table
+	desc          bool
+	conditions    []expression.Expression
+	retFieldTypes []*types.FieldType
+
+	idxReader *memIndexReader
+	tblReader *memTableReader
+}
+
+func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpExecutor) (*memIndexLookUpReader, error) {
+	idxRanges := idxLookUpReader.ranges
+	var err error
+	idxPlan := idxLookUpReader.idxPlans[0].(*core.PhysicalIndexScan)
+	// TODO: remove this.
+	if idxLookUpReader.corColInAccess {
+		idxRanges, err = rebuildIndexRanges(idxLookUpReader.ctx, idxPlan, idxLookUpReader.idxCols, idxLookUpReader.colLens)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(idxRanges) == 0 {
+		idxRanges = ranger.FullRange()
+	}
+
+	kvRanges, err := distsql.IndexRangesToKVRanges(us.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(idxLookUpReader.table), idxLookUpReader.index.ID, idxRanges, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	outputOffset := []int{len(idxLookUpReader.index.Columns)}
+	memIdxReader := &memIndexReader{
+		baseExecutor:  us.baseExecutor,
+		index:         idxLookUpReader.index,
+		table:         idxLookUpReader.table.Meta(),
+		kvRanges:      kvRanges,
+		desc:          idxLookUpReader.desc,
+		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		retFieldTypes: us.retTypes(),
+		outputOffset:  outputOffset,
+		handleBytes:   make([]byte, 0, 16),
+	}
+
+	return &memIndexLookUpReader{
+		baseExecutor:  us.baseExecutor,
+		index:         idxLookUpReader.index,
+		columns:       idxLookUpReader.columns,
+		table:         idxLookUpReader.table,
+		desc:          idxLookUpReader.desc,
+		conditions:    us.conditions,
+		retFieldTypes: us.retTypes(),
+
+		idxReader: memIdxReader,
+	}, nil
+}
+
+func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
+	handleRows, err := m.idxReader.getMemRows()
+	if err != nil || len(handleRows) == 0 {
+		return nil, err
+	}
+
+	handles := make([]int64, len(handleRows))
+	for i := range handleRows {
+		handles[i] = handleRows[i][0].GetInt64()
+	}
+
+	tblKvRanges := distsql.TableHandlesToKVRanges(getPhysicalTableID(m.table), handles)
+	colIDs := make(map[int64]int)
+	for i, col := range m.columns {
+		colIDs[col.ID] = i
+	}
+
+	memTblReader := &memTableReader{
+		baseExecutor:  m.baseExecutor,
+		table:         m.table.Meta(),
+		columns:       m.columns,
+		kvRanges:      tblKvRanges,
+		conditions:    m.conditions,
+		addedRows:     make([][]types.Datum, 0, len(handles)),
+		retFieldTypes: m.retTypes(),
+		colIDs:        colIDs,
+		handleBytes:   m.idxReader.handleBytes,
+	}
+
+	return memTblReader.getMemRows()
 }
