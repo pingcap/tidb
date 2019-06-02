@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -2366,6 +2366,12 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	if len(options) == 0 {
 		return nil
 	}
+
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		format.RestoreSpacesAroundBinaryOperation
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+
 	var hasDefaultValue, setOnUpdateNow bool
 	var err error
 	for _, opt := range options {
@@ -2400,9 +2406,12 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
 		case ast.ColumnOptionGenerated:
-			var buf = bytes.NewBuffer([]byte{})
-			opt.Expr.Format(buf)
-			col.GeneratedExprString = buf.String()
+			sb.Reset()
+			err = opt.Expr.Restore(restoreCtx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			col.GeneratedExprString = sb.String()
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
 			col.GeneratedExpr = opt.Expr
