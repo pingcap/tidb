@@ -237,7 +237,9 @@ type IndexReaderExecutor struct {
 	keepOrder       bool
 	desc            bool
 	ranges          []*ranger.Range
-	dagPB           *tipb.DAGRequest
+	// kvRanges are only use for union scan.
+	kvRanges []kv.KeyRange
+	dagPB    *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
@@ -319,6 +321,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
+	e.kvRanges = kvRanges
 
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).

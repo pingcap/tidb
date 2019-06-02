@@ -118,8 +118,26 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return us.open(ctx)
+}
+
+func (us *UnionScanExec) open(ctx context.Context) error {
+	var err error
+	reader := us.children[0]
+	switch x := reader.(type) {
+	case *TableReaderExecutor:
+		mTblReader := buildMemTableReader(us, x)
+		us.addedRows, err = mTblReader.getMemRows()
+	case *IndexReaderExecutor:
+		mIdxReader := buildMemIndexReader(us, x)
+		us.addedRows, err = mIdxReader.getMemRows()
+	case *IndexLookUpExecutor:
+		mIdxLookUpReader := buildMemIndexLookUpReader(us, x)
+		us.addedRows, err = mIdxLookUpReader.getMemRows()
+	}
+
 	us.snapshotChunkBuffer = us.newFirstChunk()
-	return nil
+	return err
 }
 
 // Next implements the Executor Next interface.

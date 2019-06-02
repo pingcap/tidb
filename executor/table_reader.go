@@ -58,7 +58,9 @@ type TableReaderExecutor struct {
 	keepOrder bool
 	desc      bool
 	ranges    []*ranger.Range
-	dagPB     *tipb.DAGRequest
+	// kvRanges are only use for union scan.
+	kvRanges []kv.KeyRange
+	dagPB    *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
@@ -175,6 +177,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
+	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, err

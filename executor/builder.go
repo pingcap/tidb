@@ -790,11 +790,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.conditions = v.Conditions
 		us.columns = x.columns
 
-		mTblReader, err := buildMemTableReader(us, x)
-		if err != nil {
-			return nil, err
-		}
-		us.addedRows, err = mTblReader.getMemRows()
+		//mTblReader, err := buildMemTableReader(us, x)
+		//if err != nil {
+		//	return nil, err
+		//}
+		//us.addedRows, err = mTblReader.getMemRows()
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -810,11 +810,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.conditions = v.Conditions
 		us.columns = x.columns
 
-		mIdxReader, err := buildMemIndexReader(us, x)
-		if err != nil {
-			return nil, err
-		}
-		us.addedRows, err = mIdxReader.getMemRows()
+		//mIdxReader, err := buildMemIndexReader(us, x)
+		//if err != nil {
+		//	return nil, err
+		//}
+		//us.addedRows, err = mIdxReader.getMemRows()
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -829,12 +829,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-
-		mIdxLookUpReader, err := buildMemIndexLookUpReader(us, x)
-		if err != nil {
-			return nil, err
-		}
-		us.addedRows, err = mIdxLookUpReader.getMemRows()
+		//mIdxLookUpReader, err := buildMemIndexLookUpReader(us, x)
+		//if err != nil {
+		//	return nil, err
+		//}
+		//us.addedRows, err = mIdxLookUpReader.getMemRows()
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return reader, nil
@@ -2001,8 +2000,8 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 		return nil, err
 	}
 	us := e.(*UnionScanExec)
-	us.snapshotChunkBuffer = us.newFirstChunk()
-	return us, nil
+	err = us.open(ctx)
+	return us, err
 }
 
 func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader, lookUpContents []*indexJoinLookUpContent) (Executor, error) {
@@ -2035,6 +2034,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
+	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 	e.resultHandler = &tableResultHandler{}
 	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
@@ -2051,7 +2051,6 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
-	e.ranges = indexRanges
 	kvRanges, err := buildKvRangesForIndexJoin(e.ctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 	if err != nil {
 		return nil, err
