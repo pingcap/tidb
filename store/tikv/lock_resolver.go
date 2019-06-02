@@ -33,8 +33,8 @@ import (
 // ResolvedCacheSize is max number of cached txn status.
 const ResolvedCacheSize = 2048
 
-// BigTxnThreshold : transaction involves keys exceed this threshold can be treated as `big transaction`.
-const BigTxnThreshold = 64
+// bigTxnThreshold : transaction involves keys exceed this threshold can be treated as `big transaction`.
+const bigTxnThreshold = 64
 
 var (
 	tikvLockResolverCountWithBatchResolve             = metrics.TiKVLockResolverCounter.WithLabelValues("batch_resolve")
@@ -413,7 +413,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		if status.IsCommitted() {
 			req.ResolveLock.CommitVersion = status.CommitTS()
 		}
-		if l.TxnSize < BigTxnThreshold {
+		if l.TxnSize < bigTxnThreshold {
 			// Only resolve specified keys when it is a small transaction,
 			// prevent from scanning the whole region in this case.
 			tikvLockResolverCountWithResolveLockLite.Inc()

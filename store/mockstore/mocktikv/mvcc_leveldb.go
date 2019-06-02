@@ -564,13 +564,14 @@ func pessimisticLockMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvr
 }
 
 // Prewrite implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64, txnSize uint64) []error {
+func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
 	anyError := false
 	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
+	txnSize := len(mutations)
 	for _, m := range mutations {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
@@ -590,7 +591,7 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 				continue
 			}
 		}
-		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl, txnSize)
+		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl, uint64(txnSize))
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
