@@ -106,3 +106,20 @@ func (s *testSuite4) TestUnionScanWithCastCondition(c *C) {
 	tk.MustQuery("select * from ta where a = 1").Check(testkit.Rows("1"))
 	tk.MustExec("rollback")
 }
+
+func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int, index idx(b))")
+	tk.MustExec("insert t values (1,1),(2,2)")
+
+	// Test for delete in union scan
+	tk.MustExec("begin")
+	tk.MustExec("delete from t")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert t values (1,1)")
+	tk.MustQuery("select a,b from t").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select a,b from t use index(idx)").Check(testkit.Rows("1 1"))
+	tk.MustExec("rollback")
+}
