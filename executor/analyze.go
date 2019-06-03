@@ -702,7 +702,6 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
 	bo := tikv.NewBackoffer(context.Background(), 500)
-	e.rowCount = 0
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
 	sampTasksForRoutine := make([][]*AnalyzeFastTask, e.concurrency)
@@ -733,6 +732,13 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	targetKey, err := e.getNextSampleKey(bo, startKey)
 	if err != nil {
 		return false, err
+	}
+	e.rowCount = 0
+	for _, task := range e.sampTasks {
+		cnt := task.EndOffset - task.BeginOffset
+		task.BeginOffset = e.rowCount
+		task.EndOffset = e.rowCount + cnt
+		e.rowCount += cnt
 	}
 	for {
 		// Search for the region which contains the targetKey.
@@ -949,7 +955,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, randKey))
 		}
 
-		var kvMap map[string][]byte
+		kvMap := make(map[string][]byte)
 		for _, key := range keys {
 			var iter kv.Iterator
 			iter, *err = snapshot.Iter(key, endKey)
