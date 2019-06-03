@@ -123,10 +123,9 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 			}
 		}
 	}
+	r.curr.RowsData = remainRowsData
 	if len(remainRowsData) == 0 {
 		r.curr = nil // Current chunk is finished.
-	} else {
-		r.curr.RowsData = remainRowsData
 	}
 	return nil
 }
