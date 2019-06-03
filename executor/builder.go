@@ -789,12 +789,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-
-		//mTblReader, err := buildMemTableReader(us, x)
-		//if err != nil {
-		//	return nil, err
-		//}
-		//us.addedRows, err = mTblReader.getMemRows()
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -809,12 +803,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-
-		//mIdxReader, err := buildMemIndexReader(us, x)
-		//if err != nil {
-		//	return nil, err
-		//}
-		//us.addedRows, err = mIdxReader.getMemRows()
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -829,11 +817,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		//mIdxLookUpReader, err := buildMemIndexLookUpReader(us, x)
-		//if err != nil {
-		//	return nil, err
-		//}
-		//us.addedRows, err = mIdxLookUpReader.getMemRows()
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return reader, nil

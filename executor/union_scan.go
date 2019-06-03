@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"time"
 
@@ -229,7 +228,6 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				continue
 			}
 			if _, ok := us.dirty.addedRows[snapshotHandle]; ok {
-				fmt.Printf("\n\nhandle: %v\n--------\n-n", snapshotHandle)
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.
 				continue

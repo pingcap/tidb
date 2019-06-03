@@ -52,7 +52,6 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 }
 
 func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
-	// todo: fix corSubquery.
 	tps := make([]*types.FieldType, 0, len(m.index.Columns)+1)
 	cols := m.table.Columns
 	for _, col := range m.index.Columns {
@@ -66,8 +65,8 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 			}
 		}
 	} else {
-		tp := types.NewFieldType(mysql.TypeLonglong)
-		tps = append(tps, tp)
+		// ExtraHandle Column tp.
+		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 
 	txn, err := m.ctx.Txn(true)
@@ -76,7 +75,6 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 	}
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	for _, rg := range m.kvRanges {
-		// todo: consider desc scan.
 		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
 		if err != nil {
 			return nil, err
@@ -210,8 +208,8 @@ func (m *memIndexReader) decodeIndexHandle(key, value []byte, pkTp *types.FieldT
 	} else if len(value) >= 8 {
 		return decodeHandle(value)
 	}
-
-	return 0, errors.New("no handle in index kv")
+	// Should never execute to here.
+	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
 }
 
 func decodeHandle(data []byte) (int64, error) {
