@@ -244,18 +244,17 @@ type IndexReaderExecutor struct {
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
 	// columns are only required by union scan.
-	columns   []*model.ColumnInfo
-	streaming bool
-	feedback  *statistics.QueryFeedback
+	columns []*model.ColumnInfo
+	// outputColumns are only required by union scan.
+	outputColumns []*expression.Column
+	streaming     bool
+	feedback      *statistics.QueryFeedback
 
 	corColInFilter bool
 	corColInAccess bool
 	idxCols        []*expression.Column
 	colLens        []int
 	plans          []plannercore.PhysicalPlan
-
-	// for union scan
-	outputColumns []*expression.Column
 
 	selectResultHook // for testing
 }

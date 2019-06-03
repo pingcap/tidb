@@ -125,14 +125,11 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	reader := us.children[0]
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		mTblReader := buildMemTableReader(us, x)
-		us.addedRows, err = mTblReader.getMemRows()
+		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
 	case *IndexReaderExecutor:
-		mIdxReader := buildMemIndexReader(us, x)
-		us.addedRows, err = mIdxReader.getMemRows()
+		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
 	case *IndexLookUpExecutor:
-		mIdxLookUpReader := buildMemIndexLookUpReader(us, x)
-		us.addedRows, err = mIdxLookUpReader.getMemRows()
+		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
 	}
 
 	us.snapshotChunkBuffer = us.newFirstChunk()
