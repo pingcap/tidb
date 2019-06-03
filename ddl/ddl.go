@@ -472,14 +472,16 @@ func (d *ddl) close() {
 	for _, worker := range d.workers {
 		worker.close()
 	}
-	if d.sessPool != nil {
-		d.sessPool.close()
-	}
+	// d.delRangeMgr using sessions from d.sessPool.
+	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
 	if d.delRangeMgr != nil {
 		d.delRangeMgr.clear()
 	}
+	if d.sessPool != nil {
+		d.sessPool.close()
+	}
 
-	logutil.Logger(ddlLogCtx).Info("[ddl] closing DDL", zap.String("ID", d.uuid), zap.Duration("takeTime", time.Since(startTime)))
+	logutil.Logger(ddlLogCtx).Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
 }
 
 // GetLease implements DDL.GetLease interface.
