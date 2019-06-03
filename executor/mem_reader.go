@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -69,42 +70,27 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 
-	txn, err := m.ctx.Txn(true)
+	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
+	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
+		err := m.decodeIndexKeyValue(key, value, tps, &mutableRow)
+		if err != nil {
+			return err
+		}
+
+		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
+		if err != nil || !matched {
+			return err
+		}
+		newData := make([]types.Datum, len(m.outputOffset))
+		for i := range m.outputOffset {
+			newData[i] = mutableRow.ToRow().GetDatum(i, m.retFieldTypes[i])
+		}
+		m.addedRows = append(m.addedRows, newData)
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
-	}
-	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
-	for _, rg := range m.kvRanges {
-		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
-		if err != nil {
-			return nil, err
-		}
-		for ; iter.Valid(); err = iter.Next() {
-			if err != nil {
-				return nil, err
-			}
-			// check whether the key was been deleted.
-			if len(iter.Value()) == 0 {
-				continue
-			}
-			err = m.decodeIndexKeyValue(iter.Key(), iter.Value(), tps, &mutableRow)
-			if err != nil {
-				return nil, err
-			}
-
-			matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
-			if err != nil {
-				return nil, err
-			}
-			if !matched {
-				continue
-			}
-			newData := make([]types.Datum, len(m.outputOffset))
-			for i := range m.outputOffset {
-				newData[i] = mutableRow.ToRow().GetDatum(i, m.retFieldTypes[i])
-			}
-			m.addedRows = append(m.addedRows, newData)
-		}
 	}
 	// TODO: After refine `IterReverse`, remove below logic and use `IterReverse` when do reverse scan.
 	if m.desc {
@@ -124,30 +110,16 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 		}
 	}
 	handles := make([]int64, 0, cap(m.addedRows))
-	txn, err := m.ctx.Txn(true)
+	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
+		handle, err := m.decodeIndexHandle(key, value, pkTp)
+		if err != nil {
+			return err
+		}
+		handles = append(handles, handle)
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	for _, rg := range m.kvRanges {
-		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
-		if err != nil {
-			return nil, err
-		}
-		for ; iter.Valid(); err = iter.Next() {
-			if err != nil {
-				return nil, err
-			}
-			// check whether the key was been deleted.
-			if len(iter.Value()) == 0 {
-				continue
-			}
-
-			handle, err := m.decodeIndexHandle(iter.Key(), iter.Value(), pkTp)
-			if err != nil {
-				return nil, err
-			}
-			handles = append(handles, handle)
-		}
 	}
 	if m.desc {
 		for i, j := 0, len(handles)-1; i < j; i, j = i+1, j-1 {
@@ -255,46 +227,29 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 }
 
 func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
-	txn, err := m.ctx.Txn(true)
+	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
+	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
+		err := m.decodeRecordKeyValue(key, value, &mutableRow)
+		if err != nil {
+			return err
+		}
+
+		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
+		if err != nil || !matched {
+			return err
+		}
+
+		newData := make([]types.Datum, len(m.columns))
+		for i := range m.columns {
+			newData[i] = mutableRow.ToRow().GetDatum(i, m.retFieldTypes[i])
+		}
+		m.addedRows = append(m.addedRows, newData)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
-	for _, rg := range m.kvRanges {
-		// todo: consider desc scan.
-		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
-		if err != nil {
-			return nil, err
-		}
-		for ; iter.Valid(); err = iter.Next() {
-			if err != nil {
-				return nil, err
-			}
 
-			// check whether the key was been deleted.
-			if len(iter.Value()) == 0 {
-				continue
-			}
-
-			err = m.decodeRecordKeyValue(iter.Key(), iter.Value(), &mutableRow)
-			if err != nil {
-				return nil, err
-			}
-
-			matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
-			if err != nil {
-				return nil, err
-			}
-			if !matched {
-				continue
-			}
-			newData := make([]types.Datum, len(m.columns))
-			for i := range m.columns {
-				newData[i] = mutableRow.ToRow().GetDatum(i, m.retFieldTypes[i])
-			}
-			m.addedRows = append(m.addedRows, newData)
-		}
-	}
 	// TODO: After refine `IterReverse`, remove below logic and use `IterReverse` when do reverse scan.
 	if m.desc {
 		reverseDatumSlice(m.addedRows)
@@ -438,6 +393,35 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 	}
 
 	return memTblReader.getMemRows()
+}
+
+type processKVFunc func(key, value []byte) error
+
+func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn processKVFunc) error {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	for _, rg := range kvRanges {
+		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
+		if err != nil {
+			return err
+		}
+		for ; iter.Valid(); err = iter.Next() {
+			if err != nil {
+				return err
+			}
+			// check whether the key was been deleted.
+			if len(iter.Value()) == 0 {
+				continue
+			}
+			err = fn(iter.Key(), iter.Value())
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func reverseDatumSlice(rows [][]types.Datum) {
