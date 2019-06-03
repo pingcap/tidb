@@ -1020,6 +1020,7 @@ type CreateViewStmt struct {
 	ViewName    *TableName
 	Cols        []model.CIStr
 	Select      StmtNode
+	SchemaCols  []model.CIStr
 	Algorithm   model.ViewAlgorithm
 	Definer     *auth.UserIdentity
 	Security    model.ViewSecurity
