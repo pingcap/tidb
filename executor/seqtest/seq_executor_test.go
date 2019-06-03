@@ -504,6 +504,18 @@ func (s *seqTestSuite) TestShow(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION p0 VALUES LESS THAN (10),\n  PARTITION p1 VALUES LESS THAN (20),\n  PARTITION p2 VALUES LESS THAN (MAXVALUE)\n)",
 	))
 
+	// Test range partition's position.
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (a int, id int(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY(id)) AUTO_INCREMENT=4 comment="testing"
+     PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (6))`)
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=4 COMMENT='testing'"+"\nPARTITION BY RANGE ( `id` ) (\n  PARTITION p0 VALUES LESS THAN (6)\n)",
+	))
+
 	tk.MustExec(`drop table if exists t`)
 	_, err := tk.Exec(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
  	PARTITION p0 VALUES LESS THAN (10),
@@ -534,6 +546,18 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY HASH( `a` )\nPARTITIONS 4",
+	))
+
+	// Test hash partition's position.
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (a int, id int(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY(id)) AUTO_INCREMENT=4 comment="testing"
+     PARTITION BY HASH(id) PARTITIONS 4`)
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=4 COMMENT='testing'"+"\nPARTITION BY HASH( `id` )\nPARTITIONS 4",
 	))
 
 	// Test show create table compression type.
