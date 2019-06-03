@@ -21,4 +21,57 @@ func (s *testEvaluatorSuite) TestSimpleRewriter(c *C) {
 	c.Assert(err, IsNil)
 	_, isNull, _ := exprs[0].EvalInt(ctx, chunk.Row{})
 	c.Assert(isNull, IsTrue)
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "+1", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "-1", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(-1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "'abc' like '%b%'", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "'abcdef' REGEXP '.*cd.*'", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "(1, 1) = (1, 1)", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "5 between 1 and 10", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "1 is true", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "0 is not true", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "1 in (1, 2, 3)", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	_, err = ParseSimpleExprsWithSchema(ctx, "1 in ()", sch)
+	c.Assert(err, NotNil)
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "1 in (1, 1, 1, 1)", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
 }
