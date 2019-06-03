@@ -78,6 +78,8 @@ func (t CmdType) String() string {
 		return "Prewrite"
 	case CmdPessimisticLock:
 		return "PessimisticLock"
+	case CmdPessimisticRollback:
+		return "PessimisticRollback"
 	case CmdCommit:
 		return "Commit"
 	case CmdCleanup:
@@ -208,6 +210,8 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Coprocessor{Coprocessor: req.Cop}}
 	case CmdPessimisticLock:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticLock{PessimisticLock: req.PessimisticLock}}
+	case CmdPessimisticRollback:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback}}
 	}
 	return nil
 }
@@ -333,6 +337,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.Prewrite.Context = ctx
 	case CmdPessimisticLock:
 		req.PessimisticLock.Context = ctx
+	case CmdPessimisticRollback:
+		req.PessimisticRollback.Context = ctx
 	case CmdCommit:
 		req.Commit.Context = ctx
 	case CmdCleanup:
@@ -377,8 +383,6 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.MvccGetByStartTs.Context = ctx
 	case CmdSplitRegion:
 		req.SplitRegion.Context = ctx
-	case CmdPessimisticRollback:
-		req.PessimisticRollback.Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -405,6 +409,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		}
 	case CmdPessimisticLock:
 		resp.PessimisticLock = &kvrpcpb.PessimisticLockResponse{
+			RegionError: e,
+		}
+	case CmdPessimisticRollback:
+		resp.PessimisticRollback = &kvrpcpb.PessimisticRollbackResponse{
 			RegionError: e,
 		}
 	case CmdCommit:
@@ -583,6 +591,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Prewrite, err = client.KvPrewrite(ctx, req.Prewrite)
 	case CmdPessimisticLock:
 		resp.PessimisticLock, err = client.KvPessimisticLock(ctx, req.PessimisticLock)
+	case CmdPessimisticRollback:
+		resp.PessimisticRollback, err = client.KVPessimisticRollback(ctx, req.PessimisticRollback)
 	case CmdCommit:
 		resp.Commit, err = client.KvCommit(ctx, req.Commit)
 	case CmdCleanup:
