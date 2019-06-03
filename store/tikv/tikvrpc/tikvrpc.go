@@ -377,6 +377,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.MvccGetByStartTs.Context = ctx
 	case CmdSplitRegion:
 		req.SplitRegion.Context = ctx
+	case CmdPessimisticRollback:
+		req.PessimisticRollback.Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -511,6 +513,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.Scan.GetRegionError()
 	case CmdPessimisticLock:
 		e = resp.PessimisticLock.GetRegionError()
+	case CmdPessimisticRollback:
+		e = resp.PessimisticRollback.GetRegionError()
 	case CmdPrewrite:
 		e = resp.Prewrite.GetRegionError()
 	case CmdCommit:

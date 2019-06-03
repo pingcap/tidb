@@ -633,16 +633,11 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			}
 			locks = append(locks, lock)
 		}
-		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
+		_, err = c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if msBeforeExpired > 0 {
-			err = bo.BackoffWithMaxSleep(BoTxnLock, int(msBeforeExpired), errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
+		// Because we already waited on tikv, no need to Backoff here.
 	}
 }
 

@@ -75,6 +75,15 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			},
 		}
 	}
+	if dead, ok := errors.Cause(err).(*ErrDeadlock); ok {
+		return &kvrpcpb.KeyError{
+			Deadlock: &kvrpcpb.Deadlock{
+				LockTs:          dead.LockTS,
+				LockKey:         dead.LockKey,
+				DeadlockKeyHash: dead.DealockKeyHash,
+			},
+		}
+	}
 	if retryable, ok := errors.Cause(err).(ErrRetryable); ok {
 		return &kvrpcpb.KeyError{
 			Retryable: retryable.Error(),
@@ -294,9 +303,24 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 			panic("KvPessimisticLock: key not in region")
 		}
 	}
+	startTS := req.StartVersion
+	regionID := req.Context.RegionId
+	h.cluster.handleDelay(startTS, regionID)
 	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(), req.GetLockTtl())
+
+	// TODO: remove this when implement sever side wait.
+	h.simulateServerSideWaitLock(errs)
 	return &kvrpcpb.PessimisticLockResponse{
 		Errors: convertToKeyErrors(errs),
+	}
+}
+
+func (h *rpcHandler) simulateServerSideWaitLock(errs []error) {
+	for _, err := range errs {
+		if _, ok := err.(*ErrLocked); ok {
+			time.Sleep(time.Millisecond * 5)
+			break
+		}
 	}
 }
 

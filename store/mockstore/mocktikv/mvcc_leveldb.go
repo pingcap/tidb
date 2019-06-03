@@ -544,7 +544,11 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 		if dec.lock.startTS != startTS {
 			errDeadlock := mvcc.deadlockDetector.Detect(startTS, dec.lock.startTS, farm.Fingerprint64(mutation.Key))
 			if errDeadlock != nil {
-				return errDeadlock
+				return &ErrDeadlock{
+					LockKey:        mutation.Key,
+					LockTS:         dec.lock.startTS,
+					DealockKeyHash: errDeadlock.KeyHash,
+				}
 			}
 			return dec.lock.lockErr(mutation.Key)
 		}
@@ -612,7 +616,7 @@ func pessimisticRollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, st
 	if ok {
 		lock := dec.lock
 		if lock.op == kvrpcpb.Op_PessimisticLock && lock.startTS == startTS && lock.forUpdateTS == forUpdateTS {
-			batch.Delete(key)
+			batch.Delete(startKey)
 		}
 	}
 	return nil

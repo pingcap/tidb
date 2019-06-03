@@ -365,7 +365,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keys ...kv
 			txn.committer.primaryKey = keys[0]
 		}
 
-		bo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(txn.vars)
+		bo := NewBackoffer(ctx, pessimisticLockMaxBackoff).WithVars(txn.vars)
 		keys1 := make([][]byte, len(keys))
 		for i, key := range keys {
 			keys1[i] = key
@@ -376,9 +376,13 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keys ...kv
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys1) == 1
 		err := txn.committer.pessimisticLockKeys(bo, keys1)
 		if err != nil {
-			txn.asyncPessimisticRollback(ctx, keys1)
+			wg := txn.asyncPessimisticRollback(ctx, keys1)
 			if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
 				dl.IsRetryable = true
+				// Wait for the pessimistic rollback to finish before we retry the statement.
+				wg.Wait()
+				// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
+				time.Sleep(time.Millisecond * 5)
 			}
 			return err
 		}
@@ -392,7 +396,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keys ...kv
 	return nil
 }
 
-func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) {
+func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *sync.WaitGroup {
 	// Clone a new committer for execute in background.
 	committer := &twoPhaseCommitter{
 		store:       txn.committer.store,
@@ -401,12 +405,16 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 		forUpdateTS: txn.committer.forUpdateTS,
 		primaryKey:  txn.committer.primaryKey,
 	}
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
 	go func() {
 		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff), keys)
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
 		}
+		wg.Done()
 	}()
+	return wg
 }
 
 func hashInKeys(deadlockKeyHash uint64, keys []kv.Key) bool {
