@@ -51,12 +51,6 @@ var _ = Suite(&testIntegrationSuite2{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite3{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
-var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
-var _ = Suite(&testIntegrationSuite7{&testIntegrationSuite{}})
-var _ = Suite(&testIntegrationSuite8{&testIntegrationSuite{}})
-var _ = Suite(&testIntegrationSuite9{&testIntegrationSuite{}})
-var _ = Suite(&testIntegrationSuite10{&testIntegrationSuite{}})
-var _ = Suite(&testIntegrationSuite11{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	lease     time.Duration
@@ -127,14 +121,8 @@ func (s *testIntegrationSuite2) TearDownTest(c *C) {
 type testIntegrationSuite3 struct{ *testIntegrationSuite }
 type testIntegrationSuite4 struct{ *testIntegrationSuite }
 type testIntegrationSuite5 struct{ *testIntegrationSuite }
-type testIntegrationSuite6 struct{ *testIntegrationSuite }
-type testIntegrationSuite7 struct{ *testIntegrationSuite }
-type testIntegrationSuite8 struct{ *testIntegrationSuite }
-type testIntegrationSuite9 struct{ *testIntegrationSuite }
-type testIntegrationSuite10 struct{ *testIntegrationSuite }
-type testIntegrationSuite11 struct{ *testIntegrationSuite }
 
-func (s *testIntegrationSuite6) TestNoZeroDateMode(c *C) {
+func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	defer tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
@@ -148,7 +136,7 @@ func (s *testIntegrationSuite6) TestNoZeroDateMode(c *C) {
 	assertErrorCode(c, tk, "create table test_zero_date(a timestamp default 0);", mysql.ErrInvalidDefault)
 }
 
-func (s *testIntegrationSuite7) TestInvalidDefault(c *C) {
+func (s *testIntegrationSuite2) TestInvalidDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("USE test;")
@@ -163,7 +151,7 @@ func (s *testIntegrationSuite7) TestInvalidDefault(c *C) {
 }
 
 // TestInvalidNameWhenCreateTable for issue #3848
-func (s *testIntegrationSuite8) TestInvalidNameWhenCreateTable(c *C) {
+func (s *testIntegrationSuite3) TestInvalidNameWhenCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("USE test;")
@@ -187,11 +175,11 @@ func (s *testIntegrationSuite3) TestCreateTableIfNotExists(c *C) {
 
 	tk.MustExec("USE test;")
 
-	tk.MustExec("create table t1(a bigint)")
-	tk.MustExec("create table t(a bigint)")
+	tk.MustExec("create table ct1(a bigint)")
+	tk.MustExec("create table ct(a bigint)")
 
 	// Test duplicate create-table with `LIKE` clause
-	tk.MustExec("create table if not exists t like t1;")
+	tk.MustExec("create table if not exists ct like ct1;")
 	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), GreaterEqual, 1)
 	lastWarn := warnings[len(warnings)-1]
@@ -199,7 +187,7 @@ func (s *testIntegrationSuite3) TestCreateTableIfNotExists(c *C) {
 	c.Assert(lastWarn.Level, Equals, stmtctx.WarnLevelNote)
 
 	// Test duplicate create-table without `LIKE` clause
-	tk.MustExec("create table if not exists t(b bigint, c varchar(60));")
+	tk.MustExec("create table if not exists ct(b bigint, c varchar(60));")
 	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), GreaterEqual, 1)
 	lastWarn = warnings[len(warnings)-1]
@@ -230,7 +218,7 @@ func (s *testIntegrationSuite1) TestUniqueKeyNullValue(c *C) {
 	tk.MustExec("admin check index t b")
 }
 
-func (s *testIntegrationSuite4) TestEndIncluded(c *C) {
+func (s *testIntegrationSuite3) TestEndIncluded(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("USE test")
@@ -252,7 +240,7 @@ func (s *testIntegrationSuite3) TestModifyColumnAfterAddIndex(c *C) {
 	tk.MustExec(`insert into city values ("abc"), ("abd");`)
 }
 
-func (s *testIntegrationSuite9) TestIssue2293(c *C) {
+func (s *testIntegrationSuite3) TestIssue2293(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_issue_2293 (a int)")
@@ -278,7 +266,7 @@ func (s *testIntegrationSuite2) TestIssue6101(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-func (s *testIntegrationSuite4) TestIssue3833(c *C) {
+func (s *testIntegrationSuite3) TestIssue3833(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table issue3833 (b char(0))")
@@ -287,7 +275,7 @@ func (s *testIntegrationSuite4) TestIssue3833(c *C) {
 	assertErrorCode(c, tk, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
 }
 
-func (s *testIntegrationSuite10) TestIssue2858And2717(c *C) {
+func (s *testIntegrationSuite1) TestIssue2858And2717(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -446,7 +434,7 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	assertErrorCode(c, tk, sql, tmysql.ErrBadNull)
 }
 
-func (s *testIntegrationSuite9) TestTableDDLWithFloatType(c *C) {
+func (s *testIntegrationSuite3) TestTableDDLWithFloatType(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists t")
@@ -461,7 +449,7 @@ func (s *testIntegrationSuite9) TestTableDDLWithFloatType(c *C) {
 	s.tk.MustExec("drop table t")
 }
 
-func (s *testIntegrationSuite10) TestTableDDLWithTimeType(c *C) {
+func (s *testIntegrationSuite1) TestTableDDLWithTimeType(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists t")
@@ -543,7 +531,7 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 	tk.MustExec("drop database umt_db")
 }
 
-func (s *testIntegrationSuite7) TestNullGeneratedColumn(c *C) {
+func (s *testIntegrationSuite2) TestNullGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -561,7 +549,7 @@ func (s *testIntegrationSuite7) TestNullGeneratedColumn(c *C) {
 	tk.MustExec("drop table t")
 }
 
-func (s *testIntegrationSuite9) TestChangingCharsetToUtf8(c *C) {
+func (s *testIntegrationSuite3) TestChangingCharsetToUtf8(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -607,7 +595,7 @@ func (s *testIntegrationSuite9) TestChangingCharsetToUtf8(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testIntegrationSuite10) TestChangingTableCharset(c *C) {
+func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("USE test")
@@ -740,7 +728,7 @@ func (s *testIntegrationSuite10) TestChangingTableCharset(c *C) {
 	checkCharset()
 }
 
-func (s *testIntegrationSuite7) TestCaseInsensitiveCharsetAndCollate(c *C) {
+func (s *testIntegrationSuite2) TestCaseInsensitiveCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database if not exists test_charset_collate")
@@ -823,7 +811,7 @@ func (s *testIntegrationSuite3) TestZeroFillCreateTable(c *C) {
 	c.Assert(mysql.HasUnsignedFlag(zCol.Flag), IsTrue)
 }
 
-func (s *testIntegrationSuite6) TestBitDefaultValue(c *C) {
+func (s *testIntegrationSuite5) TestBitDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_bit (c1 bit(10) default 250, c2 int);")
@@ -948,7 +936,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	tk.MustExec("admin check index t idx_b")
 }
 
-func (s *testIntegrationSuite4) TestMultiRegionGetTableEndHandle(c *C) {
+func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
@@ -1019,7 +1007,7 @@ func (s *testIntegrationSuite) checkGetMaxTableRowID(ctx *testMaxTableRowIDConte
 	c.Assert(maxID, Equals, expectMaxID)
 }
 
-func (s *testIntegrationSuite6) TestGetTableEndHandle(c *C) {
+func (s *testIntegrationSuite5) TestGetTableEndHandle(c *C) {
 	// TestGetTableEndHandle test ddl.GetTableMaxRowID method, which will return the max row id of the table.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
@@ -1137,7 +1125,7 @@ func (s *testIntegrationSuite1) TestCreateTableTooLarge(c *C) {
 	atomic.StoreUint32(&ddl.TableColumnCountLimit, originLimit)
 }
 
-func (s *testIntegrationSuite8) TestChangeColumnPosition(c *C) {
+func (s *testIntegrationSuite3) TestChangeColumnPosition(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 
@@ -1201,7 +1189,7 @@ func (s *testIntegrationSuite2) TestAddIndexAfterAddColumn(c *C) {
 	assertErrorCode(c, s.tk, sql, tmysql.ErrTooManyKeyParts)
 }
 
-func (s *testIntegrationSuite8) TestResolveCharset(c *C) {
+func (s *testIntegrationSuite3) TestResolveCharset(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists resolve_charset")
@@ -1296,7 +1284,7 @@ func (s *testIntegrationSuite1) TestAddColumnTooMany(c *C) {
 	assertErrorCode(c, s.tk, alterSQL, tmysql.ErrTooManyFields)
 }
 
-func (s *testIntegrationSuite4) TestAlterColumn(c *C) {
+func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 
@@ -1639,7 +1627,7 @@ func (s *testIntegrationSuite3) TestDefaultValueIsString(c *C) {
 	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "1")
 }
 
-func (s *testIntegrationSuite11) TestChangingDBCharset(c *C) {
+func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("DROP DATABASE IF EXISTS alterdb1")
