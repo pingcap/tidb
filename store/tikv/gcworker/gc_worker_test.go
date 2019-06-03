@@ -37,6 +37,7 @@ func TestT(t *testing.T) {
 
 type testGCWorkerSuite struct {
 	store    tikv.Storage
+	cluster  *mocktikv.Cluster
 	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
 	dom      *domain.Domain
@@ -47,9 +48,9 @@ var _ = Suite(&testGCWorkerSuite{})
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
 
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	store, err := mockstore.NewMockTikvStore(mockstore.WithCluster(cluster))
+	s.cluster = mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(s.cluster)
+	store, err := mockstore.NewMockTikvStore(mockstore.WithCluster(s.cluster))
 
 	s.store = store.(tikv.Storage)
 	c.Assert(err, IsNil)
@@ -58,7 +59,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	gcWorker, err := NewGCWorker(s.store, mocktikv.NewPDClient(cluster))
+	gcWorker, err := NewGCWorker(s.store, mocktikv.NewPDClient(s.cluster))
 	c.Assert(err, IsNil)
 	gcWorker.Start()
 	gcWorker.Close()
@@ -154,16 +155,28 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 
 	// Change GC enable status.
 	s.oracle.AddOffset(time.Minute * 40)
-	err = s.gcWorker.saveValueToSysTable(gcEnableKey, gcDisableValue)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
 	c.Assert(err, IsNil)
 	ok, _, err = s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsFalse)
-	err = s.gcWorker.saveValueToSysTable(gcEnableKey, gcEnableValue)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
 	c.Assert(err, IsNil)
 	ok, _, err = s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
+
+	// Change auto concurrency
+	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanFalse)
+	c.Assert(err, IsNil)
+	useAutoConcurrency, err := s.gcWorker.checkUseAutoConcurrency()
+	c.Assert(err, IsNil)
+	c.Assert(useAutoConcurrency, IsFalse)
+	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanTrue)
+	c.Assert(err, IsNil)
+	useAutoConcurrency, err = s.gcWorker.checkUseAutoConcurrency()
+	c.Assert(err, IsNil)
+	c.Assert(useAutoConcurrency, IsTrue)
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
@@ -197,6 +210,28 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+}
+
+func (s *testGCWorkerSuite) TestGetGCConcurrency(c *C) {
+	// Pick a concurrency that doesn't equal to the number of stores.
+	concurrencyConfig := 25
+	c.Assert(concurrencyConfig, Not(Equals), len(s.cluster.GetAllStores()))
+	err := s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(concurrencyConfig))
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+
+	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanFalse)
+	c.Assert(err, IsNil)
+	concurrency, err := s.gcWorker.getGCConcurrency(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, concurrencyConfig)
+
+	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanTrue)
+	c.Assert(err, IsNil)
+	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, len(s.cluster.GetAllStores()))
 }
 
 func (s *testGCWorkerSuite) TestDoGC(c *C) {
@@ -236,17 +271,20 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(str, Equals, gcModeDistributed)
 
-	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
+	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
+	c.Assert(err, IsNil)
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, false)
 
-	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
+	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
+	c.Assert(err, IsNil)
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, true)
 
-	s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
+	err = s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
+	c.Assert(err, IsNil)
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, true)
