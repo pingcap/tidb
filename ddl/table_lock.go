@@ -176,8 +176,7 @@ func unlockTables(t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, 
 		}
 	}
 
-	unlockTable(tbInfo, arg)
-	ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
+	ver, err = unlockTableAndUpdate(t, job, tbInfo, arg)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -186,8 +185,8 @@ func unlockTables(t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, 
 	return ver, nil
 }
 
-// unlockTable uses to unlock table lock that hold by the session.
-func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) {
+// unlockTableAndUpdate uses to unlock table lock that hold by the session.
+func unlockTableAndUpdate(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, arg *lockTablesArg) (ver int64, err error) {
 	if !tbInfo.IsLocked() {
 		return
 	}
@@ -203,6 +202,7 @@ func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) {
 	if len(tbInfo.Lock.Sessions) == 0 {
 		tbInfo.Lock = nil
 	}
+	return updateVersionAndTableInfo(t, job, tbInfo, true)
 }
 
 func onUnlockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {

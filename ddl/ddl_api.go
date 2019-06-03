@@ -2895,8 +2895,9 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
 		// AddTableLock here to avoid this ddl job was execute successful but the session was been kill before return.
-		// The session will release its all table locks, if don't add table lock of the new table id here,
-		// the session maybe forgot release the new table id lock when this ddl job was execute successful but the session was been kill before return.
+		// The session will release all table locks it holds, if we don't add the new locking table id here,
+		// the session may forget to release the new locked table id when this ddl job was executed successfully
+		// but the session was killed before return.
 		ctx.AddTableLock(([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}}))
 	}
 	err = d.doDDLJob(ctx, job)
@@ -3279,7 +3280,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{arg},
 	}
-	// AddTableLock here to avoid this ddl job was execute successful but the session was been kill before return.
+	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
 	ctx.AddTableLock(lockTables)
 	err := d.doDDLJob(ctx, job)
 	if err == nil {
