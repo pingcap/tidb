@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -256,16 +257,30 @@ func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rowValues, err := m.getRowData(m.columns, m.colIDs, handle, value)
+	return decodeRowData(m.ctx, m.table, m.columns, m.colIDs, handle, m.handleBytes, value)
+}
+
+// decodeRowData uses to decode row data value.
+func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, cacheBytes, value []byte) ([]types.Datum, error) {
+	values, err := getRowData(ctx.GetSessionVars().StmtCtx, tb, columns, colIDs, handle, cacheBytes, value)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	return m.decodeRowData(rowValues)
+	ds := make([]types.Datum, 0, len(columns))
+	for _, col := range columns {
+		offset := colIDs[col.ID]
+		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return nil, err
+		}
+		ds = append(ds, d)
+	}
+	return ds, nil
 }
 
 // getRowData decodes raw byte slice to row data.
-func (m *memTableReader) getRowData(columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, value []byte) ([][]byte, error) {
-	pkIsHandle := m.table.PKIsHandle
+func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, cacheBytes, value []byte) ([][]byte, error) {
+	pkIsHandle := tb.PKIsHandle
 	values, err := tablecodec.CutRowNew(value, colIDs)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -285,7 +300,7 @@ func (m *memTableReader) getRowData(columns []*model.ColumnInfo, colIDs map[int6
 			} else {
 				handleDatum = types.NewIntDatum(handle)
 			}
-			handleData, err1 := codec.EncodeValue(m.ctx.GetSessionVars().StmtCtx, m.handleBytes[:0], handleDatum)
+			handleData, err1 := codec.EncodeValue(ctx, cacheBytes, handleDatum)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
@@ -300,19 +315,6 @@ func (m *memTableReader) getRowData(columns []*model.ColumnInfo, colIDs map[int6
 	}
 
 	return values, nil
-}
-
-func (m *memTableReader) decodeRowData(values [][]byte) ([]types.Datum, error) {
-	ds := make([]types.Datum, 0, len(m.columns))
-	for _, col := range m.columns {
-		offset := m.colIDs[col.ID]
-		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().TimeZone)
-		if err != nil {
-			return nil, err
-		}
-		ds = append(ds, d)
-	}
-	return ds, nil
 }
 
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {

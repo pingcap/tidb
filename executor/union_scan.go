@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -271,7 +270,7 @@ func (us *UnionScanExec) getMissIndexRowsByHandle(handle int64) error {
 	if _, ok := us.addedRowsMap[handle]; ok {
 		return nil
 	}
-	ds, err := us.getMemColumns(handle)
+	ds, err := us.getMemRow(handle)
 	if err != nil {
 		return err
 	}
@@ -335,7 +334,7 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 }
 
 // rowWithColsInTxn gets the row from the transaction buffer.
-func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64) ([]types.Datum, error) {
 	key := t.RecordKey(h)
 	txn, err := us.ctx.Txn(true)
 	if err != nil {
@@ -345,29 +344,20 @@ func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.
 	if err != nil {
 		return nil, err
 	}
-	v, _, err := tables.DecodeRawRowData(us.ctx, t.Meta(), h, cols, value)
-	if err != nil {
-		return nil, err
+	colIDs := make(map[int64]int)
+	for i, col := range us.columns {
+		colIDs[col.ID] = i
 	}
-	return v, nil
+	return decodeRowData(us.ctx, us.table.Meta(), us.columns, colIDs, h, []byte{}, value)
 }
 
-func (us *UnionScanExec) getMemColumns(h int64) ([]types.Datum, error) {
-	cols := us.table.WritableCols()
-	data, err := us.rowWithColsInTxn(us.table, h, cols)
+func (us *UnionScanExec) getMemRow(h int64) ([]types.Datum, error) {
+	data, err := us.rowWithColsInTxn(us.table, h)
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	if err != nil {
 		return nil, err
 	}
-	newData := make([]types.Datum, 0, us.schema.Len())
-	for _, col := range us.columns {
-		if col.ID == model.ExtraHandleID {
-			newData = append(newData, types.NewIntDatum(h))
-		} else {
-			newData = append(newData, data[col.Offset])
-		}
-	}
-	mutableRow.SetDatums(newData...)
+	mutableRow.SetDatums(data...)
 	matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 	if err != nil {
 		return nil, err
@@ -375,26 +365,14 @@ func (us *UnionScanExec) getMemColumns(h int64) ([]types.Datum, error) {
 	if !matched {
 		return nil, nil
 	}
-	return newData, nil
+	return data, nil
 }
 
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
-	cols := t.WritableCols()
 	for h := range us.dirty.addedRows {
-		newData := make([]types.Datum, 0, us.schema.Len())
-		data, err := us.rowWithColsInTxn(t, h, cols)
-		if err != nil {
-			return err
-		}
-		for _, col := range us.columns {
-			if col.ID == model.ExtraHandleID {
-				newData = append(newData, types.NewIntDatum(h))
-			} else {
-				newData = append(newData, data[col.Offset])
-			}
-		}
+		newData, err := us.rowWithColsInTxn(t, h)
 		mutableRow.SetDatums(newData...)
 		matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 		if err != nil {
