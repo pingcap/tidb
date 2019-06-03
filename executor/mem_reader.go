@@ -72,20 +72,17 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
-		err := m.decodeIndexKeyValue(key, value, tps, &mutableRow)
+		data, err := m.decodeIndexKeyValue(key, value, tps)
 		if err != nil {
 			return err
 		}
 
+		mutableRow.SetDatums(data...)
 		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
-		newData := make([]types.Datum, len(m.outputOffset))
-		for i := range m.outputOffset {
-			newData[i] = mutableRow.ToRow().GetDatum(i, m.retFieldTypes[i])
-		}
-		m.addedRows = append(m.addedRows, newData)
+		m.addedRows = append(m.addedRows, data)
 		return nil
 	})
 
@@ -129,18 +126,18 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 	return handles, nil
 }
 
-func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType, mutableRow *chunk.MutRow) error {
+func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType) ([]types.Datum, error) {
 	// this is from indexScanExec decodeIndexKV method.
 	values, b, err := tablecodec.CutIndexKeyNew(key, len(m.index.Columns))
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if len(b) > 0 {
 		values = append(values, b)
 	} else if len(value) >= 8 {
 		handle, err := decodeHandle(value)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		var handleDatum types.Datum
 		if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
@@ -150,19 +147,20 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		}
 		m.handleBytes, err = codec.EncodeValue(m.ctx.GetSessionVars().StmtCtx, m.handleBytes[:0], handleDatum)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		values = append(values, m.handleBytes)
 	}
 
-	for i, offset := range m.outputOffset {
+	ds := make([]types.Datum, 0, len(m.outputOffset))
+	for _, offset := range m.outputOffset {
 		d, err := tablecodec.DecodeColumnValue(values[offset], tps[offset], m.ctx.GetSessionVars().TimeZone)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		mutableRow.SetDatum(i, d)
+		ds = append(ds, d)
 	}
-	return nil
+	return ds, nil
 }
 
 func (m *memIndexReader) decodeIndexHandle(key, value []byte, pkTp *types.FieldType) (int64, error) {
@@ -229,21 +227,17 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
-		err := m.decodeRecordKeyValue(key, value, &mutableRow)
+		row, err := m.decodeRecordKeyValue(key, value)
 		if err != nil {
 			return err
 		}
 
+		mutableRow.SetDatums(row...)
 		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
-
-		newData := make([]types.Datum, len(m.columns))
-		for i := range m.columns {
-			newData[i] = mutableRow.ToRow().GetDatum(i, m.retFieldTypes[i])
-		}
-		m.addedRows = append(m.addedRows, newData)
+		m.addedRows = append(m.addedRows, row)
 		return nil
 	})
 	if err != nil {
@@ -257,16 +251,16 @@ func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
 	return m.addedRows, nil
 }
 
-func (m *memTableReader) decodeRecordKeyValue(key, value []byte, mutableRow *chunk.MutRow) error {
+func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum, error) {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	rowValues, err := m.getRowData(m.columns, m.colIDs, handle, value)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return m.decodeRowData(rowValues, mutableRow)
+	return m.decodeRowData(rowValues)
 }
 
 // getRowData decodes raw byte slice to row data.
@@ -308,16 +302,17 @@ func (m *memTableReader) getRowData(columns []*model.ColumnInfo, colIDs map[int6
 	return values, nil
 }
 
-func (m *memTableReader) decodeRowData(values [][]byte, mutableRow *chunk.MutRow) error {
-	for i, col := range m.columns {
+func (m *memTableReader) decodeRowData(values [][]byte) ([]types.Datum, error) {
+	ds := make([]types.Datum, 0, len(m.columns))
+	for _, col := range m.columns {
 		offset := m.colIDs[col.ID]
 		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().TimeZone)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		mutableRow.SetDatum(i, d)
+		ds = append(ds, d)
 	}
-	return nil
+	return ds, nil
 }
 
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
