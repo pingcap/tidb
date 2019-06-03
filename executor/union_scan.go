@@ -353,10 +353,10 @@ func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64) ([]types.Datum
 
 func (us *UnionScanExec) getMemRow(h int64) ([]types.Datum, error) {
 	data, err := us.rowWithColsInTxn(us.table, h)
-	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	if err != nil {
 		return nil, err
 	}
+	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	mutableRow.SetDatums(data...)
 	matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 	if err != nil {
@@ -373,6 +373,9 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	for h := range us.dirty.addedRows {
 		newData, err := us.rowWithColsInTxn(t, h)
+		if err != nil {
+			return err
+		}
 		mutableRow.SetDatums(newData...)
 		matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 		if err != nil {
