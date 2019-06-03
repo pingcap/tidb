@@ -190,7 +190,6 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	c.Assert(err.Error(), Equals, "key size is not positive")
 	fsBuilder.SetDesc(byDesc)
 	_, err = fsBuilder.Build()
-	//fsBuilder.SetSchema(keySize,valSize).SetDesc(byDesc)
 	c.Assert(err.Error(), Equals, "mismatch in key size and byDesc slice")
 	fsBuilder.SetSchema(keySize, valSize)
 	_, err = fsBuilder.Build()
