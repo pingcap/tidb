@@ -16,6 +16,7 @@ package logutil
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -34,6 +35,10 @@ const (
 	// zapLogPatern is used to match the zap log format, such as the following log:
 	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] ["str key"=val] ["int key"=123]
 	zapLogPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] (\[.*=.*\]).*\n`
+	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] ["str key"=val] ["int key"=123]
+	zapLogWithConnIDPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] \[conn=.*\] (\[.*=.*\]).*\n`
+	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] ["str key"=val] ["int key"=123]
+	zapLogWithKeyValPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] \[ctxKey=.*\] (\[.*=.*\]).*\n`
 )
 
 func Test(t *testing.T) {
@@ -66,7 +71,8 @@ func (s *testLogSuite) TestStringToLogLevel(c *C) {
 
 // TestLogging assure log format and log redirection works.
 func (s *testLogSuite) TestLogging(c *C) {
-	conf := NewLogConfig("warn", DefaultLogFormat, "", EmptyFileLogConfig, false)
+	conf := NewLogConfig("warn", DefaultLogFormat, "", NewFileLogConfig(true, 0), false)
+	conf.File.Filename = "log_file"
 	c.Assert(InitLogger(conf), IsNil)
 
 	log.SetOutput(s.buf)
@@ -89,7 +95,9 @@ func (s *testLogSuite) TestLogging(c *C) {
 
 func (s *testLogSuite) TestSlowQueryLogger(c *C) {
 	fileName := "slow_query"
-	conf := NewLogConfig("info", DefaultLogFormat, fileName, EmptyFileLogConfig, false)
+	conf := NewLogConfig("info", DefaultLogFormat, fileName, NewFileLogConfig(true, DefaultLogMaxSize), false)
+	c.Assert(conf.File.LogRotate, IsTrue)
+	c.Assert(conf.File.MaxSize, Equals, DefaultLogMaxSize)
 	err := InitLogger(conf)
 	c.Assert(err, IsNil)
 	defer os.Remove(fileName)
@@ -182,6 +190,48 @@ func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
 			break
 		}
 		c.Assert(str, Matches, zapLogPattern)
+	}
+	c.Assert(err, Equals, io.EOF)
+
+}
+
+func (s *testLogSuite) TestZapLoggerWithKeys(c *C) {
+	fileCfg := FileLogConfig{zaplog.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
+	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	err := InitZapLogger(conf)
+	c.Assert(err, IsNil)
+	connID := uint32(123)
+	ctx := WithConnID(context.Background(), connID)
+	s.testZapLogger(ctx, c, fileCfg.Filename, zapLogWithConnIDPattern)
+	os.Remove(fileCfg.Filename)
+
+	err = InitZapLogger(conf)
+	c.Assert(err, IsNil)
+	key := "ctxKey"
+	val := "ctxValue"
+	ctx1 := WithKeyValue(context.Background(), key, val)
+	s.testZapLogger(ctx1, c, fileCfg.Filename, zapLogWithKeyValPattern)
+	os.Remove(fileCfg.Filename)
+}
+
+func (s *testLogSuite) testZapLogger(ctx context.Context, c *C, fileName, pattern string) {
+	Logger(ctx).Debug("debug msg", zap.String("test with key", "true"))
+	Logger(ctx).Info("info msg", zap.String("test with key", "true"))
+	Logger(ctx).Warn("warn msg", zap.String("test with key", "true"))
+	Logger(ctx).Error("error msg", zap.String("test with key", "true"))
+
+	f, err := os.Open(fileName)
+	c.Assert(err, IsNil)
+	defer f.Close()
+
+	r := bufio.NewReader(f)
+	for {
+		var str string
+		str, err = r.ReadString('\n')
+		if err != nil {
+			break
+		}
+		c.Assert(str, Matches, pattern)
 	}
 	c.Assert(err, Equals, io.EOF)
 }

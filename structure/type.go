@@ -63,6 +63,11 @@ func (t *TxStructure) encodeHashDataKey(key []byte, field []byte) kv.Key {
 	return codec.EncodeBytes(ek, field)
 }
 
+// EncodeHashDataKey exports for tests.
+func (t *TxStructure) EncodeHashDataKey(key []byte, field []byte) kv.Key {
+	return t.encodeHashDataKey(key, field)
+}
+
 func (t *TxStructure) decodeHashDataKey(ek kv.Key) ([]byte, []byte, error) {
 	var (
 		key   []byte
