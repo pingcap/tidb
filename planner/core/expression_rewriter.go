@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -82,14 +82,14 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mock
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
 func (b *PlanBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
-	expr, resultPlan, err := b.rewriteWithPreprocess(exprNode, p, aggMapper, asScalar, nil)
+	expr, resultPlan, err := b.rewriteWithPreprocess(exprNode, p, aggMapper, nil, asScalar, nil)
 	return expr, resultPlan, err
 }
 
 // rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
-func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (expression.Expression, LogicalPlan, error) {
+func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (expression.Expression, LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -103,6 +103,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan
 	}
 
 	rewriter.aggrMap = aggMapper
+	rewriter.windowMap = windowMapper
 	rewriter.asScalar = asScalar
 	rewriter.preprocess = preprocess
 
@@ -153,13 +154,14 @@ func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast
 }
 
 type expressionRewriter struct {
-	ctxStack []expression.Expression
-	p        LogicalPlan
-	schema   *expression.Schema
-	err      error
-	aggrMap  map[*ast.AggregateFuncExpr]int
-	b        *PlanBuilder
-	ctx      sessionctx.Context
+	ctxStack  []expression.Expression
+	p         LogicalPlan
+	schema    *expression.Schema
+	err       error
+	aggrMap   map[*ast.AggregateFuncExpr]int
+	windowMap map[*ast.WindowFuncExpr]int
+	b         *PlanBuilder
+	ctx       sessionctx.Context
 
 	// asScalar indicates the return value must be a scalar value.
 	// NOTE: This value can be changed during expression rewritten.
@@ -315,7 +317,16 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(er.ctx, col.Index, col.RetType))
 		return inNode, true
 	case *ast.WindowFuncExpr:
-		return er.handleWindowFunction(v)
+		index, ok := -1, false
+		if er.windowMap != nil {
+			index, ok = er.windowMap[v]
+		}
+		if !ok {
+			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
+			return inNode, true
+		}
+		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
+		return inNode, true
 	case *ast.FuncCallExpr:
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
@@ -324,17 +335,6 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.asScalar = true
 	}
 	return inNode, false
-}
-
-func (er *expressionRewriter) handleWindowFunction(v *ast.WindowFuncExpr) (ast.Node, bool) {
-	windowPlan, err := er.b.buildWindowFunction(er.p, v, er.aggrMap)
-	if err != nil {
-		er.err = err
-		return v, false
-	}
-	er.ctxStack = append(er.ctxStack, windowPlan.GetWindowResultColumn())
-	er.p = windowPlan
-	return v, true
 }
 
 func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool) {

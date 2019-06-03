@@ -123,7 +123,7 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	}
 
 	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
-		job.State = model.JobStateCancelled
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 		return ver, nil
 	}
 

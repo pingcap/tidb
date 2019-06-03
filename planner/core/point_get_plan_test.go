@@ -54,7 +54,7 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, c int, key idx_bc(b,c))")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows(
 		"Point_Get_1 1.00 root table:t, handle:1",
@@ -68,6 +68,11 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustQuery("explain delete from t where a = 1").Check(testkit.Rows(
 		"Point_Get_1 1.00 root table:t, handle:1",
 	))
+	tk.MustQuery("explain select a from t where a = -1").Check(testkit.Rows(
+		"TableDual_5 0.00 root rows:0"))
+	tk.MustExec(`prepare stmt0 from "select a from t where a = ?"`)
+	tk.MustExec("set @p0 = -1")
+	tk.MustQuery("execute stmt0 using @p0").Check(testkit.Rows())
 	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -137,4 +142,13 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	counter.Write(pb)
 	hit = pb.GetCounter().GetValue()
 	c.Check(hit, Equals, float64(2))
+	tk.MustExec("insert into t (a, b, c) values (18446744073709551615, 4, 4)")
+	tk.MustExec("set @p1=-1")
+	tk.MustExec("set @p2=1")
+	tk.MustExec(`prepare stmt7 from "select a from t where a = ?"`)
+	tk.MustQuery("execute stmt7 using @p1").Check(testkit.Rows())
+	tk.MustQuery("execute stmt7 using @p2").Check(testkit.Rows("1"))
+	counter.Write(pb)
+	hit = pb.GetCounter().GetValue()
+	c.Check(hit, Equals, float64(3))
 }

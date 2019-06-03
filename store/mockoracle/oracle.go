@@ -92,6 +92,16 @@ func (o *MockOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
 	return &mockOracleFuture{o, ctx}
 }
 
+// GetLowResolutionTimestamp implements oracle.Oracle interface.
+func (o *MockOracle) GetLowResolutionTimestamp(ctx context.Context) (uint64, error) {
+	return o.GetTimestamp(ctx)
+}
+
+// GetLowResolutionTimestampAsync implements oracle.Oracle interface.
+func (o *MockOracle) GetLowResolutionTimestampAsync(ctx context.Context) oracle.Future {
+	return o.GetTimestampAsync(ctx)
+}
+
 // IsExpired implements oracle.Oracle interface.
 func (o *MockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
 	o.RLock()

@@ -145,6 +145,8 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 				continue
 			}
 			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
+		} else if ls.ByItems[i].Expr.GetType().Tp == mysql.TypeNull {
+			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
 		} else {
 			parentUsedCols = append(parentUsedCols, cols...)
 		}
@@ -345,10 +347,17 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error {
-	windowColumn := p.GetWindowResultColumn()
+	windowColumns := p.GetWindowResultColumns()
 	len := 0
 	for _, col := range parentUsedCols {
-		if !windowColumn.Equal(nil, col) {
+		used := false
+		for _, windowColumn := range windowColumns {
+			if windowColumn.Equal(nil, col) {
+				used = true
+				break
+			}
+		}
+		if !used {
 			parentUsedCols[len] = col
 			len++
 		}
@@ -361,13 +370,15 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) error 
 	}
 
 	p.SetSchema(p.children[0].Schema().Clone())
-	p.Schema().Append(windowColumn)
+	p.Schema().Append(windowColumns...)
 	return nil
 }
 
 func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*expression.Column {
-	for _, arg := range p.WindowFuncDesc.Args {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(arg)...)
+	for _, desc := range p.WindowFuncDescs {
+		for _, arg := range desc.Args {
+			parentUsedCols = append(parentUsedCols, expression.ExtractColumns(arg)...)
+		}
 	}
 	for _, by := range p.PartitionBy {
 		parentUsedCols = append(parentUsedCols, by.Col)
