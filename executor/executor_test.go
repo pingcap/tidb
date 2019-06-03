@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -226,9 +227,9 @@ func (s *testSuite) TestAdmin(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJob, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
-	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJob[0].ID))
-	result.Check(testkit.Rows(historyJob[0].Query))
+	historyJobs, err = admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
+	result.Check(testkit.Rows(historyJobs[0].Query))
 	c.Assert(err, IsNil)
 
 	// check table test
@@ -282,6 +283,22 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD COLUMN c4 bit(10) default 127;")
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
 	tk.MustExec("admin check table t1;")
+
+	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	historyJobs, err = admin.GetHistoryDDLJobs(txn, 20)
+	c.Assert(err, IsNil)
+
+	// Split region for history ddl job queues.
+	m := meta.NewMeta(txn)
+	startKey := meta.DDLJobHistoryKey(m, 0)
+	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
+	s.cluster.SplitKeys(s.mvccStore, startKey, endKey, int(historyJobs[0].ID/5))
+
+	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
+	c.Assert(err, IsNil)
+	c.Assert(historyJobs, DeepEquals, historyJobs2)
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
