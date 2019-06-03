@@ -74,4 +74,24 @@ func (s *testEvaluatorSuite) TestSimpleRewriter(c *C) {
 	c.Assert(err, IsNil)
 	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
 	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "1 < 2", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "1 <= 2", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "2 >= 1", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "2 > 1", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1))
 }
