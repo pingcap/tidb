@@ -2404,6 +2404,9 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end")
 	result.Check(testkit.Rows("<nil> 4"))
 
+	tk.MustQuery("select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end").Check(testkit.Rows("3.0"))
+	tk.MustQuery("select case 2.0 when 3.0 then 2.0 when 4.0 then 3.0 else 5.0 end").Check(testkit.Rows("5.0"))
+
 	// for cast
 	result = tk.MustQuery("select cast(1234 as char(3))")
 	result.Check(testkit.Rows("123"))
