@@ -122,4 +122,10 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustQuery("select a,b from t").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select a,b from t use index(idx)").Check(testkit.Rows("1 1"))
 	tk.MustExec("rollback")
+
+	// Test update with untouched index columns.
+	tk.MustExec("begin")
+	tk.MustExec("update t set a=a+1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustExec("rollback")
 }

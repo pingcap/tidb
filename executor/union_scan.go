@@ -100,11 +100,12 @@ type UnionScanExec struct {
 	desc       bool
 	conditions []expression.Expression
 	columns    []*model.ColumnInfo
-
+	table      table.Table
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 
 	addedRows           [][]types.Datum
+	addedRowsMap        map[int64]struct{}
 	cursor4AddRows      int
 	sortErr             error
 	snapshotRows        [][]types.Datum
@@ -123,17 +124,28 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 func (us *UnionScanExec) open(ctx context.Context) error {
 	var err error
 	reader := us.children[0]
+	var rows [][]types.Datum
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
+		rows, err = buildMemTableReader(us, x).getMemRows()
 	case *IndexReaderExecutor:
-		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
+		rows, err = buildMemIndexReader(us, x).getMemRows()
 	case *IndexLookUpExecutor:
-		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+		rows, err = buildMemIndexLookUpReader(us, x).getMemRows()
 	}
 
+	us.setAddedRows(rows)
 	us.snapshotChunkBuffer = us.newFirstChunk()
 	return err
+}
+
+func (us *UnionScanExec) setAddedRows(rows [][]types.Datum) {
+	us.addedRows = rows
+	us.addedRowsMap = make(map[int64]struct{}, len(rows))
+	for _, row := range rows {
+		handle := row[us.belowHandleIndex].GetInt64()
+		us.addedRowsMap[handle] = struct{}{}
+	}
 }
 
 // Next implements the Executor Next interface.
@@ -222,17 +234,49 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			snapshotHandle := row.GetInt64(us.belowHandleIndex)
 			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
+				err = us.getMissIndexRowsByHandle(snapshotHandle)
+				if err != nil {
+					return nil, err
+				}
 				continue
 			}
 			if _, ok := us.dirty.addedRows[snapshotHandle]; ok {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.
+				err = us.getMissIndexRowsByHandle(snapshotHandle)
+				if err != nil {
+					return nil, err
+				}
 				continue
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(us.children[0].retTypes()))
 		}
 	}
 	return us.snapshotRows[0], nil
+}
+
+// For index reader and index look up reader, Because update does't write index to txn memBuffer when the idx column
+// was unchanged. So the `memIndexReader` and `memIndexLookUpReader` can't read the index from txn memBuffer.
+// This function use to get the miss row by handle if the handle was in dirtyTable.addedRows.
+func (us *UnionScanExec) getMissIndexRowsByHandle(handle int64) error {
+	reader := us.children[0]
+	switch reader.(type) {
+	case *TableReaderExecutor:
+		return nil
+	}
+	if _, ok := us.dirty.addedRows[handle]; !ok {
+		return nil
+	}
+	// Doesn't miss in memBuffer reader.
+	if _, ok := us.addedRowsMap[handle]; ok {
+		return nil
+	}
+	ds, err := us.getMemColumns(handle)
+	if err != nil {
+		return err
+	}
+	us.snapshotRows = append(us.snapshotRows, ds)
+	return nil
 }
 
 func (us *UnionScanExec) getAddedRow() []types.Datum {
@@ -306,6 +350,32 @@ func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.
 		return nil, err
 	}
 	return v, nil
+}
+
+func (us *UnionScanExec) getMemColumns(h int64) ([]types.Datum, error) {
+	cols := us.table.WritableCols()
+	data, err := us.rowWithColsInTxn(us.table, h, cols)
+	mutableRow := chunk.MutRowFromTypes(us.retTypes())
+	if err != nil {
+		return nil, err
+	}
+	newData := make([]types.Datum, 0, us.schema.Len())
+	for _, col := range us.columns {
+		if col.ID == model.ExtraHandleID {
+			newData = append(newData, types.NewIntDatum(h))
+		} else {
+			newData = append(newData, data[col.Offset])
+		}
+	}
+	mutableRow.SetDatums(newData...)
+	matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
+	if err != nil {
+		return nil, err
+	}
+	if !matched {
+		return nil, nil
+	}
+	return newData, nil
 }
 
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
