@@ -239,7 +239,7 @@ func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
 	c.Assert(len(ctx.Meta.Peers), Equals, 3)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false)
+	s.cache.OnSendFail(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -267,7 +267,7 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	c.Assert(len(ctx.Meta.Peers), Equals, 3)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false)
+	s.cache.OnSendFail(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -303,13 +303,13 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(len(ctx.Meta.Peers), Equals, 3)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false)
+	s.cache.OnSendFail(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
 
 	// send 2 fail leader switch to 3
-	s.cache.OnSendFail(s.bo, ctx, false)
+	s.cache.OnSendFail(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetRPCContext(s.bo, loc.Region)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
