@@ -174,7 +174,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_max_undo_log_size", ""},
 	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096"},
 	{ScopeGlobal, ConnectTimeout, "10"},
-	{ScopeGlobal | ScopeSession, "collation_server", mysql.DefaultCollationName},
+	{ScopeGlobal | ScopeSession, CollationServer, mysql.DefaultCollationName},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},
 	{ScopeGlobal, "innodb_file_format", "Antelope"},
@@ -266,7 +266,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_rollback_on_timeout", "0"},
 	{ScopeGlobal | ScopeSession, "query_alloc_block_size", "8192"},
 	{ScopeGlobal, SlaveCompressedProtocol, "0"},
-	{ScopeGlobal, "init_connect", ""},
+	{ScopeGlobal | ScopeSession, InitConnect, ""},
 	{ScopeGlobal, "rpl_semi_sync_slave_trace_level", ""},
 	{ScopeNone, "have_compress", "YES"},
 	{ScopeNone, "thread_concurrency", "10"},
@@ -306,7 +306,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "sql_buffer_result", "OFF"},
 	{ScopeGlobal | ScopeSession, "character_set_filesystem", "binary"},
 	{ScopeGlobal | ScopeSession, "collation_database", mysql.DefaultCollationName},
-	{ScopeGlobal | ScopeSession, "auto_increment_increment", "1"},
+	{ScopeGlobal | ScopeSession, AutoIncrementIncrement, "1"},
 	{ScopeGlobal | ScopeSession, "max_heap_table_size", "16777216"},
 	{ScopeGlobal | ScopeSession, "div_precision_increment", "4"},
 	{ScopeGlobal, "innodb_lru_scan_depth", "1024"},
@@ -373,7 +373,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "sha256_password_proxy_users", ""},
 	{ScopeGlobal | ScopeSession, SQLQuoteShowCreate, "1"},
 	{ScopeGlobal | ScopeSession, "binlogging_impossible_mode", "IGNORE_ERROR"},
-	{ScopeGlobal, "query_cache_size", "1048576"},
+	{ScopeGlobal | ScopeSession, QueryCacheSize, "1048576"},
 	{ScopeGlobal, "innodb_stats_transient_sample_pages", "8"},
 	{ScopeGlobal, InnodbStatsOnMetadata, "0"},
 	{ScopeNone, "server_uuid", "00000000-0000-0000-0000-000000000000"},
@@ -410,10 +410,10 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "optimizer_trace", "enabled=off,one_line=off"},
 	{ScopeGlobal | ScopeSession, "read_rnd_buffer_size", "262144"},
 	{ScopeNone, "version_comment", "MySQL Community Server (Apache License 2.0)"},
-	{ScopeGlobal | ScopeSession, "net_write_timeout", "60"},
+	{ScopeGlobal | ScopeSession, NetWriteTimeout, "60"},
 	{ScopeGlobal, InnodbBufferPoolLoadAbort, "0"},
-	{ScopeGlobal | ScopeSession, "tx_isolation", "REPEATABLE-READ"},
-	{ScopeGlobal | ScopeSession, "transaction_isolation", "REPEATABLE-READ"},
+	{ScopeGlobal | ScopeSession, TxnIsolation, "REPEATABLE-READ"},
+	{ScopeGlobal | ScopeSession, TransactionIsolation, "REPEATABLE-READ"},
 	{ScopeGlobal | ScopeSession, "collation_connection", mysql.DefaultCollationName},
 	{ScopeGlobal, "rpl_semi_sync_master_timeout", ""},
 	{ScopeGlobal | ScopeSession, "transaction_prealloc_size", "4096"},
@@ -519,8 +519,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "explicit_defaults_for_timestamp", "1"},
 	{ScopeNone, "performance_schema_events_waits_history_size", "10"},
 	{ScopeGlobal, "log_syslog_tag", ""},
-	{ScopeGlobal | ScopeSession, "tx_read_only", "0"},
-	{ScopeGlobal | ScopeSession, "transaction_read_only", "0"},
+	{ScopeGlobal | ScopeSession, TxReadOnly, "0"},
+	{ScopeGlobal | ScopeSession, TransactionReadOnly, "0"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_point", ""},
 	{ScopeGlobal, "innodb_undo_log_truncate", ""},
 	{ScopeSession, "innodb_create_intrinsic", ""},
@@ -570,7 +570,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, InnodbTableLocks, "1"},
 	{ScopeNone, PerformanceSchema, "0"},
 	{ScopeNone, "myisam_recover_options", "OFF"},
-	{ScopeGlobal | ScopeSession, "net_buffer_length", "16384"},
+	{ScopeGlobal | ScopeSession, NetBufferLength, "16384"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_for_slave_count", ""},
 	{ScopeGlobal | ScopeSession, "binlog_row_image", "FULL"},
 	{ScopeNone, "innodb_locks_unsafe_for_binlog", "0"},
@@ -593,14 +593,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "character_set_connection", mysql.DefaultCharset},
 	{ScopeGlobal, MyISAMUseMmap, "0"},
 	{ScopeGlobal | ScopeSession, "ndb_join_pushdown", ""},
-	{ScopeGlobal | ScopeSession, "character_set_server", mysql.DefaultCharset},
+	{ScopeGlobal | ScopeSession, CharacterSetServer, mysql.DefaultCharset},
 	{ScopeGlobal, "validate_password_special_char_count", "1"},
 	{ScopeNone, "performance_schema_max_thread_instances", "402"},
 	{ScopeGlobal, "slave_rows_search_algorithms", "TABLE_SCAN,INDEX_SCAN"},
 	{ScopeGlobal | ScopeSession, "ndbinfo_show_hidden", ""},
 	{ScopeGlobal | ScopeSession, "net_read_timeout", "30"},
 	{ScopeNone, "innodb_page_size", "16384"},
-	{ScopeGlobal, MaxAllowedPacket, "67108864"},
+	{ScopeGlobal | ScopeSession, MaxAllowedPacket, "67108864"},
 	{ScopeNone, "innodb_log_file_size", "50331648"},
 	{ScopeGlobal, "sync_relay_log_info", "10000"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_limit", "1"},
@@ -709,8 +709,8 @@ func addSynonymsSysVariables(synonyms ...string) {
 }
 
 func initSynonymsSysVariables() {
-	addSynonymsSysVariables("tx_isolation", "transaction_isolation")
-	addSynonymsSysVariables("tx_read_only", "transaction_read_only")
+	addSynonymsSysVariables(TxnIsolation, TransactionIsolation)
+	addSynonymsSysVariables(TxReadOnly, TransactionReadOnly)
 }
 
 // SetNamesVariables is the system variable names related to set names statements.
@@ -933,6 +933,25 @@ const (
 	InnodbTableLocks = "innodb_table_locks"
 	// InnodbStatusOutput is the name for 'innodb_status_output' system variable.
 	InnodbStatusOutput = "innodb_status_output"
+
+	// NetBufferLength is the name for 'net_buffer_length' system variable.
+	NetBufferLength = "net_buffer_length"
+	// QueryCacheSize is the name of 'query_cache_size' system variable.
+	QueryCacheSize = "query_cache_size"
+	// TxReadOnly is the name of 'tx_read_only' system variable.
+	TxReadOnly = "tx_read_only"
+	// TransactionReadOnly is the name of 'transaction_read_only' system variable.
+	TransactionReadOnly = "transaction_read_only"
+	// CharacterSetServer is the name of 'character_set_server' system variable.
+	CharacterSetServer = "character_set_server"
+	// AutoIncrementIncrement it the name of 'auto_increment_increment' system variable.
+	AutoIncrementIncrement = "auto_increment_increment"
+	// InitConnect is the name of 'init_connect' system variable.
+	InitConnect = "init_connect"
+	// CollationServer is the name of 'collation_server' variable.
+	CollationServer = "collation_server"
+	// NetWriteTimeout is the name of 'net_write_timeout' variable.
+	NetWriteTimeout = "net_write_timeout"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
