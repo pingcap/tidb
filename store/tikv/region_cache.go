@@ -476,10 +476,7 @@ func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, co
 	defer c.mu.Unlock()
 
 	for _, region := range regions {
-		_, peer, _ := region.WorkStorePeer(region.getStore())
-		if peer.GetId() != 0 {
-			c.insertRegionToCache(region)
-		}
+		c.insertRegionToCache(region)
 	}
 
 	return regions[len(regions)-1].EndKey(), nil
@@ -662,6 +659,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 }
 
 // scanRegions scans at most `limit` regions from PD, starts from the region containing `startKey` and in key order.
+// Regions with no leader will not be returned.
 func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]*Region, error) {
 	if limit == 0 {
 		return nil, nil
@@ -703,15 +701,15 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]
 			// Leader id = 0 indicates no leader.
 			if leader.GetId() != 0 {
 				c.switchToPeer(region, leader.GetStoreId())
+				regions = append(regions, region)
 			}
-			regions = append(regions, region)
 		}
 		if len(regions) == 0 {
 			return nil, errors.New("receive Regions with no peer")
 		}
 		if len(regions) < len(metas) {
 			logutil.Logger(context.Background()).Debug(
-				"regionCache: scanRegion finished but some regions has no peer.")
+				"regionCache: scanRegion finished but some regions has no leader.")
 		}
 		return regions, nil
 	}

@@ -519,20 +519,16 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	c.Assert(p0.Id, Equals, peers[1][0])
 
 	// Test region with no leader
-	s.cluster.GiveUpLeader(regions[2])
-	s.cluster.GiveUpLeader(regions[4])
+	s.cluster.GiveUpLeader(regions[1])
+	s.cluster.GiveUpLeader(regions[3])
 	scannedRegions, err = s.cache.scanRegions(s.bo, []byte(""), 5)
 	c.Assert(err, IsNil)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 3; i++ {
 		r := scannedRegions[i]
 		_, p, _ := r.WorkStorePeer(r.getStore())
 
-		c.Assert(scannedRegions[i].meta.Id, Equals, regions[i])
-		if i == 2 || i == 4 {
-			c.Assert(p, IsNil)
-		} else {
-			c.Assert(p.Id, Equals, peers[i][0])
-		}
+		c.Assert(r.meta.Id, Equals, regions[i*2])
+		c.Assert(p.Id, Equals, peers[i*2][0])
 	}
 }
 
