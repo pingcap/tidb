@@ -168,6 +168,13 @@ func (s *testSuite) TestChange(c *C) {
 	c.Assert(tk.ExecToErr("alter table t change c d varchar(100)"), NotNil)
 }
 
+func (s *testSuite) TestLoadStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	c.Assert(tk.ExecToErr("load stats"), NotNil)
+	c.Assert(tk.ExecToErr("load stats ./xxx.json"), NotNil)
+}
+
 func (s *testSuite) TestAdmin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
