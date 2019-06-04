@@ -167,7 +167,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 func (ds *DataSource) generateIndexMergeOrPaths() {
 	usedIndexCount := len(ds.possibleAccessPaths) - 1
 	for i, cond := range ds.pushedDownConds {
-		var ixMergePartialIxPaths = make([]*accessPath, 0, usedIndexCount)
+		var idxMergePartialIdxPaths = make([]*accessPath, 0, usedIndexCount)
 
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
@@ -179,18 +179,18 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 			cnfItems := expression.SplitCNFItems(item)
 			itemPaths = ds.accessPathsForConds(cnfItems, usedIndexCount)
 			if len(itemPaths) == 0 {
-				ixMergePartialIxPaths = nil
+				idxMergePartialIdxPaths = nil
 				break
 			}
 			partialPath := ds.buildIndexMergePartialPath(itemPaths)
 			if partialPath == nil {
-				ixMergePartialIxPaths = nil
+				idxMergePartialIdxPaths = nil
 				break
 			}
-			ixMergePartialIxPaths = append(ixMergePartialIxPaths, partialPath)
+			idxMergePartialIdxPaths = append(idxMergePartialIdxPaths, partialPath)
 		}
-		if len(ixMergePartialIxPaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(ixMergePartialIxPaths, i)
+		if len(idxMergePartialIdxPaths) > 1 {
+			possiblePath := ds.buildIndexMergeOrPath(idxMergePartialIdxPaths, i)
 			if possiblePath != nil {
 				ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
 			}
@@ -240,8 +240,8 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*accessPath)
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath
-func (ds *DataSource) buildIndexMergeOrPath(ixMergePartialIxPaths []*accessPath, current int) *accessPath {
-	indexMergePath := &accessPath{partialIndexPaths: ixMergePartialIxPaths}
+func (ds *DataSource) buildIndexMergeOrPath(idxMergePartialIdxPaths []*accessPath, current int) *accessPath {
+	indexMergePath := &accessPath{partialIndexPaths: idxMergePartialIdxPaths}
 	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[:current]...)
 	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[current+1:]...)
 	return indexMergePath
