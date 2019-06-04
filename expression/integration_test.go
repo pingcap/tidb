@@ -1424,7 +1424,6 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustQuery("select subtime(cast('10:10:10' as time), cast('9:10:10' as time))").Check(testkit.Rows("01:00:00"))
 	tk.MustQuery("select subtime('10:10:10', cast('9:10:10' as time))").Check(testkit.Rows("01:00:00"))
 
-
 	// ADDTIME & SUBTIME issue #5966
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime, b timestamp, c time, d date, e bit(1))")
