@@ -955,7 +955,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, randKey))
 		}
 
-		kvMap := make(map[string][]byte)
+		kvMap := make(map[string][]byte, len(keys))
 		for _, key := range keys {
 			var iter kv.Iterator
 			iter, *err = snapshot.Iter(key, endKey)
