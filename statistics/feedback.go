@@ -1141,8 +1141,8 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 
 func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCount float64) error {
 	lowIsNull := ran.LowVal[0].IsNull()
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	if q.tp == indexType {
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		lower, err := codec.EncodeKey(sc, nil, ran.LowVal[0])
 		if err != nil {
 			return errors.Trace(err)
@@ -1164,7 +1164,7 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 			ran.HighVal[0] = getMaxValue(q.hist.tp)
 		}
 	}
-	ranges := q.hist.SplitRange([]*ranger.Range{ran})
+	ranges := q.hist.SplitRange(sc, []*ranger.Range{ran})
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
 	for i, r := range ranges {

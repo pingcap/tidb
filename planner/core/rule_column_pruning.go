@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/mysql"
 )
 
 type columnPruner struct {
@@ -165,7 +166,15 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, ds.schema)
+	var (
+		handleCol     *expression.Column
+		handleColInfo *model.ColumnInfo
+	)
 	for i := len(used) - 1; i >= 0; i-- {
+		if ds.tableInfo.PKIsHandle && mysql.HasPriKeyFlag(ds.Columns[i].Flag) {
+			handleCol = ds.schema.Columns[i]
+			handleColInfo = ds.Columns[i]
+		}
 		if !used[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
@@ -179,8 +188,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if ds.schema.Len() == 0 && !infoschema.IsMemoryDB(ds.DBName.L) {
-		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
-		ds.schema.Append(ds.newExtraHandleSchemaCol())
+		if handleCol == nil {
+			handleCol = ds.newExtraHandleSchemaCol()
+			handleColInfo = model.NewExtraHandleColInfo()
+		}
+		ds.Columns = append(ds.Columns, handleColInfo)
+		ds.schema.Append(handleCol)
 	}
 }
 
