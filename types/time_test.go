@@ -1165,6 +1165,32 @@ func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
 	res, err = types.ExtractDatetimeNum(&in, "TEST_ERROR")
 	c.Assert(res, Equals, int64(0))
 	c.Assert(err, ErrorMatches, "invalid unit.*")
+
+	in = types.Time{
+		Time: types.FromDate(0000, 00, 00, 00, 00, 00, 0000),
+		Type: mysql.TypeTimestamp,
+		Fsp:  types.DefaultFsp,
+	}
+
+	res, err = types.ExtractDatetimeNum(&in, "day")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(0))
+
+	res, err = types.ExtractDatetimeNum(&in, "week")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(0))
+
+	res, err = types.ExtractDatetimeNum(&in, "MONTH")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(0))
+
+	res, err = types.ExtractDatetimeNum(&in, "QUARTER")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(0))
+
+	res, err = types.ExtractDatetimeNum(&in, "YEAR")
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, int64(0))
 }
 
 func (s *testTimeSuite) TestExtractDurationNum(c *C) {
