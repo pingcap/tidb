@@ -146,7 +146,7 @@ func (s *testSuite) TearDownTest(c *C) {
 func (s *testSuite) TestBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table t if exists")
+	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create table t(i int, s varchar(20))")
 	tk.MustExec("create index index_t on t(i,s)")
@@ -155,9 +155,17 @@ func (s *testSuite) TestBind(c *C) {
 
 	tk.MustExec("create session binding for select * from t using select * from t use index for join(index_t)")
 	c.Assert(len(tk.MustQuery("show session bindings").Rows()), Equals, 1)
-
 	tk.MustExec("drop session binding for select * from t")
-	c.Assert(len(tk.MustQuery("show session bindings").Rows()), Equals, 0)
+}
+
+func (s *testSuite) TestChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("alter table t change a b int")
+	tk.MustExec("alter table t change b c bigint")
+	c.Assert(tk.ExecToErr("alter table t change c d varchar(100)"), NotNil)
 }
 
 func (s *testSuite) TestAdmin(c *C) {
