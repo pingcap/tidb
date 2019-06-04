@@ -203,12 +203,12 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			locks = append(locks, lock)
 		}
 		if len(lockedKeys) > 0 {
-			ok, err := s.store.lockResolver.ResolveLocks(bo, locks)
+			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, locks)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !ok {
-				err = bo.Backoff(boTxnLockFast, errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+			if msBeforeExpired > 0 {
+				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -277,12 +277,12 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			ok, err := s.store.lockResolver.ResolveLocks(bo, []*Lock{lock})
+			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if !ok {
-				err = bo.Backoff(boTxnLockFast, errors.New(keyErr.String()))
+			if msBeforeExpired > 0 {
+				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -295,13 +295,14 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 
 // Iter return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	scanner, err := newScanner(s, k, upperBound, scanBatchSize)
+	scanner, err := newScanner(s, k, upperBound, scanBatchSize, false)
 	return scanner, errors.Trace(err)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
-	return nil, kv.ErrNotImplemented
+	scanner, err := newScanner(s, nil, k, scanBatchSize, true)
+	return scanner, errors.Trace(err)
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
@@ -338,7 +339,7 @@ func newWriteConflictError(conflict *pb.WriteConflict) error {
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, buf.String())
+	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {

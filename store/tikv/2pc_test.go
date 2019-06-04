@@ -224,7 +224,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("err: %s", err))
+	c.Assert(kv.ErrWriteConflictInTiDB.Equal(err), IsTrue, Commentf("err: %s", err))
 }
 
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
@@ -349,7 +349,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	c.Assert(err, IsNil)
 	err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
 	c.Assert(err, NotNil)
-	errMsgMustContain(c, err, "conflictTS")
+	errMsgMustContain(c, err, "conflictCommitTS")
 }
 
 func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
@@ -450,9 +450,11 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	c.Assert(err, IsNil)
 	commiter, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
+	commiter.forUpdateTS = 100
 	var batch batchKeys
 	batch.keys = append(batch.keys, []byte("t1"))
 	batch.region = RegionVerID{1, 1, 1}
 	req := commiter.buildPrewriteRequest(batch)
 	c.Assert(len(req.Prewrite.IsPessimisticLock), Greater, 0)
+	c.Assert(req.Prewrite.ForUpdateTs, Equals, uint64(100))
 }

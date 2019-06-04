@@ -106,7 +106,7 @@ const (
 		Table_name	CHAR(64),
 		Grantor		CHAR(77),
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
-		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index','Alter'),
+		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
@@ -263,6 +263,7 @@ const (
 
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
+	startTime := time.Now()
 	dom := domain.GetDomain(s)
 	for {
 		b, err := checkBootstrapped(s)
@@ -273,6 +274,8 @@ func bootstrap(s Session) {
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
 			upgrade(s)
+			logutil.Logger(context.Background()).Info("upgrade successful in bootstrap",
+				zap.Duration("take time", time.Since(startTime)))
 			return
 		}
 		// To reduce conflict when multiple TiDB-server start at the same time.
@@ -280,6 +283,8 @@ func bootstrap(s Session) {
 		if dom.DDL().OwnerManager().IsOwner() {
 			doDDLWorks(s)
 			doDMLWorks(s)
+			logutil.Logger(context.Background()).Info("bootstrap successful",
+				zap.Duration("take time", time.Since(startTime)))
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -330,6 +335,7 @@ const (
 	version29 = 29
 	version30 = 30
 	version31 = 31
+	version32 = 32
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -513,22 +519,28 @@ func upgrade(s Session) {
 		upgradeToVer31(s)
 	}
 
+	if ver < version32 {
+		upgradeToVer29(s)
+	}
+
 	updateBootstrapVer(s)
 	_, err = s.Execute(context.Background(), "COMMIT")
 
 	if err != nil {
-		time.Sleep(1 * time.Second)
+		sleepTime := 1 * time.Second
+		logutil.Logger(context.Background()).Info("update bootstrap ver failed",
+			zap.Error(err), zap.Duration("sleeping time", sleepTime))
+		time.Sleep(sleepTime)
 		// Check if TiDB is already upgraded.
 		v, err1 := getBootstrapVersion(s)
 		if err1 != nil {
-			logutil.Logger(context.Background()).Fatal("upgrade error",
-				zap.Error(err1))
+			logutil.Logger(context.Background()).Fatal("upgrade failed", zap.Error(err1))
 		}
 		if v >= currentBootstrapVersion {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
 			return
 		}
-		logutil.Logger(context.Background()).Fatal("[Upgrade] upgrade error",
+		logutil.Logger(context.Background()).Fatal("[Upgrade] upgrade failed",
 			zap.Int64("from", ver),
 			zap.Int("to", currentBootstrapVersion),
 			zap.Error(err))
@@ -809,6 +821,10 @@ func upgradeToVer31(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `last_analyze_pos` blob default null", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer32(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index', 'Alter', 'Create View', 'Show View', 'Trigger', 'References')")
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -903,16 +919,18 @@ func doDMLWorks(s Session) {
 	writeSystemTZ(s)
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
-		time.Sleep(1 * time.Second)
+		sleepTime := 1 * time.Second
+		logutil.Logger(context.Background()).Info("doDMLWorks failed", zap.Error(err), zap.Duration("sleeping time", sleepTime))
+		time.Sleep(sleepTime)
 		// Check if TiDB is already bootstrapped.
 		b, err1 := checkBootstrapped(s)
 		if err1 != nil {
-			logutil.Logger(context.Background()).Fatal("doDMLWorks error", zap.Error(err1))
+			logutil.Logger(context.Background()).Fatal("doDMLWorks failed", zap.Error(err1))
 		}
 		if b {
 			return
 		}
-		logutil.Logger(context.Background()).Fatal("doDMLWorks error", zap.Error(err))
+		logutil.Logger(context.Background()).Fatal("doDMLWorks failed", zap.Error(err))
 	}
 }
 

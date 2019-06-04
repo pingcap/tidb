@@ -2636,3 +2636,39 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 	tk.MustExec("rollback")
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
 }
+
+func (s *testSessionSuite) TestGrantViewRelated(c *C) {
+	tkRoot := testkit.NewTestKitWithInit(c, s.store)
+	tkUser := testkit.NewTestKitWithInit(c, s.store)
+
+	tkRoot.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+
+	tkRoot.MustExec("create table if not exists t (a int)")
+	tkRoot.MustExec("create view v_version29 as select * from t")
+	tkRoot.MustExec("create user 'u_version29'@'%'")
+	tkRoot.MustExec("grant select on t to u_version29@'%'")
+
+	tkUser.Se.Auth(&auth.UserIdentity{Username: "u_version29", Hostname: "localhost", CurrentUser: true, AuthUsername: "u_version29", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+
+	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
+	err := tkUser.ExecToErr("select * from test.v_version29;")
+	c.Assert(err, NotNil)
+	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
+	err = tkUser.ExecToErr("create view v_version29_c as select * from t;")
+	c.Assert(err, NotNil)
+
+	tkRoot.MustExec(`grant show view on v_version29 to 'u_version29'@'%'`)
+	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29'").Check(testkit.Rows("Show View"))
+
+	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
+	tkUser.MustQuery("show create view v_version29;")
+	err = tkUser.ExecToErr("create view v_version29_c as select * from v_version29;")
+	c.Assert(err, NotNil)
+
+	tkRoot.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`)
+	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29_c'").Check(testkit.Rows("Create View"))
+
+	tkRoot.MustExec(`grant select on v_version29 to 'u_version29'@'%'`)
+	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
+	tkUser.MustExec("create view v_version29_c as select * from v_version29;")
+}

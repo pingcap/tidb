@@ -296,6 +296,7 @@ func (s *tikvStore) Close() error {
 	if s.txnLatches != nil {
 		s.txnLatches.Close()
 	}
+	s.regionCache.Close()
 	return nil
 }
 
@@ -320,8 +321,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
 		// This may cause duplicate data to be written.
 		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
-			if val.(bool) && !kv.IsMockCommitErrorEnable() && mockGetTSErrorInRetryOnce {
-				mockGetTSErrorInRetryOnce = false
+			if val.(bool) && !kv.IsMockCommitErrorEnable() {
 				err = ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
 			}
 		})

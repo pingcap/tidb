@@ -70,9 +70,9 @@ func (s *testFeedbackSuite) TestUpdateHistogram(c *C) {
 	defaultBucketCount = 7
 	defer func() { defaultBucketCount = originBucketCount }()
 	c.Assert(UpdateHistogram(q.Hist, q).ToString(0), Equals,
-		"column:0 ndv:10057 totColSize:0\n"+
+		"column:0 ndv:10058 totColSize:0\n"+
 			"num: 10000 lower_bound: 0 upper_bound: 1 repeats: 0\n"+
-			"num: 8 lower_bound: 2 upper_bound: 7 repeats: 0\n"+
+			"num: 9 lower_bound: 2 upper_bound: 7 repeats: 0\n"+
 			"num: 11 lower_bound: 8 upper_bound: 19 repeats: 0\n"+
 			"num: 0 lower_bound: 20 upper_bound: 20 repeats: 0\n"+
 			"num: 18 lower_bound: 21 upper_bound: 39 repeats: 0\n"+
@@ -152,6 +152,21 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 			"num: 0 lower_bound: 11 upper_bound: 1000000 repeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{true, true})
 	c.Assert(totalCount, Equals, int64(1))
+
+	// test merge the non-overlapped feedbacks.
+	h = NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
+	appendBucket(h, 0, 10000)
+	feedbacks = feedbacks[:0]
+	feedbacks = append(feedbacks, newFeedback(0, 4000, 4000))
+	feedbacks = append(feedbacks, newFeedback(4001, 9999, 1000))
+	q = NewQueryFeedback(0, h, 0, false)
+	q.Feedback = feedbacks
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q)
+	c.Assert(buildNewHistogram(q.Hist, buckets).ToString(0), Equals,
+		"column:0 ndv:0 totColSize:0\n"+
+			"num: 5001 lower_bound: 0 upper_bound: 10000 repeats: 0")
+	c.Assert(isNewBuckets, DeepEquals, []bool{false})
+	c.Assert(totalCount, Equals, int64(5001))
 }
 
 func (s *testFeedbackSuite) TestMergeBuckets(c *C) {

@@ -157,6 +157,21 @@ func (s *testSuite2) TestIssue3641(c *C) {
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 }
 
+func (s *testSuite2) TestIssue10549(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE DATABASE newdb;")
+	tk.MustExec("CREATE ROLE 'app_developer';")
+	tk.MustExec("GRANT ALL ON newdb.* TO 'app_developer';")
+	tk.MustExec("CREATE USER 'dev';")
+	tk.MustExec("GRANT 'app_developer' TO 'dev';")
+	tk.MustExec("SET DEFAULT ROLE app_developer TO 'dev';")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil), IsTrue)
+	tk.MustQuery("SHOW DATABASES;").Check(testkit.Rows("INFORMATION_SCHEMA", "newdb"))
+	tk.MustQuery("SHOW GRANTS;").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT ALL PRIVILEGES ON newdb.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
+}
+
 // TestShow2 is moved from session_test
 func (s *testSuite2) TestShow2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

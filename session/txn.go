@@ -408,7 +408,12 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	}
 
 	oracleStore := s.store.GetOracle()
-	tsFuture := oracleStore.GetTimestampAsync(ctx)
+	var tsFuture oracle.Future
+	if s.sessionVars.LowResolutionTSO {
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
+	} else {
+		tsFuture = oracleStore.GetTimestampAsync(ctx)
+	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
 	if x := ctx.Value("mockGetTSFail"); x != nil {
 		ret.mockFail = true

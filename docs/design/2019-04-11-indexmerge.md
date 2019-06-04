@@ -6,13 +6,13 @@
 
 ## Abstract
 
-The proposal proposes to use multiple indexes to scan a table if possible. In some cases, using multiple indexes will improve performance.
+The document proposes using multiple indexes to scan a table when possible, which, in some cases, will improve performance.
 
 ## Background
 
-In present TiDB, a SQL statement with conditions involving multiple indexed attributes only uses one of the conditions as the index filter to build access condition, while others are regarded as table filters. Firstly, use index scan (at most one index) to get handles (rowid in TiDB). Then use the handles to get rows and check whether the rows satisfy the conditions of table filters. Some relational databases implement a table access path using multiple indexes. In some cases, this way will improve performance.
+In the present TiDB, a SQL statement with conditions that involve multiple indexed attributes only uses one of the conditions as the index filter to build the access condition, while regarding others as table filters. TiDB firstly uses index scan (one index at most) to get handles (rowid in TiDB), which are then used to get rows and check whether the rows satisfy the conditions of table filters. Some relational databases implement a table access path using multiple indexes to improve performance in some cases.
 
-We take an example to explain it. We define the table schema as :
+Here is an example to explain it. The table schema is defined as:
 
 ```
 CREATE TABLE t1 (a int, b int, c int);
@@ -20,20 +20,26 @@ CREATE INDEX t1a on t1(a);
 CREATE INDEX t1b on t1(b);
 CREATE INDEX t1c on t1(c);
 ```
-And use a test SQL statement `SELECT * FROM t1 where a < 2 or b > 50`. Currently, TiDB does a table scan  and puts `a < 2 or b > 50` as a Selection on top of it. If the selectivity of `a < 2 ` and `b > 50` is low, a better approach would be using indexes on columns `a` and `b` to retrieve rows respectively, and applying a union operation on the result sets.
+
+A test SQL statement `SELECT * FROM t1 where a < 2 or b > 50` is used in the example. Currently, TiDB does a table scan and puts `a < 2 or b > 50` as a Selection on top of it. If the selectivity of `a < 2 ` and `b > 50` is low, a better approach would be using indexes on columns `a` and `b` to retrieve rows respectively, and applying a union operation on the result sets.
 
 
 ## Proposal
-In short, we need to consider access paths using multiple indexes.
+
+In short, we can implement access paths using multiple indexes.
 
 ### Planner
-We propose to add new `IndexMergeReader / PhysicalIndexMergeReader` and `IndexMergeLookUpReader / PhysicalIndexMergeLookUpReader` operators.
 
-Now we just consider the following two kinds of queries: 
+We propose to add the following operators:
 
-（1）Conditions in CNF, e.g, `select * from t1 where c1 and c2 and c3 and …`
+- `IndexMergeReader / PhysicalIndexMergeReader` 
+- `IndexMergeLookUpReader / PhysicalIndexMergeLookUpReader`.
 
-In this form, each CNF item can be covered by a single index respectively. For example, if we have single column indexes for `t1.a`, `ta.b` and `t1.c` respectively, for SQL `select * from t1 where (a < 10 or a > 100) and b < 10 and c > 1000`, we can use all the three indexes to read the table handles. The result plan for it is like:
+Now consider the following types of queries: 
+
+（1）Conditions in conjunctive normal form (CNF), e.g, `select * from t1 where c1 and c2 and c3 and …`
+
+In this form, each CNF item can be covered by a single index respectively. For example, if we have single column indexes for `t1.a`, `t1.b` and `t1.c` respectively, for SQL `select * from t1 where (a < 10 or a > 100) and b < 10 and c > 1000`, we can use all the three indexes to read the table handles. The result plan for it is:
 
 ```
 PhysicalIndexMergeLookUpReader(IndexMergeIntersect)
@@ -43,9 +49,9 @@ PhysicalIndexMergeLookUpReader(IndexMergeIntersect)
 	TableScan
 ```
 
-For the CNF items not covered by any index, we take them as table filters and convert them to selection on top of the scan node. For SQL `select * from t1 where (a < 10 or c >100) and b < 10`, only item `b < 10` can be used as index access condition, so we can only consider single index lookup reader.
+For the CNF items not covered by any index, we take them as table filters and convert them to selections on top of the scan node. For SQL `select * from t1 where (a < 10 or c >100) and b < 10`, only item `b < 10` can function as an index access condition, so we will use a single index lookup reader.
 
-We set up a experiment for the CNF form to compare our demo implement with the master branch. The schema and test sql form we define are following:
+To compare our demo implementation against the master branch, we set up an experiment for the CNF form. The schema and test SQL form we defined are as below:
 
 ```
 Table Schema:
@@ -60,15 +66,15 @@ Test SQL Form:
 		SELECT * FROM T200M WHERE C1 < $3 AND C2 < $4;
 ```
 
-We load two million rows into `T200M` with one to two million sequence for all columns. We alter `$1-$4` to obtain equal selectivity on `C1` and `C2`, while the difference between `CNF-1` and `CNF-2` is `CNF-1` has no final results. The result can be seen in the following graph:
+In the experiment, we load two million rows into table `T200M` with one to two million sequence for all columns. `$1-$4` is altered to obtain equal selectivity on `C1` and `C2`, while the difference between `CNF-1` and `CNF-2` is that `CNF-1` has no final results. The result can be seen in the following graph:
 
 <img alt="CNF 200" src="./imgs/cnf200m2.png" width="500pt"/>
 
 **Note:** `SELECTIVITY`is for the single column.
 
-（2） Conditions in DNF, e.g, `select * from t1 where c1 or c2 or c3 or …` 
+（2） Conditions in disjunctive normal form (DNF), e.g, `select * from t1 where c1 or c2 or c3 or …` 
 
-In this form, every DNF item must be covered by a single index. If any DNF item cannot be covered by a single index, we cannot choose IndexMerge scan. For example, SQL `select * from t1 where a > 1 or ( b >1 and b <10)` will generate a possible plan like:
+In this form, every DNF item must be covered by a single index. If not, IndexMerge scan cannot be used. For example, SQL `select * from t1 where a > 1 or ( b >1 and b <10)` will generate a possible plan like:
 	
 ```
 PhysicalIndexMergeLookUpReader(IndexMergeUnion)
@@ -77,7 +83,7 @@ PhysicalIndexMergeLookUpReader(IndexMergeUnion)
 	TableScan
 ```
 
-We set up a experiment for the DNF form to compare our demo implement with the master branch. The schema and test sql form we define are following:
+To compare our demo implementation against the master branch, we set up an experiment for the DNF form. The schema and test SQL form we defined are as below:
 
 ```
 Table Schema:
@@ -88,12 +94,12 @@ Table Schema:
 Test SQL Form:
 	SELECT * FROM T200 WHERE a < $1 OR b > $2;
 ```  
-We load two million rows into `T200` with one to two million sequence for all columns. We alter the value of `$1` and `$2` in test sql form to obtain the accurate selectivities. The result can be seen in the following graph:
+We load two million rows into table `T200` with one to two million sequence for all columns. The value of `$1` and `$2` in the test SQL form is altered to obtain the accurate selectivities. The result can be seen in the following graph:
 
 <img alt="DNF 200" src="./imgs/dnf200.png" width="500pt"/>
 
 
-We design PhysicalIndexMergeLookUpReader structure as:
+The structure of `PhysicalIndexMergeLookUpReader` is designed as:
 	
 ```
 // PhysicalIndexMergeLookUpReader
@@ -112,17 +118,19 @@ type PhysicalIndexMergeLookUpReader struct {
 ```
 
 
-- The field `IndexMergeType` indicates the operations on results of multiple index scans, and has the following possible values:
+- Field `IndexMergeType` indicates the operations on the results of multiple index scans. Possible values are:
+
   - 0: not an IndexMerge scan;
-  - 1: intersection operation on result sets, and with a table scan;
+  - 1: intersection operation on result sets, with a table scan;
   - 2: intersection operation on result sets, without the table scan;
-  - 3: union operation on result sets, must have a table scan;
+  - 3: union operation on result sets; must have a table scan;
  
-In first version, we just take `PhysicalIndexMergeLookUpReader` and `PhysicalIndexMergeReader` together.
+In the first version, `PhysicalIndexMergeLookUpReader` and `PhysicalIndexMergeReader` will be implemented as one operator.
 
 
 ### IndexMergePath Generate
-Now, we first generate all possible IndexMergeOr paths, then generate possible IndexMergeIntersection path. 
+
+For table paths, we first generate all possible IndexMergeOr paths, then possible IndexMergeIntersection paths. 
 
 ```
 type IndexMergePath struct {
@@ -143,7 +151,7 @@ GetIndexMergeUnionPaths(IndexInfos, PushdownConditions){
 		args = flatten(cond,'or')
 		foreach arg in args {
 			var indexAccessPaths, imPaths
-                       // Common index paths would be merged later in `CreateIndexMergeUnionPath`
+                       // Common index paths will be merged later in `CreateIndexMergeUnionPath`
 			if isAndCondition(arg) {
 				andArgs = flatten(arg,'and')
 				indexAccessPaths = buildAccessPath(andArgs, IndexInfos)
@@ -180,9 +188,9 @@ buildAccessPath(Conditions, IndexInfos){
 	return results
 }
 
-// This function will get a best indexPath for a con from some alternative paths.
-// now we just take the index which has more columns.
-// for exmple: 
+// This function will get a best indexPath for a condition from some alternative paths.
+// Now we just take the index which has more columns.
+// For exmple: 
 // (1)
 // index1(a,b,c) index2(a,b) index3(a)
 // condition: a = 1 will choose index1; a = 1 and b = 2 will also choose index1
@@ -193,13 +201,13 @@ buildAccessPath(Conditions, IndexInfos){
 GetIndexMergePartialPath(IndexInfos, indexAccessPaths) {
 }
 
-// (1)maybe we will merge some indexPaths
+// (1) Maybe we will merge some indexPaths
 //    for example: index1(a) index2(b)
 //    condition : a < 1 or a > 2 or b < 1 or b > 10 
 //    imPaths will be [a<1,a>2,b<1,b>10] and we can merge it and get [a<1 or a >2 , b < 1 or b > 10] 
 // (2)IndexMergePath.tableFilters: 
-//    <1> remove cond from PushdownConditions and the remain will be added to tableFitler.
-//    <2> after merge operation, if any indexPath's tableFilter is not nil, we should add it into tableFilters
+//    <1> Remove a condition from PushdownConditions and the rest will be added to tableFitler.
+//    <2> After the merge operation, if any indexPath's tableFilter is not nil, we should add it into tableFilters
 	
 CreateIndexMergeUnionPath(imPaths,PushdownConditions,cond,IndexInfos) {
 }
@@ -231,7 +239,7 @@ GetIndexMergeIntersectionPaths(pushDownConditions, usedConditionsInOr, indexInfo
 	return CreateIndexMergeIntersectionPath(partialPaths, tableFilters)
 }
 
-// Now, we just use all path in partialPaths to generate a IndexMergeIntersection.
+// Now, we just use all paths in partialPaths to generate a IndexMergeIntersection.
 // We also need to merge possible paths. 
 // For example: 
 //   index:  ix1(a)
@@ -247,19 +255,22 @@ CreateIndexMergeIntersectionPath(partialPaths, tableFilters) {
 ```
 	
 ### Executor
-Graph bellow illustrates execution of IndexMerge scan. 
+
+The graph below illustrates an execution of IndexMerge scan.
+
 <img alt="Execution Model" src="./imgs/execution_model.png" width="500pt"/>
 
-Every index plan in `PhysicalIndexMergeLookUpReader` will start an `IndexWorker` to execute the IndexScan plan and send handles to AndOrWorker. AndOrWorker is responsible for doing set operations (and, or) to get final handles. Then `AndOrWoker` sends final handles to `TableWokers` to get rows from TiKV.
+Every index plan in `PhysicalIndexMergeLookUpReader` will start an `IndexWorker` to execute the IndexScan plan and send handles to AndOrWorker. AndOrWorker is responsible for performing set operations (and, or) to getting final handles. Then `AndOrWoker` sends final handles to `TableWokers` to get rows from TiKV.
 
-We can take some tricks to make execution at pipeline mode without considering the order.
+Here are some designs for index plans in pipeline mode to be executed without considering the order.
 
-
-(1)	IndexMergeIntersection
+(1) IndexMergeIntersection
   
  <img alt="IndexMergeIntersection" src="./imgs/and.jpeg" width="500pt"/>
-   We take an example to explain it. Use set1 to record rowids which are returned by ix1 but not sent to tableWorker. Use set2 to record the same thing for ix2.
-If new rowid comes from ix1, first we check if it is in set2. If so, we delete it from set2 and send it to tableWorker. Otherwise, we add it into set1. For the above figure, we use the following table to show the processing.
+
+Take this example: Use set1 to record row IDs returned by ix1 but not sent to tableWorker. Use set2 to record the same thing for ix2.
+
+If new row IDs comes from ix1, first we check if it is in set2. If yes, we delete it from set2 and send it to tableWorker. Otherwise, we add it into set1. For the above figure, we use the following table to show the processing.
 
 | new rowid | set1 | set2 | sent to TableWorker |
 | :------:| :------: | :------: | :------: |
@@ -272,13 +283,14 @@ If new rowid comes from ix1, first we check if it is in set2. If so, we delete i
 
 
 
-(2)	IndexMergeUnion
+(2) IndexMergeUnion
 
 
-   We take a structure(we call it set) to record which rowids are accessed. If a new rowid returned by IndexScan, check if it is in set. If in it, we just skip it. Otherwise, we add it into set and send it to tableWorker. 
+We have a structure (set) to record which row IDs are accessed. If a new row ID is returned by IndexScan, check if it is in the set. If yes, we just skip it. Otherwise, we add it into the set and send it to tableWorker. 
 
 ### Cost Model
-Cost model will consider three factors: IO, CPU, and Network. 
+
+There are three factors to be considered for the cost model: IO, CPU, and Network, as shown below:
 
 - `IndexMergeType` = 1
 
@@ -312,9 +324,11 @@ Cost model will consider three factors: IO, CPU, and Network.
 - mergedRowCount: number of handles after set operating.
 
 ## Compatibility
+
 This proposal has no effect on the compatibility.
 
-## Implementation
+## Implementation Procedure
+
 1. Implement planner operators
 1. Enhance `explain` to display the plan
 3. Implement executor operators
