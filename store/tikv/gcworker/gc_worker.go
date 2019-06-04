@@ -96,6 +96,9 @@ func (w *GCWorker) Close() {
 }
 
 const (
+	booleanTrue  = "true"
+	booleanFalse = "false"
+
 	gcWorkerTickInterval = time.Minute
 	gcJobLogTickInterval = time.Minute * 10
 	gcWorkerLease        = time.Minute * 2
@@ -120,29 +123,31 @@ const (
 	gcScanLockLimit = tikv.ResolvedCacheSize / 2
 
 	gcEnableKey          = "tikv_gc_enable"
-	gcEnableValue        = "true"
-	gcDisableValue       = "false"
 	gcDefaultEnableValue = true
 
 	gcModeKey         = "tikv_gc_mode"
 	gcModeCentral     = "central"
 	gcModeDistributed = "distributed"
 	gcModeDefault     = gcModeDistributed
+
+	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
+	gcDefaultAutoConcurrency = true
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
 
 var gcVariableComments = map[string]string{
-	gcLeaderUUIDKey:  "Current GC worker leader UUID. (DO NOT EDIT)",
-	gcLeaderDescKey:  "Host name and pid of current GC leader. (DO NOT EDIT)",
-	gcLeaderLeaseKey: "Current GC worker leader lease. (DO NOT EDIT)",
-	gcLastRunTimeKey: "The time when last GC starts. (DO NOT EDIT)",
-	gcRunIntervalKey: "GC run interval, at least 10m, in Go format.",
-	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
-	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
-	gcConcurrencyKey: "[DEPRECATED] How many goroutines used to do GC parallel, [1, 128], default 2",
-	gcEnableKey:      "Current GC enable status",
-	gcModeKey:        "Mode of GC, \"central\" or \"distributed\"",
+	gcLeaderUUIDKey:      "Current GC worker leader UUID. (DO NOT EDIT)",
+	gcLeaderDescKey:      "Host name and pid of current GC leader. (DO NOT EDIT)",
+	gcLeaderLeaseKey:     "Current GC worker leader lease. (DO NOT EDIT)",
+	gcLastRunTimeKey:     "The time when last GC starts. (DO NOT EDIT)",
+	gcRunIntervalKey:     "GC run interval, at least 10m, in Go format.",
+	gcLifeTimeKey:        "All versions within life time will not be collected by GC, at least 10m, in Go format.",
+	gcSafePointKey:       "All versions after safe point can be accessed. (DO NOT EDIT)",
+	gcConcurrencyKey:     "How many goroutines used to do GC parallel, [1, 128], default 2",
+	gcEnableKey:          "Current GC enable status",
+	gcModeKey:            "Mode of GC, \"central\" or \"distributed\"",
+	gcAutoConcurrencyKey: "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
 }
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
@@ -258,26 +263,12 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return nil
 	}
 
-	stores, err := w.getUpStores(ctx)
-	concurrency := len(stores)
+	concurrency, err := w.getGCConcurrency(ctx)
 	if err != nil {
-		logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency.",
+		logutil.Logger(ctx).Info("[gc worker] failed to get gc concurrency.",
 			zap.String("uuid", w.uuid),
 			zap.Error(err))
-
-		concurrency, err = w.loadGCConcurrencyWithDefault()
-		if err != nil {
-			logutil.Logger(ctx).Error("[gc worker] failed to load gc concurrency. use default value.",
-				zap.String("uuid", w.uuid),
-				zap.Error(err))
-			concurrency = gcDefaultConcurrency
-		}
-	}
-
-	if concurrency == 0 {
-		logutil.Logger(ctx).Error("[gc worker] no store is up",
-			zap.String("uuid", w.uuid))
-		return errors.New("[gc worker] no store is up")
+		return errors.Trace(err)
 	}
 
 	w.gcIsRunning = true
@@ -359,19 +350,68 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 }
 
 func (w *GCWorker) checkGCEnable() (bool, error) {
-	str, err := w.loadValueFromSysTable(gcEnableKey)
+	return w.loadBooleanWithDefault(gcEnableKey, gcDefaultEnableValue)
+}
+
+func (w *GCWorker) checkUseAutoConcurrency() (bool, error) {
+	return w.loadBooleanWithDefault(gcAutoConcurrencyKey, gcDefaultAutoConcurrency)
+}
+
+func (w *GCWorker) loadBooleanWithDefault(key string, defaultValue bool) (bool, error) {
+	str, err := w.loadValueFromSysTable(key)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if str == "" {
 		// Save default value for gc enable key. The default value is always true.
-		err = w.saveValueToSysTable(gcEnableKey, gcEnableValue)
-		if err != nil {
-			return gcDefaultEnableValue, errors.Trace(err)
+		defaultValueStr := booleanFalse
+		if defaultValue {
+			defaultValueStr = booleanTrue
 		}
-		return gcDefaultEnableValue, nil
+		err = w.saveValueToSysTable(key, defaultValueStr)
+		if err != nil {
+			return defaultValue, errors.Trace(err)
+		}
+		return defaultValue, nil
 	}
-	return strings.EqualFold(str, gcEnableValue), nil
+	return strings.EqualFold(str, booleanTrue), nil
+}
+
+func (w *GCWorker) getGCConcurrency(ctx context.Context) (int, error) {
+	useAutoConcurrency, err := w.checkUseAutoConcurrency()
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] failed to load config gc_auto_concurrency. use default value.",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		useAutoConcurrency = gcDefaultAutoConcurrency
+	}
+	if !useAutoConcurrency {
+		return w.loadGCConcurrencyWithDefault()
+	}
+
+	stores, err := w.getUpStores(ctx)
+	concurrency := len(stores)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency. use config.",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+
+		concurrency, err = w.loadGCConcurrencyWithDefault()
+		if err != nil {
+			logutil.Logger(ctx).Error("[gc worker] failed to load gc concurrency from config. use default value.",
+				zap.String("uuid", w.uuid),
+				zap.Error(err))
+			concurrency = gcDefaultConcurrency
+		}
+	}
+
+	if concurrency == 0 {
+		logutil.Logger(ctx).Error("[gc worker] no store is up",
+			zap.String("uuid", w.uuid))
+		return 0, errors.New("[gc worker] no store is up")
+	}
+
+	return concurrency, nil
 }
 
 func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
