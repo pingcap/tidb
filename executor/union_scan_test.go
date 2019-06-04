@@ -121,11 +121,48 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("insert t values (1,1)")
 	tk.MustQuery("select a,b from t").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select a,b from t use index(idx)").Check(testkit.Rows("1 1"))
-	tk.MustExec("rollback")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
 
 	// Test update with untouched index columns.
+	tk.MustExec("delete from t")
+	tk.MustExec("insert t values (1,1),(2,2)")
 	tk.MustExec("begin")
 	tk.MustExec("update t set a=a+1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 1", "3 2"))
-	tk.MustExec("rollback")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+
+	// Test update with index column.
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustExec("begin")
+	tk.MustExec("update t set b=b+1 where a=2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 2", "3 2"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+
+	// Test index reader order.
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 2", "3 2"))
+	tk.MustExec("begin")
+	tk.MustExec("insert t values (3,3),(1,1),(4,4),(-1,-1);")
+	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("-1 -1", "1 1", "2 2", "3 2", "3 3", "4 4"))
+	tk.MustQuery("select * from t use index (idx) order by b desc").Check(testkit.Rows("4 4", "3 3", "3 2", "2 2", "1 1", "-1 -1"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+
+	// test for update unique index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int, unique index idx(b))")
+	tk.MustExec("insert t values (1,1),(2,2)")
+	tk.MustExec("begin")
+	_, err := tk.Exec("update t set b=b+1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'idx'")
+	// update with unchange index column.
+	tk.MustExec("update t set a=a+1")
+	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustExec("update t set b=b+2 where a=2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 3", "3 2"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
 }
