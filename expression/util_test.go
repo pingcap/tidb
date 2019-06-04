@@ -34,6 +34,31 @@ var _ = check.Suite(&testUtilSuite{})
 type testUtilSuite struct {
 }
 
+func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
+	con := &Constant{
+		Value: types.NewDatum(nil),
+	}
+	_, isNull, ok := GetUint64FromConstant(con)
+	c.Assert(ok, check.IsTrue)
+	c.Assert(isNull, check.IsTrue)
+
+	con = &Constant{
+		Value: types.NewIntDatum(-1),
+	}
+	_, _, ok = GetUint64FromConstant(con)
+	c.Assert(ok, check.IsFalse)
+
+	con.Value = types.NewIntDatum(1)
+	num, isNull, ok := GetUint64FromConstant(con)
+	c.Assert(ok, check.IsTrue)
+	c.Assert(isNull, check.IsFalse)
+	c.Assert(num, check.Equals, uint64(1))
+
+	con.Value = types.NewUintDatum(1)
+	num, _, _ = GetUint64FromConstant(con)
+	c.Assert(num, check.Equals, uint64(1))
+}
+
 func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {
 	col := &Column{RetType: newIntFieldType()}
 	c.Assert(setExprColumnInOperand(col).(*Column).InOperand, check.IsTrue)
