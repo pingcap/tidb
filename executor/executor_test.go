@@ -143,6 +143,23 @@ func (s *testSuite) TearDownTest(c *C) {
 	}
 }
 
+func (s *testSuite) TestBind(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table t if exists")
+
+	tk.MustExec("create table t(i int, s varchar(20))")
+	tk.MustExec("create index index_t on t(i,s)")
+	tk.MustExec("create global binding for select * from t using select * from t use index for join(index_t)")
+	c.Assert(len(tk.MustQuery("show global bindings").Rows()), Equals, 1)
+
+	tk.MustExec("create session binding for select * from t using select * from t use index for join(index_t)")
+	c.Assert(len(tk.MustQuery("show session bindings").Rows()), Equals, 1)
+
+	tk.MustExec("drop session binding for select * from t")
+	c.Assert(len(tk.MustQuery("show session bindings").Rows()), Equals, 0)
+}
+
 func (s *testSuite) TestAdmin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2904,7 +2921,7 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id bigint unsigned primary key)")
-	var num1, num2 uint64 = math.MaxInt64 + 1, math.MaxInt64 + 2
+	var num1, num2 uint64 = math.MaxInt64+1, math.MaxInt64+2
 	tk.MustExec(fmt.Sprintf("insert into t values(%v), (%v), (1), (2)", num1, num2))
 	num1Str := strconv.FormatUint(num1, 10)
 	num2Str := strconv.FormatUint(num2, 10)
