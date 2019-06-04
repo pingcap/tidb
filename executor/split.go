@@ -162,16 +162,16 @@ func getUint64FromBytes(bs []byte, pad byte) uint64 {
 	return binary.BigEndian.Uint64(buf)
 }
 
-// getValuesList use to get `num` values between min and max value.
+// getValuesList is used to get `num` values between min and max value.
 // To Simplify the explain, suppose min and max value type is int64, and min=0, max=100, num=10,
 // then calculate the step=(max-min)/num=10, then the function should return 0+10, 10+10, 20+10... all together 9 (num-1) values.
 // then the function will return [10,20,30,40,50,60,70,80,90].
 // The difference is the max,min value type is []byte, So I use getUint64FromBytes to convert []byte to uint64.
 func getValuesList(min, max []byte, num int, valuesList [][]byte) [][]byte {
-	startIdx := longestCommonPrefixLen(min, max)
-	step := getStepValue(min[startIdx:], max[startIdx:], num)
+	commonPrefixIdx := longestCommonPrefixLen(min, max)
+	step := getStepValue(min[commonPrefixIdx:], max[commonPrefixIdx:], num)
 
-	startValueTemp := min[startIdx:]
+	startValueTemp := min[commonPrefixIdx:]
 	if len(startValueTemp) > 8 {
 		startValueTemp = startValueTemp[:8]
 	}
@@ -184,8 +184,8 @@ func getValuesList(min, max []byte, num int, valuesList [][]byte) [][]byte {
 	// To get `num` regions, only need to split `num-1` idx keys.
 	tmp := make([]byte, 8)
 	for i := 0; i < num-1; i++ {
-		value := make([]byte, 0, startIdx+8)
-		value = append(value, min[:startIdx]...)
+		value := make([]byte, 0, commonPrefixIdx+8)
+		value = append(value, min[:commonPrefixIdx]...)
 		startV += step
 		binary.BigEndian.PutUint64(tmp, startV)
 		value = append(value, tmp...)
