@@ -147,3 +147,12 @@ func BenchmarkExprFromSchema(b *testing.B) {
 	}
 	b.ReportAllocs()
 }
+
+func newIntFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeLonglong,
+		Flen:    mysql.MaxIntWidth,
+		Decimal: 0,
+		Flag:    mysql.BinaryFlag,
+	}
+}
