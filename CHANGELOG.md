@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file. See also [R
 
 ## [2.1.11] 2019-05-31
 
-* Fix the issue that incorrect schema is used for  `delete from join` [#10595](https://github.com/pingcap/tidb/pull/10595)
+* Fix the issue that incorrect schema is used for `delete from join` [#10595](https://github.com/pingcap/tidb/pull/10595)
 * Fix the issue that the built-in `CONVERT()` may return incorrect field type [#10263](https://github.com/pingcap/tidb/pull/10263)
 * Merge non-overlapped feedback when updating bucket count [#10569](https://github.com/pingcap/tidb/pull/10569)
 * Fix calculation errors  of  `unix_timestamp()-unix_timestamp(now())` [#10491](https://github.com/pingcap/tidb/pull/10491)
