@@ -27,7 +27,7 @@ DDL jobs have multiple state changes during processing. All TiDB servers in a cl
 So you can simply think that each TiDB server needs two modules to ensure that this condition is met. 
 * One is the load schema module. In order to process SQL normally, each TiDB server needs to be loaded into the latest schema within a lease. 
 * The other one is the handle DDL job module. This module is executed only after the current TiDB server is elected to the owner. Process the job and change the schema. After the owner writes the currently changed schema state to TiKV, we can assume that all TiDB servers in the cluster that can handle SQL after waiting for 2*lease have been updated to this schema.
-![Figure 1: Structure flow chart](./structure-flow-chart.png)
+![Figure 1: Structure flow chart](./imgs/structure-flow-chart.png)
 
 <font size=1 face="黑体"><center>Figure 1: Structure flow chart</center></font>
 #### Initial configuration
@@ -55,7 +55,7 @@ There are many operations in DDL that need to delete data, such as drop table re
 ### Parallel flow
 Currently, only the add index operation in TiDB takes a long time to execute, so an add index operation may block other DDL operations. In order to solve this problem preliminarily and steadily, we have implemented the parallel operation between the general operation and the add index operation between the tables. That is, between different tables, the general operation and the add index operation can be performed in parallel.
 
-![Figure 2: Owner detail flow chart](./owner-detail-flow-chart.png)
+![Figure 2: Owner detail flow chart](./imgs/owner-detail-flow-chart.png)
 
 <font size=1 face="黑体"><center>Figure 2: Owner detailed flow chart</center></font>
 ## Optimization function
