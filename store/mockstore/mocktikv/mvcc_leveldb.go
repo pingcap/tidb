@@ -594,7 +594,7 @@ func (mvcc *MVCCLevelDB) PessimisticRollback(keys [][]byte, startTS, forUpdateTS
 		return errs
 	}
 	if err := mvcc.db.Write(batch, nil); err != nil {
-		return nil
+		return []error{err}
 	}
 	return errs
 }
@@ -615,7 +615,7 @@ func pessimisticRollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, st
 	}
 	if ok {
 		lock := dec.lock
-		if lock.op == kvrpcpb.Op_PessimisticLock && lock.startTS == startTS && lock.forUpdateTS == forUpdateTS {
+		if lock.op == kvrpcpb.Op_PessimisticLock && lock.startTS == startTS && lock.forUpdateTS <= forUpdateTS {
 			batch.Delete(startKey)
 		}
 	}
