@@ -99,6 +99,7 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	idxKeys = append(idxKeys, startIdxKey)
 
 	index := tables.NewIndex(e.tableInfo.ID, e.tableInfo, e.indexInfo)
+	// Split index regions by user specified value lists.
 	if len(e.valueLists) > 0 {
 		for _, v := range e.valueLists {
 			idxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, v, math.MinInt64, nil)
@@ -109,6 +110,7 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 		}
 		return idxKeys, nil
 	}
+	// Split index regions by min, max value and calculate the step by (max - min)/num.
 	minIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.min, math.MinInt64, nil)
 	if err != nil {
 		return nil, err
@@ -123,6 +125,7 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	return getValuesList(minIdxKey, maxIdxKey, e.num, idxKeys), nil
 }
 
+// longestCommonPrefixLen gets the longest common prefix byte length.
 func longestCommonPrefixLen(s1, s2 []byte) int {
 	l := len(s1)
 	if len(s2) < len(s1) {
@@ -137,6 +140,15 @@ func longestCommonPrefixLen(s1, s2 []byte) int {
 	return i
 }
 
+// getDiffBytesValue gets the diff-value from the `startIdx`. Normally, `startIdx` is the longest common prefix byte length.
+// eg: min: [10,1, 2,3,4,5]
+//     max: [10,10,9,8,7,6,5,4]
+//     startIdx: 1
+//     the diff bytes is   [10,9,8,7,6,5,4]
+//     				    -  [1, 2,3,4,5]
+//     				    =  [9, 7,5,3,1,5,4]
+// I need 8 diff-bytes to convert(decode) a uint64 value. So append 0xff to complete 8 bytes.
+// so the return uint64 value is binary.BigEndian.Uint64([]byte{9,7,5,3,1,5,4,255}).
 func getDiffBytesValue(startIdx int, min, max []byte) uint64 {
 	l := len(min)
 	if len(max) < len(min) {
@@ -173,6 +185,11 @@ func getDiffBytesValue(startIdx int, min, max []byte) uint64 {
 	return diffValue
 }
 
+// getValuesList use to get `num` values between min and max value.
+// To Simplify the explain, suppose min and max value type is int64, and min=0, max=100, num=10,
+// then calculate the step=(max-min)/num=10, then the function should return 0+10, 10+10, 20+10... all together 9 (num-1) values.
+// then the function will return [10,20,30,40,50,60,70,80,90].
+// The difference is the max,min value type is []byte, So I use getDiffBytesValue to calculate the (max-min) value.
 func getValuesList(min, max []byte, num int, valuesList [][]byte) [][]byte {
 	startIdx := longestCommonPrefixLen(min, max)
 	diffValue := getDiffBytesValue(startIdx, min, max)
