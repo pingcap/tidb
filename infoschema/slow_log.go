@@ -188,6 +188,7 @@ type slowQueryTuple struct {
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
+	value = string(hack.String([]byte(value)))
 	switch field {
 	case variable.SlowLogTimeStr:
 		t, err := ParseTime(value)
