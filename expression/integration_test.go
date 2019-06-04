@@ -1956,6 +1956,9 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustQuery(`select adddate(cast(null as datetime), cast(1 as SIGNED))`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select adddate(cast("2000-02-01" as datetime), cast("xxx" as SIGNED))`).Check(testkit.Rows("2000-02-01 00:00:00"))
 	tk.MustQuery(`select adddate(cast("xxx" as datetime), cast(1 as SIGNED))`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select adddate(20100101, cast(1 as decimal))`).Check(testkit.Rows("2010-01-02"))
+	tk.MustQuery(`select adddate(cast('10:10:10' as time), 1)`).Check(testkit.Rows("34:10:10"))
+	tk.MustQuery(`select adddate(cast('10:10:10' as time), cast(1 as decimal))`).Check(testkit.Rows("34:10:10"))
 
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
