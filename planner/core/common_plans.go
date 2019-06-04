@@ -220,7 +220,8 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 	if err != nil {
 		return nil, err
 	}
-	if prepared.UseCache {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if !isTableDual && prepared.UseCache {
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
