@@ -166,7 +166,7 @@ func getUint64FromBytes(bs []byte, pad byte) uint64 {
 // To Simplify the explain, suppose min and max value type is int64, and min=0, max=100, num=10,
 // then calculate the step=(max-min)/num=10, then the function should return 0+10, 10+10, 20+10... all together 9 (num-1) values.
 // then the function will return [10,20,30,40,50,60,70,80,90].
-// The difference is the max,min value type is []byte, So I use getUint64FromBytes to convert []byte to uint64.
+// The difference is the value type of max,min is []byte, So I use getUint64FromBytes to convert []byte to uint64.
 func getValuesList(min, max []byte, num int, valuesList [][]byte) [][]byte {
 	commonPrefixIdx := longestCommonPrefixLen(min, max)
 	step := getStepValue(min[commonPrefixIdx:], max[commonPrefixIdx:], num)
