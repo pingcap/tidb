@@ -221,17 +221,20 @@ func (e *SimpleExec) setDefaultRoleAll(s *ast.SetDefaultRoleStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) error {
+func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) (err error) {
 	switch s.SetRoleOpt {
 	case ast.SetRoleAll:
-		return e.setDefaultRoleAll(s)
+		err = e.setDefaultRoleAll(s)
 	case ast.SetRoleNone:
-		return e.setDefaultRoleNone(s)
+		err = e.setDefaultRoleNone(s)
 	case ast.SetRoleRegular:
-		return e.setDefaultRoleRegular(s)
+		err = e.setDefaultRoleRegular(s)
 	}
-	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
-	return err
+	if err != nil {
+		return
+	}
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	return
 }
 
 func (e *SimpleExec) setRoleRegular(s *ast.SetRoleStmt) error {
