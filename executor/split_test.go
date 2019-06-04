@@ -60,7 +60,7 @@ func (s *testSplitIndex) TestLongestCommonPrefixLen(c *C) {
 	}
 }
 
-func (s *testSplitIndex) TestGetDiffBytesValue(c *C) {
+func (s *testSplitIndex) TestgetStepValue(c *C) {
 	cases := []struct {
 		min []byte
 		max []byte
@@ -79,7 +79,7 @@ func (s *testSplitIndex) TestGetDiffBytesValue(c *C) {
 	for _, ca := range cases {
 		l0 := longestCommonPrefixLen(ca.min, ca.max)
 		c.Assert(l0, Equals, ca.l)
-		v0 := getDiffBytesValue(l0, ca.min, ca.max)
+		v0 := getStepValue(ca.min[l0:], ca.max[l0:], 1)
 		c.Assert(v0, Equals, ca.v)
 	}
 }

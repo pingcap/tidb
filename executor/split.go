@@ -140,60 +140,36 @@ func longestCommonPrefixLen(s1, s2 []byte) int {
 	return i
 }
 
-// getDiffBytesValue gets the diff-value from the `startIdx`. Normally, `startIdx` is the longest common prefix byte length.
-// eg: min: [10,1, 2,3,4,5]
-//     max: [10,10,9,8,7,6,5,4]
-//     startIdx: 1
-//     the diff bytes is   [10,9,8,7,6,5,4]
-//     				    -  [1, 2,3,4,5]
-//     				    =  [9, 7,5,3,1,5,4]
-// I need 8 diff-bytes to convert(decode) a uint64 value. So append 0xff to complete 8 bytes.
-// so the return uint64 value is binary.BigEndian.Uint64([]byte{9,7,5,3,1,5,4,255}).
-func getDiffBytesValue(startIdx int, min, max []byte) uint64 {
-	l := len(min)
-	if len(max) < len(min) {
-		l = len(max)
-	}
-	if l-startIdx > 8 {
-		l = startIdx + 8
-	}
-	diff := make([]byte, 0, 8)
-	for i := startIdx; i < l; i++ {
-		diff = append(diff, max[i]-min[i])
-	}
-	if len(max) > l {
-		for i := l; i < len(max); i++ {
-			diff = append(diff, max[i])
-			if len(diff) >= 8 {
-				break
-			}
-		}
-	}
-	if len(min) > l {
-		for i := l; i < len(min); i++ {
-			diff = append(diff, 0xff-min[i])
-			if len(diff) >= 8 {
-				break
-			}
-		}
-	}
+// getStepValue gets the step of between the min and max value. step = (max-min)/num.
+// convert byte slice to uint64 first.
+func getStepValue(min, max []byte, num int) uint64 {
+	minUint := getUint64FromBytes(min, 0)
+	maxUint := getUint64FromBytes(max, 0xff)
+	return (maxUint - minUint) / uint64(num)
+}
 
-	for i := len(diff); i < 8; i++ {
-		diff = append(diff, 0xff)
+// getUint64FromBytes gets a uint64 from the `bs` byte slice.
+// If len(bs) < 8, then padding with `pad`.
+func getUint64FromBytes(bs []byte, pad byte) uint64 {
+	buf := bs
+	if len(buf) < 8 {
+		buf = make([]byte, 0, 8)
+		buf = append(buf, bs...)
+		for i := len(buf); i < 8; i++ {
+			buf = append(buf, pad)
+		}
 	}
-	diffValue := binary.BigEndian.Uint64(diff)
-	return diffValue
+	return binary.BigEndian.Uint64(buf)
 }
 
 // getValuesList use to get `num` values between min and max value.
 // To Simplify the explain, suppose min and max value type is int64, and min=0, max=100, num=10,
 // then calculate the step=(max-min)/num=10, then the function should return 0+10, 10+10, 20+10... all together 9 (num-1) values.
 // then the function will return [10,20,30,40,50,60,70,80,90].
-// The difference is the max,min value type is []byte, So I use getDiffBytesValue to calculate the (max-min) value.
+// The difference is the max,min value type is []byte, So I use getUint64FromBytes to convert []byte to uint64.
 func getValuesList(min, max []byte, num int, valuesList [][]byte) [][]byte {
 	startIdx := longestCommonPrefixLen(min, max)
-	diffValue := getDiffBytesValue(startIdx, min, max)
-	step := diffValue / uint64(num)
+	step := getStepValue(min[startIdx:], max[startIdx:], num)
 
 	startValueTemp := min[startIdx:]
 	if len(startValueTemp) > 8 {
@@ -206,9 +182,8 @@ func getValuesList(min, max []byte, num int, valuesList [][]byte) [][]byte {
 	}
 	startV := binary.BigEndian.Uint64(startValue)
 	// To get `num` regions, only need to split `num-1` idx keys.
-	num--
 	tmp := make([]byte, 8)
-	for i := 0; i < num; i++ {
+	for i := 0; i < num-1; i++ {
 		value := make([]byte, 0, startIdx+8)
 		value = append(value, min[:startIdx]...)
 		startV += step
