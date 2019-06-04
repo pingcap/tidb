@@ -170,25 +170,15 @@ func getUint64FromBytes(bs []byte, pad byte) uint64 {
 func getValuesList(min, max []byte, num int, valuesList [][]byte) [][]byte {
 	commonPrefixIdx := longestCommonPrefixLen(min, max)
 	step := getStepValue(min[commonPrefixIdx:], max[commonPrefixIdx:], num)
-
-	startValueTemp := min[commonPrefixIdx:]
-	if len(startValueTemp) > 8 {
-		startValueTemp = startValueTemp[:8]
-	}
-	startValue := make([]byte, 0, 8)
-	startValue = append(startValue, startValueTemp...)
-	for i := len(startValue); i < 8; i++ {
-		startValue = append(startValue, 0)
-	}
-	startV := binary.BigEndian.Uint64(startValue)
+	startV := getUint64FromBytes(min[commonPrefixIdx:], 0)
 	// To get `num` regions, only need to split `num-1` idx keys.
-	tmp := make([]byte, 8)
+	buf := make([]byte, 8)
 	for i := 0; i < num-1; i++ {
 		value := make([]byte, 0, commonPrefixIdx+8)
 		value = append(value, min[:commonPrefixIdx]...)
 		startV += step
-		binary.BigEndian.PutUint64(tmp, startV)
-		value = append(value, tmp...)
+		binary.BigEndian.PutUint64(buf, startV)
+		value = append(value, buf...)
 		valuesList = append(valuesList, value)
 	}
 	return valuesList
