@@ -949,6 +949,8 @@ const (
 	SlowLogTxnStartTSStr = "Txn_start_ts"
 	// SlowLogUserStr is slow log field name.
 	SlowLogUserStr = "User"
+	// SlowLogHostStr only for slow_query table usage.
+	SlowLogHostStr = "Host"
 	// SlowLogConnIDStr is slow log field name.
 	SlowLogConnIDStr = "Conn_ID"
 	// SlowLogQueryTimeStr is slow log field name.
