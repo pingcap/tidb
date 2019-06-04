@@ -5997,24 +5997,27 @@ SetExpr:
 	}
 |	ExprOrDefault
 
+EqOrAssignmentEq:
+    eq | assignmentEq
+
 VariableAssignment:
-	Identifier eq SetExpr
+	Identifier EqOrAssignmentEq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $1, Value: $3, IsSystem: true}
 	}
-|	"GLOBAL" Identifier eq SetExpr
+|	"GLOBAL" Identifier EqOrAssignmentEq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsGlobal: true, IsSystem: true}
 	}
-|	"SESSION" Identifier eq SetExpr
+|	"SESSION" Identifier EqOrAssignmentEq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
 	}
-|	"LOCAL" Identifier eq Expression
+|	"LOCAL" Identifier EqOrAssignmentEq Expression
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
 	}
-|	doubleAtIdentifier eq SetExpr
+|	doubleAtIdentifier EqOrAssignmentEq SetExpr
 	{
 		v := strings.ToLower($1)
 		var isGlobal bool
@@ -6030,13 +6033,7 @@ VariableAssignment:
 		}
 		$$ = &ast.VariableAssignment{Name: v, Value: $3, IsGlobal: isGlobal, IsSystem: true}
 	}
-|	singleAtIdentifier eq Expression
-	{
-		v := $1
-		v = strings.TrimPrefix(v, "@")
-		$$ = &ast.VariableAssignment{Name: v, Value: $3}
-	}
-|	singleAtIdentifier assignmentEq Expression
+|	singleAtIdentifier EqOrAssignmentEq Expression
 	{
 		v := $1
 		v = strings.TrimPrefix(v, "@")
