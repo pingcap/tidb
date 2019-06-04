@@ -34,6 +34,50 @@ var _ = check.Suite(&testUtilSuite{})
 type testUtilSuite struct {
 }
 
+func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			ret = true
+		}
+	}()
+	f()
+	return false
+}
+
+func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
+	c.Assert(s.checkPanic(func() {
+		newBaseBuiltinFuncWithTp(nil, nil, types.ETTimestamp)
+	}), check.IsTrue)
+
+	ctx := mock.NewContext()
+	c.Assert(s.checkPanic(func() {
+		newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp, types.ETTimestamp)
+	}), check.IsTrue)
+
+	bf := newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp)
+	c.Assert(s.checkPanic(func() {
+		bf.evalInt(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalReal(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalString(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalDecimal(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalTime(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalDuration(chunk.Row{})
+	}), check.IsTrue)
+	c.Assert(s.checkPanic(func() {
+		bf.evalJSON(chunk.Row{})
+	}), check.IsTrue)
+}
+
 func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
 	con := &Constant{
 		Value: types.NewDatum(nil),
