@@ -806,6 +806,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString("*/")
 	}
 
+	if tb.Meta().Affinity != nil {
+		fmt.Fprintf(&buf, "/*!90001 AFFINIYY_BY=(%s, %d)*/", tb.Meta().Affinity.Expr, tb.Meta().Affinity.BitWidth)
+	}
+
 	if len(tb.Meta().Comment) > 0 {
 		fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
 	}

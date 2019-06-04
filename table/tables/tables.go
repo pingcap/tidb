@@ -20,6 +20,8 @@ package tables
 import (
 	"context"
 	"encoding/binary"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/util/mock"
 	"math"
 	"strings"
 
@@ -54,6 +56,7 @@ type tableCommon struct {
 	indices         []table.Index
 	meta            *model.TableInfo
 	alloc           autoid.Allocator
+	affinityExpr    expression.Expression
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -126,6 +129,19 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 	var t Table
 	initTableCommon(&t.tableCommon, tblInfo, tblInfo.ID, columns, alloc)
+
+	if tblInfo.Affinity != nil {
+		ctx := mock.NewContext()
+		dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
+		schema := expression.NewSchema(columns...)
+		exps, err := expression.ParseSimpleExprsWithSchema(ctx, tblInfo.Affinity.Expr, schema)
+		if err != nil {
+			return nil, err
+		}
+		t.tableCommon.affinityExpr = exps[0]
+	}
+
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t.tableCommon); err != nil {
 			return nil, err
@@ -443,9 +459,16 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	if !hasRecordID {
-		recordID, err = t.AllocAutoID(ctx)
-		if err != nil {
-			return 0, err
+		if t.meta.Affinity == nil || t.affinityExpr == nil {
+			recordID, err = t.AllocAutoID(ctx)
+			if err != nil {
+				return 0, err
+			}
+		} else {
+			recordID, err = t.AllocAffinityID(ctx, r)
+			if err != nil {
+				return 0, err
+			}
 		}
 	}
 

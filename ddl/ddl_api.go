@@ -1665,6 +1665,13 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			tbInfo.PreSplitRegions = op.UintValue
+		case ast.TableOptionAffinity:
+			var buf = bytes.NewBuffer([]byte{})
+			op.Affinity.Expr.Format(buf)
+			tbInfo.Affinity = &model.AffinityInfo{
+				Expr:     buf.String(),
+				BitWidth: op.Affinity.BitWidth,
+			}
 		}
 	}
 	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
