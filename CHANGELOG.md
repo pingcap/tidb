@@ -1,6 +1,58 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [3.0.0-rc.2] 2019-05-28
+### SQL Optimizer
+* Support Index Join in more scenarios
+[#10540](https://github.com/pingcap/tidb/pull/10540)
+* Support exporting historical statistics [#10291](https://github.com/pingcap/tidb/pull/10291)
+* Support the incremental `Analyze` operation on monotonically increasing index columns 
+[#10355](https://github.com/pingcap/tidb/pull/10355)
+* Neglect the NULL value in the `Order By` clause [#10488](https://github.com/pingcap/tidb/pull/10488)
+* Fix the wrong schema information calculation of the `UnionAll` logical operator when simplifying the column information [#10384](https://github.com/pingcap/tidb/pull/10384)
+* Avoid modifying the original expression when pushing down the `Not` operator [#10363](https://github.com/pingcap/tidb/pull/10363/files)
+* Support the `dump`/`load` correlation of histograms [#10573](https://github.com/pingcap/tidb/pull/10573)
+### Execution Engine
+* Handle virtual columns with a unique index properly when fetching duplicate rows in `batchChecker` [#10370](https://github.com/pingcap/tidb/pull/10370)
+* Fix the scanning range calculation issue for the `CHAR` column [#10124](https://github.com/pingcap/tidb/pull/10124)
+* Fix the issue of `PointGet` incorrectly processing negative numbers [#10113](https://github.com/pingcap/tidb/pull/10113)
+* Merge `Window` functions with the same name to improve execution efficiency [#9866](https://github.com/pingcap/tidb/pull/9866)
+* Allow the `RANGE` frame in a `Window` function to contain no `OrderBy` clause [#10496](https://github.com/pingcap/tidb/pull/10496)
+
+### Server
+Fix the issue that TiDB continuously creates a new connection to TiKV when a fault occurs in TiKV [#10301](https://github.com/pingcap/tidb/pull/10301)
+Make `tidb_disable_txn_auto_retry` affect all retryable errors instead of only write conflict errors [#10339](https://github.com/pingcap/tidb/pull/10339)
+Allow DDL statements without parameters to be executed using `prepare`/`execute` [#10144](https://github.com/pingcap/tidb/pull/10144)
+Add the `tidb_back_off_weight` variable to control the backoff time [#10266](https://github.com/pingcap/tidb/pull/10266)
+Prohibit TiDB retrying non-automatically committed transactions in default conditions by setting the default value of `tidb_disable_txn_auto_retry` to `on` [#10266](https://github.com/pingcap/tidb/pull/10266)
+Fix the database privilege judgment of `role` in `RBAC` [#10261](https://github.com/pingcap/tidb/pull/10261)
+Support the pessimistic transaction model (experimental) [#10297](https://github.com/pingcap/tidb/pull/10297)
+Reduce the wait time for handling lock conflicts in some cases [#10006](https://github.com/pingcap/tidb/pull/10006)
+Make the Region cache able to visit follower nodes when a fault occurs in the leader node [#10256](https://github.com/pingcap/tidb/pull/10256)
+Add the `tidb_low_resolution_tso` variable to control the number of TSOs obtained in batches and reduce the times of transactions obtaining TSO to adapt for scenarios where data consistency is not so strictly required [#10428](https://github.com/pingcap/tidb/pull/10428)
+
+### DDL
+Fix the uppercase issue of the charset name in the storage of the old version of TiDB
+[#10272](https://github.com/pingcap/tidb/pull/10272)
+Support `preSplit` of table partition, which pre-allocates table Regions when creating a table to avoid write hotspots after the table is created
+[#10221](https://github.com/pingcap/tidb/pull/10221)
+Fix the issue that TiDB incorrectly updates the version information in PD in some cases [#10324](https://github.com/pingcap/tidb/pull/10324)
+Support modifying the charset and collation using the `ALTER DATABASE` statement
+[#10393](https://github.com/pingcap/tidb/pull/10393)
+Support splitting Regions based on the index and range of the specified table  to relieve hotspot issues
+[#10203](https://github.com/pingcap/tidb/pull/10203)
+Prohibit modifying the precision of the decimal column using the `alter table` statement
+[#10433](https://github.com/pingcap/tidb/pull/10433)
+Fix the restriction for expressions and functions in hash partition
+[#10273](https://github.com/pingcap/tidb/pull/10273)
+Fix the issue that adding indexes in a table that contains partitions will in some cases cause TiDB panic
+[#10475](https://github.com/pingcap/tidb/pull/10475)
+Validate table information before executing the DDL to avoid invalid table schemas
+[#10464](https://github.com/pingcap/tidb/pull/10464)
+Enable hash partition by default; and enable range columns partition when there is only one column in the partition definition
+[#9936](https://github.com/pingcap/tidb/pull/9936)
+
+
 ## [3.0.0-rc.1] 2019-05-10
 
 ### SQL Optimizer
