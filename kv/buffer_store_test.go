@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 )
 
 type testBufferStoreSuite struct{}
@@ -62,4 +63,26 @@ func (s testBufferStoreSuite) TestSaveTo(c *C) {
 		err = iter.Next()
 		c.Check(err, IsNil)
 	}
+}
+
+func (s testBufferStoreSuite) TestBufferStore(c *C) {
+	bs := NewBufferStore(&mockSnapshot{NewMemDbBuffer(DefaultTxnMembufCap)}, -1)
+	bs.SetCap(10)
+	key := Key("key")
+	err := bs.Set(key, []byte("value"))
+	c.Check(err, IsNil)
+
+	err = bs.Set(key, []byte(""))
+	c.Check(terror.ErrorEqual(err, ErrCannotSetNilValue), IsTrue)
+
+	err = bs.Delete(key)
+	c.Check(err, IsNil)
+
+	_, err = bs.Get(key)
+	c.Check(terror.ErrorEqual(err, ErrNotExist), IsTrue)
+
+	bs.Reset()
+	_, err = bs.Get(key)
+	c.Check(terror.ErrorEqual(err, ErrNotExist), IsTrue)
+
 }
