@@ -30,7 +30,10 @@ type memIndexReader struct {
 	retFieldTypes []*types.FieldType
 	outputOffset  []int
 	// cache for decode handle.
-	handleBytes []byte
+	handleBytes    []byte
+	checkedHandles map[int64]struct{}
+	// belowHandleIndex is the handle's position of the below scan plan.
+	belowHandleIndex int
 }
 
 func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -40,16 +43,18 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		outputOffset = append(outputOffset, col.Index)
 	}
 	return &memIndexReader{
-		baseExecutor:  us.baseExecutor,
-		index:         idxReader.index,
-		table:         idxReader.table.Meta(),
-		kvRanges:      kvRanges,
-		desc:          us.desc,
-		conditions:    us.conditions,
-		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
-		retFieldTypes: us.retTypes(),
-		outputOffset:  outputOffset,
-		handleBytes:   make([]byte, 0, 16),
+		baseExecutor:     us.baseExecutor,
+		index:            idxReader.index,
+		table:            idxReader.table.Meta(),
+		kvRanges:         kvRanges,
+		desc:             us.desc,
+		conditions:       us.conditions,
+		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		retFieldTypes:    us.retTypes(),
+		outputOffset:     outputOffset,
+		handleBytes:      make([]byte, 0, 16),
+		checkedHandles:   make(map[int64]struct{}, len(us.dirty.addedRows)),
+		belowHandleIndex: us.belowHandleIndex,
 	}
 }
 
@@ -77,6 +82,8 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 		if err != nil {
 			return err
 		}
+		handle := data[m.belowHandleIndex].GetInt64()
+		m.checkedHandles[handle] = struct{}{}
 
 		mutableRow.SetDatums(data...)
 		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
@@ -118,6 +125,10 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	for _, h := range handles {
+		m.checkedHandles[h] = struct{}{}
 	}
 	if m.desc {
 		for i, j := 0, len(handles)-1; i < j; i, j = i+1, j-1 {
@@ -341,15 +352,17 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
-		baseExecutor:  us.baseExecutor,
-		index:         idxLookUpReader.index,
-		table:         idxLookUpReader.table.Meta(),
-		kvRanges:      kvRanges,
-		desc:          idxLookUpReader.desc,
-		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
-		retFieldTypes: us.retTypes(),
-		outputOffset:  outputOffset,
-		handleBytes:   make([]byte, 0, 16),
+		baseExecutor:     us.baseExecutor,
+		index:            idxLookUpReader.index,
+		table:            idxLookUpReader.table.Meta(),
+		kvRanges:         kvRanges,
+		desc:             idxLookUpReader.desc,
+		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		retFieldTypes:    us.retTypes(),
+		outputOffset:     outputOffset,
+		handleBytes:      make([]byte, 0, 16),
+		checkedHandles:   make(map[int64]struct{}, len(us.dirty.addedRows)),
+		belowHandleIndex: us.belowHandleIndex,
 	}
 
 	return &memIndexLookUpReader{

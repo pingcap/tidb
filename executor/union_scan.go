@@ -104,7 +104,7 @@ type UnionScanExec struct {
 	belowHandleIndex int
 
 	addedRows           [][]types.Datum
-	addedRowsMap        map[int64]struct{}
+	checkedHandles      map[int64]struct{}
 	cursor4AddRows      int
 	sortErr             error
 	snapshotRows        [][]types.Datum
@@ -123,28 +123,21 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 func (us *UnionScanExec) open(ctx context.Context) error {
 	var err error
 	reader := us.children[0]
-	var rows [][]types.Datum
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		rows, err = buildMemTableReader(us, x).getMemRows()
+		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
 	case *IndexReaderExecutor:
-		rows, err = buildMemIndexReader(us, x).getMemRows()
+		mIdxReader := buildMemIndexReader(us, x)
+		us.addedRows, err = mIdxReader.getMemRows()
+		us.checkedHandles = mIdxReader.checkedHandles
 	case *IndexLookUpExecutor:
-		rows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+		mIdxLookUpReader := buildMemIndexLookUpReader(us, x)
+		us.addedRows, err = mIdxLookUpReader.getMemRows()
+		us.checkedHandles = mIdxLookUpReader.idxReader.checkedHandles
 	}
 
-	us.setAddedRows(rows)
 	us.snapshotChunkBuffer = us.newFirstChunk()
 	return err
-}
-
-func (us *UnionScanExec) setAddedRows(rows [][]types.Datum) {
-	us.addedRows = rows
-	us.addedRowsMap = make(map[int64]struct{}, len(rows))
-	for _, row := range rows {
-		handle := row[us.belowHandleIndex].GetInt64()
-		us.addedRowsMap[handle] = struct{}{}
-	}
 }
 
 // Next implements the Executor Next interface.
@@ -267,7 +260,7 @@ func (us *UnionScanExec) getMissIndexRowsByHandle(handle int64) error {
 		return nil
 	}
 	// Doesn't miss in memBuffer reader.
-	if _, ok := us.addedRowsMap[handle]; ok {
+	if _, ok := us.checkedHandles[handle]; ok {
 		return nil
 	}
 	ds, err := us.getMemRow(handle)
