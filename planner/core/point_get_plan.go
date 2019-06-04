@@ -443,9 +443,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 		return nil
 	}
 	if fastSelect.IsTableDual {
-		return Update{
-			SelectPlan: &PhysicalTableDual{},
-		}.Init(ctx)
+		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
 	}
 	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
 	if orderedList == nil {
@@ -505,9 +503,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 		return nil
 	}
 	if fastSelect.IsTableDual {
-		return Delete{
-			SelectPlan: &PhysicalTableDual{},
-		}.Init(ctx)
+		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
 	}
 	delPlan := Delete{
 		SelectPlan: fastSelect,
