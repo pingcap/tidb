@@ -209,12 +209,10 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 	case variable.SlowLogUserStr:
 		fields := strings.SplitN(value, "@", 2)
 		if len(field) > 1 {
-			// To avoid shallow copy.
-			st.user = string([]byte(fields[0]))
+			st.user = fields[0]
 		}
 		if len(field) > 2 {
-			// To avoid shallow copy.
-			st.ip = string([]byte(fields[1]))
+			st.ip = fields[1]
 		}
 	case variable.SlowLogConnIDStr:
 		num, err := strconv.ParseUint(value, 10, 64)
