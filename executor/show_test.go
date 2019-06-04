@@ -771,10 +771,10 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 		"PARTITION p12 VALUES LESS THAN (MAXVALUE))")
 	tk.MustQuery("show create table log").Check(testutil.RowsWithSep("|",
 		"log CREATE TABLE `log` (\n"+
-			"  `LOG_ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"+
-			"  `ROUND_ID` bigint(20) unsigned NOT NULL,\n"+
-			"  `USER_ID` int(10) unsigned NOT NULL,\n"+
-			"  `USER_IP` int(10) unsigned DEFAULT NULL,\n"+
+			"  `LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,\n"+
+			"  `ROUND_ID` bigint(20) UNSIGNED NOT NULL,\n"+
+			"  `USER_ID` int(10) UNSIGNED NOT NULL,\n"+
+			"  `USER_IP` int(10) UNSIGNED DEFAULT NULL,\n"+
 			"  `END_TIME` datetime NOT NULL,\n"+
 			"  `USER_TYPE` int(11) DEFAULT NULL,\n"+
 			"  `APP_ID` int(11) DEFAULT NULL,\n"+
