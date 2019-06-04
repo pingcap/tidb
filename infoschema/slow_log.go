@@ -208,7 +208,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		st.txnStartTs = num
 	case variable.SlowLogUserStr:
 		fields := strings.SplitN(value, "@", 2)
-		if len(field) > 1 {
+		if len(field) > 0 {
 			st.user = fields[0]
 		}
 		if len(field) > 2 {
