@@ -1164,7 +1164,11 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 			ran.HighVal[0] = getMaxValue(q.hist.tp)
 		}
 	}
-	ranges := q.hist.SplitRange(sc, []*ranger.Range{ran})
+	ranges, ok := q.Hist().SplitRange(sc, []*ranger.Range{ran}, q.tp == indexType)
+	if !ok {
+		logutil.Logger(context.Background()).Debug("type of histogram and ranges mismatch")
+		return nil
+	}
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
 	for i, r := range ranges {

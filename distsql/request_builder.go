@@ -269,7 +269,10 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 		feedbackRanges = append(feedbackRanges, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
 	}
-	feedbackRanges = fb.Hist().SplitRange(sc, feedbackRanges)
+	feedbackRanges, ok := fb.Hist().SplitRange(sc, feedbackRanges, true)
+	if !ok {
+		fb.Invalidate()
+	}
 	krs := make([]kv.KeyRange, 0, len(feedbackRanges))
 	for _, ran := range feedbackRanges {
 		low, high := ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
