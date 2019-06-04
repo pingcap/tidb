@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Skip `Virtual Column` when collecting statistics to avoid exceptions [#10628](https://github.com/pingcap/tidb/pull/10628)
 * Support the `SHOW OPEN TABLES` statement [#10374](https://github.com/pingcap/tidb/pull/10374)
 * Fix the issue that goroutine leak may happen in some cases [#10656](https://github.com/pingcap/tidb/pull/10656)
-* Fix the issue that setting the `tidb_snapshot` variable in some cases may cause incorrect parsing of time format  [#10637](https://github.com/pingcap/tidb/pull/10637)
+* Fix the issue that setting the `tidb_snapshot` variable in some cases may cause incorrect parsing of time format [#10637](https://github.com/pingcap/tidb/pull/10637)
 
 ## [2.1.10] 2019-05-21
 * Fix the issue that some abnormalities cause incorrect table schema when using `tidb_snapshot` to read the history data [#10359](https://github.com/pingcap/tidb/pull/10359)
