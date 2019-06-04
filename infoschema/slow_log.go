@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -188,6 +189,7 @@ type slowQueryTuple struct {
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
+	value = stringutil.Copy(value)
 	switch field {
 	case variable.SlowLogTimeStr:
 		t, err := ParseTime(value)
