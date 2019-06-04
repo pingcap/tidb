@@ -37,6 +37,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogTimeStr, mysql.TypeTimestamp, 26, 0, nil, nil},
 	{variable.SlowLogTxnStartTSStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogUserStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogIPStr, mysql.TypeVarchar, 64, 0, nil, nil},
 	{variable.SlowLogConnIDStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogQueryTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.ProcessTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
@@ -162,6 +163,7 @@ type slowQueryTuple struct {
 	time              time.Time
 	txnStartTs        uint64
 	user              string
+	ip                string
 	connID            uint64
 	queryTime         float64
 	processTime       float64
@@ -205,7 +207,15 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		}
 		st.txnStartTs = num
 	case variable.SlowLogUserStr:
-		st.user = value
+		fields := strings.SplitN(value, "@", 2)
+		if len(field) > 1 {
+			// To avoid shallow copy.
+			st.user = string([]byte(fields[0]))
+		}
+		if len(field) > 2 {
+			// To avoid shallow copy.
+			st.ip = string([]byte(fields[1]))
+		}
 	case variable.SlowLogConnIDStr:
 		num, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
@@ -325,6 +335,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	}))
 	record = append(record, types.NewUintDatum(st.txnStartTs))
 	record = append(record, types.NewStringDatum(st.user))
+	record = append(record, types.NewStringDatum(st.ip))
 	record = append(record, types.NewUintDatum(st.connID))
 	record = append(record, types.NewFloat64Datum(st.queryTime))
 	record = append(record, types.NewFloat64Datum(st.processTime))
