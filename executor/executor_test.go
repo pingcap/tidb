@@ -175,6 +175,23 @@ func (s *testSuite) TestLoadStats(c *C) {
 	c.Assert(tk.ExecToErr("load stats ./xxx.json"), NotNil)
 }
 
+func (s *testSuite) TestShow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("show engines")
+	tk.MustExec("create table t(a int primary key)")
+	c.Assert(len(tk.MustQuery("show index in t").Rows()), Equals, 1)
+	c.Assert(len(tk.MustQuery("show index from t").Rows()), Equals, 1)
+
+	tk.MustExec("show charset")
+	tk.MustExec("show master status")
+	tk.MustExec("show status")
+	tk.MustExec("show databases")
+	tk.MustExec("show privileges")
+	tk.MustExec("show table status")
+}
+
 func (s *testSuite) TestAdmin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
