@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
+func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists tp;")
@@ -248,7 +248,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	);`, tmysql.ErrBadField)
 }
 
-func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
+func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists employees;")
@@ -279,7 +279,7 @@ func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
 	partition by hash( year(hired) ) partitions 4;`)
 }
 
-func (s *testIntegrationSuite10) TestCreateTableWithRangeColumnPartition(c *C) {
+func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
@@ -379,7 +379,7 @@ create table log_message_1 (
 		"partition p1 values less than (2, maxvalue))")
 }
 
-func (s *testIntegrationSuite8) TestCreateTableWithKeyPartition(c *C) {
+func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists tm1;")
@@ -497,7 +497,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	assertErrorCode(c, tk, sql7, tmysql.ErrSameNamePartition)
 }
 
-func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
+func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employees")
@@ -634,7 +634,7 @@ func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
 	assertErrorCode(c, tk, sql4, tmysql.ErrDropPartitionNonExistent)
 }
 
-func (s *testIntegrationSuite11) TestAddPartitionTooManyPartitions(c *C) {
+func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	count := ddl.PartitionCountLimit
@@ -691,7 +691,7 @@ func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix k
 	return hasOldPartitionData
 }
 
-func (s *testIntegrationSuite6) TestTruncatePartitionAndDropTable(c *C) {
+func (s *testIntegrationSuite5) TestTruncatePartitionAndDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	// Test truncate common table.
@@ -1154,6 +1154,10 @@ func (s *testIntegrationSuite2) TestPartitionCancelAddIndex(c *C) {
 	var checkErr error
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
+	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s.store, s.ctx, hook)
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
@@ -1408,7 +1412,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 	return num
 }
 
-func (s *testIntegrationSuite4) TestPartitionErrorCode(c *C) {
+func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// add partition
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
