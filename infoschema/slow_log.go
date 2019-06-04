@@ -211,7 +211,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) 
 		if len(field) > 0 {
 			st.user = fields[0]
 		}
-		if len(field) > 2 {
+		if len(field) > 1 {
 			st.ip = fields[1]
 		}
 	case variable.SlowLogConnIDStr:
