@@ -201,8 +201,13 @@ func (ft *FieldType) String() string {
 func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(TypeToStr(ft.Tp, ft.Charset))
 
+	precision := ft.Flen
+	scale := ft.Decimal
+
 	switch ft.Tp {
 	case mysql.TypeEnum, mysql.TypeSet:
+		precision = UnspecifiedLength
+		scale = UnspecifiedLength
 		ctx.WritePlain("(")
 		for i, e := range ft.Elems {
 			if i != 0 {
@@ -212,21 +217,17 @@ func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WritePlain(")")
 	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
-		if ft.Flen > 0 && ft.Decimal > 0 {
-			ctx.WritePlainf("(%d)", ft.Decimal)
+		precision = ft.Decimal
+		scale = UnspecifiedLength
+	}
+
+	if precision != UnspecifiedLength {
+		ctx.WritePlainf("(%d", precision)
+		if scale != UnspecifiedLength {
+			ctx.WritePlainf(",%d", scale)
 		}
-	case mysql.TypeDouble, mysql.TypeFloat:
-		if ft.Flen > 0 && ft.Decimal > 0 {
-			ctx.WritePlainf("(%d,%d)", ft.Flen, ft.Decimal)
-		}
-	case mysql.TypeNewDecimal:
-		if ft.Flen > 0 && ft.Decimal > 0 {
-			ctx.WritePlainf("(%d,%d)", ft.Flen, ft.Decimal)
-		}
-	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeYear:
-		if ft.Flen > 0 {
-			ctx.WritePlainf("(%d)", ft.Flen)
-		}
+		ctx.WritePlain(")")
+
 	}
 
 	if mysql.HasUnsignedFlag(ft.Flag) {
