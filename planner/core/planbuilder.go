@@ -1620,7 +1620,7 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 	schema := expression.TableInfo2SchemaWithDBName(b.ctx, node.Table.Schema, tblInfo)
 	mockTablePlan.SetSchema(schema)
 
-	checkValue := func(valuesItem []ast.ExprNode) ([]types.Datum, error) {
+	convertValue2ColumnType := func(valuesItem []ast.ExprNode) ([]types.Datum, error) {
 		values := make([]types.Datum, 0, len(valuesItem))
 		for j, valueItem := range valuesItem {
 			var expr expression.Expression
@@ -1658,13 +1658,14 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 		TableInfo: tblInfo,
 		IndexInfo: indexInfo,
 	}
+	// Split index regions by user specified value lists.
 	if len(node.SplitOpt.ValueLists) > 0 {
 		indexValues := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
 		for i, valuesItem := range node.SplitOpt.ValueLists {
 			if len(valuesItem) > len(indexInfo.Columns) {
 				return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
 			}
-			values, err := checkValue(valuesItem)
+			values, err := convertValue2ColumnType(valuesItem)
 			if err != nil {
 				return nil, err
 			}
@@ -1674,6 +1675,7 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 		return p, nil
 	}
 
+	// Split index regions by min, max value.
 	checkMinMaxValue := func(valuesItem []ast.ExprNode, name string) ([]types.Datum, error) {
 		if len(valuesItem) == 0 {
 			return nil, errors.Errorf("Split index region `%v` %s value count should more than 0", indexInfo.Name, name)
@@ -1681,18 +1683,18 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 		if len(valuesItem) > len(indexInfo.Columns) {
 			return nil, errors.Errorf("Split index region `%v` Column count doesn't match value count at %v", indexInfo.Name, name)
 		}
-		return checkValue(valuesItem)
+		return convertValue2ColumnType(valuesItem)
 	}
 	minValues, err := checkMinMaxValue(node.SplitOpt.Min, "min")
 	if err != nil {
 		return nil, err
 	}
-	maxValue, err := checkMinMaxValue(node.SplitOpt.Max, "max")
+	maxValues, err := checkMinMaxValue(node.SplitOpt.Max, "max")
 	if err != nil {
 		return nil, err
 	}
 	p.Min = minValues
-	p.Max = maxValue
+	p.Max = maxValues
 
 	if node.SplitOpt.Num > maxSplitRegionNum {
 		return nil, errors.Errorf("Split index region num is exceed the limit %v", maxSplitRegionNum)

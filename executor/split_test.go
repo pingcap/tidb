@@ -77,9 +77,9 @@ func (s *testSplitIndex) TestgetStepValue(c *C) {
 	}
 
 	for _, ca := range cases {
-		l0 := longestCommonPrefixLen(ca.min, ca.max)
-		c.Assert(l0, Equals, ca.l)
-		v0 := getStepValue(ca.min[l0:], ca.max[l0:], 1)
+		l := longestCommonPrefixLen(ca.min, ca.max)
+		c.Assert(l, Equals, ca.l)
+		v0 := getStepValue(ca.min[l:], ca.max[l:], 1)
 		c.Assert(v0, Equals, ca.v)
 	}
 }
