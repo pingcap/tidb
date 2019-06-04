@@ -805,6 +805,12 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// global system variables
 		{"SET GLOBAL autocommit = 1", true, "SET @@GLOBAL.`autocommit`=1"},
 		{"SET @@global.autocommit = 1", true, "SET @@GLOBAL.`autocommit`=1"},
+		// set through mysql extension assignment syntax
+		{"SET autocommit := 1", true, "SET @@SESSION.`autocommit`=1"},
+		{"SET @@session.autocommit := 1", true, "SET @@SESSION.`autocommit`=1"},
+		{"SET @MYSQLDUMP_TEMP_LOG_BIN := @@SESSION.SQL_LOG_BIN", true, "SET @`MYSQLDUMP_TEMP_LOG_BIN`=@@SESSION.`sql_log_bin`"},
+		{"SET LOCAL autocommit := 1", true, "SET @@SESSION.`autocommit`=1"},
+		{"SET @@global.autocommit := default", true, "SET @@GLOBAL.`autocommit`=DEFAULT"},
 		// set default value
 		{"SET @@global.autocommit = default", true, "SET @@GLOBAL.`autocommit`=DEFAULT"},
 		{"SET @@session.autocommit = default", true, "SET @@SESSION.`autocommit`=DEFAULT"},
