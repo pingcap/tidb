@@ -13049,10 +13049,11 @@ yynewstate:
 			fopt := yyS[yypt-1].item.(*ast.FloatOpt)
 			x := types.NewFieldType(yyS[yypt-2].item.(byte))
 			x.Flen = fopt.Flen
-			if x.Tp == mysql.TypeFloat {
+			if x.Tp == mysql.TypeFloat && fopt.Decimal == types.UnspecifiedLength && x.Flen <= 53 {
 				if x.Flen > 24 {
 					x.Tp = mysql.TypeDouble
 				}
+				x.Flen = types.UnspecifiedLength
 			}
 			x.Decimal = fopt.Decimal
 			for _, o := range yyS[yypt-0].item.([]*ast.TypeOpt) {
