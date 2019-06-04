@@ -57,6 +57,10 @@ func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
 	con.Value = types.NewUintDatum(1)
 	num, _, _ = GetUint64FromConstant(con)
 	c.Assert(num, check.Equals, uint64(1))
+
+	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
+	num, _, _ = GetUint64FromConstant(con)
+	c.Assert(num, check.Equals, uint64(1))
 }
 
 func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {
