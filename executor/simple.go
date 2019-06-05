@@ -221,17 +221,20 @@ func (e *SimpleExec) setDefaultRoleAll(s *ast.SetDefaultRoleStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) error {
+func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) (err error) {
 	switch s.SetRoleOpt {
 	case ast.SetRoleAll:
-		return e.setDefaultRoleAll(s)
+		err = e.setDefaultRoleAll(s)
 	case ast.SetRoleNone:
-		return e.setDefaultRoleNone(s)
+		err = e.setDefaultRoleNone(s)
 	case ast.SetRoleRegular:
-		return e.setDefaultRoleRegular(s)
+		err = e.setDefaultRoleRegular(s)
 	}
-	err := domain.GetDomain(e.ctx).PrivilegeHandle().Update(e.ctx.(sessionctx.Context))
-	return err
+	if err != nil {
+		return
+	}
+	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	return
 }
 
 func (e *SimpleExec) setRoleRegular(s *ast.SetRoleStmt) error {
@@ -400,8 +403,17 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
 	pTxnConf := config.GetGlobalConfig().PessimisticTxn
-	if pTxnConf.Enable && (s.Pessimistic || pTxnConf.Default || e.ctx.GetSessionVars().PessimisticLock) {
-		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	if pTxnConf.Enable {
+		txnMode := s.Mode
+		if txnMode == "" {
+			txnMode = e.ctx.GetSessionVars().TxnMode
+			if txnMode == "" && pTxnConf.Default {
+				txnMode = ast.Pessimistic
+			}
+		}
+		if txnMode == ast.Pessimistic {
+			e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
+		}
 	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {

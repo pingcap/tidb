@@ -326,6 +326,7 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
 
 	// test skip isolation level check: reset
+	tk.MustExec("SET GLOBAL transaction_isolation='REPEATABLE-READ'") // should reset tx_isolation back to rr before reset tidb_skip_isolation_level_check
 	tk.MustExec("SET GLOBAL tidb_skip_isolation_level_check = 0")
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 

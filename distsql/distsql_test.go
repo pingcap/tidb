@@ -206,6 +206,14 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSuite) TestSelectStreamingWithNextRaw(c *C) {
+	response, _ := s.createSelectStreaming(1, 2, c)
+	response.Fetch(context.TODO())
+	data, err := response.NextRaw(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 16)
+}
+
 func (s *testSuite) TestSelectStreamingChunkSize(c *C) {
 	response, colTypes := s.createSelectStreaming(100, 1000000, c)
 	response.Fetch(context.TODO())
@@ -274,6 +282,30 @@ func (s *testSuite) TestAnalyze(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(result.label, Equals, "analyze")
 	c.Assert(result.sqlType, Equals, "internal")
+
+	response.Fetch(context.TODO())
+
+	bytes, err := response.NextRaw(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(len(bytes), Equals, 16)
+
+	err = response.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestChecksum(c *C) {
+	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
+		SetChecksumRequest(&tipb.ChecksumRequest{}).
+		Build()
+	c.Assert(err, IsNil)
+
+	response, err := Checksum(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars)
+	c.Assert(err, IsNil)
+
+	result, ok := response.(*selectResult)
+	c.Assert(ok, IsTrue)
+	c.Assert(result.label, Equals, "checksum")
+	c.Assert(result.sqlType, Equals, "general")
 
 	response.Fetch(context.TODO())
 

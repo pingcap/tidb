@@ -1628,6 +1628,19 @@ var builtinGlobalVariable = []string{
 	variable.WaitTimeout,
 	variable.InteractiveTimeout,
 	variable.MaxPreparedStmtCount,
+	variable.InitConnect,
+	variable.TxnIsolation,
+	variable.TxReadOnly,
+	variable.TransactionIsolation,
+	variable.TransactionReadOnly,
+	variable.NetBufferLength,
+	variable.QueryCacheType,
+	variable.QueryCacheSize,
+	variable.CharacterSetServer,
+	variable.AutoIncrementIncrement,
+	variable.CollationServer,
+	variable.NetWriteTimeout,
+
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,
@@ -1743,9 +1756,15 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		CreateTime:    time.Now(),
 	}
 	if !s.sessionVars.IsAutocommit() {
-		txnConf := config.GetGlobalConfig().PessimisticTxn
-		if txnConf.Enable && (txnConf.Default || s.sessionVars.PessimisticLock) {
-			s.sessionVars.TxnCtx.IsPessimistic = true
+		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
+		if pessTxnConf.Enable {
+			txnMode := s.sessionVars.TxnMode
+			if txnMode == "" && pessTxnConf.Default {
+				txnMode = ast.Pessimistic
+			}
+			if txnMode == ast.Pessimistic {
+				s.sessionVars.TxnCtx.IsPessimistic = true
+			}
 		}
 	}
 }

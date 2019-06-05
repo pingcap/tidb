@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -89,6 +90,44 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	resp, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	c.Assert(resp.RawPut, NotNil)
+}
+
+func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOne(c *C) {
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdRawPut,
+		RawPut: &kvrpcpb.RawPutRequest{
+			Key:   []byte("key"),
+			Value: []byte("value"),
+		},
+	}
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
+	c.Assert(err, IsNil)
+	c.Assert(resp.RawPut, NotNil)
+
+	// add new unknown region
+	store2 := s.cluster.AllocID()
+	peer2 := s.cluster.AllocID()
+	s.cluster.AddStore(store2, fmt.Sprintf("store%d", store2))
+	s.cluster.AddPeer(region.Region.id, store2, peer2)
+
+	// stop known region
+	s.cluster.StopStore(s.store)
+
+	// send to failed store
+	resp, err = s.regionRequestSender.SendReq(NewBackoffer(context.Background(), 100), req, region.Region, time.Second)
+	c.Assert(err, NotNil)
+
+	// retry to send store by old region info
+	region, err = s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(region, NotNil)
+	c.Assert(err, IsNil)
+
+	// retry again, reload region info and send to new store.
+	resp, err = s.regionRequestSender.SendReq(NewBackoffer(context.Background(), 100), req, region.Region, time.Second)
+	c.Assert(err, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {

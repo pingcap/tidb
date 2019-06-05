@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"time"
 
@@ -245,14 +246,32 @@ func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 }
 
 func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanResponse {
-	if !h.checkKeyInRegion(req.GetStartKey()) {
-		panic("KvScan: startKey not in region")
+	endKey := MvccKey(h.endKey).Raw()
+	var pairs []Pair
+	if !req.Reverse {
+		if !h.checkKeyInRegion(req.GetStartKey()) {
+			panic("KvScan: startKey not in region")
+		}
+		if len(req.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.EndKey), h.endKey) < 0) {
+			endKey = req.EndKey
+		}
+		pairs = h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+	} else {
+		// TiKV use range [end_key, start_key) for reverse scan.
+		// Should use the req.EndKey to check in region.
+		if !h.checkKeyInRegion(req.GetEndKey()) {
+			panic("KvScan: startKey not in region")
+		}
+
+		// TiKV use range [end_key, start_key) for reverse scan.
+		// So the req.StartKey actually is the end_key.
+		if len(req.StartKey) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.StartKey), h.endKey) < 0) {
+			endKey = req.StartKey
+		}
+
+		pairs = h.mvccStore.ReverseScan(req.EndKey, endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
 	}
-	endKey := h.endKey
-	if len(req.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(req.EndKey, endKey) < 0) {
-		endKey = req.EndKey
-	}
-	pairs := h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+
 	return &kvrpcpb.ScanResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
@@ -856,8 +875,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	// DebugGetRegionProperties is for fast analyze in mock tikv.
 	case tikvrpc.CmdDebugGetRegionProperties:
 		r := req.DebugGetRegionProperties
-		region, _ := c.Cluster.GetRegionByID(r.RegionId)
-		scanResp := handler.handleKvScan(&kvrpcpb.ScanRequest{StartKey: region.StartKey, EndKey: region.EndKey})
+		region, _ := c.Cluster.GetRegion(r.RegionId)
+		scanResp := handler.handleKvScan(&kvrpcpb.ScanRequest{StartKey: MvccKey(region.StartKey).Raw(), EndKey: MvccKey(region.EndKey).Raw(), Version: math.MaxUint64, Limit: math.MaxUint32})
 		resp.DebugGetRegionProperties = &debugpb.GetRegionPropertiesResponse{
 			Props: []*debugpb.Property{{
 				Name:  "mvcc.num_rows",

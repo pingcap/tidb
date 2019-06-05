@@ -25,3 +25,31 @@ Projection_6	5.00	root	test.t1.a, test.t1.b, test.t2.a, test.t2.b
     ├─Selection_10	0.00	cop	not(isnull(test.t1.a))
     │ └─IndexScan_8	5.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
     └─TableScan_9	0.00	cop	table:t1, keep order:false, stats:pseudo
+drop table if exists t1, t2;
+create table t1(a int not null, b int not null);
+create table t2(a int not null, b int not null, key a(a));
+set @@tidb_opt_insubq_to_join_and_agg=0;
+explain select /*+ TIDB_INLJ(t2) */ * from t1 where t1.a in (select t2.a from t2);
+id	count	task	operator info
+IndexJoin_10	8000.00	root	semi join, inner:IndexReader_9, outer key:test.t1.a, inner key:test.t2.a
+├─TableReader_12	10000.00	root	data:TableScan_11
+│ └─TableScan_11	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─IndexReader_9	10.00	root	index:IndexScan_8
+  └─IndexScan_8	10.00	cop	table:t2, index:a, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+set @@tidb_opt_insubq_to_join_and_agg=1;
+drop table if exists t1, t2;
+create table t1(a int not null, b int not null, key a(a));
+create table t2(a int not null, b int not null, key a(a));
+explain select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in (select t2.a from t2);
+id	count	task	operator info
+Projection_8	10000.00	root	test.t1.a, test.t1.b
+└─IndexJoin_12	10000.00	root	inner join, inner:IndexLookUp_11, outer key:test.t2.a, inner key:test.t1.a
+  ├─IndexLookUp_11	10.00	root	
+  │ ├─IndexScan_9	10.00	cop	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
+  │ └─TableScan_10	10.00	cop	table:t1, keep order:false, stats:pseudo
+  └─StreamAgg_24	8000.00	root	group by:col_1, funcs:firstrow(col_0)
+    └─IndexReader_25	8000.00	root	index:StreamAgg_16
+      └─StreamAgg_16	8000.00	cop	group by:test.t2.a, funcs:firstrow(test.t2.a)
+        └─IndexScan_23	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo

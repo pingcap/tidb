@@ -323,7 +323,8 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalWindow) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.WindowFuncDesc.String())
+	buffer := bytes.NewBufferString("")
+	formatWindowFuncDescs(buffer, p.WindowFuncDescs)
 	buffer.WriteString(" over(")
 	isFirst := true
 	if len(p.PartitionBy) > 0 {
@@ -369,4 +370,14 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	}
 	buffer.WriteString(")")
 	return buffer.String()
+}
+
+func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc) *bytes.Buffer {
+	for i, desc := range descs {
+		if i != 0 {
+			buffer.WriteString(", ")
+		}
+		buffer.WriteString(desc.String())
+	}
+	return buffer
 }

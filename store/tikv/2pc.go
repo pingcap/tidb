@@ -52,6 +52,11 @@ var (
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
 )
 
+// Global variable set by config file.
+var (
+	PessimisticLockTTL uint64
+)
+
 func (ca twoPhaseCommitAction) String() string {
 	switch ca {
 	case actionPrewrite:
@@ -471,6 +476,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Reque
 			StartVersion:      c.startTS,
 			LockTtl:           c.lockTTL,
 			IsPessimisticLock: isPessimisticLock,
+			ForUpdateTs:       c.forUpdateTS,
 		},
 		Context: pb.Context{
 			Priority: c.priority,
@@ -567,7 +573,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
 			ForUpdateTs:  c.forUpdateTS,
-			LockTtl:      config.GetGlobalConfig().PessimisticTxn.TTL,
+			LockTtl:      PessimisticLockTTL,
 			IsFirstLock:  c.isFirstLock,
 		},
 		Context: pb.Context{
@@ -610,6 +616,9 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
 				}
 				return errors.Trace(conditionPair.Err())
+			}
+			if deadlock := keyErr.Deadlock; deadlock != nil {
+				return errors.New("deadlock")
 			}
 
 			// Extract lock from key error
