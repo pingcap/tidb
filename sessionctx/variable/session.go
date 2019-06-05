@@ -699,7 +699,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptCorrelationThreshold:
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 	case TiDBOptCorrelationExpFactor:
-		s.CorrelationExpFactor = tidbOptPositiveInt32(val, DefOptCorrelationExpFactor)
+		s.CorrelationExpFactor = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
@@ -949,6 +949,8 @@ const (
 	SlowLogTxnStartTSStr = "Txn_start_ts"
 	// SlowLogUserStr is slow log field name.
 	SlowLogUserStr = "User"
+	// SlowLogHostStr only for slow_query table usage.
+	SlowLogHostStr = "Host"
 	// SlowLogConnIDStr is slow log field name.
 	SlowLogConnIDStr = "Conn_ID"
 	// SlowLogQueryTimeStr is slow log field name.
