@@ -794,7 +794,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.bindHandle = bindinfo.NewBindHandle(ctx)
 	err := do.bindHandle.Update(true)
-	if err != nil {
+	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
 
@@ -804,7 +804,6 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
 }
 
 func (do *Domain) loadBindInfoLoop() {
-	duration := 3 * time.Second
 	do.wg.Add(1)
 	go func() {
 		defer do.wg.Done()
@@ -813,7 +812,7 @@ func (do *Domain) loadBindInfoLoop() {
 			select {
 			case <-do.exit:
 				return
-			case <-time.After(duration):
+			case <-time.After(bindinfo.Lease):
 			}
 			err := do.bindHandle.Update(false)
 			if err != nil {
@@ -824,7 +823,6 @@ func (do *Domain) loadBindInfoLoop() {
 }
 
 func (do *Domain) handleInvalidBindTaskLoop() {
-	handleInvalidTaskDuration := 3 * time.Second
 	do.wg.Add(1)
 	go func() {
 		defer do.wg.Done()
@@ -833,7 +831,7 @@ func (do *Domain) handleInvalidBindTaskLoop() {
 			select {
 			case <-do.exit:
 				return
-			case <-time.After(handleInvalidTaskDuration):
+			case <-time.After(bindinfo.Lease):
 			}
 			do.bindHandle.DropInvalidBindRecord()
 		}
