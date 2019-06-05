@@ -34,9 +34,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
@@ -218,18 +216,13 @@ func (s *Server) startHTTPServer() {
 		err = zw.Close()
 		terror.Log(err)
 	})
-	se, err := session.CreateSession(tikvHandlerTool.Store)
-	if err == nil {
-		do := domain.GetDomain(se)
-		fetcher := sqlInfoFetcher{s: se, do: do}
-		serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
-	} else {
-		logutil.Logger(context.Background()).Warn("create session for sql info fetch HTTP API", zap.Error(err))
-	}
+	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
+	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
 	var (
 		httpRouterPage bytes.Buffer
 		pathTemplate   string
+		err            error
 	)
 	httpRouterPage.WriteString("<html><head><title>TiDB Status and Metrics Report</title></head><body><h1>TiDB Status and Metrics Report</h1><table>")
 	err = router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {

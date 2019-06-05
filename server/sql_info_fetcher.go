@@ -31,13 +31,15 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 type sqlInfoFetcher struct {
-	do *domain.Domain
-	s  session.Session
+	store tikv.Storage
+	do    *domain.Domain
+	s     session.Session
 }
 
 type tableNamePair struct {
@@ -46,6 +48,7 @@ type tableNamePair struct {
 }
 
 type tableNameExtractor struct {
+	curDB string
 	names map[tableNamePair]struct{}
 }
 
@@ -59,6 +62,9 @@ func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
 func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 	if t, ok := in.(*ast.TableName); ok {
 		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L}
+		if tp.DBName == "" {
+			tp.DBName = tne.curDB
+		}
 		if _, ok := tne.names[tp]; !ok {
 			tne.names[tp] = struct{}{}
 		}
@@ -67,14 +73,29 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 }
 
 func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) {
+	var err error
+	sh.s, err = session.CreateSession(sh.store)
+	if err != nil {
+		serveError(w, http.StatusInternalServerError, fmt.Sprintf("create session failed, err: %v", err))
+		return
+	}
+	defer sh.s.Close()
+	sh.do = domain.GetDomain(sh.s)
 	reqCtx := r.Context()
 	sql := r.FormValue("sql")
 	pprofTimeString := r.FormValue("pprof_time")
 	timeoutString := r.FormValue("timeout")
+	curDB := strings.ToLower(r.FormValue("current_db"))
+	if curDB != "" {
+		_, err = sh.s.Execute(reqCtx, fmt.Sprintf("use %v", curDB))
+		if err != nil {
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("use database failed, err: %v", err))
+			return
+		}
+	}
 	var (
 		pprofTime int
 		timeout   int
-		err       error
 	)
 	if pprofTimeString != "" {
 		pprofTime, err = strconv.Atoi(pprofTimeString)
@@ -83,7 +104,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 		serveError(w, http.StatusBadRequest, "invalid value for pprof_time")
 		return
 	}
-	if pprofTime < 5 {
+	if pprofTimeString != "" && pprofTime < 5 {
 		serveError(w, http.StatusBadRequest, "pprof time is too short")
 	}
 	if timeoutString != "" {
@@ -96,7 +117,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	if timeout < pprofTime {
 		timeout = pprofTime
 	}
-	pairs, err := sh.extractTableNames(sql)
+	pairs, err := sh.extractTableNames(sql, curDB)
 	if err != nil {
 		serveError(w, http.StatusBadRequest, fmt.Sprintf("invalid SQL text, err: %v", err))
 		return
@@ -269,7 +290,7 @@ func (sh *sqlInfoFetcher) getShowCreateTable(pair tableNamePair, zw *zip.Writer)
 	return nil
 }
 
-func (sh *sqlInfoFetcher) extractTableNames(sql string) (map[tableNamePair]struct{}, error) {
+func (sh *sqlInfoFetcher) extractTableNames(sql, curDB string) (map[tableNamePair]struct{}, error) {
 	p := parser.New()
 	charset, collation := sh.s.GetSessionVars().GetCharsetInfo()
 	stmts, _, err := p.Parse(sql, charset, collation)
@@ -277,6 +298,7 @@ func (sh *sqlInfoFetcher) extractTableNames(sql string) (map[tableNamePair]struc
 		return nil, err
 	}
 	extractor := &tableNameExtractor{
+		curDB: curDB,
 		names: make(map[tableNamePair]struct{}),
 	}
 	for _, stmt := range stmts {
