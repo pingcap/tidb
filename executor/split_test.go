@@ -110,17 +110,17 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 
 	// Test for int index.
 	// range is 0 ~ 100, and split into 10 region.
-	// So 10 regions range is like below:
-	// region1: -inf ~ 10
-	// region2: 10 ~ 20
-	// region3: 20 ~ 30
-	// region4: 30 ~ 40
-	// region5: 40 ~ 50
-	// region6: 50 ~ 60
-	// region7: 60 ~ 70
-	// region8: 70 ~ 80
-	// region9: 80 ~ 80
-	// region10: 90 ~ +inf
+	// So 10 regions range is like below, left close right open interval:
+	// region1: [-inf ~ 10)
+	// region2: [10 ~ 20)
+	// region3: [20 ~ 30)
+	// region4: [30 ~ 40)
+	// region5: [40 ~ 50)
+	// region6: [50 ~ 60)
+	// region7: [60 ~ 70)
+	// region8: [70 ~ 80)
+	// region9: [80 ~ 90)
+	// region10: [90 ~ +inf)
 	ctx := mock.NewContext()
 	e := &SplitIndexRegionExec{
 		baseExecutor: newBaseExecutor(ctx, nil, nil),
@@ -173,12 +173,12 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	// Test for varchar index.
 	// range is a ~ z, and split into 26 region.
 	// So 26 regions range is like below:
-	// region1: -inf ~ b
-	// region2: b ~ c
+	// region1: [-inf ~ b)
+	// region2: [b ~ c)
 	// .
 	// .
 	// .
-	// region26: y ~ +inf
+	// region26: [y ~ +inf)
 	e.lower = []types.Datum{types.NewDatum("a")}
 	e.upper = []types.Datum{types.NewDatum("z")}
 	e.num = 26
@@ -221,12 +221,12 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	// Test for timestamp index.
 	// range is 2010-01-01 00:00:00 ~ 2020-01-01 00:00:00, and split into 10 region.
 	// So 10 regions range is like below:
-	// region1: -inf			    ~ 2011-01-01 00:00:00
-	// region2: 2011-01-01 00:00:00 ~ 2012-01-01 00:00:00
+	// region1: [-inf					~ 2011-01-01 00:00:00)
+	// region2: [2011-01-01 00:00:00 	~ 2012-01-01 00:00:00)
 	// .
 	// .
 	// .
-	// region10: 2019-01-01 00:00:00 ~ +inf
+	// region10: [2019-01-01 00:00:00 	~ +inf)
 	lowerTime := types.Time{
 		Time: types.FromDate(2010, 1, 1, 0, 0, 0, 0),
 		Type: mysql.TypeTimestamp,

@@ -116,7 +116,7 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	upperIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.upper, math.MinInt64, nil)
+	upperIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.upper, math.MaxInt64, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,7 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 // getValuesList is used to get `num` values between lower and upper value.
 // To Simplify the explain, suppose lower and upper value type is int64, and lower=0, upper=100, num=10,
 // then calculate the step=(upper-lower)/num=10, then the function should return 0+10, 10+10, 20+10... all together 9 (num-1) values.
-// then the function will return [10,20,30,40,50,60,70,80,90].
+// Then the function will return [10,20,30,40,50,60,70,80,90].
 // The difference is the value type of upper,lower is []byte, So I use getUint64FromBytes to convert []byte to uint64.
 func getValuesList(lower, upper []byte, num int, valuesList [][]byte) [][]byte {
 	commonPrefixIdx := longestCommonPrefixLen(lower, upper)
@@ -166,7 +166,7 @@ func longestCommonPrefixLen(s1, s2 []byte) int {
 }
 
 // getStepValue gets the step of between the lower and upper value. step = (upper-lower)/num.
-// convert byte slice to uint64 first.
+// Convert byte slice to uint64 first.
 func getStepValue(lower, upper []byte, num int) uint64 {
 	lowerUint := getUint64FromBytes(lower, 0)
 	upperUint := getUint64FromBytes(upper, 0xff)
