@@ -108,8 +108,8 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &mockSessionManager{make(map[uint64]util.ProcessInfo, 1)}
-	sm.processInfoMap[1] = util.ProcessInfo{
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
@@ -241,12 +241,12 @@ func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 }
 
 type mockSessionManager struct {
-	processInfoMap map[uint64]util.ProcessInfo
+	processInfoMap map[uint64]*util.ProcessInfo
 }
 
-func (sm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo { return sm.processInfoMap }
+func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo { return sm.processInfoMap }
 
-func (sm *mockSessionManager) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
+func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	rs, ok := sm.processInfoMap[id]
 	return rs, ok
 }
@@ -267,8 +267,8 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
 	tk.MustQuery("select * from information_schema.USER_PRIVILEGES where PRIVILEGE_TYPE='Select';").Check(testkit.Rows("'root'@'%' def Select YES"))
 
-	sm := &mockSessionManager{make(map[uint64]util.ProcessInfo, 2)}
-	sm.processInfoMap[1] = util.ProcessInfo{
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
 		Host:    "localhost",
@@ -276,7 +276,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Command: byte(1),
 		State:   1,
 		Info:    "do something"}
-	sm.processInfoMap[2] = util.ProcessInfo{
+	sm.processInfoMap[2] = &util.ProcessInfo{
 		ID:      2,
 		User:    "user-2",
 		Host:    "localhost",

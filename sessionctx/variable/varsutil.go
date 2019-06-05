@@ -103,6 +103,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
+	case TiDBExpensiveQueryTimeThreshold:
+		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
 	case TiDBConfig:
 		conf := config.GetGlobalConfig()
 		j, err := json.MarshalIndent(conf, "", "\t")

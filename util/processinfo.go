@@ -62,8 +62,7 @@ func (pi *ProcessInfo) ToRow(full bool) []interface{} {
 // SessionManager is an interface for session manage. Show processlist and
 // kill statement rely on this interface.
 type SessionManager interface {
-	// ShowProcessList returns map[connectionID]ProcessInfo
-	ShowProcessList() map[uint64]ProcessInfo
-	GetProcessInfo(id uint64) (ProcessInfo, bool)
+	ShowProcessList() map[uint64]*ProcessInfo
+	GetProcessInfo(id uint64) (*ProcessInfo, bool)
 	Kill(connectionID uint64, query bool)
 }

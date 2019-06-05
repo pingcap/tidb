@@ -18,10 +18,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -30,22 +31,18 @@ import (
 
 // Handle is the handler for expensive query.
 type Handle struct {
-	sctx   sessionctx.Context
 	exitCh chan struct{}
 }
 
 // NewExpensiveQueryHandle builds a new expensive query handler.
-func NewExpensiveQueryHandle(sctx sessionctx.Context, exitCh chan struct{}) *Handle {
-	return &Handle{
-		sctx,
-		exitCh,
-	}
+func NewExpensiveQueryHandle(exitCh chan struct{}) *Handle {
+	return &Handle{exitCh}
 }
 
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run(sm util.SessionManager) {
-	sctx := eqh.sctx
-	curInterval := time.Second * time.Duration(sctx.GetSessionVars().ExpensiveQueryTimeThreshold)
+	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
+	curInterval := time.Second * time.Duration(threshold)
 	ticker := time.NewTicker(curInterval / 2)
 	for {
 		select {
@@ -63,7 +60,8 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 					info.ExceedExpensiveTimeThresh = true
 				}
 			}
-			if newInterval := time.Second * time.Duration(sctx.GetSessionVars().ExpensiveQueryTimeThreshold); curInterval != newInterval {
+			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
+			if newInterval := time.Second * time.Duration(threshold); curInterval != newInterval {
 				curInterval = newInterval
 				ticker.Stop()
 				ticker = time.NewTicker(curInterval / 2)
@@ -75,7 +73,7 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 }
 
 // logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
-func logExpensiveQuery(costTime time.Duration, info util.ProcessInfo) {
+func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()

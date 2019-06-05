@@ -1014,8 +1014,8 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 }
 
 // InitExpensiveQueryHandle init the expensive query handler.
-func (do *Domain) InitExpensiveQueryHandle(sctx sessionctx.Context) {
-	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(sctx, do.exit)
+func (do *Domain) InitExpensiveQueryHandle() {
+	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 }
 
 const privilegeKey = "/tidb/privilege"

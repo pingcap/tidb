@@ -122,7 +122,7 @@ type Session interface {
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
-	ShowProcess() util.ProcessInfo
+	ShowProcess() *util.ProcessInfo
 	// PrePareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
@@ -924,7 +924,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
 	}
-	s.processInfo.Store(pi)
+	s.processInfo.Store(&pi)
 }
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) ([]sqlexec.RecordSet, error) {
@@ -1479,11 +1479,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	se3, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	dom.InitExpensiveQueryHandle(se3)
+	dom.InitExpensiveQueryHandle()
 	if raw, ok := store.(tikv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
@@ -1788,11 +1784,11 @@ func (s *session) GetStore() kv.Storage {
 	return s.store
 }
 
-func (s *session) ShowProcess() util.ProcessInfo {
-	var pi util.ProcessInfo
+func (s *session) ShowProcess() *util.ProcessInfo {
+	var pi *util.ProcessInfo
 	tmp := s.processInfo.Load()
 	if tmp != nil {
-		pi = tmp.(util.ProcessInfo)
+		pi = tmp.(*util.ProcessInfo)
 	}
 	return pi
 }

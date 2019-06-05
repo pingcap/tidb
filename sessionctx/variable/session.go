@@ -379,9 +379,6 @@ type SessionVars struct {
 
 	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	LowResolutionTSO bool
-
-	// ExpensiveQueryTimeThreshold indicates the time threshold when trigger the expensive query log.
-	ExpensiveQueryTimeThreshold int
 }
 
 // ConnectionInfo present connection used by audit.
@@ -432,7 +429,6 @@ func NewSessionVars() *SessionVars {
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
-		ExpensiveQueryTimeThreshold: DefTiDBExpensiveQueryTimeThreshold,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -799,7 +795,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBWaitTableSplitFinish:
 		s.WaitTableSplitFinish = TiDBOptOn(val)
 	case TiDBExpensiveQueryTimeThreshold:
-		s.ExpensiveQueryTimeThreshold = tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)
+		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBPessimisticLock:
 		s.PessimisticLock = TiDBOptOn(val)
 	case TiDBLowResolutionTSO:
