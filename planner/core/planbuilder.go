@@ -1687,8 +1687,8 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 		return p, nil
 	}
 
-	// Split index regions by min, max value.
-	checkMinMaxValue := func(valuesItem []ast.ExprNode, name string) ([]types.Datum, error) {
+	// Split index regions by lower, upper value.
+	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) ([]types.Datum, error) {
 		if len(valuesItem) == 0 {
 			return nil, errors.Errorf("Split index region `%v` %s value count should more than 0", indexInfo.Name, name)
 		}
@@ -1697,16 +1697,16 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 		}
 		return convertValue2ColumnType(valuesItem)
 	}
-	minValues, err := checkMinMaxValue(node.SplitOpt.Min, "min")
+	lowerValues, err := checkLowerUpperValue(node.SplitOpt.Lower, "lower")
 	if err != nil {
 		return nil, err
 	}
-	maxValues, err := checkMinMaxValue(node.SplitOpt.Max, "max")
+	UpperValues, err := checkLowerUpperValue(node.SplitOpt.Upper, "upper")
 	if err != nil {
 		return nil, err
 	}
-	p.Min = minValues
-	p.Max = maxValues
+	p.Lower = lowerValues
+	p.Upper = UpperValues
 
 	if node.SplitOpt.Num > maxSplitRegionNum {
 		return nil, errors.Errorf("Split index region num is exceed the limit %v", maxSplitRegionNum)

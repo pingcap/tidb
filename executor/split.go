@@ -36,8 +36,8 @@ type SplitIndexRegionExec struct {
 
 	tableInfo  *model.TableInfo
 	indexInfo  *model.IndexInfo
-	min        []types.Datum
-	max        []types.Datum
+	lower      []types.Datum
+	upper      []types.Datum
 	num        int
 	valueLists [][]types.Datum
 }
@@ -110,19 +110,19 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 		}
 		return idxKeys, nil
 	}
-	// Split index regions by min, max value and calculate the step by (max - min)/num.
-	minIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.min, math.MinInt64, nil)
+	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
+	lowerIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.lower, math.MinInt64, nil)
 	if err != nil {
 		return nil, err
 	}
-	maxIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.max, math.MinInt64, nil)
+	upperIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.upper, math.MinInt64, nil)
 	if err != nil {
 		return nil, err
 	}
-	if bytes.Compare(minIdxKey, maxIdxKey) >= 0 {
-		return nil, errors.Errorf("Split index region `%v` min value %v should less than the max value %v", e.indexInfo.Name, e.min, e.max)
+	if bytes.Compare(lowerIdxKey, upperIdxKey) >= 0 {
+		return nil, errors.Errorf("Split index region `%v` lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
 	}
-	return getValuesList(minIdxKey, maxIdxKey, e.num, idxKeys), nil
+	return getValuesList(lowerIdxKey, upperIdxKey, e.num, idxKeys), nil
 }
 
 // longestCommonPrefixLen gets the longest common prefix byte length.
@@ -140,12 +140,12 @@ func longestCommonPrefixLen(s1, s2 []byte) int {
 	return i
 }
 
-// getStepValue gets the step of between the min and max value. step = (max-min)/num.
+// getStepValue gets the step of between the lower and upper value. step = (upper-lower)/num.
 // convert byte slice to uint64 first.
-func getStepValue(min, max []byte, num int) uint64 {
-	minUint := getUint64FromBytes(min, 0)
-	maxUint := getUint64FromBytes(max, 0xff)
-	return (maxUint - minUint) / uint64(num)
+func getStepValue(lower, upper []byte, num int) uint64 {
+	lowerUint := getUint64FromBytes(lower, 0)
+	upperUint := getUint64FromBytes(upper, 0xff)
+	return (upperUint - lowerUint) / uint64(num)
 }
 
 // getUint64FromBytes gets a uint64 from the `bs` byte slice.
@@ -162,20 +162,20 @@ func getUint64FromBytes(bs []byte, pad byte) uint64 {
 	return binary.BigEndian.Uint64(buf)
 }
 
-// getValuesList is used to get `num` values between min and max value.
-// To Simplify the explain, suppose min and max value type is int64, and min=0, max=100, num=10,
-// then calculate the step=(max-min)/num=10, then the function should return 0+10, 10+10, 20+10... all together 9 (num-1) values.
+// getValuesList is used to get `num` values between lower and upper value.
+// To Simplify the explain, suppose lower and upper value type is int64, and lower=0, upper=100, num=10,
+// then calculate the step=(upper-lower)/num=10, then the function should return 0+10, 10+10, 20+10... all together 9 (num-1) values.
 // then the function will return [10,20,30,40,50,60,70,80,90].
-// The difference is the value type of max,min is []byte, So I use getUint64FromBytes to convert []byte to uint64.
-func getValuesList(min, max []byte, num int, valuesList [][]byte) [][]byte {
-	commonPrefixIdx := longestCommonPrefixLen(min, max)
-	step := getStepValue(min[commonPrefixIdx:], max[commonPrefixIdx:], num)
-	startV := getUint64FromBytes(min[commonPrefixIdx:], 0)
+// The difference is the value type of upper,lower is []byte, So I use getUint64FromBytes to convert []byte to uint64.
+func getValuesList(lower, upper []byte, num int, valuesList [][]byte) [][]byte {
+	commonPrefixIdx := longestCommonPrefixLen(lower, upper)
+	step := getStepValue(lower[commonPrefixIdx:], upper[commonPrefixIdx:], num)
+	startV := getUint64FromBytes(lower[commonPrefixIdx:], 0)
 	// To get `num` regions, only need to split `num-1` idx keys.
 	buf := make([]byte, 8)
 	for i := 0; i < num-1; i++ {
 		value := make([]byte, 0, commonPrefixIdx+8)
-		value = append(value, min[:commonPrefixIdx]...)
+		value = append(value, lower[:commonPrefixIdx]...)
 		startV += step
 		binary.BigEndian.PutUint64(buf, startV)
 		value = append(value, buf...)

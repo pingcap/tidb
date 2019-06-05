@@ -485,8 +485,8 @@ type SplitRegion struct {
 
 	TableInfo  *model.TableInfo
 	IndexInfo  *model.IndexInfo
-	Min        []types.Datum
-	Max        []types.Datum
+	Lower      []types.Datum
+	Upper      []types.Datum
 	Num        int
 	ValueLists [][]types.Datum
 }

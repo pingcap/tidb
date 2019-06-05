@@ -1268,8 +1268,8 @@ func (b *executorBuilder) buildSplitIndexRegion(v *plannercore.SplitRegion) Exec
 		baseExecutor: base,
 		tableInfo:    v.TableInfo,
 		indexInfo:    v.IndexInfo,
-		min:          v.Min,
-		max:          v.Max,
+		lower:        v.Lower,
+		upper:        v.Upper,
 		num:          v.Num,
 		valueLists:   v.ValueLists,
 	}

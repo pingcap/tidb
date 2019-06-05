@@ -62,10 +62,10 @@ func (s *testSplitIndex) TestLongestCommonPrefixLen(c *C) {
 
 func (s *testSplitIndex) TestgetStepValue(c *C) {
 	cases := []struct {
-		min []byte
-		max []byte
-		l   int
-		v   uint64
+		lower []byte
+		upper []byte
+		l     int
+		v     uint64
 	}{
 		{[]byte{}, []byte{}, 0, math.MaxUint64},
 		{[]byte{0}, []byte{128}, 0, binary.BigEndian.Uint64([]byte{128, 255, 255, 255, 255, 255, 255, 255})},
@@ -77,9 +77,9 @@ func (s *testSplitIndex) TestgetStepValue(c *C) {
 	}
 
 	for _, ca := range cases {
-		l := longestCommonPrefixLen(ca.min, ca.max)
+		l := longestCommonPrefixLen(ca.lower, ca.upper)
 		c.Assert(l, Equals, ca.l)
-		v0 := getStepValue(ca.min[l:], ca.max[l:], 1)
+		v0 := getStepValue(ca.lower[l:], ca.upper[l:], 1)
 		c.Assert(v0, Equals, ca.v)
 	}
 }
@@ -126,8 +126,8 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 		baseExecutor: newBaseExecutor(ctx, nil, nil),
 		tableInfo:    tbInfo,
 		indexInfo:    idxInfo,
-		min:          []types.Datum{types.NewDatum(0)},
-		max:          []types.Datum{types.NewDatum(100)},
+		lower:        []types.Datum{types.NewDatum(0)},
+		upper:        []types.Datum{types.NewDatum(100)},
 		num:          10,
 	}
 	valueList, err := e.getSplitIdxKeys()
@@ -179,8 +179,8 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	// .
 	// .
 	// region26: y ~ +inf
-	e.min = []types.Datum{types.NewDatum("a")}
-	e.max = []types.Datum{types.NewDatum("z")}
+	e.lower = []types.Datum{types.NewDatum("a")}
+	e.upper = []types.Datum{types.NewDatum("z")}
 	e.num = 26
 	// change index column type to varchar
 	tbInfo.Columns[0].FieldType = *types.NewFieldType(mysql.TypeVarchar)
@@ -227,16 +227,16 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	// .
 	// .
 	// region10: 2019-01-01 00:00:00 ~ +inf
-	minTime := types.Time{
+	lowerTime := types.Time{
 		Time: types.FromDate(2010, 1, 1, 0, 0, 0, 0),
 		Type: mysql.TypeTimestamp,
 	}
-	maxTime := types.Time{
+	upperTime := types.Time{
 		Time: types.FromDate(2020, 1, 1, 0, 0, 0, 0),
 		Type: mysql.TypeTimestamp,
 	}
-	e.min = []types.Datum{types.NewDatum(minTime)}
-	e.max = []types.Datum{types.NewDatum(maxTime)}
+	e.lower = []types.Datum{types.NewDatum(lowerTime)}
+	e.upper = []types.Datum{types.NewDatum(upperTime)}
 	e.num = 10
 
 	// change index column type to timestamp
