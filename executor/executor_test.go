@@ -3804,9 +3804,9 @@ func (s *testSuite) TestSplitIndexRegion(c *C) {
 
 	// Check min value is more than max value.
 	tk.MustExec(`split table t index idx1 between (0) and (1000000000) regions 10`)
-	_, err = tk.Exec(`split table t index idx1 between (2) and (1) regions 10`)
+	_, err = tk.Exec(`split table t index idx1 between (2,'a') and (1,'c') regions 10`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split index region `idx1` lower value [{1 0 0 0 2 [] <nil>}] should less than the upper value [{1 0 0 0 1 [] <nil>}]")
+	c.Assert(err.Error(), Equals, "Split index region `idx1` lower value (2,a) should less than the upper value (1,c)")
 
 	// Check min value is invalid.
 	_, err = tk.Exec(`split table t index idx1 between () and (1) regions 10`)

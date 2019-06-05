@@ -120,9 +120,30 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 		return nil, err
 	}
 	if bytes.Compare(lowerIdxKey, upperIdxKey) >= 0 {
-		return nil, errors.Errorf("Split index region `%v` lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
+		lowerStr, err1 := datumSliceToString(e.lower)
+		upperStr, err2 := datumSliceToString(e.upper)
+		if err1 != nil || err2 != nil {
+			return nil, errors.Errorf("Split index region `%v` lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
+		}
+		return nil, errors.Errorf("Split index region `%v` lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
 	}
 	return getValuesList(lowerIdxKey, upperIdxKey, e.num, idxKeys), nil
+}
+
+func datumSliceToString(ds []types.Datum) (string, error) {
+	str := "("
+	for i, d := range ds {
+		s, err := d.ToString()
+		if err != nil {
+			return str, err
+		}
+		if i > 0 {
+			str += ","
+		}
+		str += s
+	}
+	str += ")"
+	return str, nil
 }
 
 // longestCommonPrefixLen gets the longest common prefix byte length.
