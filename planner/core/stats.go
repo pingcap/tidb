@@ -14,9 +14,11 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
@@ -124,7 +126,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 	ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
-			noIntervalRanges, err := ds.deriveTablePathStats(path)
+			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds)
 			if err != nil {
 				return nil, err
 			}
@@ -217,6 +219,42 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression) []
 			continue
 		}
 		results = append(results, path)
+	}
+	// if there is no index satisfy condition;
+	// make sure one of args are column and check it is primary key
+	// remember check the type
+	if len(results) == 0 && len(conditions) == 1 {
+		sf, ok := conditions[0].(*expression.ScalarFunction)
+		if ok {
+			if c, ok := sf.GetArgs()[0].(*expression.Column); ok && ds.getPKIsHandleCol().ID == c.ID {
+				typeOk := c.RetType.Tp == mysql.TypeLong || c.RetType.Tp == mysql.TypeLonglong || c.RetType.Tp == mysql.TypeTiny || c.RetType.Tp == mysql.TypeShort || c.RetType.Tp == mysql.TypeInt24
+				if _, ok := sf.GetArgs()[1].(*expression.Constant); ok && typeOk {
+					// add tableAccessPath, this access path just return pk
+					// index merge we just get pk from access path
+					path := &accessPath{isTablePath: true}
+					_, err := ds.deriveTablePathStats(path, conditions)
+					if err != nil {
+						return results
+					}
+					if len(path.accessConds) > 0 {
+						results = append(results, path)
+					}
+				}
+			}
+			if c, ok := sf.GetArgs()[1].(*expression.Column); ok && ds.getPKIsHandleCol().ID == c.ID {
+				typeOk := c.RetType.Tp == mysql.TypeLong || c.RetType.Tp == mysql.TypeLonglong || c.RetType.Tp == mysql.TypeTiny || c.RetType.Tp == mysql.TypeShort || c.RetType.Tp == mysql.TypeInt24
+				if _, ok := sf.GetArgs()[0].(*expression.Constant); ok && typeOk {
+					path := &accessPath{isTablePath: true}
+					_, err := ds.deriveTablePathStats(path, conditions)
+					if err != nil {
+						return results
+					}
+					if len(path.accessConds) > 0 {
+						results = append(results, path)
+					}
+				}
+			}
+		}
 	}
 	return results
 }

@@ -377,11 +377,11 @@ type accessPath struct {
 
 // deriveTablePathStats will fulfill the information that the accessPath need.
 // And it will check whether the primary key is covered only by point query.
-func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
+func (ds *DataSource) deriveTablePathStats(path *accessPath, conds []expression.Expression) (bool, error) {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.countAfterAccess = float64(ds.statisticTable.Count)
-	path.tableFilters = ds.pushedDownConds
+	path.tableFilters = conds
 	var pkCol *expression.Column
 	columnLen := len(ds.schema.Columns)
 	isUnsigned := false
@@ -399,10 +399,10 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	}
 
 	path.ranges = ranger.FullIntRange(isUnsigned)
-	if len(ds.pushedDownConds) == 0 {
+	if len(conds) == 0 {
 		return false, nil
 	}
-	path.accessConds, path.tableFilters = ranger.DetachCondsForColumn(ds.ctx, ds.pushedDownConds, pkCol)
+	path.accessConds, path.tableFilters = ranger.DetachCondsForColumn(ds.ctx, conds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
 	// can be used to access data.
 	corColInAccessConds := false
