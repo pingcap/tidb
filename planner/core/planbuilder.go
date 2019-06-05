@@ -1710,6 +1710,8 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 
 	if node.SplitOpt.Num > maxSplitRegionNum {
 		return nil, errors.Errorf("Split index region num is exceed the limit %v", maxSplitRegionNum)
+	} else if node.SplitOpt.Num < 1 {
+		return nil, errors.Errorf("Split index region num should more than 0")
 	}
 	p.Num = int(node.SplitOpt.Num)
 	return p, nil

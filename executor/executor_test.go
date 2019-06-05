@@ -3822,6 +3822,11 @@ func (s *testSuite) TestSplitIndexRegion(c *C) {
 	_, err = tk.Exec(`split table t index idx1 between (0) and (1000000000) regions 10000`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split index region num is exceed the limit 1000")
+
+	// Check pre-split region num 0 is invalid.
+	_, err = tk.Exec(`split table t index idx1 between (0) and (1000000000) regions 0`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index region num should more than 0")
 }
 
 func (s *testSuite) TestIssue10435(c *C) {
