@@ -34,7 +34,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
@@ -47,6 +49,22 @@ const defaultStatusPort = 10080
 
 func (s *Server) startStatusHTTP() {
 	go s.startHTTPServer()
+}
+
+func serveError(w http.ResponseWriter, status int, txt string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Go-Pprof", "1")
+	w.Header().Del("Content-Disposition")
+	w.WriteHeader(status)
+	_, err := fmt.Fprintln(w, txt)
+	terror.Log(err)
+}
+
+func sleepWithCtx(ctx context.Context, d time.Duration) {
+	select {
+	case <-time.After(d):
+	case <-ctx.Done():
+	}
 }
 
 func (s *Server) startHTTPServer() {
@@ -123,26 +141,6 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
-	serveError := func(w http.ResponseWriter, status int, txt string) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("X-Go-Pprof", "1")
-		w.Header().Del("Content-Disposition")
-		w.WriteHeader(status)
-		_, err := fmt.Fprintln(w, txt)
-		terror.Log(err)
-	}
-
-	sleep := func(w http.ResponseWriter, d time.Duration) {
-		var clientGone <-chan bool
-		if cn, ok := w.(http.CloseNotifier); ok {
-			clientGone = cn.CloseNotify()
-		}
-		select {
-		case <-time.After(d):
-		case <-clientGone:
-		}
-	}
-
 	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
 
@@ -191,7 +189,7 @@ func (s *Server) startHTTPServer() {
 		if sec <= 0 || err != nil {
 			sec = 10
 		}
-		sleep(w, time.Duration(sec)*time.Second)
+		sleepWithCtx(r.Context(), time.Duration(sec)*time.Second)
 		rpprof.StopCPUProfile()
 
 		// dump config
@@ -220,9 +218,16 @@ func (s *Server) startHTTPServer() {
 		err = zw.Close()
 		terror.Log(err)
 	})
+	se, err := session.CreateSession(tikvHandlerTool.Store)
+	if err == nil {
+		do := domain.GetDomain(se)
+		fetcher := sqlInfoFetcher{s: se, do: do}
+		serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
+	} else {
+		logutil.Logger(context.Background()).Warn("create session for sql info fetch HTTP API", zap.Error(err))
+	}
 
 	var (
-		err            error
 		httpRouterPage bytes.Buffer
 		pathTemplate   string
 	)
