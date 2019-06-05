@@ -1277,8 +1277,8 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 	collates := make([]string, 0, len(options))
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
-		// we set the ca to the last option. example: alter table t ca latin1 ca utf8 co utf8_bin;
-		// the ca will be utf8, co will be utf8_bin
+		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
+		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
 			charsets = append(charsets, opt.StrValue)
