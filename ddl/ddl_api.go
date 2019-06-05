@@ -1796,9 +1796,9 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
-			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
+			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
-			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
+			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name), spec.IfExists)
 		case ast.AlterTableDropPartition:
 			err = d.DropTablePartition(ctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
@@ -1824,6 +1824,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				// Nothing to do now.
 			}
 		case ast.AlterTableDropForeignKey:
+			// NOTE: we do not check `if not exists` and `if exists` for ForeignKey now.
 			err = d.DropForeignKey(ctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableModifyColumn:
 			err = d.ModifyColumn(ctx, ident, spec)
@@ -2110,6 +2111,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	err = d.doDDLJob(ctx, job)
+	if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
+		return nil
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -2197,6 +2201,10 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 	err = checkDropTablePartition(meta, spec.Name)
 	if err != nil {
+		if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
 		return errors.Trace(err)
 	}
 
@@ -2210,6 +2218,9 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	err = d.doDDLJob(ctx, job)
 	if err != nil {
+		if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	err = d.callHookOnChanged(err)
@@ -2217,15 +2228,20 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 }
 
 // DropColumn will drop a column from the table, now we don't support drop the column with index covered.
-func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIStr) error {
+func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// Check whether dropped column has existed.
+	colName := spec.OldColumnName.Name
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
+		if spec.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName))
+			return nil
+		}
 		return ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
 
@@ -2247,6 +2263,10 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 	}
 
 	err = d.doDDLJob(ctx, job)
+	// column not exists, but if_exists flags is true, so we ignore this error.
+	if ErrCantDropFieldOrKey.Equal(err) && spec.IfExists {
+		return nil
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -2570,10 +2590,18 @@ func (d *ddl) ChangeColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 
 	job, err := d.getModifiableColumnJob(ctx, ident, spec.OldColumnName.Name, spec)
 	if err != nil {
+		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(spec.OldColumnName.Name, ident.Name))
+			return nil
+		}
 		return errors.Trace(err)
 	}
 
 	err = d.doDDLJob(ctx, job)
+	// column not exists, but if_exists flags is true, so we ignore this error.
+	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
+		return nil
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -2606,10 +2634,18 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	originalColName := specNewColumn.Name.Name
 	job, err := d.getModifiableColumnJob(ctx, ident, originalColName, spec)
 	if err != nil {
+		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name))
+			return nil
+		}
 		return errors.Trace(err)
 	}
 
 	err = d.doDDLJob(ctx, job)
+	// column not exists, but if_exists flags is true, so we ignore this error.
+	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
+		return nil
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -3107,7 +3143,7 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr) error {
+func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -3119,6 +3155,10 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo == nil {
+		if ifExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName))
+			return nil
+		}
 		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
@@ -3131,6 +3171,10 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	err = d.doDDLJob(ctx, job)
+	// index not exists, but if_exists flags is true, so we ignore this error.
+	if ErrCantDropFieldOrKey.Equal(err) && ifExists {
+		return nil
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

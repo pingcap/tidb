@@ -2665,11 +2665,51 @@ func (s *testDBSuite4) TestIfNotExists(c *C) {
 
 	// ADD PARTITION
 	s.mustExec(c, "drop table if exists t2")
-	s.mustExec(c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20));;")
+	s.mustExec(c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
 	sql = "alter table t2 add partition (partition p2 values less than (30))"
 	s.mustExec(c, sql)
 	assertErrorCode(c, s.tk, sql, tmysql.ErrSameNamePartition)
 	s.mustExec(c, "alter table t2 add partition if not exists (partition p2 values less than (30))")
+}
+
+func (s *testDBSuite4) TestIfExists(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (a int key, b int);")
+
+	// DROP COLUMN
+	sql := "alter table t1 drop column b"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrCantDropFieldOrKey)
+	s.mustExec(c, "alter table t1 drop column if exists b") // only `a` exists now
+
+	// CHANGE COLUMN
+	sql = "alter table t1 change column b c int"
+	assertErrorCode(c, s.tk, sql, tmysql.ErrBadField)
+	s.mustExec(c, "alter table t1 change column if exists b c int")
+	s.mustExec(c, "alter table t1 change column if exists a c int") // only `c` exists now
+
+	// MODIFY COLUMN
+	sql = "alter table t1 modify column a bigint"
+	assertErrorCode(c, s.tk, sql, tmysql.ErrBadField)
+	s.mustExec(c, "alter table t1 modify column if exists a bigint")
+	s.mustExec(c, "alter table t1 modify column if exists c bigint") // only `c` exists now
+
+	// DROP INDEX
+	s.mustExec(c, "alter table t1 add index idx_c (c)")
+	sql = "alter table t1 drop index idx_c"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrCantDropFieldOrKey)
+	s.mustExec(c, "alter table t1 drop index if exists idx_c")
+
+	// DROP PARTITION
+	s.mustExec(c, "drop table if exists t2")
+	s.mustExec(c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	sql = "alter table t2 drop partition p1"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrDropPartitionNonExistent)
+	s.mustExec(c, "alter table t2 drop partition if exists p1")
 }
 
 func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {

@@ -293,7 +293,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName))
+	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName), s.IfExists)
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && s.IfExists {
 		err = nil
 	}
