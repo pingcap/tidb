@@ -179,7 +179,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		for _, item := range dnfItems {
 			var itemPaths []*accessPath
 			cnfItems := expression.SplitCNFItems(item)
-			itemPaths = ds.accessPathsForConds(cnfItems)
+			itemPaths = ds.accessPathsForConds(cnfItems, usedIndexCount)
 			if len(itemPaths) == 0 {
 				idxMergePartialIdxPaths = nil
 				break
@@ -201,8 +201,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 }
 
 // accessPathsForConds generates all possible index paths for conditions.
-func (ds *DataSource) accessPathsForConds(conditions []expression.Expression) []*accessPath {
-	usedIndexCount := len(ds.possibleAccessPaths) - 1
+func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, usedIndexCount int) []*accessPath {
 	var results = make([]*accessPath, 0, usedIndexCount)
 	for i := 1; i <= usedIndexCount; i++ {
 		path := &accessPath{index: ds.possibleAccessPaths[i].index}
