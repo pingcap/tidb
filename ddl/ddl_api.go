@@ -2922,7 +2922,6 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
 	}
 	return nil
-
 }
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
