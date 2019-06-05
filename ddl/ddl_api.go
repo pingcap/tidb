@@ -2089,6 +2089,10 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	err = checkPartitionNameUnique(meta, partInfo)
 	if err != nil {
+		if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
 		return errors.Trace(err)
 	}
 

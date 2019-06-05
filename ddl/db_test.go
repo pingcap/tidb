@@ -2662,6 +2662,14 @@ func (s *testDBSuite4) TestIfNotExists(c *C) {
 	sql = "create index idx_b on t1 (b)"
 	assertErrorCode(c, s.tk, sql, tmysql.ErrDupKeyName)
 	s.mustExec(c, "create index if not exists idx_b on t1 (b)")
+
+	// ADD PARTITION
+	s.mustExec(c, "drop table if exists t2")
+	s.mustExec(c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20));;")
+	sql = "alter table t2 add partition (partition p2 values less than (30))"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrSameNamePartition)
+	s.mustExec(c, "alter table t2 add partition if not exists (partition p2 values less than (30))")
 }
 
 func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
