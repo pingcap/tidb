@@ -637,6 +637,7 @@ type SelectLockExec struct {
 	baseExecutor
 
 	Lock ast.SelectLockType
+	keys []kv.Key
 }
 
 // Open implements the Executor Open interface.
@@ -670,29 +671,24 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
+	if req.NumRows() != 0 {
+		iter := chunk.NewIterator4Chunk(req.Chunk)
+		for id, cols := range e.Schema().TblID2Handle {
+			for _, col := range cols {
+				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
+				}
+			}
+		}
+		return nil
+	}
+	// Lock keys only once when finished fetching all results.
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	keys := make([]kv.Key, 0, req.NumRows())
-	iter := chunk.NewIterator4Chunk(req.Chunk)
 	forUpdateTS := e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-	for id, cols := range e.Schema().TblID2Handle {
-		for _, col := range cols {
-			keys = keys[:0]
-			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-				keys = append(keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
-			}
-			if len(keys) == 0 {
-				continue
-			}
-			err = txn.LockKeys(ctx, forUpdateTS, keys...)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return txn.LockKeys(ctx, forUpdateTS, e.keys...)
 }
 
 // LimitExec represents limit executor
