@@ -163,9 +163,8 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 		if !sessVars.InTxn() {
 			logutil.Logger(context.Background()).Info("rollbackTxn for ddl/autocommit error.")
 			se.RollbackTxn(ctx)
-		} else if se.txn.Valid() && se.txn.IsPessimistic() && strings.Contains(meetsErr.Error(), "deadlock") {
+		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
 			logutil.Logger(context.Background()).Info("rollbackTxn for deadlock error", zap.Uint64("txn", se.txn.StartTS()))
-			meetsErr = errDeadlock
 			se.RollbackTxn(ctx)
 		}
 		return meetsErr
@@ -328,18 +327,15 @@ func IsQuery(sql string) bool {
 var (
 	errForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
 		mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
-	errDeadlock = terror.ClassSession.New(codeDeadlock, mysql.MySQLErrName[mysql.ErrLockDeadlock])
 )
 
 const (
 	codeForUpdateCantRetry terror.ErrCode = mysql.ErrForUpdateCantRetry
-	codeDeadlock           terror.ErrCode = mysql.ErrLockDeadlock
 )
 
 func init() {
 	sessionMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
-		codeDeadlock:           mysql.ErrLockDeadlock,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSession] = sessionMySQLErrCodes
 }
