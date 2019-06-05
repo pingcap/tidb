@@ -479,7 +479,7 @@ type LoadStats struct {
 	Path string
 }
 
-// SplitIndexRegion represents a split index regions plan.
+// SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer
 
