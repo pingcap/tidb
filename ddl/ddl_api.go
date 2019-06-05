@@ -1807,10 +1807,14 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex:
-				err = d.CreateIndex(ctx, ident, false, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				err = d.CreateIndex(ctx, ident, false, model.NewCIStr(constr.Name),
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
-				err = d.CreateIndex(ctx, ident, true, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				err = d.CreateIndex(ctx, ident, true, model.NewCIStr(constr.Name),
+					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintForeignKey:
+				// NOTE: we do not handle `symbol` and `index_name` well in the parser and we do not check ForeignKey already exists,
+				// so we just also ignore the `if not exists` check.
 				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
 				err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("add")
@@ -1988,6 +1992,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// Check whether added column has existed.
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
+		if spec.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnExists.GenWithStackByArgs(colName))
+			return nil
+		}
 		return infoschema.ErrColumnExists.GenWithStackByArgs(colName)
 	}
 
@@ -2040,6 +2048,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	err = d.doDDLJob(ctx, job)
+	// column exists, but if_not_exists flags is true, so we ignore this error.
+	if infoschema.ErrColumnExists.Equal(err) && spec.IfNotExists {
+		return nil
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -2942,7 +2954,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 }
 
 func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, indexName model.CIStr,
-	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption) error {
+	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption, ifNotExists bool) error {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -2954,6 +2966,10 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+		if ifNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(ErrDupKeyName.GenWithStack("index already exist %s", indexName))
+			return nil
+		}
 		return ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
@@ -2998,6 +3014,10 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	}
 
 	err = d.doDDLJob(ctx, job)
+	// key exists, but if_not_exists flags is true, so we ignore this error.
+	if ErrDupKeyName.Equal(err) && ifNotExists {
+		return nil
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

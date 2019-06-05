@@ -2640,6 +2640,30 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	s.tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
 }
 
+func (s *testDBSuite4) TestIfNotExists(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (a int key);")
+
+	// ADD COLUMN
+	sql := "alter table t1 add column b int"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrDupFieldName)
+	s.mustExec(c, "alter table t1 add column if not exists b int")
+
+	// ADD INDEX
+	sql = "alter table t1 add index idx_b (b)"
+	s.mustExec(c, sql)
+	assertErrorCode(c, s.tk, sql, tmysql.ErrDupKeyName)
+	s.mustExec(c, "alter table t1 add index if not exists idx_b (b)")
+
+	// CREATE INDEX
+	sql = "create index idx_b on t1 (b)"
+	assertErrorCode(c, s.tk, sql, tmysql.ErrDupKeyName)
+	s.mustExec(c, "create index if not exists idx_b on t1 (b)")
+}
+
 func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")

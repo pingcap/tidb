@@ -888,6 +888,22 @@ func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
 	s.testParallelExecSQL(c, "create database if not exists test_not_exists;")
 }
 
+// TestDDLIfNotExists parallel exec some DDLs with `if not exists` clause. No error returns is expected.
+func (s *testStateChangeSuite) TestDDLIfNotExists(c *C) {
+	defer s.se.Execute(context.Background(), "drop table test_not_exists")
+	_, err := s.se.Execute(context.Background(), "create table if not exists test_not_exists(a int)")
+	c.Assert(err, IsNil)
+
+	// ADD COLUMN
+	s.testParallelExecSQL(c, "alter table test_not_exists add column if not exists b int")
+
+	// ADD INDEX
+	s.testParallelExecSQL(c, "alter table test_not_exists add index if not exists idx_b (b)")
+
+	// CREATE INDEX
+	s.testParallelExecSQL(c, "create index if not exists idx_b on test_not_exists (b)")
+}
+
 // TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.
 // This test is used to simulate the following conditions:
 // In a cluster, TiDB "a" executes the DDL.
