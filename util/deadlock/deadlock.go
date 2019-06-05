@@ -42,11 +42,11 @@ func NewDetector() *Detector {
 
 // ErrDeadlock is returned when deadlock is detected.
 type ErrDeadlock struct {
-	keyHash uint64
+	KeyHash uint64
 }
 
 func (e *ErrDeadlock) Error() string {
-	return fmt.Sprintf("deadlock(%d)", e.keyHash)
+	return fmt.Sprintf("deadlock(%d)", e.KeyHash)
 }
 
 // Detect detects deadlock for the sourceTxn on a locked key.
@@ -67,7 +67,7 @@ func (d *Detector) doDetect(sourceTxn, waitForTxn uint64) *ErrDeadlock {
 	}
 	for _, nextTarget := range list.txns {
 		if nextTarget.txn == sourceTxn {
-			return &ErrDeadlock{keyHash: nextTarget.keyHash}
+			return &ErrDeadlock{KeyHash: nextTarget.keyHash}
 		}
 		if err := d.doDetect(sourceTxn, nextTarget.txn); err != nil {
 			return err
