@@ -187,6 +187,9 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("create table if not exists t1 (a int ,b int)")
 	_, err = tk.Exec("create or replace view t1 as select * from t1")
 	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error())
+	// create view using prepare
+	tk.MustExec(`prepare stmt from "create view v10 (x) as select 1";`)
+	tk.MustExec("execute stmt")
 }
 
 func (s *testSuite3) TestCreateDropDatabase(c *C) {
