@@ -116,7 +116,9 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	upperIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.upper, math.MaxInt64, nil)
+	// Use math.MinInt64 as handle_id for the upper index key to avoid affecting calculate split point.
+	// If use math.MaxInt64 here, test of `TestSplitIndex` will report error.
+	upperIdxKey, _, err := index.GenIndexKey(e.ctx.GetSessionVars().StmtCtx, e.upper, math.MinInt64, nil)
 	if err != nil {
 		return nil, err
 	}
