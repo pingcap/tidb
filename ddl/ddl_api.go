@@ -1089,11 +1089,12 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
+		err = infoschema.ErrTableExists.GenWithStackByArgs(ident)
 		if ifNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
-		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+		return err
 	}
 
 	tblInfo := buildTableInfoWithLike(ident, referTbl.Meta())
@@ -1243,11 +1244,12 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
+		err = infoschema.ErrTableExists.GenWithStackByArgs(ident)
 		if s.IfNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
-		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+		return err
 	}
 
 	tbInfo, err := buildTableInfoWithCheck(ctx, d, s, schema.Charset)
@@ -1993,11 +1995,12 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// Check whether added column has existed.
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
+		err = infoschema.ErrColumnExists.GenWithStackByArgs(colName)
 		if spec.IfNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnExists.GenWithStackByArgs(colName))
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
-		return infoschema.ErrColumnExists.GenWithStackByArgs(colName)
+		return err
 	}
 
 	// If new column is a generated column, do validation.
@@ -2238,11 +2241,12 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	colName := spec.OldColumnName.Name
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
+		err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 		if spec.IfExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName))
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
-		return ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		return err
 	}
 
 	tblInfo := t.Meta()
@@ -3006,11 +3010,12 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+		err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 		if ifNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(ErrDupKeyName.GenWithStack("index already exist %s", indexName))
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
-		return ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		return err
 	}
 
 	if err = checkTooLongIndex(indexName); err != nil {
@@ -3155,11 +3160,12 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo == nil {
+		err = ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		if ifExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName))
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
-		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+		return err
 	}
 
 	job := &model.Job{
