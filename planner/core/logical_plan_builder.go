@@ -2178,7 +2178,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	tableInfo := tbl.Meta()
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Hostname, b.ctx.GetSessionVars().User.Username, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
@@ -2323,6 +2323,10 @@ func (b *PlanBuilder) BuildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 		b.visitInfo = b.visitInfo[:0]
 	}
 	b.visitInfo = append(originalVisitInfo, b.visitInfo...)
+
+	if b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.L, tableInfo.Name.L, "", ErrViewNoExplain)
+	}
 
 	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
 	projExprs := make([]expression.Expression, 0, len(tableInfo.View.Cols))
@@ -2483,7 +2487,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			joinPlan.preferJoinType |= preferHashJoin
 		}
 		if b.TableHints().ifPreferINLJ(innerAlias) {
-			joinPlan.preferJoinType = preferLeftAsIndexInner
+			joinPlan.preferJoinType = preferRightAsIndexInner
 		}
 		// If there're multiple join hints, they're conflict.
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
@@ -3156,8 +3160,8 @@ func extractWindowFuncs(fields []*ast.SelectField) []*ast.WindowFuncExpr {
 	return extractor.windowFuncs
 }
 
-func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, name string) (*ast.WindowSpec, bool) {
-	needFrame := aggregation.NeedFrame(name)
+func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName string) (*ast.WindowSpec, bool) {
+	needFrame := aggregation.NeedFrame(windowFuncName)
 	// According to MySQL, In the absence of a frame clause, the default frame depends on whether an ORDER BY clause is present:
 	//   (1) With order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW";
 	//   (2) Without order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING",
@@ -3176,7 +3180,7 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, name string) (*as
 	// For functions that operate on the entire partition, the frame clause will be ignored.
 	if !needFrame && spec.Frame != nil {
 		specName := spec.Name.O
-		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(name, specName))
+		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(windowFuncName, getWindowName(specName)))
 		newSpec := *spec
 		newSpec.Frame = nil
 		return &newSpec, true

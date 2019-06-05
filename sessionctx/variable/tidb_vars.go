@@ -291,7 +291,7 @@ const (
 	DefOptAggPushDown                = false
 	DefOptWriteRowID                 = false
 	DefOptCorrelationThreshold       = 0.9
-	DefOptCorrelationExpFactor       = 0
+	DefOptCorrelationExpFactor       = 1
 	DefOptInSubqToJoinAndAgg         = true
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false

@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -164,12 +165,8 @@ type analyzeTask struct {
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- analyzeResult, isCloseChanThread bool) {
+	var task *analyzeTask
 	defer func() {
-		e.wg.Done()
-		if isCloseChanThread {
-			e.wg.Wait()
-			close(resultCh)
-		}
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
@@ -178,11 +175,18 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- analyzeResult{
 				Err: errAnalyzeWorkerPanic,
+				job: task.job,
 			}
+		}
+		e.wg.Done()
+		if isCloseChanThread {
+			e.wg.Wait()
+			close(resultCh)
 		}
 	}()
 	for {
-		task, ok := <-taskCh
+		var ok bool
+		task, ok = <-taskCh
 		if !ok {
 			break
 		}
@@ -295,6 +299,11 @@ func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error
 }
 
 func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, error) {
+	failpoint.Inject("buildStatsFromResult", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, nil, errors.New("mock buildStatsFromResult error"))
+		}
+	})
 	hist := &statistics.Histogram{}
 	var cms *statistics.CMSketch
 	if needCMS {
@@ -335,7 +344,10 @@ func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool)
 		return nil, nil, err
 	}
 	defer func() {
-		err = closeAll(e.result, e.countNullRes)
+		err1 := closeAll(e.result, e.countNullRes)
+		if err == nil {
+			err = err1
+		}
 	}()
 	hist, cms, err = e.buildStatsFromResult(e.result, true)
 	if err != nil {
@@ -690,7 +702,6 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
 	bo := tikv.NewBackoffer(context.Background(), 500)
-	e.rowCount = 0
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
 	sampTasksForRoutine := make([][]*AnalyzeFastTask, e.concurrency)
@@ -721,6 +732,13 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	targetKey, err := e.getNextSampleKey(bo, startKey)
 	if err != nil {
 		return false, err
+	}
+	e.rowCount = 0
+	for _, task := range e.sampTasks {
+		cnt := task.EndOffset - task.BeginOffset
+		task.BeginOffset = e.rowCount
+		task.EndOffset = e.rowCount + cnt
+		e.rowCount += cnt
 	}
 	for {
 		// Search for the region which contains the targetKey.
@@ -937,7 +955,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, randKey))
 		}
 
-		var kvMap map[string][]byte
+		kvMap := make(map[string][]byte, len(keys))
 		for _, key := range keys {
 			var iter kv.Iterator
 			iter, *err = snapshot.Iter(key, endKey)

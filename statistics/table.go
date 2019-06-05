@@ -16,6 +16,7 @@ package statistics
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 
@@ -98,11 +99,21 @@ func (t *Table) Copy() *Table {
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
 	strs = append(strs, fmt.Sprintf("Table:%d Count:%d", t.PhysicalID, t.Count))
+	cols := make([]*Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
+		cols = append(cols, col)
+	}
+	sort.Slice(cols, func(i, j int) bool { return cols[i].ID < cols[j].ID })
+	for _, col := range cols {
 		strs = append(strs, col.String())
 	}
-	for _, col := range t.Indices {
-		strs = append(strs, col.String())
+	idxs := make([]*Index, 0, len(t.Indices))
+	for _, idx := range t.Indices {
+		idxs = append(idxs, idx)
+	}
+	sort.Slice(idxs, func(i, j int) bool { return idxs[i].ID < idxs[j].ID })
+	for _, idx := range idxs {
+		strs = append(strs, idx.String())
 	}
 	return strings.Join(strs, "\n")
 }
