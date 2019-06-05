@@ -1658,11 +1658,18 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 				return nil, err
 			}
 			colOffset := indexInfo.Columns[j].Offset
-			value, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[colOffset].FieldType)
+			value1, err := value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[colOffset].FieldType)
 			if err != nil {
-				return nil, err
+				if !types.ErrTruncated.Equal(err) {
+					return nil, err
+				}
+				valStr, err1 := value.ToString()
+				if err1 != nil {
+					return nil, err
+				}
+				return nil, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for index column '%.192s'", valStr, tblInfo.Columns[colOffset].Name.O)
 			}
-			values = append(values, value)
+			values = append(values, value1)
 		}
 		return values, nil
 	}

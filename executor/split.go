@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"math"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -154,10 +155,7 @@ func getValuesList(lower, upper []byte, num int, valuesList [][]byte) [][]byte {
 
 // longestCommonPrefixLen gets the longest common prefix byte length.
 func longestCommonPrefixLen(s1, s2 []byte) int {
-	l := len(s1)
-	if len(s2) < len(s1) {
-		l = len(s2)
-	}
+	l := mathutil.Min(len(s1), len(s2))
 	i := 0
 	for ; i < l; i++ {
 		if s1[i] != s2[i] {
