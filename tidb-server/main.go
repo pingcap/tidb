@@ -516,6 +516,7 @@ func createServer() {
 	svr, err = server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
 	terror.MustNil(err, closeDomainAndStorage)
+	go dom.ExpensiveQueryHandle().Run(svr)
 }
 
 func serverShutdown(isgraceful bool) {

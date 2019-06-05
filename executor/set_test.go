@@ -358,6 +358,9 @@ func (s *testSuite2) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("set global tidb_back_off_weight = 10")
 	tk.MustQuery("select @@global.tidb_back_off_weight;").Check(testkit.Rows("10"))
+
+	tk.MustExec("set @@tidb_expensive_query_time_threshold=70")
+	tk.MustQuery("select @@tidb_expensive_query_time_threshold;").Check(testkit.Rows("70"))
 }
 
 func (s *testSuite2) TestSetCharset(c *C) {
