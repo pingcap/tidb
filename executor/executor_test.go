@@ -283,7 +283,6 @@ func (s *testSuite) TestShow(c *C) {
 
 	tk.MustQuery("show charset")
 	tk.MustQuery("show master status")
-	tk.MustQuery("show status")
 	tk.MustQuery("show create database test")
 	tk.MustQuery("show privileges")
 	tk.MustQuery("show table status")
