@@ -72,6 +72,9 @@ type BindHandle struct {
 	lastUpdateTime types.Time
 }
 
+// Lease influences the duration of loading bind info and handling invalid bind.
+var Lease = 3 * time.Second
+
 type invalidBindRecordMap struct {
 	bindRecord  *BindRecord
 	droppedTime time.Time
