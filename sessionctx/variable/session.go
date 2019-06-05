@@ -796,8 +796,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.WaitTableSplitFinish = TiDBOptOn(val)
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
-	case TiDBPessimisticLock:
-		s.PessimisticLock = TiDBOptOn(val)
 	case TiDBTxnMode:
 		if err := s.setTxnMode(val); err != nil {
 			return err
