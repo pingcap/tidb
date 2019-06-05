@@ -149,7 +149,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 			terror.Log(err)
 			return
 		}
-		fw, err := zw.Create("explain.result")
+		fw, err := zw.Create("explain.txt")
 		if err != nil {
 			terror.Log(err)
 			return
@@ -176,7 +176,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 			if len(result.rows) == 0 {
 				break
 			}
-			fw, err := zw.Create("explain_analyze.result")
+			fw, err := zw.Create("explain_analyze.txt")
 			if err != nil {
 				terror.Log(err)
 				break
