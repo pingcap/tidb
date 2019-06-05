@@ -3857,6 +3857,22 @@ func (s *testSuite) TestIssue10448(c *C) {
 	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:9223372036854775808"))
 }
 
+func (s *testSuite) TestIssue10677(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int1 primary key)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("desc select * from t where pk = 1.1").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("select * from t where pk = 1.1").Check(testkit.Rows())
+	tk.MustQuery("desc select * from t where pk = '1.1'").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("select * from t where pk = '1.1'").Check(testkit.Rows())
+	tk.MustQuery("desc select * from t where pk = 1").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:1"))
+	tk.MustQuery("select * from t where pk = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("desc select * from t where pk = '1'").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:1"))
+	tk.MustQuery("select * from t where pk = '1'").Check(testkit.Rows("1"))
+}
+
 func (s *testSuite) TestUnsignedFeedback(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	oriProbability := statistics.FeedbackProbability.Load()
