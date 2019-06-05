@@ -3239,6 +3239,8 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	// Check whether the table was already locked by other.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
+		// TODO: replace const string "performance_schema" with xxx.LowerName.
+		// Currently use perfschema.LowerName will have import cycle problem.
 		if tb.Schema.L == infoschema.LowerName || tb.Schema.L == "performance_schema" || tb.Schema.L == mysql.SystemDB {
 			if ctx.GetSessionVars().User != nil {
 				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)

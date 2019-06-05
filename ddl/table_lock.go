@@ -61,7 +61,7 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		if err != nil {
 			return ver, err
 		}
-		err = checkAndLockTable(tbInfo, arg.IndexOfLock, arg)
+		err = lockTable(tbInfo, arg.IndexOfLock, arg)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -105,8 +105,8 @@ func findSessionInfoIndex(sessions []model.SessionInfo, sessionInfo model.Sessio
 	return -1
 }
 
-// checkAndLockTable uses to check table locked and acquire the table lock for the request session.
-func checkAndLockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
+// lockTable uses to check table locked and acquire the table lock for the request session.
+func lockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
 	if !tbInfo.IsLocked() {
 		tbInfo.Lock = &model.TableLockInfo{
 			Tp: arg.LockTables[idx].Tp,

@@ -43,6 +43,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	}
 	switch privilege {
 	case mysql.ShowDBPriv, mysql.AllPrivMask:
+		// AllPrivMask only used in show create table statement now.
 		return nil
 	case mysql.CreatePriv, mysql.CreateViewPriv:
 		if c.ctx.HasLockedTables() {
@@ -50,11 +51,8 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		}
 		return nil
 	}
+	// TODO: try to remove this get for speed up.
 	tb, err := c.is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	// TODO: remove this
-	if infoschema.ErrTableNotExists.Equal(err) {
-		return nil
-	}
 	if err != nil {
 		return err
 	}
