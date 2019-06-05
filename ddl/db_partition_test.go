@@ -1500,6 +1500,4 @@ func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
 		);`
 	assertErrorCode(c, tk, sql7, tmysql.ErrWrongExprInPartitionFunc)
 
-
-
 }
