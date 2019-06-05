@@ -310,8 +310,6 @@ func (s *testDBSuite) testGetTableByName(c *C, db, table string) table.Table {
 func testGetTableByName(c *C, se sessionctx.Context, db, table string) table.Table {
 	ctx := se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
-	c.Assert(dom, NotNil)
-
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
 	c.Assert(err, IsNil)
