@@ -31,7 +31,7 @@ var (
 	_ DMLNode = &SelectStmt{}
 	_ DMLNode = &ShowStmt{}
 	_ DMLNode = &LoadDataStmt{}
-	_ DMLNode = &SplitIndexRegionStmt{}
+	_ DMLNode = &SplitRegionStmt{}
 
 	_ Node = &Assignment{}
 	_ Node = &ByItem{}
@@ -2416,22 +2416,105 @@ func (n *FrameBound) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-type SplitIndexRegionStmt struct {
+type SplitRegionStmt struct {
 	dmlNode
 
-	Table      *TableName
-	IndexName  string
+	Table     *TableName
+	IndexName model.CIStr
+
+	SplitOpt *SplitOption
+}
+
+type SplitOption struct {
+	Lower      []ExprNode
+	Upper      []ExprNode
+	Num        int64
 	ValueLists [][]ExprNode
 }
 
-func (n *SplitIndexRegionStmt) Restore(ctx *RestoreCtx) error {
+func (n *SplitRegionStmt) Restore(ctx *RestoreCtx) error {
 	ctx.WriteKeyWord("SPLIT TABLE ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore SplitIndexRegionStmt.Table")
 	}
-	ctx.WriteKeyWord(" INDEX ")
-	ctx.WriteName(n.IndexName)
-	ctx.WriteKeyWord(" BY ")
+	if len(n.IndexName.L) > 0 {
+		ctx.WriteKeyWord(" INDEX ")
+		ctx.WriteName(n.IndexName.String())
+	}
+	ctx.WritePlain(" ")
+	err := n.SplitOpt.Restore(ctx)
+	return err
+}
+
+func (n *SplitRegionStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*SplitRegionStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
+	for i, val := range n.SplitOpt.Lower {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SplitOpt.Lower[i] = node.(ExprNode)
+	}
+	for i, val := range n.SplitOpt.Upper {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SplitOpt.Upper[i] = node.(ExprNode)
+	}
+
+	for i, list := range n.SplitOpt.ValueLists {
+		for j, val := range list {
+			node, ok := val.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.SplitOpt.ValueLists[i][j] = node.(ExprNode)
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *SplitOption) Restore(ctx *RestoreCtx) error {
+	if len(n.ValueLists) == 0 {
+		ctx.WriteKeyWord("BETWEEN ")
+		ctx.WritePlain("(")
+		for j, v := range n.Lower {
+			if j != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore SplitOption Lower")
+			}
+		}
+		ctx.WritePlain(")")
+
+		ctx.WriteKeyWord(" AND ")
+		ctx.WritePlain("(")
+		for j, v := range n.Upper {
+			if j != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore SplitOption Upper")
+			}
+		}
+		ctx.WritePlain(")")
+		ctx.WriteKeyWord(" REGIONS")
+		ctx.WritePlainf(" %d", n.Num)
+		return nil
+	}
+	ctx.WriteKeyWord("BY ")
 	for i, row := range n.ValueLists {
 		if i != 0 {
 			ctx.WritePlain(",")
@@ -2442,34 +2525,10 @@ func (n *SplitIndexRegionStmt) Restore(ctx *RestoreCtx) error {
 				ctx.WritePlain(",")
 			}
 			if err := v.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore SplitIndexRegionStmt.ValueLists[%d][%d]", i, j)
+				return errors.Annotatef(err, "An error occurred while restore SplitOption.ValueLists[%d][%d]", i, j)
 			}
 		}
 		ctx.WritePlain(")")
 	}
 	return nil
-}
-
-func (n *SplitIndexRegionStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-
-	n = newNode.(*SplitIndexRegionStmt)
-	node, ok := n.Table.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Table = node.(*TableName)
-	for i, list := range n.ValueLists {
-		for j, val := range list {
-			node, ok := val.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.ValueLists[i][j] = node.(ExprNode)
-		}
-	}
-	return v.Leave(n)
 }
