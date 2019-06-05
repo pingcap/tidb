@@ -34,7 +34,7 @@ import (
 const ResolvedCacheSize = 2048
 
 // bigTxnThreshold : transaction involves keys exceed this threshold can be treated as `big transaction`.
-const bigTxnThreshold = 64
+const bigTxnThreshold = 16
 
 var (
 	tikvLockResolverCountWithBatchResolve             = metrics.TiKVLockResolverCounter.WithLabelValues("batch_resolve")
@@ -395,7 +395,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cleanRegions map[RegionVerID]struct{}) error {
 	tikvLockResolverCountWithResolveLocks.Inc()
-	cleanWholeRegion := true
+	cleanWholeRegion := l.TxnSize >= bigTxnThreshold
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
 		if err != nil {
@@ -417,7 +417,6 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			// Only resolve specified keys when it is a small transaction,
 			// prevent from scanning the whole region in this case.
 			tikvLockResolverCountWithResolveLockLite.Inc()
-			cleanWholeRegion = false
 			req.ResolveLock.Keys = [][]byte{l.Key}
 		}
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
