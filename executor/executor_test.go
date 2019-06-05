@@ -17,8 +17,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/util/gcutil"
 	"math"
 	"os"
 	"strconv"
@@ -43,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -64,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -3072,7 +3072,7 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id bigint unsigned primary key)")
-	var num1, num2 uint64 = math.MaxInt64+1, math.MaxInt64+2
+	var num1, num2 uint64 = math.MaxInt64 + 1, math.MaxInt64 + 2
 	tk.MustExec(fmt.Sprintf("insert into t values(%v), (%v), (1), (2)", num1, num2))
 	num1Str := strconv.FormatUint(num1, 10)
 	num2Str := strconv.FormatUint(num2, 10)
