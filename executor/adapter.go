@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -427,40 +428,51 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	if err == nil {
 		return nil, nil
 	}
-	if !terror.ErrorEqual(kv.ErrWriteConflict, err) {
+	txnCtx := a.Ctx.GetSessionVars().TxnCtx
+	var newForUpdateTS uint64
+	if deadlock, ok := errors.Cause(err).(*tikv.ErrDeadlock); ok {
+		if !deadlock.IsRetryable {
+			return nil, ErrDeadlock
+		}
+		logutil.Logger(ctx).Info("single statement deadlock, retry statement",
+			zap.Uint64("txn", txnCtx.StartTS),
+			zap.Uint64("lockTS", deadlock.LockTs),
+			zap.Binary("lockKey", deadlock.LockKey),
+			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
+	} else if terror.ErrorEqual(kv.ErrWriteConflict, err) {
+		conflictCommitTS := extractConflictCommitTS(err.Error())
+		if conflictCommitTS == 0 {
+			logutil.Logger(ctx).Warn("failed to extract conflictCommitTS from a conflict error")
+		}
+		forUpdateTS := txnCtx.GetForUpdateTS()
+		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
+			zap.Uint64("txn", txnCtx.StartTS),
+			zap.Uint64("forUpdateTS", forUpdateTS),
+			zap.Uint64("conflictCommitTS", conflictCommitTS))
+		if conflictCommitTS > forUpdateTS {
+			newForUpdateTS = conflictCommitTS
+		}
+	} else {
 		return nil, err
 	}
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
-	conflictCommitTS := extractConflictCommitTS(err.Error())
-	if conflictCommitTS == 0 {
-		logutil.Logger(ctx).Warn("failed to extract conflictCommitTS from a conflict error")
-	}
-	sctx := a.Ctx
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	forUpdateTS := txnCtx.GetForUpdateTS()
-	logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
-		zap.Uint64("txn", txnCtx.StartTS),
-		zap.Uint64("forUpdateTS", forUpdateTS),
-		zap.Uint64("conflictCommitTS", conflictCommitTS))
-	if conflictCommitTS > txnCtx.GetForUpdateTS() {
-		txnCtx.SetForUpdateTS(conflictCommitTS)
-	} else {
-		ts, err1 := sctx.GetStore().GetOracle().GetTimestamp(ctx)
-		if err1 != nil {
-			return nil, err1
+	if newForUpdateTS == 0 {
+		newForUpdateTS, err = a.Ctx.GetStore().GetOracle().GetTimestamp(ctx)
+		if err != nil {
+			return nil, err
 		}
-		txnCtx.SetForUpdateTS(ts)
 	}
+	txnCtx.SetForUpdateTS(newForUpdateTS)
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
 	}
 	// Rollback the statement change before retry it.
-	sctx.StmtRollback()
-	sctx.GetSessionVars().StmtCtx.ResetForRetry()
+	a.Ctx.StmtRollback()
+	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
