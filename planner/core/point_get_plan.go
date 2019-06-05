@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
@@ -41,10 +42,12 @@ type PointGetPlan struct {
 	IndexInfo        *model.IndexInfo
 	Handle           int64
 	HandleParam      *driver.ParamMarkerExpr
+	UnsignedHandle   bool
 	IndexValues      []types.Datum
 	IndexValueParams []*driver.ParamMarkerExpr
 	expr             expression.Expression
 	ctx              sessionctx.Context
+	IsTableDual      bool
 }
 
 type nameValuePair struct {
@@ -83,7 +86,11 @@ func (p *PointGetPlan) ExplainInfo() string {
 			}
 		}
 	} else {
-		fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+		if p.UnsignedHandle {
+			fmt.Fprintf(buffer, ", handle:%d", uint64(p.Handle))
+		} else {
+			fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+		}
 	}
 	return buffer.String()
 }
@@ -128,6 +135,11 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 		if fp != nil {
 			if checkFastPlanPrivilege(ctx, fp, mysql.SelectPriv) != nil {
 				return nil
+			}
+			if fp.IsTableDual {
+				tableDual := PhysicalTableDual{}
+				tableDual.SetSchema(fp.Schema())
+				return tableDual.Init(ctx, &property.StatsInfo{})
 			}
 			return fp
 		}
@@ -185,18 +197,23 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if pairs == nil {
 		return nil
 	}
-	handlePair := findPKHandle(tbl, pairs)
+	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
 		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
 		}
 		p := newPointGetPlan(ctx, schema, tbl)
-		var err error
-		p.Handle, err = handlePair.value.ToInt64(ctx.GetSessionVars().StmtCtx)
+		intDatum, err := handlePair.value.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
 		if err != nil {
+			if terror.ErrorEqual(types.ErrOverflow, err) {
+				p.IsTableDual = true
+				return p
+			}
 			return nil
 		}
+		p.Handle = intDatum.GetInt64()
+		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
 		return p
 	}
@@ -362,20 +379,20 @@ func getNameValuePairs(nvPairs []nameValuePair, expr ast.ExprNode) []nameValuePa
 	return nil
 }
 
-func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair) {
+func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldType) {
 	if !tblInfo.PKIsHandle {
-		return handlePair
+		return handlePair, nil
 	}
 	for _, col := range tblInfo.Columns {
 		if mysql.HasPriKeyFlag(col.Flag) {
 			i := findInPairs(col.Name.L, pairs)
 			if i == -1 {
-				return handlePair
+				return handlePair, nil
 			}
-			return pairs[i]
+			return pairs[i], &col.FieldType
 		}
 	}
-	return handlePair
+	return handlePair, nil
 }
 
 func getIndexValues(idxInfo *model.IndexInfo, pairs []nameValuePair) ([]types.Datum, []*driver.ParamMarkerExpr) {
@@ -424,6 +441,9 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	}
 	if checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.UpdatePriv) != nil {
 		return nil
+	}
+	if fastSelect.IsTableDual {
+		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
 	}
 	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
 	if orderedList == nil {
@@ -481,6 +501,9 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	}
 	if checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
+	}
+	if fastSelect.IsTableDual {
+		return PhysicalTableDual{}.Init(ctx, &property.StatsInfo{})
 	}
 	delPlan := Delete{
 		SelectPlan: fastSelect,

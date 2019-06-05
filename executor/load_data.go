@@ -35,6 +35,7 @@ type LoadDataExec struct {
 	baseExecutor
 
 	IsLocal      bool
+	OnDuplicate  ast.OnDuplicateKeyHandlingType
 	loadDataInfo *LoadDataInfo
 }
 
@@ -57,6 +58,10 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return errors.New("Load Data: don't support load data without local field")
+	}
+	// TODO: support load data with replace field.
+	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
+		return errors.New("Load Data: don't support load data with replace field")
 	}
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {

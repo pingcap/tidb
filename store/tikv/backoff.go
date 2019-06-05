@@ -110,12 +110,12 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 		}
 		select {
 		case <-time.After(time.Duration(realSleep) * time.Millisecond):
+			attempts++
+			lastSleep = sleep
+			return lastSleep
 		case <-ctx.Done():
+			return 0
 		}
-
-		attempts++
-		lastSleep = sleep
-		return lastSleep
 	}
 }
 

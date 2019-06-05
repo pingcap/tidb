@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
+	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -276,8 +278,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 
 		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
-			if val.(bool) && mockRecoverTableCommitErrOnce {
-				mockRecoverTableCommitErrOnce = false
+			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
 				kv.MockCommitErrorEnable()
 			}
 		})
@@ -295,8 +296,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
-// mockRecoverTableCommitErrOnce uses to make sure `mockRecoverTableCommitErr` only mock error once.
-var mockRecoverTableCommitErrOnce = true
+// mockRecoverTableCommitErrOnce uses to make sure
+// `mockRecoverTableCommitErr` only mock error once.
+var mockRecoverTableCommitErrOnce uint32 = 0
 
 func enableGC(w *worker) error {
 	ctx, err := w.sessPool.get()
@@ -744,7 +746,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	tblInfo.Collate = toCollate
 	// update column charset.
 	for _, col := range tblInfo.Columns {
-		if typesNeedCharset(col.Tp) {
+		if field_types.HasCharset(&col.FieldType) {
 			col.Charset = toCharset
 			col.Collate = toCollate
 		} else {

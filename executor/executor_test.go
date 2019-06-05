@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -87,6 +88,7 @@ var _ = Suite(&testSuite{})
 var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
+var _ = Suite(&testSuite4{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
@@ -225,9 +227,9 @@ func (s *testSuite) TestAdmin(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJob, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
-	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJob[0].ID))
-	result.Check(testkit.Rows(historyJob[0].Query))
+	historyJobs, err = admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
+	result.Check(testkit.Rows(historyJobs[0].Query))
 	c.Assert(err, IsNil)
 
 	// check table test
@@ -281,6 +283,22 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD COLUMN c4 bit(10) default 127;")
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
 	tk.MustExec("admin check table t1;")
+
+	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	historyJobs, err = admin.GetHistoryDDLJobs(txn, 20)
+	c.Assert(err, IsNil)
+
+	// Split region for history ddl job queues.
+	m := meta.NewMeta(txn)
+	startKey := meta.DDLJobHistoryKey(m, 0)
+	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
+	s.cluster.SplitKeys(s.mvccStore, startKey, endKey, int(historyJobs[0].ID/5))
+
+	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
+	c.Assert(err, IsNil)
+	c.Assert(historyJobs, DeepEquals, historyJobs2)
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
@@ -2051,6 +2069,10 @@ func (s *testSuite) TestSelectVar(c *C) {
 	// This behavior is different from MySQL.
 	result := tk.MustQuery("select @a, @a := d+1 from t")
 	result.Check(testkit.Rows("<nil> 2", "2 3", "3 2"))
+	// Test for PR #10658.
+	tk.MustExec("select SQL_BIG_RESULT d from t group by d")
+	tk.MustExec("select SQL_SMALL_RESULT d from t group by d")
+	tk.MustExec("select SQL_BUFFER_RESULT d from t group by d")
 }
 
 func (s *testSuite) TestHistoryRead(c *C) {
@@ -2115,6 +2137,28 @@ func (s *testSuite) TestHistoryRead(c *C) {
 
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
+}
+
+func (s *testSuite) TestLowResolutionTSORead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@autocommit=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists low_resolution_tso")
+	tk.MustExec("create table low_resolution_tso(a int)")
+	tk.MustExec("insert low_resolution_tso values (1)")
+
+	// enable low resolution tso
+	c.Assert(tk.Se.GetSessionVars().LowResolutionTSO, IsFalse)
+	tk.Exec("set @@tidb_low_resolution_tso = 'on'")
+	c.Assert(tk.Se.GetSessionVars().LowResolutionTSO, IsTrue)
+
+	time.Sleep(3 * time.Second)
+	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("1"))
+	_, err := tk.Exec("update low_resolution_tso set a = 2")
+	c.Assert(err, NotNil)
+	tk.MustExec("set @@tidb_low_resolution_tso = 'off'")
+	tk.MustExec("update low_resolution_tso set a = 2")
+	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("2"))
 }
 
 func (s *testSuite) TestScanControlSelection(c *C) {
@@ -3759,25 +3803,79 @@ func (s *testSuite) TestSplitIndexRegion(c *C) {
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
 
 	// Check min value is more than max value.
-	tk.MustExec(`split table t index idx1 min (0) max (1000000000) num 10`)
-	_, err = tk.Exec(`split table t index idx1 min (2) max (1) num 10`)
+	tk.MustExec(`split table t index idx1 between (0) and (1000000000) regions 10`)
+	_, err = tk.Exec(`split table t index idx1 between (2) and (1) regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split index region `idx1` min value [{1 0 0 0 2 [] <nil>}] should less than the max value [{1 0 0 0 1 [] <nil>}]")
 
 	// Check min value is invalid.
-	_, err = tk.Exec(`split table t index idx1 min () max (1) num 10`)
+	_, err = tk.Exec(`split table t index idx1 between () and (1) regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split index region `idx1` min value count should more than 0")
 
 	// Check max value is invalid.
-	_, err = tk.Exec(`split table t index idx1 min (1) max () num 10`)
+	_, err = tk.Exec(`split table t index idx1 between (1) and () regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split index region `idx1` max value count should more than 0")
 
 	// Check pre-split region num is too large.
-	_, err = tk.Exec(`split table t index idx1 min (0) max (1000000000) num 10000`)
+	_, err = tk.Exec(`split table t index idx1 between (0) and (1000000000) regions 10000`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split index region num is exceed the limit 1000")
+}
+
+func (s *testSuite) TestIssue10435(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(i int, j int, k int)")
+	tk.MustExec("insert into t1 VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4)")
+	tk.MustExec("INSERT INTO t1 SELECT 10*i,j,5*j FROM t1 UNION SELECT 20*i,j,5*j FROM t1 UNION SELECT 30*i,j,5*j FROM t1")
+
+	tk.MustExec("set @@session.tidb_enable_window_function=1")
+	tk.MustQuery("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w").Check(
+		testkit.Rows("1", "2", "3", "4", "11", "22", "31", "33", "44", "61", "62", "93", "122", "124", "183", "244"),
+	)
+}
+
+func (s *testSuite) TestIssue10448(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int1 primary key)")
+	tk.MustExec("insert into t values(125)")
+	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 128").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int8 primary key)")
+	tk.MustExec("insert into t values(9223372036854775807)")
+	tk.MustQuery("select * from t where pk = 9223372036854775807").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:9223372036854775807"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int1 unsigned primary key)")
+	tk.MustExec("insert into t values(255)")
+	tk.MustQuery("select * from t where pk = 255").Check(testkit.Rows("255"))
+	tk.MustQuery("desc select * from t where pk = 256").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int8 unsigned primary key)")
+	tk.MustExec("insert into t value(18446744073709551615)")
+	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:18446744073709551615"))
+	tk.MustQuery("select * from t where pk = 18446744073709551615").Check(testkit.Rows("18446744073709551615"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:9223372036854775807"))
+	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
+	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:9223372036854775808"))
 }
 
 func (s *testSuite) TestUnsignedFeedback(c *C) {

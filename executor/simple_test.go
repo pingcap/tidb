@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/planner/core"
 
 	. "github.com/pingcap/check"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite3) TestCharsetDatabase(c *C) {
@@ -276,6 +278,8 @@ func (s *testSuite3) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User test2@localhost does not exist."))
+
 	// Test negative cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)

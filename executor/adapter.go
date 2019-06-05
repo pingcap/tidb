@@ -372,6 +372,10 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		if snapshotTS != 0 {
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 		}
+		lowResolutionTSO := sctx.GetSessionVars().LowResolutionTSO
+		if lowResolutionTSO {
+			return nil, errors.New("can not execute write statement when 'tidb_low_resolution_tso' is set")
+		}
 	}
 
 	var err error

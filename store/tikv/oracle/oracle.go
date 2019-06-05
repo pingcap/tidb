@@ -22,6 +22,8 @@ import (
 type Oracle interface {
 	GetTimestamp(ctx context.Context) (uint64, error)
 	GetTimestampAsync(ctx context.Context) Future
+	GetLowResolutionTimestamp(ctx context.Context) (uint64, error)
+	GetLowResolutionTimestampAsync(ctx context.Context) Future
 	IsExpired(lockTimestamp uint64, TTL uint64) bool
 	UntilExpired(lockTimeStamp uint64, TTL uint64) int64
 	Close()

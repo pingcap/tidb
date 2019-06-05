@@ -122,8 +122,8 @@ const (
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
-	// tidb_pessimistic_lock is used to control the transactin behavior.
-	TiDBPessimisticLock = "tidb_pessimistic_lock"
+	// tidb_txn_mode is used to control the transaction behavior.
+	TiDBTxnMode = "tidb_txn_mode"
 
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
@@ -138,6 +138,9 @@ const (
 	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
 	// isolation level.
 	TiDBSkipIsolationLevelCheck = "tidb_skip_isolation_level_check"
+
+	// TiDBLowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
+	TiDBLowResolutionTSO = "tidb_low_resolution_tso"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -288,7 +291,7 @@ const (
 	DefOptAggPushDown                = false
 	DefOptWriteRowID                 = false
 	DefOptCorrelationThreshold       = 0.9
-	DefOptCorrelationExpFactor       = 0
+	DefOptCorrelationExpFactor       = 1
 	DefOptInSubqToJoinAndAgg         = true
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
@@ -314,7 +317,7 @@ const (
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
-	DefTiDBPessimisticLock           = 0
+	DefTiDBTxnMode                   = ""
 	DefTiDBDDLReorgWorkerCount       = 16
 	DefTiDBDDLReorgBatchSize         = 1024
 	DefTiDBDDLErrorCountLimit        = 512

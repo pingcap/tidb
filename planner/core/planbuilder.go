@@ -185,7 +185,7 @@ type PlanBuilder struct {
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
 
-	windowSpecs map[string]ast.WindowSpec
+	windowSpecs map[string]*ast.WindowSpec
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -423,6 +423,13 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	for _, f := range sel.Fields.Fields {
 		if ast.HasWindowFlag(f.Expr) {
 			return true
+		}
+	}
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			if ast.HasWindowFlag(item.Expr) {
+				return true
+			}
 		}
 	}
 	return false
@@ -748,6 +755,10 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
 	for _, col := range tbl.Columns {
+		// The virtual column will not store any data in TiKV, so it should be ignored when collect statistics
+		if col.IsGenerated() && !col.GeneratedStored {
+			continue
+		}
 		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			pkCol = col
 		} else {
@@ -1092,7 +1103,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			}
 		case ast.ShowCreateView:
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, "", "", "", err)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 		}
 		p.SetSchema(buildShowSchema(show, isView))
 	}
@@ -1448,7 +1459,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan 
 	}
 
 	for i, assign := range insert.Setlist {
-		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, checkRefColumn)
+		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
 		}
@@ -1509,7 +1520,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 					RetType: &x.Type,
 				}
 			default:
-				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, true, checkRefColumn)
+				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				return err
@@ -1578,6 +1589,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
 		IsLocal:     ld.IsLocal,
+		OnDuplicate: ld.OnDuplicate,
 		Path:        ld.Path,
 		Table:       ld.Table,
 		Columns:     ld.Columns,
@@ -1794,12 +1806,10 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		if v.Cols != nil && len(v.Cols) != schema.Len() {
 			return nil, ddl.ErrViewWrongList
 		}
-		// we use fieldList to store schema.Columns temporary
-		var fieldList = make([]*ast.SelectField, schema.Len())
+		v.SchemaCols = make([]model.CIStr, schema.Len())
 		for i, col := range schema.Columns {
-			fieldList[i] = &ast.SelectField{AsName: col.ColName}
+			v.SchemaCols[i] = col.ColName
 		}
-		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
 		if _, ok := plan.(LogicalPlan); ok {
 			if b.ctx.GetSessionVars().User != nil {
 				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
@@ -1808,7 +1818,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
 				v.ViewName.Name.L, "", authErr)
 		}
-		if v.Definer.CurrentUser {
+		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
 			v.Definer = b.ctx.GetSessionVars().User
 		}
 		if b.ctx.GetSessionVars().User != nil && v.Definer.String() != b.ctx.GetSessionVars().User.String() {
