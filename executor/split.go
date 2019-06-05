@@ -130,20 +130,26 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 	return getValuesList(lowerIdxKey, upperIdxKey, e.num, idxKeys), nil
 }
 
-func datumSliceToString(ds []types.Datum) (string, error) {
-	str := "("
-	for i, d := range ds {
-		s, err := d.ToString()
-		if err != nil {
-			return str, err
-		}
-		if i > 0 {
-			str += ","
-		}
-		str += s
+// getValuesList is used to get `num` values between lower and upper value.
+// To Simplify the explain, suppose lower and upper value type is int64, and lower=0, upper=100, num=10,
+// then calculate the step=(upper-lower)/num=10, then the function should return 0+10, 10+10, 20+10... all together 9 (num-1) values.
+// then the function will return [10,20,30,40,50,60,70,80,90].
+// The difference is the value type of upper,lower is []byte, So I use getUint64FromBytes to convert []byte to uint64.
+func getValuesList(lower, upper []byte, num int, valuesList [][]byte) [][]byte {
+	commonPrefixIdx := longestCommonPrefixLen(lower, upper)
+	step := getStepValue(lower[commonPrefixIdx:], upper[commonPrefixIdx:], num)
+	startV := getUint64FromBytes(lower[commonPrefixIdx:], 0)
+	// To get `num` regions, only need to split `num-1` idx keys.
+	buf := make([]byte, 8)
+	for i := 0; i < num-1; i++ {
+		value := make([]byte, 0, commonPrefixIdx+8)
+		value = append(value, lower[:commonPrefixIdx]...)
+		startV += step
+		binary.BigEndian.PutUint64(buf, startV)
+		value = append(value, buf...)
+		valuesList = append(valuesList, value)
 	}
-	str += ")"
-	return str, nil
+	return valuesList
 }
 
 // longestCommonPrefixLen gets the longest common prefix byte length.
@@ -183,24 +189,18 @@ func getUint64FromBytes(bs []byte, pad byte) uint64 {
 	return binary.BigEndian.Uint64(buf)
 }
 
-// getValuesList is used to get `num` values between lower and upper value.
-// To Simplify the explain, suppose lower and upper value type is int64, and lower=0, upper=100, num=10,
-// then calculate the step=(upper-lower)/num=10, then the function should return 0+10, 10+10, 20+10... all together 9 (num-1) values.
-// then the function will return [10,20,30,40,50,60,70,80,90].
-// The difference is the value type of upper,lower is []byte, So I use getUint64FromBytes to convert []byte to uint64.
-func getValuesList(lower, upper []byte, num int, valuesList [][]byte) [][]byte {
-	commonPrefixIdx := longestCommonPrefixLen(lower, upper)
-	step := getStepValue(lower[commonPrefixIdx:], upper[commonPrefixIdx:], num)
-	startV := getUint64FromBytes(lower[commonPrefixIdx:], 0)
-	// To get `num` regions, only need to split `num-1` idx keys.
-	buf := make([]byte, 8)
-	for i := 0; i < num-1; i++ {
-		value := make([]byte, 0, commonPrefixIdx+8)
-		value = append(value, lower[:commonPrefixIdx]...)
-		startV += step
-		binary.BigEndian.PutUint64(buf, startV)
-		value = append(value, buf...)
-		valuesList = append(valuesList, value)
+func datumSliceToString(ds []types.Datum) (string, error) {
+	str := "("
+	for i, d := range ds {
+		s, err := d.ToString()
+		if err != nil {
+			return str, err
+		}
+		if i > 0 {
+			str += ","
+		}
+		str += s
 	}
-	return valuesList
+	str += ")"
+	return str, nil
 }
