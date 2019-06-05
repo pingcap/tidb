@@ -2897,7 +2897,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		Args:       []interface{}{newTableID},
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-		// AddTableLock here to avoid this ddl job was execute successful but the session was been kill before return.
+		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
 		// The session will release all table locks it holds, if we don't add the new locking table id here,
 		// the session may forget to release the new locked table id when this ddl job was executed successfully
 		// but the session was killed before return.
