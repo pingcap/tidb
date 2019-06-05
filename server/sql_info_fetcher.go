@@ -168,6 +168,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 		select {
 		case result := <-resultChan:
 			timer.Stop()
+			cancelFunc()
 			if result.err != nil {
 				serveError(w, http.StatusInternalServerError, fmt.Sprintf("explain analyze SQL failed, err: %v", err))
 				return
@@ -241,7 +242,7 @@ func (sh *sqlInfoFetcher) getStatsForTable(pair tableNamePair) (*handle.JSONTabl
 		return nil, err
 	}
 	js, err := h.DumpStatsToJSON(pair.DBName, tbl.Meta(), nil)
-	return js, nil
+	return js, err
 }
 
 func (sh *sqlInfoFetcher) getShowCreateTable(pair tableNamePair, zw *zip.Writer) error {
