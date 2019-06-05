@@ -212,6 +212,13 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			}
 			return nil
 		}
+		cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &handlePair.value)
+		if err != nil {
+			return nil
+		} else if cmp != 0 {
+			p.IsTableDual = true
+			return p
+		}
 		p.Handle = intDatum.GetInt64()
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
