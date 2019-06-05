@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -165,15 +166,17 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// clear table locks.
-	tbs := is.SchemaTables(schema)
-	lockTableIDs := make([]int64, 0)
-	for _, tb := range tbs {
-		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-			lockTableIDs = append(lockTableIDs, tb.Meta().ID)
+	if config.TableLockEnabled() {
+		// Clear table locks hold by the session.
+		tbs := is.SchemaTables(schema)
+		lockTableIDs := make([]int64, 0)
+		for _, tb := range tbs {
+			if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+				lockTableIDs = append(lockTableIDs, tb.Meta().ID)
+			}
 		}
+		ctx.ReleaseTableLockByTableIDs(lockTableIDs)
 	}
-	ctx.ReleaseTableLockByTableIDs(lockTableIDs)
 	return nil
 }
 

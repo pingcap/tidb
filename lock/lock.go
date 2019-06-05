@@ -53,6 +53,10 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	}
 	// TODO: try to remove this get for speed up.
 	tb, err := c.is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	// Ignore this error for "drop table if not exists t1" when t1 doesn't exists.
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}

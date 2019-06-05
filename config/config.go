@@ -576,6 +576,11 @@ func hasRootPrivilege() bool {
 	return os.Geteuid() == 0
 }
 
+// TableLockEnabled uses to check whether enabled the table lock feature.
+func TableLockEnabled() bool {
+	return GetGlobalConfig().EnableTableLock
+}
+
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
 	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp)

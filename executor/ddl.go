@@ -439,7 +439,7 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 }
 
 func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
-	if !config.GetGlobalConfig().EnableTableLock {
+	if !config.TableLockEnabled() {
 		return nil
 	}
 	err := domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
@@ -447,7 +447,7 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 }
 
 func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
-	if !config.GetGlobalConfig().EnableTableLock {
+	if !config.TableLockEnabled() {
 		return nil
 	}
 	lockedTables := e.ctx.GetAllTableLocks()
