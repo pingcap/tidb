@@ -166,17 +166,18 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if config.TableLockEnabled() {
-		// Clear table locks hold by the session.
-		tbs := is.SchemaTables(schema)
-		lockTableIDs := make([]int64, 0)
-		for _, tb := range tbs {
-			if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-				lockTableIDs = append(lockTableIDs, tb.Meta().ID)
-			}
-		}
-		ctx.ReleaseTableLockByTableIDs(lockTableIDs)
+	if !config.TableLockEnabled() {
+		return nil
 	}
+	// Clear table locks hold by the session.
+	tbs := is.SchemaTables(schema)
+	lockTableIDs := make([]int64, 0)
+	for _, tb := range tbs {
+		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+			lockTableIDs = append(lockTableIDs, tb.Meta().ID)
+		}
+	}
+	ctx.ReleaseTableLockByTableIDs(lockTableIDs)
 	return nil
 }
 
@@ -2851,6 +2852,9 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if !config.TableLockEnabled() {
+		return nil
+	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
 		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
 	}
@@ -2896,7 +2900,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableID},
 	}
-	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
 		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
 		// The session will release all table locks it holds, if we don't add the new locking table id here,
 		// the session may forget to release the new locked table id when this ddl job was executed successfully
@@ -2906,8 +2910,13 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	if err != nil {
-		ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
+		if config.TableLockEnabled() {
+			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
+		}
 		return errors.Trace(err)
+	}
+	if !config.TableLockEnabled() {
+		return nil
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
 		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
