@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -492,9 +493,31 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	// double check.
+	_, err = checkAlterTableCharset(tblInfo, dbInfo, toCharset, toCollate)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	// update column charset.
+	for _, col := range tblInfo.Columns {
+		if typesNeedCharset(col.Tp) {
+			col.Charset = toCharset
+			col.Collate = toCollate
+		} else {
+			col.Charset = charset.CharsetBin
+			col.Collate = charset.CharsetBin
+		}
 	}
 
 	tblInfo.Charset = toCharset

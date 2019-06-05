@@ -275,18 +275,27 @@ func ResolveCharsetCollation(tblCharset, dbCharset string) (string, string, erro
 	return charset, collate, nil
 }
 
+func typesNeedCharset(tp byte) bool {
+	switch tp {
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		mysql.TypeEnum, mysql.TypeSet:
+		return true
+	}
+	return false
+}
+
 func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCharset string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
-		switch tp.Tp {
-		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
+		if typesNeedCharset(tp.Tp) {
 			var err error
 			tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
 			if err != nil {
 				return errors.Trace(err)
 			}
-		default:
+		} else {
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
 		}
@@ -1263,13 +1272,13 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (charset, collate string) {
-	charsets := make([]string, len(options))
-	collates := make([]string, len(options))
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (ca, co string, err error) {
+	charsets := make([]string, 0, len(options))
+	collates := make([]string, 0, len(options))
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
-		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
-		// the charset will be utf8, collate will be utf8_bin
+		// we set the ca to the last option. example: alter table t ca latin1 ca utf8 co utf8_bin;
+		// the ca will be utf8, co will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
 			charsets = append(charsets, opt.StrValue)
@@ -1278,12 +1287,26 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		}
 	}
 
-	if len(charsets) != 0 {
-		charset = charsets[len(charsets)-1]
+	if len(charsets) > 1 {
+		return "", "", ErrConflictingDeclarations.GenWithStackByArgs(charsets[0], charsets[1])
+	}
+	if len(charsets) == 1 {
+		if charsets[0] == "" {
+			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs("")
+		}
+		ca = charsets[0]
 	}
 
 	if len(collates) != 0 {
-		collate = collates[len(collates)-1]
+		for i := range collates {
+			if collates[i] == "" {
+				return "", "", ErrUnknownCollation.GenWithStackByArgs("")
+			}
+			if len(ca) != 0 && !charset.ValidCharsetAndCollation(ca, collates[i]) {
+				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(collates[i], ca)
+			}
+		}
+		co = collates[len(collates)-1]
 	}
 	return
 }
@@ -1371,7 +1394,11 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					if handledCharsetOrCollate {
 						continue
 					}
-					toCharset, toCollate := getCharsetAndCollateInTableOption(i, spec.Options)
+					var toCharset, toCollate string
+					toCharset, toCollate, err = getCharsetAndCollateInTableOption(i, spec.Options)
+					if err != nil {
+						return err
+					}
 					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate)
 					handledCharsetOrCollate = true
 				}
@@ -1718,7 +1745,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 // modifiableCharsetAndCollation returns error when the charset or collation is not modifiable.
 func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate string) error {
 	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
-		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset, toCollate)
+		return ErrUnknownCharacterSet.GenWithStack("Unknown character set: '%s', collation: '%s'", toCharset, toCollate)
 	}
 	if toCharset == charset.CharsetUTF8MB4 && origCharset == charset.CharsetUTF8 {
 		// TiDB only allow utf8 to be changed to utf8mb4.
@@ -2152,11 +2179,9 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
-	origCharset := tb.Meta().Charset
-	origCollate := tb.Meta().Collate
 	if toCharset == "" {
 		// charset does not change.
-		toCharset = origCharset
+		toCharset = tb.Meta().Charset
 	}
 
 	if toCollate == "" {
@@ -2166,23 +2191,13 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 			return errors.Trace(err)
 		}
 	}
-	// Old version schema charset maybe modified when load schema if TreatOldVersionUTF8AsUTF8MB4 was enable.
-	// So even if the origCharset equal toCharset, we still need to do the ddl for old version schema.
-	if origCharset == toCharset && origCollate == toCollate && tb.Meta().Version >= model.TableInfoVersion2 {
-		// nothing to do.
+
+	doNothing, err := checkAlterTableCharset(tb.Meta(), schema, toCharset, toCollate)
+	if err != nil {
+		return err
+	}
+	if doNothing {
 		return nil
-	}
-
-	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, col := range tb.Meta().Cols() {
-		if col.Tp == mysql.TypeVarchar {
-			if err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset); err != nil {
-				return errors.Trace(err)
-			}
-		}
 	}
 
 	job := &model.Job{
@@ -2195,6 +2210,64 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+// checkAlterTableCharset uses to check is it possible to change the charset of table.
+// This function returns 2 variable:
+// doNothing: if doNothing is true, means no need to change any more, because the target charset is same with the charset of table.
+// err: if err is not nil, means it is not possible to change table charset to target charset.
+func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCharset, toCollate string) (doNothing bool, err error) {
+	origCharset := tblInfo.Charset
+	origCollate := tblInfo.Collate
+	// Old version schema charset maybe modified when load schema if TreatOldVersionUTF8AsUTF8MB4 was enable.
+	// So even if the origCharset equal toCharset, we still need to do the ddl for old version schema.
+	if origCharset == toCharset && origCollate == toCollate && tblInfo.Version >= model.TableInfoVersion2 {
+		// nothing to do.
+		doNothing = true
+		for _, col := range tblInfo.Columns {
+			if col.Charset == charset.CharsetBin {
+				continue
+			}
+			if col.Charset == toCharset && col.Collate == toCollate {
+				continue
+			}
+			doNothing = false
+		}
+		if doNothing {
+			return doNothing, nil
+		}
+	}
+
+	if len(origCharset) == 0 {
+		// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
+		// This DDL will update the table charset to default charset.
+		origCharset, origCollate, err = ResolveCharsetCollation("", dbInfo.Charset)
+		if err != nil {
+			return doNothing, err
+		}
+	}
+
+	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
+		return doNothing, err
+	}
+
+	for _, col := range tblInfo.Columns {
+		if col.Tp == mysql.TypeVarchar {
+			if err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset); err != nil {
+				return doNothing, err
+			}
+		}
+		if col.Charset == charset.CharsetBin {
+			continue
+		}
+		if len(col.Charset) == 0 {
+			continue
+		}
+		if err = modifiableCharsetAndCollation(toCharset, toCollate, col.Charset, col.Collate); err != nil {
+			return doNothing, err
+		}
+	}
+	return doNothing, nil
 }
 
 // RenameIndex renames an index.
