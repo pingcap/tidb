@@ -85,6 +85,8 @@ func checkLockTpMeetPrivilege(tp model.TableLockType, privilege mysql.PrivilegeT
 	case model.TableLockWrite, model.TableLockWriteLocal:
 		return true
 	case model.TableLockRead:
+		// ShowDBPriv, AllPrivMask,CreatePriv, CreateViewPriv already checked before.
+		// The other privilege in read lock was not allowed.
 		if privilege == mysql.SelectPriv {
 			return true
 		}
