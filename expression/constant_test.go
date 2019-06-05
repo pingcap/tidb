@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -32,12 +34,16 @@ var _ = Suite(&testExpressionSuite{})
 type testExpressionSuite struct{}
 
 func newColumn(id int) *Column {
+	return newColumnWithType(id, types.NewFieldType(mysql.TypeLonglong))
+}
+
+func newColumnWithType(id int, t *types.FieldType) *Column {
 	return &Column{
 		UniqueID: int64(id),
 		ColName:  model.NewCIStr(fmt.Sprint(id)),
 		TblName:  model.NewCIStr("t"),
 		DBName:   model.NewCIStr("test"),
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  t,
 	}
 }
 
@@ -45,6 +51,18 @@ func newLonglong(value int64) *Constant {
 	return &Constant{
 		Value:   types.NewIntDatum(value),
 		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+}
+
+func newDate(year, month, day int) *Constant {
+	var tmp types.Datum
+	tmp.SetMysqlTime(types.Time{
+		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+	})
+	return &Constant{
+		Value:   tmp,
+		RetType: types.NewFieldType(mysql.TypeDate),
 	}
 }
 
@@ -180,6 +198,91 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 	}
 }
 
+func (*testExpressionSuite) TestConstraintPropagation(c *C) {
+	defer testleak.AfterTest(c)()
+	col1 := newColumnWithType(1, types.NewFieldType(mysql.TypeDate))
+	tests := []struct {
+		solver     constraintSolver
+		conditions []Expression
+		result     string
+	}{
+		// Don't propagate this any more, because it makes the code more complex but not
+		// useful for partition pruning.
+		// {
+		// 	solver: newConstraintSolver(ruleColumnGTConst),
+		// 	conditions: []Expression{
+		// 		newFunction(ast.GT, newColumn(0), newLonglong(5)),
+		// 		newFunction(ast.GT, newColumn(0), newLonglong(7)),
+		// 	},
+		// 	result: "gt(test.t.0, 7)",
+		// },
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			conditions: []Expression{
+				newFunction(ast.GT, newColumn(0), newLonglong(5)),
+				newFunction(ast.LT, newColumn(0), newLonglong(5)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			conditions: []Expression{
+				newFunction(ast.GT, newColumn(0), newLonglong(7)),
+				newFunction(ast.LT, newColumn(0), newLonglong(5)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			// col1 > '2018-12-11' and to_days(col1) < 5 => false
+			conditions: []Expression{
+				newFunction(ast.GT, col1, newDate(2018, 12, 11)),
+				newFunction(ast.LT, newFunction(ast.ToDays, col1), newLonglong(5)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			conditions: []Expression{
+				newFunction(ast.LT, newColumn(0), newLonglong(5)),
+				newFunction(ast.GT, newColumn(0), newLonglong(5)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			conditions: []Expression{
+				newFunction(ast.LT, newColumn(0), newLonglong(5)),
+				newFunction(ast.GT, newColumn(0), newLonglong(7)),
+			},
+			result: "0",
+		},
+		{
+			solver: newConstraintSolver(ruleColumnOPConst),
+			// col1 < '2018-12-11' and to_days(col1) > 737999 => false
+			conditions: []Expression{
+				newFunction(ast.LT, col1, newDate(2018, 12, 11)),
+				newFunction(ast.GT, newFunction(ast.ToDays, col1), newLonglong(737999)),
+			},
+			result: "0",
+		},
+	}
+	for _, tt := range tests {
+		ctx := mock.NewContext()
+		conds := make([]Expression, 0, len(tt.conditions))
+		for _, cd := range tt.conditions {
+			conds = append(conds, FoldConstant(cd))
+		}
+		newConds := tt.solver.Solve(ctx, conds)
+		var result []string
+		for _, v := range newConds {
+			result = append(result, v.String())
+		}
+		sort.Strings(result)
+		c.Assert(strings.Join(result, ", "), Equals, tt.result, Commentf("different for expr %s", tt.conditions))
+	}
+}
+
 func (*testExpressionSuite) TestConstantFolding(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
@@ -243,4 +346,80 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 		c.Assert(ok, IsTrue, comment)
 		c.Assert(newConst.DeferredExpr.String(), Equals, tt.deferred, comment)
 	}
+}
+
+func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {
+	defer testleak.AfterTest(c)()
+	m := &MockExpr{}
+	ctx := mock.NewContext()
+	cst := &Constant{DeferredExpr: m, RetType: newIntFieldType()}
+	m.i, m.err = nil, fmt.Errorf("ERROR")
+	_, _, err := cst.EvalInt(ctx, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalReal(ctx, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalDecimal(ctx, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalString(ctx, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalTime(ctx, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalDuration(ctx, chunk.Row{})
+	c.Assert(err, NotNil)
+	_, _, err = cst.EvalJSON(ctx, chunk.Row{})
+	c.Assert(err, NotNil)
+
+	m.i, m.err = nil, nil
+	_, isNull, err := cst.EvalInt(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalReal(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalDecimal(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalString(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalTime(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalDuration(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	_, isNull, err = cst.EvalJSON(ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+
+	m.i = int64(2333)
+	xInt, _, _ := cst.EvalInt(ctx, chunk.Row{})
+	c.Assert(xInt, Equals, int64(2333))
+
+	m.i = float64(123.45)
+	xFlo, _, _ := cst.EvalReal(ctx, chunk.Row{})
+	c.Assert(xFlo, Equals, float64(123.45))
+
+	m.i = "abc"
+	xStr, _, _ := cst.EvalString(ctx, chunk.Row{})
+	c.Assert(xStr, Equals, "abc")
+
+	m.i = &types.MyDecimal{}
+	xDec, _, _ := cst.EvalDecimal(ctx, chunk.Row{})
+	c.Assert(xDec.Compare(m.i.(*types.MyDecimal)), Equals, 0)
+
+	m.i = types.Time{}
+	xTim, _, _ := cst.EvalTime(ctx, chunk.Row{})
+	c.Assert(xTim.Compare(m.i.(types.Time)), Equals, 0)
+
+	m.i = types.Duration{}
+	xDur, _, _ := cst.EvalDuration(ctx, chunk.Row{})
+	c.Assert(xDur.Compare(m.i.(types.Duration)), Equals, 0)
+
+	m.i = json.BinaryJSON{}
+	xJsn, _, _ := cst.EvalJSON(ctx, chunk.Row{})
+	c.Assert(m.i.(json.BinaryJSON).String(), Equals, xJsn.String())
+
+	cln := cst.Clone().(*Constant)
+	c.Assert(cln.DeferredExpr, Equals, cst.DeferredExpr)
 }

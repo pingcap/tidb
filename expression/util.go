@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+	"golang.org/x/tools/container/intsets"
 )
 
 // Filter the input expressions, append the results to result.
@@ -39,6 +42,19 @@ func Filter(result []Expression, input []Expression, filter func(Expression) boo
 		}
 	}
 	return result
+}
+
+// FilterOutInPlace do the filtering out in place.
+// The remained are the ones who doesn't match the filter, storing in the original slice.
+// The filteredOut are the ones match the filter, storing in a new slice.
+func FilterOutInPlace(input []Expression, filter func(Expression) bool) (remained, filteredOut []Expression) {
+	for i := len(input) - 1; i >= 0; i-- {
+		if filter(input[i]) {
+			filteredOut = append(filteredOut, input[i])
+			input = append(input[:i], input[i+1:]...)
+		}
+	}
+	return input, filteredOut
 }
 
 // ExtractColumns extracts all columns from an expression.
@@ -93,6 +109,41 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	return result
 }
 
+// ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
+func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
+	set := &intsets.Sparse{}
+	for _, expr := range exprs {
+		extractColumnSet(expr, set)
+	}
+	return set
+}
+
+func extractColumnSet(expr Expression, set *intsets.Sparse) {
+	switch v := expr.(type) {
+	case *Column:
+		set.Insert(int(v.UniqueID))
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			extractColumnSet(arg, set)
+		}
+	}
+}
+
+func setExprColumnInOperand(expr Expression) Expression {
+	switch v := expr.(type) {
+	case *Column:
+		col := v.Clone().(*Column)
+		col.InOperand = true
+		return col
+	case *ScalarFunction:
+		args := v.GetArgs()
+		for i, arg := range args {
+			args[i] = setExprColumnInOperand(arg)
+		}
+	}
+	return expr
+}
+
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
@@ -102,7 +153,11 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 		if id == -1 {
 			return v
 		}
-		return newExprs[id]
+		newExpr := newExprs[id]
+		if v.InOperand {
+			newExpr = setExprColumnInOperand(newExpr)
+		}
+		return newExpr
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
@@ -234,6 +289,14 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
+func doPushDownNot(ctx sessionctx.Context, exprs []Expression, not bool) []Expression {
+	newExprs := make([]Expression, 0, len(exprs))
+	for _, expr := range exprs {
+		newExprs = append(newExprs, PushDownNot(ctx, expr, not))
+	}
+	return newExprs
+}
+
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
@@ -244,34 +307,22 @@ func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
 			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
-			}
-			return f
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		case ast.LogicAnd:
 			if not {
-				args := f.GetArgs()
-				for i, a := range args {
-					args[i] = PushDownNot(f.GetCtx(), a, true)
-				}
-				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
+				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
+				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), newArgs...)
 			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
-			}
-			return f
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		case ast.LogicOr:
 			if not {
-				args := f.GetArgs()
-				for i, a := range args {
-					args[i] = PushDownNot(f.GetCtx(), a, true)
-				}
-				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
+				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
+				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), newArgs...)
 			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
-			}
-			return f
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		}
 	}
 	if not {
@@ -321,15 +372,15 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 		for _, cnfItem := range cnfItems {
 			code := cnfItem.HashCode(sc)
 			if i == 0 {
-				codeMap[hack.String(code)] = 1
-				hashcode2Expr[hack.String(code)] = cnfItem
-			} else if _, ok := codeMap[hack.String(code)]; ok {
+				codeMap[string(code)] = 1
+				hashcode2Expr[string(code)] = cnfItem
+			} else if _, ok := codeMap[string(code)]; ok {
 				// We need this check because there may be the case like `select * from t, t1 where (t.a=t1.a and t.a=t1.a) or (something).
 				// We should make sure that the two `t.a=t1.a` contributes only once.
 				// TODO: do this out of this function.
-				if _, ok = innerMap[hack.String(code)]; !ok {
-					codeMap[hack.String(code)]++
-					innerMap[hack.String(code)] = struct{}{}
+				if _, ok = innerMap[string(code)]; !ok {
+					codeMap[string(code)]++
+					innerMap[string(code)] = struct{}{}
 				}
 			}
 		}
@@ -350,7 +401,7 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 		newCNFItems := make([]Expression, 0, len(cnfItems))
 		for _, cnfItem := range cnfItems {
 			code := cnfItem.HashCode(sc)
-			_, ok := hashcode2Expr[hack.String(code)]
+			_, ok := hashcode2Expr[string(code)]
 			if !ok {
 				newCNFItems = append(newCNFItems, cnfItem)
 			}
@@ -491,20 +542,6 @@ func (s *exprStack) len() int {
 	return len(s.stack)
 }
 
-// ColumnSliceIsIntersect checks whether two column slice is intersected.
-func ColumnSliceIsIntersect(s1, s2 []*Column) bool {
-	intSet := map[int64]struct{}{}
-	for _, col := range s1 {
-		intSet[col.UniqueID] = struct{}{}
-	}
-	for _, col := range s2 {
-		if _, ok := intSet[col.UniqueID]; ok {
-			return true
-		}
-	}
-	return false
-}
-
 // DatumToConstant generates a Constant expression from a Datum.
 func DatumToConstant(d types.Datum, tp byte) *Constant {
 	return &Constant{Value: d, RetType: types.NewFieldType(tp)}
@@ -526,6 +563,22 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expr
 		value.DeferredExpr = f
 	}
 	return value, nil
+}
+
+// DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
+// We should not *PARSE* a string as JSON under some scenarios. ParseToJSONFlag
+// is 0 for JSON column yet(as well as JSON correlated column), so we can skip
+// it. Moreover, Column.RetType refers to the infoschema, if we modify it, data
+// race may happen if another goroutine read from the infoschema at the same
+// time.
+func DisableParseJSONFlag4Expr(expr Expression) {
+	if _, isColumn := expr.(*Column); isColumn {
+		return
+	}
+	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
+		return
+	}
+	expr.GetType().Flag &= ^mysql.ParseToJSONFlag
 }
 
 // ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
@@ -574,4 +627,79 @@ func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, er
 		return 0, true, nil
 	}
 	return intNum, false, nil
+}
+
+// BuildNotNullExpr wraps up `not(isnull())` for given expression.
+func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
+	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
+	return notNull
+}
+
+// isMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
+func isMutableEffectsExpr(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
+			return true
+		}
+		for _, arg := range x.GetArgs() {
+			if isMutableEffectsExpr(arg) {
+				return true
+			}
+		}
+	case *Column:
+	case *Constant:
+		if x.DeferredExpr != nil {
+			return isMutableEffectsExpr(x.DeferredExpr)
+		}
+	}
+	return false
+}
+
+// RemoveDupExprs removes identical exprs. Not that if expr contains functions which
+// are mutable or have side effects, we cannot remove it even if it has duplicates.
+func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
+	res := make([]Expression, 0, len(exprs))
+	exists := make(map[string]struct{}, len(exprs))
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, expr := range exprs {
+		key := string(expr.HashCode(sc))
+		if _, ok := exists[key]; !ok || isMutableEffectsExpr(expr) {
+			res = append(res, expr)
+			exists[key] = struct{}{}
+		}
+	}
+	return res
+}
+
+// GetUint64FromConstant gets a uint64 from constant expression.
+func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
+	con, ok := expr.(*Constant)
+	if !ok {
+		logutil.Logger(context.Background()).Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
+		return 0, false, false
+	}
+	dt := con.Value
+	if con.DeferredExpr != nil {
+		var err error
+		dt, err = con.DeferredExpr.Eval(chunk.Row{})
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("eval deferred expr failed", zap.Error(err))
+			return 0, false, false
+		}
+	}
+	switch dt.Kind() {
+	case types.KindNull:
+		return 0, true, true
+	case types.KindInt64:
+		val := dt.GetInt64()
+		if val < 0 {
+			return 0, false, false
+		}
+		return uint64(val), false, true
+	case types.KindUint64:
+		return dt.GetUint64(), false, true
+	}
+	return 0, false, false
 }

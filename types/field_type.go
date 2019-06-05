@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	ast "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/types/json"
+	utilMath "github.com/pingcap/tidb/util/math"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -123,12 +124,27 @@ func setTypeFlag(flag *uint, flagItem uint, on bool) {
 func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 	switch value.(type) {
 	case nil:
-		tp.Tp = mysql.TypeUnspecified
+		tp.Tp = mysql.TypeVarString
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
 	default:
 		DefaultTypeForValue(value, tp)
+		if hasVariantFieldLength(tp) {
+			tp.Flen = UnspecifiedLength
+		}
+		if tp.Tp == mysql.TypeUnspecified {
+			tp.Tp = mysql.TypeVarString
+		}
 	}
+}
+
+func hasVariantFieldLength(tp *FieldType) bool {
+	switch tp.Tp {
+	case mysql.TypeLonglong, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeBlob,
+		mysql.TypeBit, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeEnum, mysql.TypeSet:
+		return true
+	}
+	return false
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.
@@ -147,18 +163,18 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case int:
 		tp.Tp = mysql.TypeLonglong
-		tp.Flen = len(strconv.FormatInt(int64(x), 10))
+		tp.Flen = utilMath.StrLenOfInt64Fast(int64(x))
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case int64:
 		tp.Tp = mysql.TypeLonglong
-		tp.Flen = len(strconv.FormatInt(x, 10))
+		tp.Flen = utilMath.StrLenOfInt64Fast(x)
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
-		tp.Flen = len(strconv.FormatUint(x, 10))
+		tp.Flen = utilMath.StrLenOfUint64Fast(x)
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case string:

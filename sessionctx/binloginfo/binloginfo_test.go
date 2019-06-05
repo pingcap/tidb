@@ -44,9 +44,7 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -121,8 +119,8 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 	s.ddl.Stop()
 	s.serv.Stop()
 	os.Remove(s.unixFile)
-	s.store.Close()
 	s.domain.Close()
+	s.store.Close()
 }
 
 func (s *testBinlogSuite) TestBinlog(c *C) {
@@ -418,4 +416,18 @@ func (s *testBinlogSuite) TestPartitionedTable(c *C) {
 	for i := 1; i < 10; i++ {
 		c.Assert(tids[i], Equals, tids[0])
 	}
+}
+
+func (s *testBinlogSuite) TestDeleteSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `b1` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `split_job_id` varchar(30) DEFAULT NULL, PRIMARY KEY (`id`), KEY `b1` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `b2` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `batch_class` varchar(20) DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `bu` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+	tk.MustExec("insert into b2 (job_id, batch_class) values (2, 'TEST');")
+	tk.MustExec("insert into b1 (job_id) values (2);")
+
+	// This test cover a bug that the final schema and the binlog row inconsistent.
+	// The final schema of this SQL should be the schema of table b1, rather than the schema of join result.
+	tk.MustExec("delete from b1 where job_id in (select job_id from b2 where batch_class = 'TEST') or split_job_id in (select job_id from b2 where batch_class = 'TEST');")
+	tk.MustExec("delete b1 from b2 right join b1 on b1.job_id = b2.job_id and batch_class = 'TEST';")
 }

@@ -14,6 +14,7 @@
 package timeutil
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,7 +23,8 @@ import (
 	"syscall"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // init initializes `locCache`.
@@ -74,9 +76,9 @@ func InferSystemTZ() string {
 			if err2 == nil {
 				return name
 			}
-			log.Errorln(err2)
+			logutil.Logger(context.Background()).Error("infer timezone failed", zap.Error(err2))
 		}
-		log.Errorln(err1)
+		logutil.Logger(context.Background()).Error("locate timezone files failed", zap.Error(err1))
 	case tz != "" && tz != "UTC":
 		for _, source := range zoneSources {
 			if _, err := os.Stat(source + tz); err == nil {
@@ -159,8 +161,7 @@ func LoadLocation(name string) (*time.Location, error) {
 // In compatible with MySQL, we change `SystemLocation` to `System`.
 func Zone(loc *time.Location) (string, int64) {
 	_, offset := time.Now().In(loc).Zone()
-	var name string
-	name = loc.String()
+	name := loc.String()
 	// when we found name is "System", we have no chice but push down
 	// "System" to tikv side.
 	if name == "Local" {

@@ -15,26 +15,27 @@ package cascades
 
 import (
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
 )
 
 // ImplementationRule defines the interface for implementation rules.
 type ImplementationRule interface {
 	// Match checks if current GroupExpr matches this rule under required physical property.
-	Match(expr *GroupExpr, prop *property.PhysicalProperty) (matched bool)
+	Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool)
 	// OnImplement generates physical plan using this rule for current GroupExpr. Note that
 	// childrenReqProps of generated physical plan should be set correspondingly in this function.
-	OnImplement(expr *GroupExpr, reqProp *property.PhysicalProperty) (impl Implementation, err error)
+	OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (impl memo.Implementation, err error)
 }
 
 // GetImplementationRules gets the all the candidate implementation rules based
 // on the logical plan node.
 func GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
-	operand := GetOperand(node)
+	operand := memo.GetOperand(node)
 	return implementationMap[operand]
 }
 
-var implementationMap = map[Operand][]ImplementationRule{
+var implementationMap = map[memo.Operand][]ImplementationRule{
 	/**
 	OperandSelection: []ImplementationRule{
 		nil,

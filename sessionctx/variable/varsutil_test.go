@@ -79,6 +79,8 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
 	c.Assert(vars.EnableRadixJoin, Equals, DefTiDBUseRadixJoin)
 	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
+	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
+	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
@@ -97,23 +99,29 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	v := NewSessionVars()
 	v.GlobalVarsAccessor = NewMockGlobalAccessor()
 
-	SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
+	err := SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
 	val, err := GetSessionSystemVar(v, "autocommit")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 	c.Assert(SetSessionSystemVar(v, "autocommit", types.Datum{}), NotNil)
 
 	// 0 converts to OFF
-	SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("0"))
+	err = SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "OFF")
 
 	// 1/ON is not supported (generates a warning and sets to OFF)
-	SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("1"))
+	err = SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "OFF")
 
-	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
+	err = SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, "sql_mode")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "STRICT_TRANS_TABLES")
@@ -121,8 +129,10 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(""))
 	c.Assert(v.StrictSQLMode, IsFalse)
 
-	SetSessionSystemVar(v, "character_set_connection", types.NewStringDatum("utf8"))
-	SetSessionSystemVar(v, "collation_connection", types.NewStringDatum("utf8_general_ci"))
+	err = SetSessionSystemVar(v, "character_set_connection", types.NewStringDatum("utf8"))
+	c.Assert(err, IsNil)
+	err = SetSessionSystemVar(v, "collation_connection", types.NewStringDatum("utf8_general_ci"))
+	c.Assert(err, IsNil)
 	charset, collation := v.GetCharsetInfo()
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_general_ci")
@@ -135,16 +145,26 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		expect       string
 		compareValue bool
 		diff         time.Duration
+		err          error
 	}{
-		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour},
-		{"US/Eastern", "US/Eastern", true, 5 * time.Hour},
+		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
+		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
 		//TODO: Check it out and reopen this case.
 		//{"SYSTEM", "Local", false, 0},
-		{"+10:00", "", true, -10 * time.Hour},
-		{"-6:00", "", true, 6 * time.Hour},
+		{"+10:00", "", true, -10 * time.Hour, nil},
+		{"-6:00", "", true, 6 * time.Hour, nil},
+		{"+14:00", "", true, -14 * time.Hour, nil},
+		{"-12:59", "", true, 12*time.Hour + 59*time.Minute, nil},
+		{"+14:01", "", false, -14 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("+14:01")},
+		{"-13:00", "", false, 13 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("-13:00")},
 	}
 	for _, tt := range tests {
 		err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
+		if tt.err != nil {
+			c.Assert(err, NotNil)
+			continue
+		}
+
 		c.Assert(err, IsNil)
 		c.Assert(v.TimeZone.String(), Equals, tt.expect)
 		if tt.compareValue {
@@ -183,9 +203,12 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
 	c.Assert(v.BatchInsert, IsTrue)
 
-	c.Assert(v.MaxChunkSize, Equals, 32)
-	SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
-	c.Assert(v.MaxChunkSize, Equals, 2)
+	c.Assert(v.InitChunkSize, Equals, 32)
+	c.Assert(v.MaxChunkSize, Equals, 1024)
+	err = SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
+	c.Assert(err, NotNil)
+	err = SetSessionSystemVar(v, TiDBInitChunkSize, types.NewStringDatum("1024"))
+	c.Assert(err, NotNil)
 
 	// Test case for TiDBConfig session variable.
 	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))
@@ -211,10 +234,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
 
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
-
 	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
 	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
@@ -235,4 +254,44 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "on")
 	c.Assert(v.EnableTablePartition, Equals, "on")
+
+	c.Assert(v.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
+	err = SetSessionSystemVar(v, TiDBOptJoinReorderThreshold, types.NewIntDatum(5))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptJoinReorderThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5")
+	c.Assert(v.TiDBOptJoinReorderThreshold, Equals, 5)
+
+	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, true)
+	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
+
+	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("1"))
+	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(v.LowResolutionTSO, Equals, true)
+	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("0"))
+	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(v.LowResolutionTSO, Equals, false)
+
+	c.Assert(v.CorrelationThreshold, Equals, 0.9)
+	err = SetSessionSystemVar(v, TiDBOptCorrelationThreshold, types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptCorrelationThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(v.CorrelationThreshold, Equals, float64(0))
 }

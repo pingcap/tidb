@@ -43,7 +43,7 @@ var _ = Suite(&testStatisticsSuite{})
 
 type testStatisticsSuite struct {
 	count   int
-	samples []types.Datum
+	samples []*SampleItem
 	rc      sqlexec.RecordSet
 	pk      sqlexec.RecordSet
 }
@@ -83,23 +83,23 @@ func (r *recordSet) getNext() []types.Datum {
 	return row
 }
 
-func (r *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (r *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	row := r.getNext()
 	if row != nil {
 		for i := 0; i < len(row); i++ {
-			chk.AppendDatum(i, &row[i])
+			req.AppendDatum(i, &row[i])
 		}
 	}
 	return nil
 }
 
-func (r *recordSet) NewChunk() *chunk.Chunk {
+func (r *recordSet) NewRecordBatch() *chunk.RecordBatch {
 	fields := make([]*types.FieldType, 0, len(r.fields))
 	for _, field := range r.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunkWithCapacity(fields, 32)
+	return chunk.NewRecordBatch(chunk.NewChunkWithCapacity(fields, 32))
 }
 
 func (r *recordSet) Close() error {
@@ -109,23 +109,26 @@ func (r *recordSet) Close() error {
 
 func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.count = 100000
-	samples := make([]types.Datum, 10000)
+	samples := make([]*SampleItem, 10000)
+	for i := 0; i < len(samples); i++ {
+		samples[i] = &SampleItem{}
+	}
 	start := 1000
-	samples[0].SetInt64(0)
+	samples[0].Value.SetInt64(0)
 	for i := 1; i < start; i++ {
-		samples[i].SetInt64(2)
+		samples[i].Value.SetInt64(2)
 	}
 	for i := start; i < len(samples); i++ {
-		samples[i].SetInt64(int64(i))
+		samples[i].Value.SetInt64(int64(i))
 	}
 	for i := start; i < len(samples); i += 3 {
-		samples[i].SetInt64(samples[i].GetInt64() + 1)
+		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 1)
 	}
 	for i := start; i < len(samples); i += 5 {
-		samples[i].SetInt64(samples[i].GetInt64() + 2)
+		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 2)
 	}
 	sc := new(stmtctx.StatementContext)
-	err := types.SortDatums(sc, samples)
+	err := SortSampleItems(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
 
@@ -174,15 +177,15 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	ctx := context.Background()
 	for {
-		chk := records.NewChunk()
-		err := records.Next(ctx, chk)
+		req := records.NewRecordBatch()
+		err := records.Next(ctx, req)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
-		it := chunk.NewIterator4Chunk(chk)
+		it := chunk.NewIterator4Chunk(req.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, records.Fields())
 			err = b.Iterate(datums[0])
@@ -198,14 +201,14 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
-	chk := records.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
+	req := records.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err := records.Next(ctx, chk)
+		err := records.Next(ctx, req)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -262,7 +265,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(count, Equals, 0.0)
 	count = col.equalRowCount(types.NewIntDatum(200000000))
 	c.Check(count, Equals, 0.0)
-	count = col.betweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
+	count = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(int(count), Equals, 4994)
 	count = col.lessRowCount(types.NewIntDatum(1))
 	c.Check(int(count), Equals, 9)
@@ -292,9 +295,9 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 1)
 	count = col.lessRowCount(encodeKey(types.NewIntDatum(20000)))
 	c.Check(int(count), Equals, 19999)
-	count = col.betweenRowCount(encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
+	count = col.BetweenRowCount(encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
 	c.Check(int(count), Equals, 4999)
-	count = col.betweenRowCount(encodeKey(types.MinNotNullDatum()), encodeKey(types.NewIntDatum(0)))
+	count = col.BetweenRowCount(encodeKey(types.MinNotNullDatum()), encodeKey(types.NewIntDatum(0)))
 	c.Check(int(count), Equals, 0)
 	count = col.lessRowCount(encodeKey(types.NewIntDatum(0)))
 	c.Check(int(count), Equals, 0)
@@ -309,14 +312,8 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 1)
 	count = col.lessRowCount(types.NewIntDatum(20000))
 	c.Check(int(count), Equals, 20000)
-	count = col.betweenRowCount(types.NewIntDatum(30000), types.NewIntDatum(35000))
+	count = col.BetweenRowCount(types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(int(count), Equals, 5000)
-	count = col.greaterAndEqRowCount(types.NewIntDatum(1001))
-	c.Check(int(count), Equals, 98999)
-	count = col.lessAndEqRowCount(types.NewIntDatum(99999))
-	c.Check(int(count), Equals, 100000)
-	count = col.lessAndEqRowCount(types.Datum{})
-	c.Check(int(count), Equals, 0)
 	count = col.greaterRowCount(types.NewIntDatum(1001))
 	c.Check(int(count), Equals, 98998)
 	count = col.lessRowCount(types.NewIntDatum(99999))
@@ -324,10 +321,11 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 
 	datum := types.Datum{}
 	datum.SetMysqlJSON(json.BinaryJSON{TypeCode: json.TypeCodeLiteral})
+	item := &SampleItem{Value: datum}
 	collector = &SampleCollector{
 		Count:     1,
 		NullCount: 0,
-		Samples:   []types.Datum{datum},
+		Samples:   []*SampleItem{item},
 		FMSketch:  sketch,
 	}
 	col, err = BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeJSON))
@@ -400,7 +398,7 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(h.NDV, Equals, t.ndv)
 		c.Assert(h.Len(), Equals, t.bucketNum)
-		c.Assert(int64(h.totalRowCount()), Equals, t.leftNum+t.rightNum)
+		c.Assert(int64(h.TotalRowCount()), Equals, t.leftNum+t.rightNum)
 		expectLower := types.NewIntDatum(t.leftLower)
 		cmp, err := h.GetLower(0).CompareDatum(sc, &expectLower)
 		c.Assert(err, IsNil)
@@ -457,7 +455,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
 	tbl := &Table{
 		HistColl: HistColl{
-			Count:   int64(col.totalRowCount()),
+			Count:   int64(col.TotalRowCount()),
 			Columns: make(map[int64]*Column),
 		},
 	}
@@ -526,7 +524,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
 	tbl := &Table{
 		HistColl: HistColl{
-			Count:   int64(col.totalRowCount()),
+			Count:   int64(col.TotalRowCount()),
 			Columns: make(map[int64]*Column),
 		},
 	}
@@ -618,7 +616,7 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 	tbl := &Table{
 		HistColl: HistColl{
-			Count:   int64(idx.totalRowCount()),
+			Count:   int64(idx.TotalRowCount()),
 			Indices: make(map[int64]*Index),
 		},
 	}

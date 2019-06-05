@@ -309,7 +309,9 @@ type functionClass interface {
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
 }
 
-// funcs holds all registered builtin functions.
+// funcs holds all registered builtin functions. When new function is added,
+// check expression/function_traits.go to see if it should be appended to
+// any set there.
 var funcs = map[string]functionClass{
 	// common functions
 	ast.Coalesce: &coalesceFunctionClass{baseFunctionClass{ast.Coalesce, 1, -1}},
@@ -468,6 +470,7 @@ var funcs = map[string]functionClass{
 	// information functions
 	ast.ConnectionID: &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},
 	ast.CurrentUser:  &currentUserFunctionClass{baseFunctionClass{ast.CurrentUser, 0, 0}},
+	ast.CurrentRole:  &currentRoleFunctionClass{baseFunctionClass{ast.CurrentRole, 0, 0}},
 	ast.Database:     &databaseFunctionClass{baseFunctionClass{ast.Database, 0, 0}},
 	// This function is a synonym for DATABASE().
 	// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_schema

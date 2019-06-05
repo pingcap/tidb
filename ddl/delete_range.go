@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -27,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -38,9 +40,16 @@ const (
 	delBackLog   = 128
 )
 
+// enableEmulatorGC means whether to enable emulator GC. The default is enable.
+// In some unit tests, we want to stop emulator GC, then wen can set enableEmulatorGC to 0.
+var emulatorGCEnable = int32(1)
+
 type delRangeManager interface {
 	// addDelRangeJob add a DDL job into gc_delete_range table.
 	addDelRangeJob(job *model.Job) error
+	// removeFromGCDeleteRange removes the deleting table job from gc_delete_range table by jobID and tableID.
+	// It's use for recover the table that was mistakenly deleted.
+	removeFromGCDeleteRange(jobID, tableID int64) error
 	start()
 	clear()
 }
@@ -86,8 +95,19 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 	if !dr.storeSupport {
 		dr.emulatorCh <- struct{}{}
 	}
-	log.Infof("[ddl] add job (%d,%s) into delete-range table", job.ID, job.Type.String())
+	logutil.Logger(ddlLogCtx).Info("[ddl] add job into delete-range table", zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()))
 	return nil
+}
+
+// removeFromGCDeleteRange implements delRangeManager interface.
+func (dr *delRange) removeFromGCDeleteRange(jobID, tableID int64) error {
+	ctx, err := dr.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer dr.sessPool.put(ctx)
+	err = util.RemoveFromGCDeleteRange(ctx, jobID, tableID)
+	return errors.Trace(err)
 }
 
 // start implements delRangeManager interface.
@@ -100,10 +120,9 @@ func (dr *delRange) start() {
 
 // clear implements delRangeManager interface.
 func (dr *delRange) clear() {
-	log.Infof("[ddl] closing delRange session pool")
+	logutil.Logger(ddlLogCtx).Info("[ddl] closing delRange")
 	close(dr.quitCh)
 	dr.wait.Wait()
-	dr.sessPool.close()
 }
 
 // startEmulator is only used for those storage engines which don't support
@@ -111,35 +130,52 @@ func (dr *delRange) clear() {
 // deletes all keys in each DelRangeTask.
 func (dr *delRange) startEmulator() {
 	defer dr.wait.Done()
-	log.Infof("[ddl] start delRange emulator")
+	logutil.Logger(ddlLogCtx).Info("[ddl] start delRange emulator")
 	for {
 		select {
 		case <-dr.emulatorCh:
 		case <-dr.quitCh:
 			return
 		}
-		err := dr.doDelRangeWork()
-		terror.Log(errors.Trace(err))
+		if IsEmulatorGCEnable() {
+			err := dr.doDelRangeWork()
+			terror.Log(errors.Trace(err))
+		}
 	}
+}
+
+// EmulatorGCEnable enables emulator gc. It exports for testing.
+func EmulatorGCEnable() {
+	atomic.StoreInt32(&emulatorGCEnable, 1)
+}
+
+// EmulatorGCDisable disables emulator gc. It exports for testing.
+func EmulatorGCDisable() {
+	atomic.StoreInt32(&emulatorGCEnable, 0)
+}
+
+// IsEmulatorGCEnable indicates whether emulator GC enabled. It exports for testing.
+func IsEmulatorGCEnable() bool {
+	return atomic.LoadInt32(&emulatorGCEnable) == 1
 }
 
 func (dr *delRange) doDelRangeWork() error {
 	ctx, err := dr.sessPool.get()
 	if err != nil {
-		log.Errorf("[ddl] delRange emulator get session fail: %s", err)
+		logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator get session failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	defer dr.sessPool.put(ctx)
 
 	ranges, err := util.LoadDeleteRanges(ctx, math.MaxInt64)
 	if err != nil {
-		log.Errorf("[dd] delRange emulator load tasks fail: %s", err)
+		logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator load tasks failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	for _, r := range ranges {
 		if err := dr.doTask(ctx, r); err != nil {
-			log.Errorf("[ddl] delRange emulator do task fail: %s", err)
+			logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator do task failed", zap.Error(err))
 			return errors.Trace(err)
 		}
 	}
@@ -185,14 +221,14 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 		}
 		if finish {
 			if err := util.CompleteDeleteRange(ctx, r); err != nil {
-				log.Errorf("[ddl] delRange emulator complete task fail: %s", err)
+				logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator complete task failed", zap.Error(err))
 				return errors.Trace(err)
 			}
-			log.Infof("[ddl] delRange emulator complete task: (%d, %d)", r.JobID, r.ElementID)
+			logutil.Logger(ddlLogCtx).Info("[ddl] delRange emulator complete task", zap.Int64("jobID", r.JobID), zap.Int64("elementID", r.ElementID))
 			break
 		}
 		if err := util.UpdateDeleteRange(ctx, r, newStartKey, oldStartKey); err != nil {
-			log.Errorf("[ddl] delRange emulator update task fail: %s", err)
+			logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator update task failed", zap.Error(err))
 		}
 		oldStartKey = newStartKey
 	}
@@ -243,7 +279,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
-	case model.ActionDropTablePartition:
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		var physicalTableID int64
 		if err := job.DecodeArgs(&physicalTableID); err != nil {
 			return errors.Trace(err)
@@ -298,7 +334,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 }
 
 func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts uint64) error {
-	log.Infof("[ddl] insert into delete-range table with key: (%d,%d)", jobID, elementID)
+	logutil.Logger(ddlLogCtx).Info("[ddl] insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64("elementID", elementID))
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
 	sql := fmt.Sprintf(insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)

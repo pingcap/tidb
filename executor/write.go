@@ -14,9 +14,9 @@
 package executor
 
 import (
+	"context"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -62,7 +63,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			// Cast changed fields with respective columns.
 			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
 			if err != nil {
-				return false, false, 0, errors.Trace(err)
+				return false, false, 0, err
 			}
 			newData[i] = v
 		}
@@ -72,7 +73,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	for i, col := range t.Cols() {
 		var err error
 		if newData[i], err = col.HandleBadNull(newData[i], sc); err != nil {
-			return false, false, 0, errors.Trace(err)
+			return false, false, 0, err
 		}
 	}
 
@@ -80,7 +81,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	for i, col := range t.Cols() {
 		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		if err != nil {
-			return false, false, 0, errors.Trace(err)
+			return false, false, 0, err
 		}
 		if cmp != 0 {
 			changed = true
@@ -88,7 +89,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			// Rebase auto increment id if the field is changed.
 			if mysql.HasAutoIncrementFlag(col.Flag) {
 				if err = t.RebaseAutoID(ctx, newData[i].GetInt64(), true); err != nil {
-					return false, false, 0, errors.Trace(err)
+					return false, false, 0, err
 				}
 			}
 			if col.IsPKHandleColumn(t.Meta()) {
@@ -104,6 +105,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 
+	sc.AddTouchedRows(1)
 	// If no changes, nothing to do, return directly.
 	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
@@ -120,7 +122,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				newData[i] = v
 				modified[i] = true
 			} else {
-				return false, false, 0, errors.Trace(err)
+				return false, false, 0, err
 			}
 		}
 	}
@@ -128,23 +130,22 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
 	var err error
 	if handleChanged {
-		skipHandleCheck := false
 		if sc.DupKeyAsWarning {
 			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
 			// If the new handle exists, this will avoid to remove the record.
 			err = tables.CheckHandleExists(ctx, t, newHandle, newData)
 			if err != nil {
-				return false, handleChanged, newHandle, errors.Trace(err)
+				return false, handleChanged, newHandle, err
 			}
-			skipHandleCheck = true
 		}
 		if err = t.RemoveRecord(ctx, h, oldData); err != nil {
-			return false, false, 0, errors.Trace(err)
+			return false, false, 0, err
 		}
 		// the `affectedRows` is increased when adding new record.
-		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
+		newHandle, err = t.AddRecord(ctx, newData,
+			&table.AddRecordOpt{CreateIdxOpt: table.CreateIdxOpt{SkipHandleCheck: sc.DupKeyAsWarning}, IsUpdate: true})
 		if err != nil {
-			return false, false, 0, errors.Trace(err)
+			return false, false, 0, err
 		}
 		if onDup {
 			sc.AddAffectedRows(1)
@@ -152,7 +153,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	} else {
 		// Update record to new value and update index.
 		if err = t.UpdateRecord(ctx, h, oldData, newData, modified); err != nil {
-			return false, false, 0, errors.Trace(err)
+			return false, false, 0, err
 		}
 		if onDup {
 			sc.AddAffectedRows(2)
@@ -160,6 +161,8 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			sc.AddAffectedRows(1)
 		}
 	}
+	sc.AddUpdatedRows(1)
+	sc.AddCopiedRows(1)
 
 	return true, handleChanged, newHandle, nil
 }
@@ -169,8 +172,8 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, err error) error {
 	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
-	log.Error(err)
-	return errors.Trace(newErr)
+	logutil.Logger(context.Background()).Error("data too long for column", zap.String("colName", colName), zap.Int("rowIndex", rowIdx))
+	return newErr
 }
 
 func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int {

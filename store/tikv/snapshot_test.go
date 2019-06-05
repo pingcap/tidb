@@ -21,7 +21,8 @@ import (
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type testSnapshotSuite struct {
@@ -99,7 +100,8 @@ func (s *testSnapshotSuite) deleteKeys(keys []kv.Key, c *C) {
 
 func (s *testSnapshotSuite) TestBatchGet(c *C) {
 	for _, rowNum := range s.rowNums {
-		log.Debugf("Test BatchGet with length[%d]", rowNum)
+		logutil.Logger(context.Background()).Debug("test BatchGet",
+			zap.Int("length", rowNum))
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
 			k := encodeKey(s.prefix, s08d("key", i))
@@ -117,7 +119,8 @@ func (s *testSnapshotSuite) TestBatchGet(c *C) {
 
 func (s *testSnapshotSuite) TestBatchGetNotExist(c *C) {
 	for _, rowNum := range s.rowNums {
-		log.Debugf("Test BatchGetNotExist with length[%d]", rowNum)
+		logutil.Logger(context.Background()).Debug("test BatchGetNotExist",
+			zap.Int("length", rowNum))
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
 			k := encodeKey(s.prefix, s08d("key", i))
@@ -145,12 +148,17 @@ func makeKeys(rowNum int, prefix string) []kv.Key {
 
 func (s *testSnapshotSuite) TestWriteConflictPrettyFormat(c *C) {
 	conflict := &pb.WriteConflict{
-		StartTs:    399402937522847774,
-		ConflictTs: 399402937719455772,
-		Key:        []byte{116, 128, 0, 0, 0, 0, 0, 1, 155, 95, 105, 128, 0, 0, 0, 0, 0, 0, 1, 1, 82, 87, 48, 49, 0, 0, 0, 0, 251, 1, 55, 54, 56, 50, 50, 49, 49, 48, 255, 57, 0, 0, 0, 0, 0, 0, 0, 248, 1, 0, 0, 0, 0, 0, 0, 0, 0, 247},
-		Primary:    []byte{116, 128, 0, 0, 0, 0, 0, 1, 155, 95, 105, 128, 0, 0, 0, 0, 0, 0, 1, 1, 82, 87, 48, 49, 0, 0, 0, 0, 251, 1, 55, 54, 56, 50, 50, 49, 49, 48, 255, 57, 0, 0, 0, 0, 0, 0, 0, 248, 1, 0, 0, 0, 0, 0, 0, 0, 0, 247},
+		StartTs:          399402937522847774,
+		ConflictTs:       399402937719455772,
+		ConflictCommitTs: 399402937719455773,
+		Key:              []byte{116, 128, 0, 0, 0, 0, 0, 1, 155, 95, 105, 128, 0, 0, 0, 0, 0, 0, 1, 1, 82, 87, 48, 49, 0, 0, 0, 0, 251, 1, 55, 54, 56, 50, 50, 49, 49, 48, 255, 57, 0, 0, 0, 0, 0, 0, 0, 248, 1, 0, 0, 0, 0, 0, 0, 0, 0, 247},
+		Primary:          []byte{116, 128, 0, 0, 0, 0, 0, 1, 155, 95, 105, 128, 0, 0, 0, 0, 0, 0, 1, 1, 82, 87, 48, 49, 0, 0, 0, 0, 251, 1, 55, 54, 56, 50, 50, 49, 49, 48, 255, 57, 0, 0, 0, 0, 0, 0, 0, 248, 1, 0, 0, 0, 0, 0, 0, 0, 0, 247},
 	}
 
-	expectedStr := `WriteConflict: startTS=399402937522847774, conflictTS=399402937719455772, key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }}`
-	c.Assert(conflictToString(conflict), Equals, expectedStr)
+	expectedStr := "[kv:9007]Write conflict, " +
+		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
+		"key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
+		"primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
+		kv.TxnRetryableMark
+	c.Assert(newWriteConflictError(conflict).Error(), Equals, expectedStr)
 }

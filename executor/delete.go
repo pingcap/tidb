@@ -17,7 +17,6 @@ import (
 	"context"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -44,17 +43,17 @@ type DeleteExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeleteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *DeleteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("delete.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 
-	chk.Reset()
+	req.Reset()
 	if e.IsMultiTable {
-		return errors.Trace(e.deleteMultiTablesByChunk(ctx))
+		return e.deleteMultiTablesByChunk(ctx)
 	}
-	return errors.Trace(e.deleteSingleTableByChunk(ctx))
+	return e.deleteSingleTableByChunk(ctx)
 }
 
 // matchingDeletingTable checks whether this column is from the table which is in the deleting list.
@@ -79,7 +78,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column,
 	handle := row[handleCol.Index].GetInt64()
 	err := e.removeRow(e.ctx, tbl, handle, row[:end])
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	return nil
@@ -106,9 +105,9 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].Next(ctx, chk)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -116,7 +115,9 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				e.ctx.StmtCommit()
+				if err = e.ctx.StmtCommit(); err != nil {
+					return err
+				}
 				if err = e.ctx.NewTxn(ctx); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
@@ -127,7 +128,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			datumRow := chunkRow.GetDatumRow(fields)
 			err = e.deleteOneRow(tbl, handleCol, datumRow)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			rowCount++
 		}
@@ -186,9 +187,9 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	chk := e.children[0].newFirstChunk()
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
-		err := e.children[0].Next(ctx, chk)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -201,7 +202,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 
-	return errors.Trace(e.removeRowsInTblRowMap(tblRowMap))
+	return e.removeRowsInTblRowMap(tblRowMap)
 }
 
 func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
@@ -209,7 +210,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 		for handle, data := range rowMap {
 			err := e.removeRow(e.ctx, e.tblID2Table[id], handle, data)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
@@ -220,7 +221,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, data []types.Datum) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil

@@ -14,19 +14,21 @@
 package core
 
 import (
+	"context"
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -42,6 +44,7 @@ var (
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
 	_ LogicalPlan = &LogicalLimit{}
+	_ LogicalPlan = &LogicalWindow{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -63,6 +66,12 @@ const (
 	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
 	AntiLeftOuterSemiJoin
 )
+
+// IsOuterJoin returns if this joiner is a outer joiner
+func (tp JoinType) IsOuterJoin() bool {
+	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
 
 func (tp JoinType) String() string {
 	switch tp {
@@ -95,10 +104,13 @@ const (
 type LogicalJoin struct {
 	logicalSchemaProducer
 
-	JoinType       JoinType
-	reordered      bool
-	cartesianJoin  bool
-	StraightJoin   bool
+	JoinType      JoinType
+	reordered     bool
+	cartesianJoin bool
+	StraightJoin  bool
+
+	// hintInfo stores the join algorithm hint information specified by client.
+	hintInfo       *tableHintInfo
 	preferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
@@ -123,30 +135,54 @@ type LogicalJoin struct {
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
+	for i, cond := range p.LeftConditions {
+		p.LeftConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
+	for i, cond := range p.RightConditions {
+		p.RightConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
+	for i, cond := range p.OtherConditions {
+		p.OtherConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
 	for i := len(p.EqualConditions) - 1; i >= 0; i-- {
-		p.EqualConditions[i] = expression.ColumnSubstitute(p.EqualConditions[i], schema, exprs).(*expression.ScalarFunction)
-		// After the column substitute, the equal condition may become single side condition.
-		if p.children[0].Schema().Contains(p.EqualConditions[i].GetArgs()[1].(*expression.Column)) {
-			p.LeftConditions = append(p.LeftConditions, p.EqualConditions[i])
+		newCond := expression.ColumnSubstitute(p.EqualConditions[i], schema, exprs).(*expression.ScalarFunction)
+
+		// If the columns used in the new filter all come from the left child,
+		// we can push this filter to it.
+		if expression.ExprFromSchema(newCond, p.children[0].Schema()) {
+			p.LeftConditions = append(p.LeftConditions, newCond)
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
-		} else if p.children[1].Schema().Contains(p.EqualConditions[i].GetArgs()[0].(*expression.Column)) {
-			p.RightConditions = append(p.RightConditions, p.EqualConditions[i])
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
 		}
-	}
-	for i, fun := range p.LeftConditions {
-		p.LeftConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
-	}
-	for i, fun := range p.RightConditions {
-		p.RightConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
-	}
-	for i, fun := range p.OtherConditions {
-		p.OtherConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
+
+		// If the columns used in the new filter all come from the right
+		// child, we can push this filter to it.
+		if expression.ExprFromSchema(newCond, p.children[1].Schema()) {
+			p.RightConditions = append(p.RightConditions, newCond)
+			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
+		}
+
+		_, lhsIsCol := newCond.GetArgs()[0].(*expression.Column)
+		_, rhsIsCol := newCond.GetArgs()[1].(*expression.Column)
+
+		// If the columns used in the new filter are not all expression.Column,
+		// we can not use it as join's equal condition.
+		if !(lhsIsCol && rhsIsCol) {
+			p.OtherConditions = append(p.OtherConditions, newCond)
+			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
+		}
+
+		p.EqualConditions[i] = newCond
 	}
 }
 
 func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
-	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan), false, false)
+	eq, left, right, other := p.extractOnCondition(onConds, false, false)
 	p.EqualConditions = append(eq, p.EqualConditions...)
 	p.LeftConditions = append(left, p.LeftConditions...)
 	p.RightConditions = append(right, p.RightConditions...)
@@ -294,13 +330,11 @@ type DataSource struct {
 
 	TableAsName *model.CIStr
 
-	LimitCount *int64
-
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
-
-	// relevantIndices means the indices match the push down conditions
-	relevantIndices []bool
+	// allConds contains all the filters on this table. For now it's maintained
+	// in predicate push down and used only in partition pruning.
+	allConds []expression.Expression
 
 	statisticTable *statistics.Table
 
@@ -310,6 +344,7 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	isPartition     bool
 	physicalTableID int64
+	partitionNames  []model.CIStr
 }
 
 // accessPath tells how we access one index or just access table.
@@ -341,23 +376,25 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	path.tableFilters = ds.pushedDownConds
 	var pkCol *expression.Column
 	columnLen := len(ds.schema.Columns)
-	if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
-		pkCol = ds.schema.Columns[columnLen-1]
-	} else if ds.tableInfo.PKIsHandle {
+	isUnsigned := false
+	if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
+	} else if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
+		pkCol = ds.schema.Columns[columnLen-1]
 	}
 	if pkCol == nil {
-		path.ranges = ranger.FullIntRange(false)
+		path.ranges = ranger.FullIntRange(isUnsigned)
 		return false, nil
 	}
 
-	path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
+	path.ranges = ranger.FullIntRange(isUnsigned)
 	if len(ds.pushedDownConds) == 0 {
 		return false, nil
 	}
-	path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
+	path.accessConds, path.tableFilters = ranger.DetachCondsForColumn(ds.ctx, ds.pushedDownConds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
 	// can be used to access data.
 	corColInAccessConds := false
@@ -395,7 +432,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	}
 	path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
@@ -411,57 +448,64 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 			break
 		}
 	}
-	return noIntervalRange, errors.Trace(err)
+	return noIntervalRange, err
 }
 
 // deriveIndexPathStats will fulfill the information that the accessPath need.
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
 func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
-	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+	eqOrInCount := 0
 	if len(path.idxCols) != 0 {
-		path.ranges, path.accessConds, path.tableFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
+		path.ranges = res.Ranges
+		path.accessConds = res.AccessConds
+		path.tableFilters = res.RemainedConds
+		path.eqCondCount = res.EqCondCount
+		eqOrInCount = res.EqOrInCount
 		path.countAfterAccess, err = ds.stats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 	} else {
 		path.tableFilters = ds.pushedDownConds
 	}
-	corColInAccessConds := false
-	if path.eqCondCount == len(path.accessConds) {
-		access, remained := path.splitCorColAccessCondFromFilters()
-		path.accessConds = append(path.accessConds, access...)
+	if eqOrInCount == len(path.accessConds) {
+		accesses, remained := path.splitCorColAccessCondFromFilters(eqOrInCount)
+		path.accessConds = append(path.accessConds, accesses...)
 		path.tableFilters = remained
-		if len(access) > 0 {
-			corColInAccessConds = true
+		if len(accesses) > 0 && ds.statisticTable.Pseudo {
+			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+		} else {
+			selectivity := path.countAfterAccess / float64(ds.statisticTable.Count)
+			for i := range accesses {
+				col := path.idxCols[eqOrInCount+i]
+				ndv := ds.getColumnNDV(col.ID)
+				ndv *= selectivity
+				if ndv < 1 {
+					ndv = 1.0
+				}
+				path.countAfterAccess = path.countAfterAccess / ndv
+			}
 		}
 	}
 	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
-	if corColInAccessConds {
-		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
-		if ok && !ds.stats.HistColl.Pseudo {
-			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
-		} else {
-			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
-		}
-	}
 	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.countAfterAccess < ds.stats.RowCount {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, _, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
-			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+			logutil.Logger(context.Background()).Warn("calculate selectivity faild, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)
@@ -489,24 +533,24 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	return noIntervalRanges && !haveNullVal, nil
 }
 
-func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []expression.Expression) {
-	access = make([]expression.Expression, len(path.idxCols)-path.eqCondCount)
+func (path *accessPath) splitCorColAccessCondFromFilters(eqOrInCount int) (access, remained []expression.Expression) {
+	access = make([]expression.Expression, len(path.idxCols)-eqOrInCount)
 	used := make([]bool, len(path.tableFilters))
-	for i := path.eqCondCount; i < len(path.idxCols); i++ {
+	for i := eqOrInCount; i < len(path.idxCols); i++ {
 		matched := false
 		for j, filter := range path.tableFilters {
 			if used[j] || !isColEqCorColOrConstant(filter, path.idxCols[i]) {
 				continue
 			}
 			matched = true
-			access[i-path.eqCondCount] = filter
+			access[i-eqOrInCount] = filter
 			if path.idxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
 			}
 			break
 		}
 		if !matched {
-			access = access[:i-path.eqCondCount]
+			access = access[:i-eqOrInCount]
 			break
 		}
 	}
@@ -616,4 +660,68 @@ type LogicalLock struct {
 	baseLogicalPlan
 
 	Lock ast.SelectLockType
+}
+
+// WindowFrame represents a window function frame.
+type WindowFrame struct {
+	Type  ast.FrameType
+	Start *FrameBound
+	End   *FrameBound
+}
+
+// FrameBound is the boundary of a frame.
+type FrameBound struct {
+	Type      ast.BoundType
+	UnBounded bool
+	Num       uint64
+	// CalcFuncs is used for range framed windows.
+	// We will build the date_add or date_sub functions for frames like `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`,
+	// and plus or minus for frames like `1 preceding`.
+	CalcFuncs []expression.Expression
+	// CmpFuncs is used to decide whether one row is included in the current frame.
+	CmpFuncs []expression.CompareFunc
+}
+
+// LogicalWindow represents a logical window function plan.
+type LogicalWindow struct {
+	logicalSchemaProducer
+
+	WindowFuncDescs []*aggregation.WindowFuncDesc
+	PartitionBy     []property.Item
+	OrderBy         []property.Item
+	Frame           *WindowFrame
+}
+
+// GetWindowResultColumns returns the columns storing the result of the window function.
+func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
+	return p.schema.Columns[p.schema.Len()-len(p.WindowFuncDescs):]
+}
+
+// extractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
+// e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
+// only [t2.a] is returned.
+func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := p.extractCorrelatedCols()
+	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
+	for _, corCol := range corCols {
+		idx := schema.ColumnIndex(&corCol.Column)
+		if idx != -1 {
+			if resultCorCols[idx] == nil {
+				resultCorCols[idx] = &expression.CorrelatedColumn{
+					Column: *schema.Columns[idx],
+					Data:   new(types.Datum),
+				}
+			}
+			corCol.Data = resultCorCols[idx].Data
+		}
+	}
+	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2].
+	length := 0
+	for _, col := range resultCorCols {
+		if col != nil {
+			resultCorCols[length] = col
+			length++
+		}
+	}
+	return resultCorCols[:length]
 }

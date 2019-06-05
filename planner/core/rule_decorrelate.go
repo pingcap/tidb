@@ -16,43 +16,12 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/types"
 )
-
-// extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.
-// e.g. If the correlated columns from inner plan are [t1.a, t2.a, t3.a] and outer plan's schema is [t2.a, t2.b, t2.c],
-// only [t2.a] is treated as this apply's correlated column.
-func (la *LogicalApply) extractCorColumnsBySchema() {
-	schema := la.children[0].Schema()
-	corCols := la.children[1].extractCorrelatedCols()
-	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
-	for _, corCol := range corCols {
-		idx := schema.ColumnIndex(&corCol.Column)
-		if idx != -1 {
-			if resultCorCols[idx] == nil {
-				resultCorCols[idx] = &expression.CorrelatedColumn{
-					Column: *schema.Columns[idx],
-					Data:   new(types.Datum),
-				}
-			}
-			corCol.Data = resultCorCols[idx].Data
-		}
-	}
-	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2].
-	length := 0
-	for _, col := range resultCorCols {
-		if col != nil {
-			resultCorCols[length] = col
-			length++
-		}
-	}
-	la.corCols = resultCorCols[:length]
-}
 
 // canPullUpAgg checks if an apply can pull an aggregation up.
 func (la *LogicalApply) canPullUpAgg() bool {
@@ -132,7 +101,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1]
-		apply.extractCorColumnsBySchema()
+		apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
 		if len(apply.corCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
@@ -168,7 +137,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				np, err := s.optimize(p)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				proj.SetChildren(np)
 				return proj, nil
@@ -197,7 +166,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
 				np, err := s.optimize(p)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				agg.SetChildren(np)
 				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
@@ -223,7 +192,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				if len(eqCondWithCorCol) > 0 {
 					originalExpr := sel.Conditions
 					sel.Conditions = remainedExpr
-					apply.extractCorColumnsBySchema()
+					apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
 					// There's no other correlated column.
 					if len(apply.corCols) == 0 {
 						join := &apply.LogicalJoin
@@ -264,7 +233,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 						return s.optimize(p)
 					}
 					sel.Conditions = originalExpr
-					apply.extractCorColumnsBySchema()
+					apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
 				}
 			}
 		}
@@ -273,7 +242,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	for _, child := range p.Children() {
 		np, err := s.optimize(child)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		newChildren = append(newChildren, np)
 	}

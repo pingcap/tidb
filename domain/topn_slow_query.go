@@ -82,7 +82,6 @@ func (q *slowQueryQueue) Enqueue(info *SlowQueryInfo) {
 	}
 
 	q.data = append(q.data, info)[1:]
-	return
 }
 
 func (q *slowQueryQueue) Query(count int) []*SlowQueryInfo {
@@ -160,6 +159,10 @@ func (q *topNSlowQueries) Append(info *SlowQueryInfo) {
 	}
 }
 
+func (q *topNSlowQueries) QueryAll() []*SlowQueryInfo {
+	return q.recent.data
+}
+
 func (q *topNSlowQueries) RemoveExpired(now time.Time) {
 	q.user.RemoveExpired(now, q.period)
 	q.internal.RemoveExpired(now, q.period)
@@ -222,4 +225,5 @@ type SlowQueryInfo struct {
 	TableIDs string
 	IndexIDs string
 	Internal bool
+	Digest   string
 }

@@ -14,21 +14,26 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	binlog "github.com/pingcap/tipb/go-binlog"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-binlog"
+	"go.uber.org/zap"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
@@ -47,9 +52,9 @@ type TxnState struct {
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
 
-	// If StmtCommit meets error (which should not happen, just in case), mark it.
-	// And rollback the whole transaction when it commit.
-	fail error
+	// If doNotCommit is not nil, Commit() will not commit the transaction.
+	// doNotCommit flag may be set when StmtCommit fail.
+	doNotCommit error
 }
 
 func (st *TxnState) init() {
@@ -88,21 +93,20 @@ func (st *TxnState) GoString() string {
 		s.WriteString("state=pending")
 	} else if st.Valid() {
 		s.WriteString("state=valid")
-		fmt.Fprintf(&s, ", startTS=%d", st.Transaction.StartTS())
+		fmt.Fprintf(&s, ", txnStartTS=%d", st.Transaction.StartTS())
 		if len(st.dirtyTableOP) > 0 {
-			fmt.Fprintf(&s, ", len(dirtyTable)=%d", len(st.dirtyTableOP))
+			fmt.Fprintf(&s, ", len(dirtyTable)=%d, %#v", len(st.dirtyTableOP), st.dirtyTableOP)
 		}
 		if len(st.mutations) > 0 {
-			fmt.Fprintf(&s, ", len(mutations)=%d", len(st.mutations))
+			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(st.mutations), st.mutations)
+		}
+		if st.buf != nil && st.buf.Len() != 0 {
+			fmt.Fprintf(&s, ", buf.length: %d, buf.size: %d", st.buf.Len(), st.buf.Size())
 		}
 	} else {
 		s.WriteString("state=invalid")
 	}
 
-	if st.fail != nil {
-		s.WriteString(", fail=")
-		s.WriteString(st.fail.Error())
-	}
 	s.WriteString("}")
 	return s.String()
 }
@@ -128,7 +132,7 @@ func (st *TxnState) changePendingToValid(txnCap int) error {
 	txn, err := future.wait()
 	if err != nil {
 		st.Transaction = nil
-		return errors.Trace(err)
+		return err
 	}
 	txn.SetCap(txnCap)
 	st.Transaction = txn
@@ -149,24 +153,60 @@ type dirtyTableOperation struct {
 	row    []types.Datum
 }
 
+var hasMockAutoIDRetry = int64(0)
+
+func enableMockAutoIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIDRetry, 1)
+}
+
+func mockAutoIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIDRetry) == 1
+}
+
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
-	if st.fail != nil {
-		// If any error happen during StmtCommit, don't commit this transaction.
-		err := st.fail
-		st.fail = nil
-		return errors.Trace(err)
+	defer st.reset()
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
+		logutil.Logger(context.Background()).Error("the code should never run here",
+			zap.String("TxnState", st.GoString()),
+			zap.Stack("something must be wrong"))
+		return errors.New("invalid transaction")
 	}
-	return errors.Trace(st.Transaction.Commit(ctx))
+	if st.doNotCommit != nil {
+		if err1 := st.Transaction.Rollback(); err1 != nil {
+			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
+		}
+		return errors.Trace(st.doNotCommit)
+	}
+
+	// mockCommitError8942 is used for PR #8942.
+	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
+
+	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
+	failpoint.Inject("mockCommitRetryForAutoID", func(val failpoint.Value) {
+		if val.(bool) && !mockAutoIDRetry() {
+			enableMockAutoIDRetry()
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
+
+	return st.Transaction.Commit(ctx)
 }
 
 // Rollback overrides the Transaction interface.
 func (st *TxnState) Rollback() error {
-	if st.fail != nil {
-		log.Error(errors.Trace(st.fail))
-		st.fail = nil
-	}
-	return errors.Trace(st.Transaction.Rollback())
+	defer st.reset()
+	return st.Transaction.Rollback()
+}
+
+func (st *TxnState) reset() {
+	st.doNotCommit = nil
+	st.cleanup()
+	st.changeToInvalid()
 }
 
 // Get overrides the Transaction interface.
@@ -179,12 +219,42 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 		}
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(val) == 0 {
 		return nil, kv.ErrNotExist
 	}
 	return val, nil
+}
+
+// BatchGet overrides the Transaction interface.
+func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]kv.Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := st.buf.Get(key)
+		if kv.IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
+	}
+	storageValues, err := st.Transaction.BatchGet(shrinkKeys)
+	if err != nil {
+		return nil, err
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
 }
 
 // Set overrides the Transaction interface.
@@ -201,11 +271,11 @@ func (st *TxnState) Delete(k kv.Key) error {
 func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.Iter(k, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	retrieverIt, err := st.Transaction.Iter(k, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
@@ -214,11 +284,11 @@ func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.IterReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	retrieverIt, err := st.Transaction.IterReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
@@ -235,6 +305,45 @@ func (st *TxnState) cleanup() {
 		}
 		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
+}
+
+// KeysNeedToLock returns the keys need to be locked.
+func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
+	keys := make([]kv.Key, 0, st.buf.Len())
+	if err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		if !keyNeedToLock(k, v) {
+			return nil
+		}
+		if mb := st.Transaction.GetMemBuffer(); mb != nil {
+			_, err1 := mb.Get(k)
+			if err1 == nil {
+				// Key is already in txn MemBuffer, must already been locked, we don't need to lock it again.
+				return nil
+			}
+		}
+		// The statement MemBuffer will be reused, so we must copy the key here.
+		keys = append(keys, append([]byte{}, k...))
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func keyNeedToLock(k, v []byte) bool {
+	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
+	if !isTableKey {
+		// meta key always need to lock.
+		return true
+	}
+	isDelete := len(v) == 0
+	if isDelete {
+		// only need to delete row key.
+		return k[10] == 'r'
+	}
+	isNonUniqueIndex := len(v) == 1 && v[0] == '0'
+	// Put row key and unique index need to lock.
+	return !isNonUniqueIndex
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
@@ -259,13 +368,14 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 }
 
 func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
+	dt := dirtyDB.GetDirtyTable(op.tid)
 	switch op.kind {
 	case table.DirtyTableAddRow:
-		dirtyDB.AddRow(op.tid, op.handle, op.row)
+		dt.AddRow(op.handle, op.row)
 	case table.DirtyTableDeleteRow:
-		dirtyDB.DeleteRow(op.tid, op.handle)
+		dt.DeleteRow(op.handle)
 	case table.DirtyTableTruncate:
-		dirtyDB.TruncateTable(op.tid)
+		dt.TruncateTable()
 	}
 }
 
@@ -273,9 +383,15 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 type txnFuture struct {
 	future oracle.Future
 	store  kv.Storage
+
+	mockFail bool
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
+	if tf.mockFail {
+		return nil, errors.New("mock get timestamp fail")
+	}
+
 	startTS, err := tf.future.Wait()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
@@ -292,31 +408,43 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	}
 
 	oracleStore := s.store.GetOracle()
-	tsFuture := oracleStore.GetTimestampAsync(ctx)
-	return &txnFuture{tsFuture, s.store}
+	var tsFuture oracle.Future
+	if s.sessionVars.LowResolutionTSO {
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
+	} else {
+		tsFuture = oracleStore.GetTimestampAsync(ctx)
+	}
+	ret := &txnFuture{future: tsFuture, store: s.store}
+	if x := ctx.Value("mockGetTSFail"); x != nil {
+		ret.mockFail = true
+	}
+	return ret
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() {
-	if s.txn.fail != nil {
-		return
-	}
-
+func (s *session) StmtCommit() error {
 	defer s.txn.cleanup()
 	st := &s.txn
+	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
-		// gofail: var mockStmtCommitError bool
-		// if mockStmtCommitError {
-		// 	return errors.New("mock stmt commit error")
-		// }
-		if len(v) == 0 {
-			return errors.Trace(st.Transaction.Delete(k))
+		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
+			if val.(bool) {
+				count++
+			}
+		})
+
+		if count > 3 {
+			return errors.New("mock stmt commit error")
 		}
-		return errors.Trace(st.Transaction.Set(k, v))
+
+		if len(v) == 0 {
+			return st.Transaction.Delete(k)
+		}
+		return st.Transaction.Set(k, v)
 	})
 	if err != nil {
-		s.txn.fail = errors.Trace(err)
-		return
+		st.doNotCommit = err
+		return err
 	}
 
 	// Need to flush binlog.
@@ -331,6 +459,7 @@ func (s *session) StmtCommit() {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.

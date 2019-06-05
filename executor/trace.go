@@ -16,18 +16,16 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/planner"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/tracing"
 	"sourcegraph.com/sourcegraph/appdash"
 	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )
@@ -50,137 +48,117 @@ type TraceExec struct {
 }
 
 // Next executes real query and collects span later.
-func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *TraceExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.exhausted {
 		return nil
 	}
-
-	if e.format == "json" {
-		if se, ok := e.ctx.(sqlexec.SQLExecutor); ok {
-			store := appdash.NewMemoryStore()
-			tracer := traceImpl.NewTracer(store)
-			span := tracer.StartSpan("trace")
-			defer span.Finish()
-			ctx = opentracing.ContextWithSpan(ctx, span)
-			recordSets, err := se.Execute(ctx, e.stmtNode.Text())
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			for _, rs := range recordSets {
-				_, err = drainRecordSet(ctx, e.ctx, rs)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if err = rs.Close(); err != nil {
-					return errors.Trace(err)
-				}
-			}
-
-			traces, err := store.Traces(appdash.TracesOpts{})
-			if err != nil {
-				return errors.Trace(err)
-			}
-			data, err := json.Marshal(traces)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			// Split json data into rows to avoid the max packet size limitation.
-			const maxRowLen = 4096
-			for len(data) > maxRowLen {
-				chk.AppendString(0, string(data[:maxRowLen]))
-				data = data[maxRowLen:]
-			}
-			chk.AppendString(0, string(data))
-		}
+	se, ok := e.ctx.(sqlexec.SQLExecutor)
+	if !ok {
 		e.exhausted = true
 		return nil
 	}
 
-	// TODO: If the following code is never used, remove it later.
-	// record how much time was spent for optimizeing plan
-	optimizeSp := e.rootTrace.Tracer().StartSpan("plan_optimize", opentracing.FollowsFrom(e.rootTrace.Context()))
-	stmtPlan, err := planner.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
-	if err != nil {
-		return err
-	}
-	optimizeSp.Finish()
-
-	pp, ok := stmtPlan.(plannercore.PhysicalPlan)
-	if !ok {
-		return errors.New("cannot cast logical plan to physical plan")
-	}
-
-	// append select executor to trace executor
-	stmtExec := e.builder.build(pp)
-
-	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
-		e.CollectedSpans = append(e.CollectedSpans, sp)
-	})
-	err = stmtExec.Open(ctx)
+	store := appdash.NewMemoryStore()
+	tracer := traceImpl.NewTracer(store)
+	span := tracer.StartSpan("trace")
+	defer span.Finish()
+	ctx = opentracing.ContextWithSpan(ctx, span)
+	recordSets, err := se.Execute(ctx, e.stmtNode.Text())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stmtExecChk := stmtExec.newFirstChunk()
 
-	// store span into context
-	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
-
-	for {
-		if err := stmtExec.Next(ctx, stmtExecChk); err != nil {
+	for _, rs := range recordSets {
+		_, err = drainRecordSet(ctx, e.ctx, rs)
+		if err != nil {
 			return errors.Trace(err)
 		}
-		if stmtExecChk.NumRows() == 0 {
-			break
+		if err = rs.Close(); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
-	e.rootTrace.LogKV("event", "tracing completed")
-	e.rootTrace.Finish()
-	var rootSpan basictracer.RawSpan
-
-	treeSpans := make(map[uint64][]basictracer.RawSpan)
-	for _, sp := range e.CollectedSpans {
-		treeSpans[sp.ParentSpanID] = append(treeSpans[sp.ParentSpanID], sp)
-		// if a span's parentSpanID is 0, then it is root span
-		// this is by design
-		if sp.ParentSpanID == 0 {
-			rootSpan = sp
-		}
+	traces, err := store.Traces(appdash.TracesOpts{})
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	dfsTree(rootSpan, treeSpans, "", false, chk)
+	// Row format.
+	if e.format != "json" {
+		if len(traces) < 1 {
+			e.exhausted = true
+			return nil
+		}
+		trace := traces[0]
+		sortTraceByStartTime(trace)
+		dfsTree(trace, "", false, req.Chunk)
+		e.exhausted = true
+		return nil
+	}
+
+	// Json format.
+	data, err := json.Marshal(traces)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Split json data into rows to avoid the max packet size limitation.
+	const maxRowLen = 4096
+	for len(data) > maxRowLen {
+		req.AppendString(0, string(data[:maxRowLen]))
+		data = data[maxRowLen:]
+	}
+	req.AppendString(0, string(data))
 	e.exhausted = true
 	return nil
 }
 
 func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 
 	for {
-		err := rs.Next(ctx, chk)
-		if err != nil || chk.NumRows() == 0 {
+		err := rs.Next(ctx, req)
+		if err != nil || req.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
-		iter := chunk.NewIterator4Chunk(chk)
+		iter := chunk.NewIterator4Chunk(req.Chunk)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 
-func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, prefix string, isLast bool, chk *chunk.Chunk) {
-	suffix := ""
-	spans := tree[span.Context.SpanID]
-	var newPrefix string
-	if span.ParentSpanID == 0 {
-		newPrefix = prefix
+type sortByStartTime []*appdash.Trace
+
+func (t sortByStartTime) Len() int { return len(t) }
+func (t sortByStartTime) Less(i, j int) bool {
+	return getStartTime(t[j]).After(getStartTime(t[i]))
+}
+func (t sortByStartTime) Swap(i, j int) { t[i], t[j] = t[j], t[i] }
+
+func getStartTime(trace *appdash.Trace) (t time.Time) {
+	if e, err := trace.TimespanEvent(); err == nil {
+		t = e.Start()
+	}
+	return
+}
+
+func sortTraceByStartTime(trace *appdash.Trace) {
+	sort.Sort(sortByStartTime(trace.Sub))
+	for _, t := range trace.Sub {
+		sortTraceByStartTime(t)
+	}
+}
+
+func dfsTree(t *appdash.Trace, prefix string, isLast bool, chk *chunk.Chunk) {
+	var newPrefix, suffix string
+	if len(prefix) == 0 {
+		newPrefix = prefix + "  "
 	} else {
-		if len(tree[span.ParentSpanID]) > 0 && !isLast {
+		if !isLast {
 			suffix = "├─"
 			newPrefix = prefix + "│ "
 		} else {
@@ -189,11 +167,19 @@ func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, pr
 		}
 	}
 
-	chk.AppendString(0, prefix+suffix+span.Operation)
-	chk.AppendString(1, span.Start.Format(time.StampNano))
-	chk.AppendString(2, span.Duration.String())
+	var start time.Time
+	var duration time.Duration
+	if e, err := t.TimespanEvent(); err == nil {
+		start = e.Start()
+		end := e.End()
+		duration = end.Sub(start)
+	}
 
-	for i, sp := range spans {
-		dfsTree(sp, tree, newPrefix, i == (len(spans))-1 /*last element of array*/, chk)
+	chk.AppendString(0, prefix+suffix+t.Span.Name())
+	chk.AppendString(1, start.Format("15:04:05.000000"))
+	chk.AppendString(2, duration.String())
+
+	for i, sp := range t.Sub {
+		dfsTree(sp, newPrefix, i == (len(t.Sub))-1 /*last element of array*/, chk)
 	}
 }

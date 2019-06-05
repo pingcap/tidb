@@ -14,17 +14,19 @@
 package distsql
 
 import (
+	"fmt"
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -38,26 +40,32 @@ type RequestBuilder struct {
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
-	return &builder.Request, errors.Trace(builder.err)
+	return &builder.Request, builder.err
+}
+
+// SetMemTracker sets a memTracker for this request.
+func (builder *RequestBuilder) SetMemTracker(sctx sessionctx.Context, label fmt.Stringer) *RequestBuilder {
+	t := memory.NewTracker(label, sctx.GetSessionVars().MemQuotaDistSQL)
+	t.AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
+	builder.Request.MemTracker = t
+	return builder
 }
 
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
 // to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
-	if builder.err != nil {
-		return builder
+	if builder.err == nil {
+		builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges, fb)
 	}
-	builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges, fb)
 	return builder
 }
 
 // SetIndexRanges sets "KeyRanges" for "kv.Request" by converting index range
 // "ranges" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range) *RequestBuilder {
-	if builder.err != nil {
-		return builder
+	if builder.err == nil {
+		builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges, nil)
 	}
-	builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges, nil)
 	return builder
 }
 
@@ -70,41 +78,38 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []int64) *Requ
 
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
-	if builder.err != nil {
-		return builder
+	if builder.err == nil {
+		builder.Request.Tp = kv.ReqTypeDAG
+		builder.Request.StartTs = dag.StartTs
+		builder.Request.Data, builder.err = dag.Marshal()
 	}
 
-	builder.Request.Tp = kv.ReqTypeDAG
-	builder.Request.StartTs = dag.StartTs
-	builder.Request.Data, builder.err = dag.Marshal()
 	return builder
 }
 
 // SetAnalyzeRequest sets the request type to "ReqTypeAnalyze" and cosntruct request data.
 func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestBuilder {
-	if builder.err != nil {
-		return builder
+	if builder.err == nil {
+		builder.Request.Tp = kv.ReqTypeAnalyze
+		builder.Request.StartTs = ana.StartTs
+		builder.Request.Data, builder.err = ana.Marshal()
+		builder.Request.NotFillCache = true
+		builder.Request.IsolationLevel = kv.RC
+		builder.Request.Priority = kv.PriorityLow
 	}
 
-	builder.Request.Tp = kv.ReqTypeAnalyze
-	builder.Request.StartTs = ana.StartTs
-	builder.Request.Data, builder.err = ana.Marshal()
-	builder.Request.NotFillCache = true
-	builder.Request.IsolationLevel = kv.RC
-	builder.Request.Priority = kv.PriorityLow
 	return builder
 }
 
 // SetChecksumRequest sets the request type to "ReqTypeChecksum" and construct request data.
 func (builder *RequestBuilder) SetChecksumRequest(checksum *tipb.ChecksumRequest) *RequestBuilder {
-	if builder.err != nil {
-		return builder
+	if builder.err == nil {
+		builder.Request.Tp = kv.ReqTypeChecksum
+		builder.Request.StartTs = checksum.StartTs
+		builder.Request.Data, builder.err = checksum.Marshal()
+		builder.Request.NotFillCache = true
 	}
 
-	builder.Request.Tp = kv.ReqTypeChecksum
-	builder.Request.StartTs = checksum.StartTs
-	builder.Request.Data, builder.err = checksum.Marshal()
-	builder.Request.NotFillCache = true
 	return builder
 }
 
@@ -170,10 +175,9 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 
 // TableRangesToKVRanges converts table ranges to "KeyRange".
 func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
-	if fb == nil || fb.Hist() == nil {
+	if fb == nil || fb.Hist == nil {
 		return tableRangesToKVRangesWithoutSplit(tid, ranges)
 	}
-	ranges = fb.Hist().SplitRange(ranges)
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
@@ -248,19 +252,22 @@ func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
 func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
-	if fb == nil || fb.Hist() == nil {
+	if fb == nil || fb.Hist == nil {
 		return indexRangesToKVWithoutSplit(sc, tid, idxID, ranges)
 	}
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
 		low, high, err := encodeIndexKey(sc, ran)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		feedbackRanges = append(feedbackRanges, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
 	}
-	feedbackRanges = fb.Hist().SplitRange(feedbackRanges)
+	feedbackRanges, ok := fb.Hist.SplitRange(sc, feedbackRanges, true)
+	if !ok {
+		fb.Invalidate()
+	}
 	krs := make([]kv.KeyRange, 0, len(feedbackRanges))
 	for _, ran := range feedbackRanges {
 		low, high := ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
@@ -288,7 +295,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tid, idxID int64,
 	for _, ran := range ranges {
 		low, high, err := encodeIndexKey(sc, ran)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
 		endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
@@ -300,14 +307,14 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tid, idxID int64,
 func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []byte, error) {
 	low, err := codec.EncodeKey(sc, nil, ran.LowVal...)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	if ran.LowExclude {
 		low = []byte(kv.Key(low).PrefixNext())
 	}
 	high, err := codec.EncodeKey(sc, nil, ran.HighVal...)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 
 	if !ran.HighExclude {

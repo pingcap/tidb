@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // Transaction options
@@ -32,8 +33,6 @@ const (
 	PresumeKeyNotExistsError
 	// BinlogInfo contains the binlog data and client.
 	BinlogInfo
-	// Skip existing check when "prewrite".
-	SkipCheckForWrite
 	// SchemaChecker is used for checking schema-validity.
 	SchemaChecker
 	// IsolationLevel sets isolation level for current transaction. The default level is SI.
@@ -46,6 +45,8 @@ const (
 	SyncLog
 	// KeyOnly retrieve only keys, it can be used in scan now.
 	KeyOnly
+	// Pessimistic is defined for pessimistic lock
+	Pessimistic
 )
 
 // Priority value for transaction priority.
@@ -133,7 +134,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
-	LockKeys(keys ...Key) error
+	LockKeys(ctx context.Context, forUpdateTS uint64, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -148,10 +149,13 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
-	// GetSnapshot returns the snapshot of this transaction.
-	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
+	// SetAssertion sets an assertion for an operation on the key.
+	SetAssertion(key Key, assertion AssertionType)
+	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+	BatchGet(keys []Key) (map[string][]byte, error)
+	IsPessimistic() bool
 }
 
 // Client is used to send request to KV layer.
@@ -206,6 +210,8 @@ type Request struct {
 	// Streaming indicates using streaming API for this request, result in that one Next()
 	// call would not corresponds to a whole region result.
 	Streaming bool
+	// MemTracker is used to trace and control memory usage in co-processor layer.
+	MemTracker *memory.Tracker
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -217,6 +223,8 @@ type ResultSubset interface {
 	GetStartKey() Key
 	// GetExecDetails gets the detail information.
 	GetExecDetails() *execdetails.ExecDetails
+	// MemSize returns how many bytes of memory this result use for tracing memory usage.
+	MemSize() int64
 }
 
 // Response represents the response returned from KV layer.
@@ -266,6 +274,12 @@ type Storage interface {
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
 	SupportDeleteRange() (supported bool)
+	// Name gets the name of the storage engine
+	Name() string
+	// Describe returns of brief introduction of the storage
+	Describe() string
+	// ShowStatus returns the specified status of the storage
+	ShowStatus(ctx context.Context, key string) (interface{}, error)
 }
 
 // FnKeyCmp is the function for iterator the keys

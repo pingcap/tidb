@@ -126,6 +126,9 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"drop table `t `", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create database ``", true, errors.New("[ddl:1102]Incorrect database name ''")},
 		{"create database `test `", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
+		{"alter database collate = 'utf8mb4_bin'", true, nil},
+		{"alter database `` collate = 'utf8mb4_bin'", true, errors.New("[ddl:1102]Incorrect database name ''")},
+		{"alter database `test ` collate = 'utf8mb4_bin'", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
 		{"drop database ``", true, errors.New("[ddl:1102]Incorrect database name ''")},
 		{"drop database `test `", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
 		{"alter table `t ` add column c int", true, errors.New("[ddl:1103]Incorrect table name 't '")},
@@ -192,9 +195,17 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a join (select 2) b join (select 3) a;", false, core.ErrNonUniqTable},
+		{"select person.id from person inner join person on person.id = person.id;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b;", true, nil},
 		{"select * from (select * from ( select 1 ) a join (select 2) b) b join (select 3) a;", false, nil},
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
+
+		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
+
+		// issue 9464
+		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
+		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
+		{"create table t (a DOUBLE NULL, b_sto DOUBLE GENERATED ALWAYS AS (a + 2) STORED UNIQUE KEY NOT NULL PRIMARY KEY);", false, nil},
 	}
 
 	store, dom, err := newStoreWithBootstrap()
@@ -214,7 +225,11 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		err = core.Preprocess(ctx, stmt, is, tt.inPrepare)
+		var opts []core.PreprocessOpt
+		if tt.inPrepare {
+			opts = append(opts, core.InPrepare)
+		}
+		err = core.Preprocess(ctx, stmt, is, opts...)
 		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("sql: %s, err:%v", tt.sql, err))
 	}
 }

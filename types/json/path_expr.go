@@ -117,6 +117,30 @@ func (pe PathExpression) popOneLastLeg() (PathExpression, pathLeg) {
 	return PathExpression{legs: pe.legs[:lastLegIdx]}, lastLeg
 }
 
+// pushBackOneIndexLeg pushback one leg of INDEX type
+func (pe PathExpression) pushBackOneIndexLeg(index int) PathExpression {
+	newPe := PathExpression{
+		legs:  append(pe.legs, pathLeg{typ: pathLegIndex, arrayIndex: index}),
+		flags: pe.flags,
+	}
+	if index == -1 {
+		newPe.flags |= pathExpressionContainsAsterisk
+	}
+	return newPe
+}
+
+// pushBackOneKeyLeg pushback one leg of KEY type
+func (pe PathExpression) pushBackOneKeyLeg(key string) PathExpression {
+	newPe := PathExpression{
+		legs:  append(pe.legs, pathLeg{typ: pathLegKey, dotKey: key}),
+		flags: pe.flags,
+	}
+	if key == "*" {
+		newPe.flags |= pathExpressionContainsAsterisk
+	}
+	return newPe
+}
+
 // ContainsAnyAsterisk returns true if pe contains any asterisk.
 func (pe PathExpression) ContainsAnyAsterisk() bool {
 	return pe.flags.containsAnyAsterisk()
@@ -211,4 +235,28 @@ func isBlank(c rune) bool {
 		return true
 	}
 	return false
+}
+
+func (pe PathExpression) String() string {
+	var s strings.Builder
+
+	s.WriteString("$")
+	for _, leg := range pe.legs {
+		switch leg.typ {
+		case pathLegIndex:
+			if leg.arrayIndex == -1 {
+				s.WriteString("[*]")
+			} else {
+				s.WriteString("[")
+				s.WriteString(strconv.Itoa(leg.arrayIndex))
+				s.WriteString("]")
+			}
+		case pathLegKey:
+			s.WriteString(".")
+			s.WriteString(quoteString(leg.dotKey))
+		case pathLegDoubleAsterisk:
+			s.WriteString("**")
+		}
+	}
+	return s.String()
 }

@@ -554,6 +554,9 @@ func (b *builtinValuesRealSig) evalReal(_ chunk.Row) (float64, bool, error) {
 		if row.IsNull(b.offset) {
 			return 0, true, nil
 		}
+		if b.getRetTp().Tp == mysql.TypeFloat {
+			return float64(row.GetFloat32(b.offset)), false, nil
+		}
 		return row.GetFloat64(b.offset), false, nil
 	}
 	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
@@ -612,13 +615,22 @@ func (b *builtinValuesStringSig) evalString(_ chunk.Row) (string, bool, error) {
 	if row.IsEmpty() {
 		return "", true, errors.New("Session current insert values is nil")
 	}
-	if b.offset < row.Len() {
-		if row.IsNull(b.offset) {
-			return "", true, nil
-		}
-		return row.GetString(b.offset), false, nil
+	if b.offset >= row.Len() {
+		return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 	}
-	return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+
+	if row.IsNull(b.offset) {
+		return "", true, nil
+	}
+
+	// Specially handle the ENUM/SET/BIT input value.
+	if retType := b.getRetTp(); retType.Hybrid() {
+		val := row.GetDatum(b.offset, retType)
+		res, err := val.ToString()
+		return res, err != nil, err
+	}
+
+	return row.GetString(b.offset), false, nil
 }
 
 type builtinValuesTimeSig struct {

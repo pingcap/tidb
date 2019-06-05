@@ -262,7 +262,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 			var err error
 			buffer, err = dumpBinaryDateTime(buffer, row.GetTime(i), nil)
 			if err != nil {
-				return buffer, errors.Trace(err)
+				return buffer, err
 			}
 		case mysql.TypeDuration:
 			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i, 0).Duration)...)
@@ -341,6 +341,21 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 		}
 	}
 	return buffer, nil
+}
+
+func lengthEncodedIntSize(n uint64) int {
+	switch {
+	case n <= 250:
+		return 1
+
+	case n <= 0xffff:
+		return 3
+
+	case n <= 0xffffff:
+		return 4
+	}
+
+	return 9
 }
 
 const (

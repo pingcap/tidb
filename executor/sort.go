@@ -16,17 +16,20 @@ package executor
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 )
+
+var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
 
 // SortExec represents sorting executor.
 type SortExec struct {
@@ -43,8 +46,6 @@ type SortExec struct {
 	keyColumns []int
 	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
-	// keyChunks is used to store ByItems values when not all ByItems are column.
-	keyChunks *chunk.List
 	// rowChunks is the chunks to store row values.
 	rowChunks *chunk.List
 	// rowPointer store the chunk index and row index for each row.
@@ -57,7 +58,7 @@ type SortExec struct {
 func (e *SortExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
-	return errors.Trace(e.children[0].Close())
+	return e.children[0].Close()
 }
 
 // Open implements the Executor Open interface.
@@ -70,46 +71,34 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
-	return errors.Trace(e.children[0].Open(ctx))
+	return e.children[0].Open(ctx)
 }
 
 // Next implements the Executor Next interface.
-func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("sort.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		e.initPointers()
 		e.initCompareFuncs()
-		allColumnExpr := e.buildKeyColumns()
-		if allColumnExpr {
-			sort.Slice(e.rowPtrs, e.keyColumnsLess)
-		} else {
-			e.buildKeyExprsAndTypes()
-			err = e.buildKeyChunks()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			sort.Slice(e.rowPtrs, e.keyChunksLess)
-		}
+		e.buildKeyColumns()
+		sort.Slice(e.rowPtrs, e.keyColumnsLess)
 		e.fetched = true
 	}
-	for chk.NumRows() < e.maxChunkSize {
-		if e.Idx >= len(e.rowPtrs) {
-			return nil
-		}
+	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 		rowPtr := e.rowPtrs[e.Idx]
-		chk.AppendRow(e.rowChunks.GetRow(rowPtr))
+		req.AppendRow(e.rowChunks.GetRow(rowPtr))
 		e.Idx++
 	}
 	return nil
@@ -119,12 +108,12 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	fields := e.retTypes()
 	e.rowChunks = chunk.NewList(fields, e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
+	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	for {
 		chk := e.children[0].newFirstChunk()
-		err := e.children[0].Next(ctx, chk)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		rowCount := chk.NumRows()
 		if rowCount == 0 {
@@ -154,47 +143,12 @@ func (e *SortExec) initCompareFuncs() {
 	}
 }
 
-func (e *SortExec) buildKeyColumns() (allColumnExpr bool) {
+func (e *SortExec) buildKeyColumns() {
 	e.keyColumns = make([]int, 0, len(e.ByItems))
 	for _, by := range e.ByItems {
-		if col, ok := by.Expr.(*expression.Column); ok {
-			e.keyColumns = append(e.keyColumns, col.Index)
-		} else {
-			e.keyColumns = e.keyColumns[:0]
-			for i := range e.ByItems {
-				e.keyColumns = append(e.keyColumns, i)
-			}
-			return false
-		}
+		col := by.Expr.(*expression.Column)
+		e.keyColumns = append(e.keyColumns, col.Index)
 	}
-	return true
-}
-
-func (e *SortExec) buildKeyExprsAndTypes() {
-	keyLen := len(e.ByItems)
-	e.keyTypes = make([]*types.FieldType, keyLen)
-	e.keyExprs = make([]expression.Expression, keyLen)
-	for keyColIdx := range e.ByItems {
-		e.keyExprs[keyColIdx] = e.ByItems[keyColIdx].Expr
-		e.keyTypes[keyColIdx] = e.ByItems[keyColIdx].Expr.GetType()
-	}
-}
-
-func (e *SortExec) buildKeyChunks() error {
-	e.keyChunks = chunk.NewList(e.keyTypes, e.initCap, e.maxChunkSize)
-	e.keyChunks.GetMemTracker().SetLabel("keyChunks")
-	e.keyChunks.GetMemTracker().AttachTo(e.memTracker)
-
-	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
-		keyChk := chunk.NewChunkWithCapacity(e.keyTypes, e.rowChunks.GetChunk(chkIdx).NumRows())
-		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childIter, keyChk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.keyChunks.Add(keyChk)
-	}
-	return nil
 }
 
 func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
@@ -220,13 +174,6 @@ func (e *SortExec) keyColumnsLess(i, j int) bool {
 	return e.lessRow(rowI, rowJ)
 }
 
-// keyChunksLess is the less function for key chunk.
-func (e *SortExec) keyChunksLess(i, j int) bool {
-	keyRowI := e.keyChunks.GetRow(e.rowPtrs[i])
-	keyRowJ := e.keyChunks.GetRow(e.rowPtrs[j])
-	return e.lessRow(keyRowI, keyRowJ)
-}
-
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
@@ -245,19 +192,6 @@ type topNChunkHeap struct {
 // Less implement heap.Interface, but since we mantains a max heap,
 // this function returns true if row i is greater than row j.
 func (h *topNChunkHeap) Less(i, j int) bool {
-	if h.keyChunks != nil {
-		return h.keyChunksGreater(i, j)
-	}
-	return h.keyColumnsGreater(i, j)
-}
-
-func (h *topNChunkHeap) keyChunksGreater(i, j int) bool {
-	keyRowI := h.keyChunks.GetRow(h.rowPtrs[i])
-	keyRowJ := h.keyChunks.GetRow(h.rowPtrs[j])
-	return h.greaterRow(keyRowI, keyRowJ)
-}
-
-func (h *topNChunkHeap) keyColumnsGreater(i, j int) bool {
 	rowI := h.rowChunks.GetRow(h.rowPtrs[i])
 	rowJ := h.rowChunks.GetRow(h.rowPtrs[j])
 	return h.greaterRow(rowI, rowJ)
@@ -301,39 +235,39 @@ func (h *topNChunkHeap) Swap(i, j int) {
 func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaTopn)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	return errors.Trace(e.SortExec.Open(ctx))
+	return e.SortExec.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
-func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *TopNExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("topN.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	if !e.fetched {
 		e.totalLimit = e.limit.Offset + e.limit.Count
 		e.Idx = int(e.limit.Offset)
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = e.executeTopN(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		e.fetched = true
 	}
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	for chk.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
+	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		chk.AppendRow(row)
+		req.AppendRow(row)
 		e.Idx++
 	}
 	return nil
@@ -343,12 +277,14 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
 	e.rowChunks = chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
+	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
 		srcChk := e.children[0].newFirstChunk()
-		err := e.children[0].Next(ctx, srcChk)
+		// adjust required rows by total limit
+		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(srcChk))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if srcChk.NumRows() == 0 {
 			break
@@ -357,14 +293,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	}
 	e.initPointers()
 	e.initCompareFuncs()
-	allColumnExpr := e.buildKeyColumns()
-	if !allColumnExpr {
-		e.buildKeyExprsAndTypes()
-		err := e.buildKeyChunks()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
+	e.buildKeyColumns()
 	return nil
 }
 
@@ -376,62 +305,39 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
-	var childKeyChk *chunk.Chunk
-	if e.keyChunks != nil {
-		childKeyChk = chunk.NewChunkWithCapacity(e.keyTypes, e.maxChunkSize)
-	}
 	childRowChk := e.children[0].newFirstChunk()
 	for {
-		err := e.children[0].Next(ctx, childRowChk)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(childRowChk))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if childRowChk.NumRows() == 0 {
 			break
 		}
-		err = e.processChildChk(childRowChk, childKeyChk)
+		err = e.processChildChk(childRowChk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionFactor {
 			err = e.doCompaction()
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
-	if e.keyChunks != nil {
-		sort.Slice(e.rowPtrs, e.keyChunksLess)
-	} else {
-		sort.Slice(e.rowPtrs, e.keyColumnsLess)
-	}
+	sort.Slice(e.rowPtrs, e.keyColumnsLess)
 	return nil
 }
 
-func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error {
-	if childKeyChk != nil {
-		childKeyChk.Reset()
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, chunk.NewIterator4Chunk(childRowChk), childKeyChk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
+func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 	for i := 0; i < childRowChk.NumRows(); i++ {
 		heapMaxPtr := e.rowPtrs[0]
 		var heapMax, next chunk.Row
-		if childKeyChk != nil {
-			heapMax = e.keyChunks.GetRow(heapMaxPtr)
-			next = childKeyChk.GetRow(i)
-		} else {
-			heapMax = e.rowChunks.GetRow(heapMaxPtr)
-			next = childRowChk.GetRow(i)
-		}
+		heapMax = e.rowChunks.GetRow(heapMaxPtr)
+		next = childRowChk.GetRow(i)
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
 			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
-			if childKeyChk != nil {
-				e.keyChunks.AppendRow(childKeyChk.GetRow(i))
-			}
 			heap.Fix(e.chkHeap, 0)
 		}
 	}
@@ -449,19 +355,9 @@ func (e *TopNExec) doCompaction() error {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
-	newRowChunks.GetMemTracker().SetLabel("rowChunks")
+	newRowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
-
-	if e.keyChunks != nil {
-		newKeyChunks := chunk.NewList(e.keyTypes, e.initCap, e.maxChunkSize)
-		for _, rowPtr := range e.rowPtrs {
-			newKeyChunks.AppendRow(e.keyChunks.GetRow(rowPtr))
-		}
-		newKeyChunks.GetMemTracker().SetLabel("keyChunks")
-		e.memTracker.ReplaceChild(e.keyChunks.GetMemTracker(), newKeyChunks.GetMemTracker())
-		e.keyChunks = newKeyChunks
-	}
 
 	e.memTracker.Consume(int64(-8 * len(e.rowPtrs)))
 	e.memTracker.Consume(int64(8 * len(newRowPtrs)))

@@ -93,23 +93,28 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 	return nil
 }
 
-// BuildColumn builds histogram from samples for column.
-func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
-	count := collector.Count
-	ndv := collector.FMSketch.NDV()
+// BuildColumnHist build a histogram for a column.
+// numBuckets: number of buckets for the histogram.
+// id: the id of the table.
+// collector: the collector of samples.
+// tp: the FieldType for the column.
+// count: represents the row count for the column.
+// ndv: represents the number of distinct values for the column.
+// nullCount: represents the number of null values for the column.
+func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
 	if ndv > count {
 		ndv = count
 	}
 	if count == 0 || len(collector.Samples) == 0 {
-		return NewHistogram(id, ndv, collector.NullCount, 0, tp, 0, collector.TotalSize), nil
+		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
-	err := types.SortDatums(sc, samples)
+	err := SortSampleItems(sc, samples)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets), collector.TotalSize)
+	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
@@ -124,9 +129,11 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	}
 	bucketIdx := 0
 	var lastCount int64
-	hg.AppendBucket(&samples[0], &samples[0], int64(sampleFactor), int64(ndvFactor))
+	var corrXYSum float64
+	hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
 	for i := int64(1); i < sampleNum; i++ {
-		cmp, err := hg.GetUpper(bucketIdx).CompareDatum(sc, &samples[i])
+		corrXYSum += float64(i) * float64(samples[i].Ordinal)
+		cmp, err := hg.GetUpper(bucketIdx).CompareDatum(sc, &samples[i].Value)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -143,24 +150,37 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 			}
 		} else if totalCount-float64(lastCount) <= valuesPerBucket {
 			// The bucket still have room to store a new item, update the bucket.
-			hg.updateLastBucket(&samples[i], int64(totalCount), int64(ndvFactor))
+			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor))
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
-			hg.AppendBucket(&samples[i], &samples[i], int64(totalCount), int64(ndvFactor))
+			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
 		}
 	}
+	// Compute column order correlation with handle.
+	if sampleNum == 1 {
+		hg.Correlation = 1
+		return hg, nil
+	}
+	// X means the ordinal of the item in original sequence, Y means the oridnal of the item in the
+	// sorted sequence, we know that X and Y value sets are both:
+	// 0, 1, ..., sampleNum-1
+	// we can simply compute sum(X) = sum(Y) =
+	//    (sampleNum-1)*sampleNum / 2
+	// and sum(X^2) = sum(Y^2) =
+	//    (sampleNum-1)*sampleNum*(2*sampleNum-1) / 6
+	// We use "Pearson correlation coefficient" to compute the order correlation of columns,
+	// the formula is based on https://en.wikipedia.org/wiki/Pearson_correlation_coefficient.
+	// Note that (itemsCount*corrX2Sum - corrXSum*corrXSum) would never be zero when sampleNum is larger than 1.
+	itemsCount := float64(sampleNum)
+	corrXSum := (itemsCount - 1) * itemsCount / 2.0
+	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
+	hg.Correlation = (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
 	return hg, nil
 }
 
-// AnalyzeResult is used to represent analyze result.
-type AnalyzeResult struct {
-	// PhysicalTableID is the id of a partition or a table.
-	PhysicalTableID int64
-	Hist            []*Histogram
-	Cms             []*CMSketch
-	Count           int64
-	IsIndex         int
-	Err             error
+// BuildColumn builds histogram from samples for column.
+func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
+	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }

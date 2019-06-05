@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestExportRowID(c *C) {
+func (s *testSuite1) TestExportRowID(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.GetSessionVars().AllowWriteRowID = true
 	defer func() {
@@ -47,7 +47,7 @@ func (s *testSuite) TestExportRowID(c *C) {
 	tk.MustExec("insert s values (1)")
 	_, err := tk.Exec("insert s (a, _tidb_rowid) values (1, 2)")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("select _tidb_rowid from s")
+	err = tk.ExecToErr("select _tidb_rowid from s")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("update s set a = 2 where _tidb_rowid = 1")
 	c.Assert(err, NotNil)
@@ -61,7 +61,7 @@ func (s *testSuite) TestExportRowID(c *C) {
 	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not supported.")
 }
 
-func (s *testSuite) TestNotAllowWriteRowID(c *C) {
+func (s *testSuite1) TestNotAllowWriteRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tt(id binary(10), c int, primary key(id));")

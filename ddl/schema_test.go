@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testSchemaSuite{})
@@ -34,11 +34,9 @@ var _ = Suite(&testSchemaSuite{})
 type testSchemaSuite struct{}
 
 func (s *testSchemaSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 }
 
 func (s *testSchemaSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
 }
 
 func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
@@ -146,7 +144,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	testCheckJobDone(c, d, tJob1, true)
 	tbl1 := testGetTable(c, d, dbInfo.ID, tblInfo1.ID)
 	for i := 1; i <= 100; i++ {
-		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i), false)
+		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 	// create table t1 with 1034 records.
@@ -156,7 +154,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	testCheckJobDone(c, d, tJob2, true)
 	tbl2 := testGetTable(c, d, dbInfo.ID, tblInfo2.ID)
 	for i := 1; i <= 1034; i++ {
-		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i), false)
+		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 	job, v := testDropSchema(c, ctx, d, dbInfo)
@@ -264,4 +262,21 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	}
 	testRunInterruptedJob(c, d1, job)
 	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
+}
+
+func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {
+	var dbInfo *model.DBInfo
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		dbInfo, err1 = t.GetDatabase(schemaID)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return dbInfo, nil
 }

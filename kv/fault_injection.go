@@ -97,6 +97,16 @@ func (t *InjectedTransaction) Get(k Key) ([]byte, error) {
 	return t.Transaction.Get(k)
 }
 
+// BatchGet returns an error if cfg.getError is set.
+func (t *InjectedTransaction) BatchGet(keys []Key) (map[string][]byte, error) {
+	t.cfg.RLock()
+	defer t.cfg.RUnlock()
+	if t.cfg.getError != nil {
+		return nil, t.cfg.getError
+	}
+	return t.Transaction.BatchGet(keys)
+}
+
 // Commit returns an error if cfg.commitError is set.
 func (t *InjectedTransaction) Commit(ctx context.Context) error {
 	t.cfg.RLock()
@@ -105,14 +115,6 @@ func (t *InjectedTransaction) Commit(ctx context.Context) error {
 		return t.cfg.commitError
 	}
 	return t.Transaction.Commit(ctx)
-}
-
-// GetSnapshot implements Transaction GetSnapshot method.
-func (t *InjectedTransaction) GetSnapshot() Snapshot {
-	return &InjectedSnapshot{
-		Snapshot: t.Transaction.GetSnapshot(),
-		cfg:      t.cfg,
-	}
 }
 
 // InjectedSnapshot wraps a Snapshot with injections.

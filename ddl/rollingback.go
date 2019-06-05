@@ -17,11 +17,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/util/schemautil"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
@@ -51,7 +50,7 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -68,7 +67,7 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := tblInfo.FindIndexByName(indexName.L)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob
@@ -78,32 +77,13 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 
 func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	job.State = model.JobStateRollingback
-	col := &model.ColumnInfo{}
-	pos := &ast.ColumnPosition{}
-	offset := 0
-	err = job.DecodeArgs(col, pos, &offset)
+	tblInfo, columnInfo, col, _, _, err := checkAddColumn(t, job)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob
-	}
-
-	if columnInfo.State == model.StatePublic {
-		// We already have a column with the same column name.
-		job.State = model.JobStateCancelled
-		return ver, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
 	}
 
 	originalState := columnInfo.State
@@ -118,24 +98,28 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, errCancelledDDLJob
 }
 
+func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, colInfo, err := checkDropColumn(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// StatePublic means when the job is not running yet.
+	if colInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
+		return ver, errCancelledDDLJob
+	}
+	// In the state of drop column `write only -> delete only -> reorganization`,
+	// We can not rollback now, so just continue to drop column.
+	job.State = model.JobStateRunning
+	return ver, nil
+}
+
 func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, indexInfo, err := checkDropIndex(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-
-	var indexName model.CIStr
-	err = job.DecodeArgs(&indexName)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
-	if indexInfo == nil {
-		job.State = model.JobStateCancelled
-		return ver, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
 	originalState := indexInfo.State
@@ -166,7 +150,7 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// add index workers are started. need to ask them to exit.
-		log.Infof("[ddl-%s] run the cancelling DDL job %s", w, job)
+		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
 		w.reorgCtx.notifyReorgCancel()
 		ver, err = w.onCreateIndex(d, t, job)
 	} else {
@@ -176,14 +160,115 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	return
 }
 
+func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return cancelOnlyNotHandledJob(job)
+}
+
+func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
+	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, job.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// To simplify the rollback logic, cannot be canceled after job start to run.
+	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+	if tblInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return errCancelledDDLJob
+	}
+	job.State = model.JobStateRunning
+	return nil
+}
+
+func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return cancelOnlyNotHandledJob(job)
+}
+
+func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// To simplify the rollback logic, cannot be canceled after job start to run.
+	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+	if dbInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return errCancelledDDLJob
+	}
+	job.State = model.JobStateRunning
+	return nil
+}
+
+func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, from, _, err := checkRenameIndex(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// Here rename index is done in a transaction, if the job is not completed, it can be canceled.
+	idx := tblInfo.FindIndexByName(from.L)
+	if idx.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+	job.State = model.JobStateRunning
+	return ver, errors.Trace(err)
+}
+
+func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
+	// We can only cancel the not handled job.
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+
+	job.State = model.JobStateRunning
+
+	return ver, nil
+}
+
+func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return cancelOnlyNotHandledJob(job)
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddindex(w, d, t, job)
+	case model.ActionAddTablePartition:
+		ver, err = rollingbackAddTablePartition(t, job)
+	case model.ActionDropColumn:
+		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionDropIndex:
 		ver, err = rollingbackDropIndex(t, job)
+	case model.ActionDropTable, model.ActionDropView:
+		err = rollingbackDropTableOrView(t, job)
+	case model.ActionDropTablePartition:
+		ver, err = rollingbackDropTablePartition(t, job)
+	case model.ActionDropSchema:
+		err = rollingbackDropSchema(t, job)
+	case model.ActionRenameIndex:
+		ver, err = rollingbackRenameIndex(t, job)
+	case model.ActionTruncateTable:
+		ver, err = rollingbackTruncateTable(t, job)
+	case model.ActionRebaseAutoID, model.ActionShardRowID,
+		model.ActionModifyColumn, model.ActionAddForeignKey,
+		model.ActionDropForeignKey, model.ActionRenameTable,
+		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
+		model.ActionModifySchemaCharsetAndCollate:
+		ver, err = cancelOnlyNotHandledJob(job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob
@@ -191,9 +276,9 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 	if err != nil {
 		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
-			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
+			logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		} else {
-			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, err)
+			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
 		}
 
 		job.Error = toTError(err)

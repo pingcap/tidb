@@ -22,6 +22,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 )
 
@@ -95,6 +96,18 @@ func (c *Cluster) GetStore(storeID uint64) *metapb.Store {
 		return proto.Clone(store.meta).(*metapb.Store)
 	}
 	return nil
+}
+
+// GetAllStores returns all Stores' meta.
+func (c *Cluster) GetAllStores() []*metapb.Store {
+	c.RLock()
+	defer c.RUnlock()
+
+	stores := make([]*metapb.Store, 0, len(c.stores))
+	for _, store := range c.stores {
+		stores = append(stores, proto.Clone(store.meta).(*metapb.Store))
+	}
+	return stores
 }
 
 // StopStore stops a store with storeID.
@@ -215,6 +228,23 @@ func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 	return nil, nil
 }
 
+// GetPrevRegionByKey returns the previous Region and its leader whose range contains the key.
+func (c *Cluster) GetPrevRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
+	c.RLock()
+	defer c.RUnlock()
+
+	currentRegion, _ := c.GetRegionByKey(key)
+	if len(currentRegion.StartKey) == 0 {
+		return nil, nil
+	}
+	for _, r := range c.regions {
+		if bytes.Equal(r.Meta.EndKey, currentRegion.StartKey) {
+			return proto.Clone(r.Meta).(*metapb.Region), proto.Clone(r.leaderPeer()).(*metapb.Peer)
+		}
+	}
+	return nil, nil
+}
+
 // GetRegionByID returns the Region and its leader whose ID is regionID.
 func (c *Cluster) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer) {
 	c.RLock()
@@ -311,6 +341,12 @@ func (c *Cluster) SplitIndex(mvccStore MVCCStore, tableID, indexID int64, count 
 	c.splitRange(mvccStore, NewMvccKey(indexStart), NewMvccKey(indexEnd), count)
 }
 
+// SplitKeys evenly splits the start, end key into "count" regions.
+// Only works for single store.
+func (c *Cluster) SplitKeys(mvccStore MVCCStore, start, end kv.Key, count int) {
+	c.splitRange(mvccStore, NewMvccKey(start), NewMvccKey(end), count)
+}
+
 func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int) {
 	c.Lock()
 	defer c.Unlock()
@@ -319,7 +355,7 @@ func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int)
 	c.createNewRegions(regionPairs, start, end)
 }
 
-// getPairsGroupByRegions groups the key value pairs into splitted regions.
+// getEntriesGroupByRegions groups the key value pairs into splitted regions.
 func (c *Cluster) getEntriesGroupByRegions(mvccStore MVCCStore, start, end MvccKey, count int) [][]Pair {
 	startTS := uint64(math.MaxUint64)
 	limit := int(math.MaxInt32)
@@ -400,7 +436,7 @@ func (c *Cluster) firstStoreID() uint64 {
 
 // getRegionsCoverRange gets regions in the cluster that has intersection with [start, end).
 func (c *Cluster) getRegionsCoverRange(start, end MvccKey) []*Region {
-	var regions []*Region
+	regions := make([]*Region, 0, len(c.regions))
 	for _, region := range c.regions {
 		onRight := bytes.Compare(end, region.Meta.StartKey) <= 0
 		onLeft := bytes.Compare(region.Meta.EndKey, start) <= 0

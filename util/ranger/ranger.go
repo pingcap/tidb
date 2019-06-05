@@ -242,8 +242,8 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 	return ranges, nil
 }
 
-// BuildTableRange will build range of pk for PhysicalTableScan
-func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+// buildColumnRange builds range from CNF conditions.
+func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, tableRange bool, colLen int) (ranges []*Range, err error) {
 	rb := builder{sc: sc}
 	rangePoints := fullRange
 	for _, cond := range accessConditions {
@@ -253,33 +253,38 @@ func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 		}
 	}
 	newTp := newFieldType(tp)
-	ranges, err := points2TableRanges(sc, rangePoints, newTp)
+	if tableRange {
+		ranges, err = points2TableRanges(sc, rangePoints, newTp)
+	} else {
+		ranges, err = points2Ranges(sc, rangePoints, newTp)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if colLen != types.UnspecifiedLength {
+		for _, ran := range ranges {
+			if fixRangeDatum(&ran.LowVal[0], colLen, tp) {
+				ran.LowExclude = false
+			}
+			if fixRangeDatum(&ran.HighVal[0], colLen, tp) {
+				ran.HighExclude = false
+			}
+		}
 	}
 	return ranges, nil
 }
 
-// BuildColumnRange builds the range for sampling histogram to calculate the row count.
-func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+// BuildTableRange builds range of PK column for PhysicalTableScan.
+func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+	return buildColumnRange(accessConditions, sc, tp, true, types.UnspecifiedLength)
+}
+
+// BuildColumnRange builds range from access conditions for general columns.
+func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, colLen int) ([]*Range, error) {
 	if len(conds) == 0 {
 		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
 	}
-
-	rb := builder{sc: sc}
-	rangePoints := fullRange
-	for _, cond := range conds {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond))
-		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
-		}
-	}
-	newTp := newFieldType(tp)
-	ranges, err := points2Ranges(sc, rangePoints, newTp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return ranges, nil
+	return buildColumnRange(conds, sc, tp, false, colLen)
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
@@ -330,25 +335,14 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 
 	// Take prefix index into consideration.
 	if hasPrefix(lengths) {
-		fixPrefixColRange(ranges, lengths, newTp)
-	}
-
-	if len(ranges) > 0 && len(ranges[0].LowVal) < len(cols) {
-		for _, ran := range ranges {
-			if ran.HighExclude || ran.LowExclude {
-				if ran.HighExclude {
-					ran.HighVal = append(ran.HighVal, types.NewDatum(nil))
-				} else {
-					ran.HighVal = append(ran.HighVal, types.MaxValueDatum())
-				}
-				if ran.LowExclude {
-					ran.LowVal = append(ran.LowVal, types.MaxValueDatum())
-				} else {
-					ran.LowVal = append(ran.LowVal, types.NewDatum(nil))
-				}
+		if fixPrefixColRange(ranges, lengths, newTp) {
+			ranges, err = unionRanges(sc, ranges)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 	}
+
 	return ranges, nil
 }
 
@@ -413,20 +407,44 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
-func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) {
+// fixPrefixColRange checks whether the range of one column exceeds the length and needs to be cut.
+// It specially handles the last column of each range point. If the last one need to be cut, it will
+// change the exclude status of that point and return `true` to tell
+// that we need do a range merging since that interval may have intersection.
+// e.g. if the interval is (-inf -inf, a xxxxx), (a xxxxx, +inf +inf) and the length of the last column is 3,
+//      then we'll change it to (-inf -inf, a xxx], [a xxx, +inf +inf). You can see that this two interval intersect,
+//      so we need a merge operation.
+// Q: only checking the last column to decide whether the endpoint's exclude status needs to be reset is enough?
+// A: Yes, suppose that the interval is (-inf -inf, a xxxxx b) and only the second column needs to be cut.
+//    The result would be (-inf -inf, a xxx b) if the length of it is 3. Obviously we only need to care about the data
+//    whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
+//    value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
+//    So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
+func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
+	var hasCut bool
 	for _, ran := range ranges {
-		for i := 0; i < len(ran.LowVal); i++ {
+		lowTail := len(ran.LowVal) - 1
+		for i := 0; i < lowTail; i++ {
 			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
 		}
-		ran.LowExclude = false
-		for i := 0; i < len(ran.HighVal); i++ {
+		lowCut := fixRangeDatum(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
+		if lowCut {
+			ran.LowExclude = false
+		}
+		highTail := len(ran.HighVal) - 1
+		for i := 0; i < highTail; i++ {
 			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
 		}
-		ran.HighExclude = false
+		highCut := fixRangeDatum(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
+		if highCut {
+			ran.HighExclude = false
+		}
+		hasCut = lowCut || highCut
 	}
+	return hasCut
 }
 
-func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) {
+func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) bool {
 	// If this column is prefix and the prefix length is smaller than the range, cut it.
 	// In case of UTF8, prefix should be cut by characters rather than bytes
 	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
@@ -439,12 +457,15 @@ func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) {
 				truncateStr := string(rs[:length])
 				// truncate value and limit its length
 				v.SetString(truncateStr)
+				return true
 			}
 		} else if length != types.UnspecifiedLength && len(colValue) > length {
 			// truncate value and limit its length
 			v.SetBytes(colValue[:length])
+			return true
 		}
 	}
+	return false
 }
 
 // We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
@@ -474,7 +495,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 // 1. 'expr' must be either 'EQUAL' or 'IN' function.
 // 2. 'points' should not be empty.
 func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.Expression) expression.Expression {
-	// len(points) cannot be 0 here, since we impose early termination in extractEqAndInCondition
+	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	sf, _ := expr.(*expression.ScalarFunction)
 	// Constant and Column args should have same RetType, simply get from first arg
 	retType := sf.GetArgs()[0].GetType()

@@ -46,6 +46,8 @@ var (
 	ErrTableExists = terror.ClassSchema.New(codeTableExists, "Table '%s' already exists")
 	// ErrTableDropExists returns for dropping a non-existent table.
 	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "Unknown table '%s'")
+	// ErrUserDropExists returns for dropping a non-existent user.
+	ErrUserDropExists = terror.ClassSchema.New(codeBadUser, "User %s does not exist.")
 	// ErrColumnExists returns for column already exists.
 	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column name '%s'")
 	// ErrIndexExists returns for index already exists.
@@ -78,6 +80,8 @@ type InfoSchema interface {
 	Clone() (result []*model.DBInfo)
 	SchemaTables(schema model.CIStr) []table.Table
 	SchemaMetaVersion() int64
+	// TableIsView indicates whether the schema.table is a view.
+	TableIsView(schema, table model.CIStr) bool
 }
 
 // Information Schema Name.
@@ -175,6 +179,15 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 		}
 	}
 	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+}
+
+func (is *infoSchema) TableIsView(schema, table model.CIStr) bool {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok := tbNames.tables[table.L]; ok {
+			return t.Meta().IsView()
+		}
+	}
+	return false
 }
 
 func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
@@ -301,6 +314,7 @@ const (
 	codeDatabaseExists   = 1007
 	codeTableExists      = 1050
 	codeBadTable         = 1051
+	codeBadUser          = 3162
 	codeColumnExists     = 1060
 	codeIndexExists      = 1831
 	codeMultiplePriKey   = 1068
@@ -321,6 +335,7 @@ func init() {
 		codeDatabaseExists:      mysql.ErrDBCreateExists,
 		codeTableExists:         mysql.ErrTableExists,
 		codeBadTable:            mysql.ErrBadTable,
+		codeBadUser:             mysql.ErrBadUser,
 		codeColumnExists:        mysql.ErrDupFieldName,
 		codeIndexExists:         mysql.ErrDupIndex,
 		codeMultiplePriKey:      mysql.ErrMultiplePriKey,
@@ -358,5 +373,13 @@ func initInfoSchemaDB() {
 
 // IsMemoryDB checks if the db is in memory.
 func IsMemoryDB(dbName string) bool {
-	return dbName == "information_schema" || dbName == "performance_schema"
+	if dbName == "information_schema" {
+		return true
+	}
+	for _, driver := range drivers {
+		if driver.DBInfo.Name.L == dbName {
+			return true
+		}
+	}
+	return false
 }

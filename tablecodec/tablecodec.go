@@ -14,7 +14,6 @@
 package tablecodec
 
 import (
-	"bytes"
 	"encoding/binary"
 	"math"
 	"time"
@@ -305,10 +304,10 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 		row = make(map[int64]types.Datum, len(cols))
 	}
 	if b == nil {
-		return nil, nil
+		return row, nil
 	}
 	if len(b) == 1 && b[0] == codec.NilFlag {
-		return nil, nil
+		return row, nil
 	}
 	cnt := 0
 	var (
@@ -372,25 +371,23 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 		cnt int
 		b   []byte
 		err error
+		cid int64
 	)
 	row := make([][]byte, len(colIDs))
 	for len(data) > 0 && cnt < len(colIDs) {
 		// Get col id.
-		b, data, err = codec.CutOne(data)
+		data, cid, err = codec.CutColumnID(data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		_, cid, err := codec.DecodeOne(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+
 		// Get col value.
 		b, data, err = codec.CutOne(data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		id := cid.GetInt64()
-		offset, ok := colIDs[id]
+
+		offset, ok := colIDs[cid]
 		if ok {
 			row[offset] = b
 			cnt++
@@ -603,25 +600,6 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	startKey = EncodeIndexSeekKey(tableID, indexID, nil)
 	endKey = EncodeIndexSeekKey(tableID, indexID, []byte{255})
 	return
-}
-
-type keyRangeSorter struct {
-	ranges []kv.KeyRange
-}
-
-func (r *keyRangeSorter) Len() int {
-	return len(r.ranges)
-}
-
-func (r *keyRangeSorter) Less(i, j int) bool {
-	a := r.ranges[i]
-	b := r.ranges[j]
-	cmp := bytes.Compare(a.StartKey, b.StartKey)
-	return cmp < 0
-}
-
-func (r *keyRangeSorter) Swap(i, j int) {
-	r.ranges[i], r.ranges[j] = r.ranges[j], r.ranges[i]
 }
 
 const (

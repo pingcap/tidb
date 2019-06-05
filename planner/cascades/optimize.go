@@ -18,6 +18,7 @@ import (
 	"math"
 
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -26,29 +27,30 @@ import (
 // optimization is composed of 2 phases: exploration and implementation.
 func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (plannercore.Plan, error) {
 	rootGroup := convert2Group(logical)
-
 	err := onPhaseExploration(sctx, rootGroup)
 	if err != nil {
 		return nil, err
 	}
-
 	best, err := onPhaseImplementation(sctx, rootGroup)
 	return best, err
 }
 
 // convert2Group converts a logical plan to expression groups.
-func convert2Group(node plannercore.LogicalPlan) *Group {
-	e := NewGroupExpr(node)
-	e.children = make([]*Group, 0, len(node.Children()))
+func convert2Group(node plannercore.LogicalPlan) *memo.Group {
+	e := memo.NewGroupExpr(node)
+	e.Children = make([]*memo.Group, 0, len(node.Children()))
 	for _, child := range node.Children() {
 		childGroup := convert2Group(child)
-		e.children = append(e.children, childGroup)
+		e.Children = append(e.Children, childGroup)
 	}
-	return NewGroup(e)
+	g := memo.NewGroup(e)
+	// Stats property for `Group` would be computed after exploration phase.
+	g.Prop = &property.LogicalProperty{Schema: node.Schema()}
+	return g
 }
 
-func onPhaseExploration(sctx sessionctx.Context, g *Group) error {
-	for !g.explored {
+func onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
+	for !g.Explored {
 		err := exploreGroup(g)
 		if err != nil {
 			return err
@@ -57,23 +59,25 @@ func onPhaseExploration(sctx sessionctx.Context, g *Group) error {
 	return nil
 }
 
-func exploreGroup(g *Group) error {
-	if g.explored {
+func exploreGroup(g *memo.Group) error {
+	if g.Explored {
 		return nil
 	}
 
-	g.explored = true
-	for elem := g.equivalents.Front(); elem != nil; elem.Next() {
-		curExpr := elem.Value.(*GroupExpr)
-		if curExpr.explored {
+	g.Explored = true
+	for elem := g.Equivalents.Front(); elem != nil; elem.Next() {
+		curExpr := elem.Value.(*memo.GroupExpr)
+		if curExpr.Explored {
 			continue
 		}
 
 		// Explore child groups firstly.
-		curExpr.explored = true
-		for _, childGroup := range curExpr.children {
-			exploreGroup(childGroup)
-			curExpr.explored = curExpr.explored && childGroup.explored
+		curExpr.Explored = true
+		for _, childGroup := range curExpr.Children {
+			if err := exploreGroup(childGroup); err != nil {
+				return err
+			}
+			curExpr.Explored = curExpr.Explored && childGroup.Explored
 		}
 
 		eraseCur, err := findMoreEquiv(g, elem)
@@ -84,22 +88,22 @@ func exploreGroup(g *Group) error {
 			g.Delete(curExpr)
 		}
 
-		g.explored = g.explored && curExpr.explored
+		g.Explored = g.Explored && curExpr.Explored
 	}
 	return nil
 }
 
 // findMoreEquiv finds and applies the matched transformation rules.
-func findMoreEquiv(g *Group, elem *list.Element) (eraseCur bool, err error) {
-	expr := elem.Value.(*GroupExpr)
-	for _, rule := range GetTransformationRules(expr.exprNode) {
+func findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
+	expr := elem.Value.(*memo.GroupExpr)
+	for _, rule := range GetTransformationRules(expr.ExprNode) {
 		pattern := rule.GetPattern()
-		if !pattern.operand.match(GetOperand(expr.exprNode)) {
+		if !pattern.Operand.Match(memo.GetOperand(expr.ExprNode)) {
 			continue
 		}
-		// Create a binding of the current group expression and the pattern of
+		// Create a binding of the current Group expression and the pattern of
 		// the transformation rule to enumerate all the possible expressions.
-		iter := NewExprIterFromGroupElem(elem, pattern)
+		iter := memo.NewExprIterFromGroupElem(elem, pattern)
 		for ; iter != nil && iter.Matched(); iter.Next() {
 			if !rule.Match(iter) {
 				continue
@@ -115,19 +119,41 @@ func findMoreEquiv(g *Group, elem *list.Element) (eraseCur bool, err error) {
 				continue
 			}
 
-			// If the new group expression is successfully inserted into the
-			// current group, we mark the group expression and the group as
-			// unexplored to enable the exploration on the new group expression
+			// If the new Group expression is successfully inserted into the
+			// current Group, we mark the Group expression and the Group as
+			// unexplored to enable the exploration on the new Group expression
 			// and all the antecedent groups.
-			newExpr.explored = false
-			g.explored = false
+			newExpr.Explored = false
+			g.Explored = false
 		}
 	}
 	return eraseCur, nil
 }
 
-// onPhaseImplementation starts implementating physical operators from given root Group.
-func onPhaseImplementation(sctx sessionctx.Context, g *Group) (plannercore.Plan, error) {
+// fillGroupStats computes Stats property for each Group recursively.
+func fillGroupStats(g *memo.Group) (err error) {
+	if g.Prop.Stats != nil {
+		return nil
+	}
+	// All GroupExpr in a Group should share same LogicalProperty, so just use
+	// first one to compute Stats property.
+	elem := g.Equivalents.Front()
+	expr := elem.Value.(*memo.GroupExpr)
+	childStats := make([]*property.StatsInfo, len(expr.Children))
+	for i, childGroup := range expr.Children {
+		err = fillGroupStats(childGroup)
+		if err != nil {
+			return err
+		}
+		childStats[i] = childGroup.Prop.Stats
+	}
+	planNode := expr.ExprNode
+	g.Prop.Stats, err = planNode.DeriveStats(childStats)
+	return err
+}
+
+// onPhaseImplementation starts implementation physical operators from given root Group.
+func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.Plan, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
@@ -139,14 +165,14 @@ func onPhaseImplementation(sctx sessionctx.Context, g *Group) (plannercore.Plan,
 	if impl == nil {
 		return nil, plannercore.ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
-	return impl.getPlan(), nil
+	return impl.GetPlan(), nil
 }
 
 // implGroup picks one implementation with lowest cost for a Group, which satisfies specified physical property.
-func implGroup(g *Group, reqPhysProp *property.PhysicalProperty, costLimit float64) (Implementation, error) {
-	groupImpl := g.getImpl(reqPhysProp)
+func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit float64) (memo.Implementation, error) {
+	groupImpl := g.GetImpl(reqPhysProp)
 	if groupImpl != nil {
-		if groupImpl.getCost() <= costLimit {
+		if groupImpl.GetCost() <= costLimit {
 			return groupImpl, nil
 		}
 		return nil, nil
@@ -155,9 +181,13 @@ func implGroup(g *Group, reqPhysProp *property.PhysicalProperty, costLimit float
 	var cumCost float64
 	var childCosts []float64
 	var childPlans []plannercore.PhysicalPlan
-	outCount := math.Min(g.prop.Stats.RowCount, reqPhysProp.ExpectedCnt)
-	for elem := g.equivalents.Front(); elem != nil; elem = elem.Next() {
-		curExpr := elem.Value.(*GroupExpr)
+	err := fillGroupStats(g)
+	if err != nil {
+		return nil, err
+	}
+	outCount := math.Min(g.Prop.Stats.RowCount, reqPhysProp.ExpectedCnt)
+	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		curExpr := elem.Value.(*memo.GroupExpr)
 		impls, err := implGroupExpr(curExpr, reqPhysProp)
 		if err != nil {
 			return nil, err
@@ -166,29 +196,29 @@ func implGroup(g *Group, reqPhysProp *property.PhysicalProperty, costLimit float
 			cumCost = 0.0
 			childCosts = childCosts[:0]
 			childPlans = childPlans[:0]
-			for i, childGroup := range curExpr.children {
-				childImpl, err := implGroup(childGroup, impl.getPlan().GetChildReqProps(i), costLimit-cumCost)
+			for i, childGroup := range curExpr.Children {
+				childImpl, err := implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), costLimit-cumCost)
 				if err != nil {
 					return nil, err
 				}
 				if childImpl == nil {
-					impl.setCost(math.MaxFloat64)
+					impl.SetCost(math.MaxFloat64)
 					break
 				}
-				childCost := childImpl.getCost()
+				childCost := childImpl.GetCost()
 				childCosts = append(childCosts, childCost)
 				cumCost += childCost
-				childPlans = append(childPlans, childImpl.getPlan())
+				childPlans = append(childPlans, childImpl.GetPlan())
 			}
-			if impl.getCost() == math.MaxFloat64 {
+			if impl.GetCost() == math.MaxFloat64 {
 				continue
 			}
-			cumCost = impl.calcCost(outCount, childCosts, curExpr.children...)
+			cumCost = impl.CalcCost(outCount, childCosts, curExpr.Children...)
 			if cumCost > costLimit {
 				continue
 			}
-			if groupImpl == nil || groupImpl.getCost() > cumCost {
-				impl.getPlan().SetChildren(childPlans...)
+			if groupImpl == nil || groupImpl.GetCost() > cumCost {
+				impl.GetPlan().SetChildren(childPlans...)
 				groupImpl = impl
 				costLimit = cumCost
 			}
@@ -206,22 +236,22 @@ func implGroup(g *Group, reqPhysProp *property.PhysicalProperty, costLimit float
 			continue
 		}
 		impl := rule.OnEnforce(reqPhysProp, childImpl)
-		cumCost = enforceCost + childImpl.getCost()
-		impl.setCost(cumCost)
-		if groupImpl == nil || groupImpl.getCost() > cumCost {
+		cumCost = enforceCost + childImpl.GetCost()
+		impl.SetCost(cumCost)
+		if groupImpl == nil || groupImpl.GetCost() > cumCost {
 			groupImpl = impl
 			costLimit = cumCost
 		}
 	}
-	if groupImpl == nil || groupImpl.getCost() == math.MaxFloat64 {
+	if groupImpl == nil || groupImpl.GetCost() == math.MaxFloat64 {
 		return nil, nil
 	}
-	g.insertImpl(reqPhysProp, groupImpl)
+	g.InsertImpl(reqPhysProp, groupImpl)
 	return groupImpl, nil
 }
 
-func implGroupExpr(cur *GroupExpr, reqPhysProp *property.PhysicalProperty) (impls []Implementation, err error) {
-	for _, rule := range GetImplementationRules(cur.exprNode) {
+func implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.PhysicalProperty) (impls []memo.Implementation, err error) {
+	for _, rule := range GetImplementationRules(cur.ExprNode) {
 		if !rule.Match(cur, reqPhysProp) {
 			continue
 		}

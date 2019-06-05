@@ -16,12 +16,14 @@ package core
 import (
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -34,7 +36,7 @@ type Plan interface {
 	// Get the ID.
 	ID() int
 	// Get the ID in explain statement
-	ExplainID() string
+	ExplainID() fmt.Stringer
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
@@ -49,10 +51,10 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		return tsk
 	}
 	tsk = finishCopTask(ctx, tsk)
-	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.Cols, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Cols))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
-	for _, col := range p.Cols {
-		sort.ByItems = append(sort.ByItems, &ByItems{col, p.Desc})
+	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Items: p.Items, ExpectedCnt: math.MaxFloat64}
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
+	for _, col := range p.Items {
+		sort.ByItems = append(sort.ByItems, &ByItems{col.Col, col.Desc})
 	}
 	return sort.attach2Task(tsk)
 }
@@ -68,7 +70,7 @@ type LogicalPlan interface {
 	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns.
-	PruneColumns([]*expression.Column)
+	PruneColumns([]*expression.Column) error
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -82,8 +84,11 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
-	// deriveStats derives statistic info between plans.
-	deriveStats() (*property.StatsInfo, error)
+	// recursiveDeriveStats derives statistic info between plans.
+	recursiveDeriveStats() (*property.StatsInfo, error)
+
+	// DeriveStats derives statistic info for current plan node given child stats.
+	DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -137,7 +142,7 @@ type PhysicalPlan interface {
 	SetChildren(...PhysicalPlan)
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-	ResolveIndices()
+	ResolveIndices() error
 }
 
 type baseLogicalPlan struct {
@@ -226,11 +231,11 @@ func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) error {
 	if len(p.children) == 0 {
-		return
+		return nil
 	}
-	p.children[0].PruneColumns(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols)
 }
 
 // basePlan implements base Plan interface.
@@ -255,8 +260,10 @@ func (p *basePlan) statsInfo() *property.StatsInfo {
 	return p.stats
 }
 
-func (p *basePlan) ExplainID() string {
-	return fmt.Sprintf("%s_%d", p.tp, p.id)
+func (p *basePlan) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return p.tp + "_" + strconv.Itoa(p.id)
+	})
 }
 
 // Schema implements Plan Schema interface.
@@ -298,5 +305,5 @@ func (p *baseLogicalPlan) findColumn(column *ast.ColumnName) (*expression.Column
 	if err == nil && col == nil {
 		err = errors.Errorf("column %s not found", column.Name.O)
 	}
-	return col, idx, errors.Trace(err)
+	return col, idx, err
 }

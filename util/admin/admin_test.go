@@ -220,6 +220,40 @@ func (s *testSuite) TestCancelJobs(c *C) {
 		c.Assert(err, IsNil)
 	}
 
+	errs, err = CancelJobs(txn, []int64{})
+	c.Assert(err, IsNil)
+	c.Assert(errs, IsNil)
+	errs, err = CancelJobs(txn, []int64{-1})
+	c.Assert(err, IsNil)
+	c.Assert(errs[0], NotNil)
+	c.Assert(errs[0].Error(), Equals, "[admin:4]DDL Job:-1 not found")
+
+	// test cancel finish job.
+	job := &model.Job{
+		ID:       100,
+		SchemaID: 1,
+		Type:     model.ActionCreateTable,
+		State:    model.JobStateDone,
+	}
+	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+	errs, err = CancelJobs(txn, []int64{100})
+	c.Assert(err, IsNil)
+	c.Assert(errs[0], NotNil)
+	c.Assert(errs[0].Error(), Equals, "[admin:5]This job:100 is finished, so can't be cancelled")
+
+	// test can't cancelable job.
+	job.Type = model.ActionDropIndex
+	job.SchemaState = model.StateDeleteOnly
+	job.State = model.JobStateRunning
+	job.ID = 101
+	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+	errs, err = CancelJobs(txn, []int64{101})
+	c.Assert(err, IsNil)
+	c.Assert(errs[0], NotNil)
+	c.Assert(errs[0].Error(), Equals, "[admin:6]This job:101 is almost finished, can't be cancelled now")
+
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 }
@@ -287,14 +321,16 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false)
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
-	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
+	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11))
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
+	txn, err := s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(1), int64(10), int64(11))}
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
@@ -305,10 +341,12 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
-	_, err = tb.AddRecord(s.ctx, record2.Values, false)
+	_, err = tb.AddRecord(s.ctx, record2.Values)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
-	txn, err := s.store.Begin()
+	txn, err = s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 
 	records, nextHandle, err := ScanTableRecord(se, txn, tb, int64(1), 1)
@@ -327,10 +365,10 @@ func (s *testSuite) TestScan(c *C) {
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
 	kvIndex := tables.NewIndex(tb.Meta().ID, tb.Meta(), indices[0].Meta())
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	idxRows, nextVals, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 2)
+	idxRows, _, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1, idxRow2})
-	idxRows, nextVals, err = ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 1)
+	idxRows, nextVals, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 1)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1})
 	idxRows, nextVals, err = ScanIndexData(sc, txn, kvIndex, nextVals, 1)
@@ -351,7 +389,9 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	err = tb.RemoveRecord(s.ctx, 2, record2.Values)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
+	txn, err = s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 }
 
 func newDiffRetError(prefix string, ra, rb *RecordData) string {
@@ -505,7 +545,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(40)), 4)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(40)), 4, nil)
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
@@ -531,4 +571,24 @@ func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestIsJobRollbackable(c *C) {
+	cases := []struct {
+		tp     model.ActionType
+		state  model.SchemaState
+		result bool
+	}{
+		{model.ActionDropIndex, model.StateNone, true},
+		{model.ActionDropIndex, model.StateDeleteOnly, false},
+		{model.ActionDropSchema, model.StateDeleteOnly, false},
+		{model.ActionDropColumn, model.StateDeleteOnly, false},
+	}
+	job := &model.Job{}
+	for _, ca := range cases {
+		job.Type = ca.tp
+		job.SchemaState = ca.state
+		re := IsJobRollbackable(job)
+		c.Assert(re == ca.result, IsTrue)
+	}
 }

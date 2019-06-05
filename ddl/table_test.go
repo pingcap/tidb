@@ -14,11 +14,13 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testTableSuite{})
@@ -61,7 +62,63 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 		col.ID = allocateColumnID(tblInfo)
 		cols[i] = col
 	}
+	tblInfo.Columns = cols
+	tblInfo.Charset = "utf8"
+	tblInfo.Collate = "utf8_bin"
+	return tblInfo
+}
 
+// testTableInfo creates a test table with num int columns and with no index.
+func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.TableInfo {
+	tblInfo := testTableInfo(c, d, name, num)
+	pid, err := d.genGlobalID()
+	c.Assert(err, IsNil)
+	tblInfo.Partition = &model.PartitionInfo{
+		Type:   model.PartitionTypeRange,
+		Expr:   tblInfo.Columns[0].Name.L,
+		Enable: true,
+		Definitions: []model.PartitionDefinition{{
+			ID:       pid,
+			Name:     model.NewCIStr("p0"),
+			LessThan: []string{"maxvalue"},
+		}},
+	}
+
+	return tblInfo
+}
+
+// testViewInfo creates a test view with num int columns.
+func testViewInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
+	var err error
+	tblInfo := &model.TableInfo{
+		Name: model.NewCIStr(name),
+	}
+	tblInfo.ID, err = d.genGlobalID()
+	c.Assert(err, IsNil)
+
+	cols := make([]*model.ColumnInfo, num)
+	viewCols := make([]model.CIStr, num)
+
+	var stmtBuffer bytes.Buffer
+	stmtBuffer.WriteString("SELECT ")
+	for i := range cols {
+		col := &model.ColumnInfo{
+			Name:   model.NewCIStr(fmt.Sprintf("c%d", i+1)),
+			Offset: i,
+			State:  model.StatePublic,
+		}
+
+		col.ID = allocateColumnID(tblInfo)
+		cols[i] = col
+		viewCols[i] = col.Name
+		stmtBuffer.WriteString(cols[i].Name.L + ",")
+	}
+	stmtBuffer.WriteString("1 FROM t")
+
+	view := model.ViewInfo{Cols: viewCols, Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge,
+		SelectStmt: stmtBuffer.String(), CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
+
+	tblInfo.View = &view
 	tblInfo.Columns = cols
 
 	return tblInfo
@@ -75,6 +132,26 @@ func testCreateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tblInfo},
 	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	tblInfo.State = model.StateNone
+	return job
+}
+
+func testCreateView(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateView,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tblInfo, false, 0},
+	}
+
+	c.Assert(tblInfo.IsView(), IsTrue)
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
@@ -177,7 +254,7 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 	if tblInfo == nil {
 		return nil, errors.New("table not found")
 	}
-	alloc := autoid.NewAllocator(d.store, schemaID)
+	alloc := autoid.NewAllocator(d.store, schemaID, false)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -186,7 +263,6 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 }
 
 func (s *testTableSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_table")
 	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 
@@ -198,7 +274,6 @@ func (s *testTableSuite) TearDownSuite(c *C) {
 	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 	s.d.Stop()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 func (s *testTableSuite) TestTable(c *C) {
@@ -218,7 +293,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	count := 2000
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	for i := 1; i <= count; i++ {
-		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i), false)
+		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 

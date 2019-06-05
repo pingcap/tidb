@@ -20,16 +20,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -64,25 +67,21 @@ type worker struct {
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
 	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
+	logCtx          context.Context
 }
 
-func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
-	sessPool := &sessionPool{resPool: ctxPool}
+func newWorker(tp workerType, store kv.Storage, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
 	worker := &worker{
-		id:       atomic.AddInt32(&ddlWorkerID, 1),
-		tp:       tp,
-		ddlJobCh: make(chan struct{}, 1),
-		quitCh:   make(chan struct{}),
-		reorgCtx: &reorgCtx{notifyCancelReorgJob: 0},
-		sessPool: sessPool,
+		id:              atomic.AddInt32(&ddlWorkerID, 1),
+		tp:              tp,
+		ddlJobCh:        make(chan struct{}, 1),
+		quitCh:          make(chan struct{}),
+		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
+		sessPool:        sessPool,
+		delRangeManager: delRangeMgr,
 	}
 
-	if ctxPool != nil {
-		worker.delRangeManager = newDelRangeManager(store, sessPool)
-		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !store.SupportDeleteRange())
-	} else {
-		worker.delRangeManager = newMockDelRangeManager()
-	}
+	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
 	return worker
 }
 
@@ -104,20 +103,17 @@ func (w *worker) String() string {
 }
 
 func (w *worker) close() {
+	startTime := time.Now()
 	close(w.quitCh)
-	w.delRangeManager.clear()
-	w.sessPool.close()
 	w.wg.Wait()
-	log.Infof("[ddl-%s] close DDL worker", w)
+	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
 // start is used for async online schema changing, it will try to become the owner firstly,
 // then wait or pull the job queue to handle a schema change job.
 func (w *worker) start(d *ddlCtx) {
-	log.Infof("[ddl-%s] start DDL worker", w)
+	logutil.Logger(w.logCtx).Info("[ddl] start DDL worker")
 	defer w.wg.Done()
-
-	w.delRangeManager.start()
 
 	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
 	// every 2 * lease time. If lease is 0, we will use default 1s.
@@ -130,7 +126,7 @@ func (w *worker) start(d *ddlCtx) {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debugf("[ddl-%s] wait %s to check DDL status again", w, checkTime)
+			logutil.Logger(w.logCtx).Debug("[ddl] wait to check DDL status again", zap.Duration("interval", checkTime))
 		case <-w.ddlJobCh:
 		case <-w.quitCh:
 			return
@@ -138,7 +134,7 @@ func (w *worker) start(d *ddlCtx) {
 
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
-			log.Errorf("[ddl-%s] handle DDL job err %v", w, errors.ErrorStack(err))
+			logutil.Logger(w.logCtx).Error("[ddl] handle DDL job failed", zap.Error(err))
 		}
 	}
 }
@@ -176,7 +172,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 			return errors.Trace(err)
 		}
 		if isDependent {
-			log.Infof("[ddl] current DDL job %v depends on job %v", curJob, job)
+			logutil.Logger(ddlLogCtx).Info("[ddl] current DDL job depends on other job", zap.String("currentJob", curJob.String()), zap.String("dependentJob", job.String()))
 			curJob.DependencyID = job.ID
 			break
 		}
@@ -234,7 +230,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		return nil
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
-		log.Warnf("[ddl-%s] update DDL job %v failed %v", w, job, errors.ErrorStack(err))
+		logutil.Logger(w.logCtx).Warn("[ddl] update DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
 		job.Error = toTError(err)
@@ -252,7 +248,7 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// so we shouldn't replace RawArgs with the marshaling Args.
 	if meetErr && (job.RawArgs != nil && job.Args == nil) {
-		log.Infof("[ddl-%s] update DDL Job %s shouldn't update raw args", w, job)
+		logutil.Logger(w.logCtx).Info("[ddl] meet error before update DDL job, shouldn't update raw args", zap.String("job", job.String()))
 		updateRawArgs = false
 	}
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
@@ -285,12 +281,16 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition:
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
 		}
-		if err != nil {
-			return errors.Trace(err)
-		}
+	}
+	switch job.Type {
+	case model.ActionRecoverTable:
+		err = finishRecoverTable(w, t, job)
+	}
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	_, err = t.DeQueueDDLJob()
@@ -299,9 +299,26 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
-	log.Infof("[ddl-%s] finish DDL job %v", w, job)
+	logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()))
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
+}
+
+func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
+	tbInfo := &model.TableInfo{}
+	var autoID, dropJobID, recoverTableCheckFlag int64
+	var snapshotTS uint64
+	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if recoverTableCheckFlag == recoverTableCheckFlagEnableGC {
+		err = enableGC(w)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
@@ -316,7 +333,7 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 	if historyJob == nil {
 		return false, nil
 	}
-	log.Infof("[ddl] current DDL job %v dependent job ID %d is finished", job, job.DependencyID)
+	logutil.Logger(ddlLogCtx).Info("[ddl] current DDL job dependent job is finished", zap.String("currentJob", job.String()), zap.Int64("dependentJobID", job.DependencyID))
 	job.DependencyID = noneDependencyJob
 	return true, nil
 }
@@ -367,7 +384,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			if job.IsDone() || job.IsRollbackDone() {
-				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
 				if !job.IsRollbackDone() {
 					job.State = model.JobStateSynced
 				}
@@ -388,13 +404,19 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				return errors.Trace(err)
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
-			return errors.Trace(w.handleUpdateJobError(t, job, err))
+			if err = w.handleUpdateJobError(t, job, err); err != nil {
+				return errors.Trace(err)
+			}
+			if job.IsDone() || job.IsRollbackDone() {
+				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
+			}
+			return nil
 		})
 
 		if runJobErr != nil {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
-			log.Infof("[ddl-%s] run DDL job error, sleeps a while:%v then retries it.", w, WaitTimeWhenErrorOccured)
+			logutil.Logger(w.logCtx).Info("[ddl] run DDL job error, sleeps a while then retries it.", zap.Duration("waitTime", WaitTimeWhenErrorOccured), zap.Error(runJobErr))
 			time.Sleep(WaitTimeWhenErrorOccured)
 		}
 
@@ -414,7 +436,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
 		w.waitSchemaChanged(nil, d, waitTime, schemaVer, job)
-		if job.IsSynced() {
+		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
@@ -426,7 +448,10 @@ func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
 	if job.DependencyID != noneDependencyJob {
 		intervalCnt := int(3 * time.Second / waitDependencyJobInterval)
 		if *cnt%intervalCnt == 0 {
-			log.Infof("[ddl-%s] job ID:%d needs to wait dependency job %d, sleeps a while:%v then retries it.", w, job.ID, job.DependencyID, waitDependencyJobInterval)
+			logutil.Logger(w.logCtx).Info("[ddl] DDL job need to wait dependent job, sleeps a while, then retries it.",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("dependentJobID", job.DependencyID),
+				zap.Duration("waitTime", waitDependencyJobInterval))
 		}
 		time.Sleep(waitDependencyJobInterval)
 		*cnt++
@@ -444,7 +469,7 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	log.Infof("[ddl-%s] run DDL job %s", w, job)
+	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	timeStart := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
@@ -463,15 +488,21 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	switch job.Type {
 	case model.ActionCreateSchema:
-		ver, err = onCreateSchema(t, job)
+		ver, err = onCreateSchema(d, t, job)
+	case model.ActionModifySchemaCharsetAndCollate:
+		ver, err = onModifySchemaCharsetAndCollate(t, job)
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
-	case model.ActionDropTable:
-		ver, err = onDropTable(t, job)
+	case model.ActionCreateView:
+		ver, err = onCreateView(d, t, job)
+	case model.ActionDropTable, model.ActionDropView:
+		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = onDropTablePartition(t, job)
+	case model.ActionTruncateTablePartition:
+		ver, err = onTruncateTablePartition(t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
 	case model.ActionDropColumn:
@@ -495,13 +526,17 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionRebaseAutoID:
 		ver, err = onRebaseAutoID(d.store, t, job)
 	case model.ActionRenameTable:
-		ver, err = onRenameTable(t, job)
+		ver, err = onRenameTable(d, t, job)
 	case model.ActionShardRowID:
-		ver, err = onShardRowID(t, job)
+		ver, err = w.onShardRowID(d, t, job)
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(t, job)
 	case model.ActionAddTablePartition:
 		ver, err = onAddTablePartition(t, job)
+	case model.ActionModifyTableCharsetAndCollate:
+		ver, err = onModifyTableCharsetAndCollate(t, job)
+	case model.ActionRecoverTable:
+		ver, err = w.onRecoverTable(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -510,17 +545,38 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	// Save errors in job, so that others can know errors happened.
 	if err != nil {
-		// If job is not cancelled, we should log this error.
-		if job.State != model.JobStateCancelled {
-			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
-		} else {
-			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, err)
-		}
-
 		job.Error = toTError(err)
 		job.ErrorCount++
+
+		// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
+		if job.State == model.JobStateCancelled {
+			logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
+			return ver, nil
+		}
+		logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
+
+		// Load global ddl variables.
+		if err1 := loadDDLVars(w); err1 != nil {
+			logutil.Logger(w.logCtx).Error("[ddl] load DDL global variable failed", zap.Error(err1))
+		}
+		// Check error limit to avoid falling into an infinite loop.
+		if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && admin.IsJobRollbackable(job) {
+			logutil.Logger(w.logCtx).Warn("[ddl] DDL job error count exceed the limit, cancelling it now", zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
+			job.State = model.JobStateCancelling
+		}
 	}
 	return
+}
+
+func loadDDLVars(w *worker) error {
+	// Get sessionctx from context resource pool.
+	var ctx sessionctx.Context
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+	return util.LoadDDLVars(ctx)
 }
 
 func toTError(err error) *terror.Error {
@@ -551,7 +607,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	}()
 
 	if latestSchemaVersion == 0 {
-		log.Infof("[ddl-%s] schema version doesn't change", w)
+		logutil.Logger(w.logCtx).Info("[ddl] schema version doesn't change")
 		return
 	}
 
@@ -562,7 +618,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	}
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
-		log.Infof("[ddl-%s] update latest schema version %d failed %v", w, latestSchemaVersion, err)
+		logutil.Logger(w.logCtx).Info("[ddl] update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			// If err is context.DeadlineExceeded, it means waitTime(2 * lease) is elapsed. So all the schemas are synced by ticker.
 			// There is no need to use etcd to sync. The function returns directly.
@@ -573,7 +629,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	// OwnerCheckAllVersions returns only when context is timeout(2 * lease) or all TiDB schemas are synced.
 	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
-		log.Infof("[ddl-%s] wait latest schema version %d to deadline %v", w, latestSchemaVersion, err)
+		logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version to deadline", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
@@ -582,8 +638,10 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 			return
 		}
 	}
-	log.Infof("[ddl-%s] wait latest schema version %d changed, take time %v, job %s", w, latestSchemaVersion, time.Since(timeStart), job)
-	return
+	logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version changed",
+		zap.Int64("ver", latestSchemaVersion),
+		zap.Duration("take time", time.Since(timeStart)),
+		zap.String("job", job.String()))
 }
 
 // waitSchemaSynced handles the following situation:
@@ -600,14 +658,12 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 	ctx, cancelFunc := context.WithTimeout(context.Background(), waitTime)
 	defer cancelFunc()
 
-	startTime := time.Now()
 	latestSchemaVersion, err := d.schemaSyncer.MustGetGlobalVersion(ctx)
 	if err != nil {
-		log.Warnf("[ddl-%s] handle exception take time %v", w, time.Since(startTime))
+		logutil.Logger(w.logCtx).Warn("[ddl] get global version failed", zap.Error(err))
 		return
 	}
 	w.waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
-	log.Infof("[ddl-%s] handle exception take time %v", w, time.Since(startTime))
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
