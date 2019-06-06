@@ -1663,10 +1663,10 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	// Split index regions by lower, upper value.
 	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) ([]types.Datum, error) {
 		if len(valuesItem) == 0 {
-			return nil, errors.Errorf("Split index region `%v` %s value count should more than 0", indexInfo.Name, name)
+			return nil, errors.Errorf("Split index `%v` region %s value count should more than 0", indexInfo.Name, name)
 		}
 		if len(valuesItem) > len(indexInfo.Columns) {
-			return nil, errors.Errorf("Split index region `%v` Column count doesn't match value count at %v", indexInfo.Name, name)
+			return nil, errors.Errorf("Split index `%v` region column count doesn't match value count at %v", indexInfo.Name, name)
 		}
 		return b.convertValue2ColumnType(valuesItem, mockTablePlan, indexInfo, tblInfo)
 	}
@@ -1682,7 +1682,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	p.Upper = upperValues
 
 	if node.SplitOpt.Num > maxSplitRegionNum {
-		return nil, errors.Errorf("Split index region num is exceed the limit %v", maxSplitRegionNum)
+		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
 	} else if node.SplitOpt.Num < 1 {
 		return nil, errors.Errorf("Split index region num should more than 0")
 	}
@@ -1791,7 +1791,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	p.Upper = []types.Datum{upperValue}
 
 	if node.SplitOpt.Num > maxSplitRegionNum {
-		return nil, errors.Errorf("Split table region num is exceed the limit %v", maxSplitRegionNum)
+		return nil, errors.Errorf("Split table region num exceeded the limit %v", maxSplitRegionNum)
 	} else if node.SplitOpt.Num < 1 {
 		return nil, errors.Errorf("Split table region num should more than 0")
 	}

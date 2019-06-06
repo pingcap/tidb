@@ -301,6 +301,10 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 			},
 		},
 	}
+	defer func(originValue uint64) {
+		minRegionStepValue = originValue
+	}(minRegionStepValue)
+	minRegionStepValue = 10
 	// range is 0 ~ 100, and split into 10 region.
 	// So 10 regions range is like below:
 	// region1: [-inf ~ 10)

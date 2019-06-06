@@ -127,9 +127,9 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 		lowerStr, err1 := datumSliceToString(e.lower)
 		upperStr, err2 := datumSliceToString(e.upper)
 		if err1 != nil || err2 != nil {
-			return nil, errors.Errorf("Split index region `%v` lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
+			return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
 		}
-		return nil, errors.Errorf("Split index region `%v` lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
+		return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
 	}
 	return getValuesList(lowerIdxKey, upperIdxKey, e.num, idxKeys), nil
 }
@@ -255,7 +255,7 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 	return nil
 }
 
-const minRegionStepValue = 1000
+var minRegionStepValue = uint64(1000)
 
 func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 	var keys [][]byte
@@ -284,7 +284,7 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 		lowerRecordID := e.lower[0].GetUint64()
 		upperRecordID := e.upper[0].GetUint64()
 		if upperRecordID <= lowerRecordID {
-			return nil, errors.Errorf("Split table %s region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+			return nil, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
 		}
 		step = (upperRecordID - lowerRecordID) / uint64(e.num)
 		lowerValue = int64(lowerRecordID)
@@ -292,13 +292,13 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 		lowerRecordID := e.lower[0].GetInt64()
 		upperRecordID := e.upper[0].GetInt64()
 		if upperRecordID <= lowerRecordID {
-			return nil, errors.Errorf("Split table %s region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+			return nil, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
 		}
 		step = uint64(upperRecordID-lowerRecordID) / uint64(e.num)
 		lowerValue = lowerRecordID
 	}
 	if step < minRegionStepValue {
-		return nil, errors.Errorf("Split table %s region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
+		return nil, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
 	}
 
 	recordID := lowerValue
