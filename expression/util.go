@@ -554,13 +554,10 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expr
 	types.DefaultParamTypeForValue(v.GetValue(), tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
 	if useCache {
-		f, err := NewFunctionBase(ctx, ast.GetParam, &v.Type,
-			DatumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
-		if err != nil {
-			return nil, err
+		value.DeferredParam = &DeferredParam{
+			order: v.Order,
+			ctx:   ctx,
 		}
-		f.GetType().Tp = v.Type.Tp
-		value.DeferredExpr = f
 	}
 	return value, nil
 }
@@ -681,7 +678,9 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 		return 0, false, false
 	}
 	dt := con.Value
-	if con.DeferredExpr != nil {
+	if con.DeferredParam != nil {
+		dt = con.DeferredParam.Value()
+	} else if con.DeferredExpr != nil {
 		var err error
 		dt, err = con.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {

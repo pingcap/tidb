@@ -210,6 +210,14 @@ func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
 	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
 	num, _, _ = GetUint64FromConstant(con)
 	c.Assert(num, check.Equals, uint64(1))
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewUintDatum(100),
+	}
+	con.DeferredParam = &DeferredParam{order: 0, ctx: ctx}
+	num, _, _ = GetUint64FromConstant(con)
+	c.Assert(num, check.Equals, uint64(100))
 }
 
 func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {

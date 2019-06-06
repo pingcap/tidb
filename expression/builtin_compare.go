@@ -1088,9 +1088,10 @@ func tryToConvertConstantInt(ctx sessionctx.Context, isUnsigned bool, con *Const
 		return con, terror.ErrorEqual(err, types.ErrOverflow)
 	}
 	return &Constant{
-		Value:        dt,
-		RetType:      fieldType,
-		DeferredExpr: con.DeferredExpr,
+		Value:         dt,
+		RetType:       fieldType,
+		DeferredExpr:  con.DeferredExpr,
+		DeferredParam: con.DeferredParam,
 	}, false
 }
 
@@ -1117,9 +1118,10 @@ func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Consta
 	}
 	if c == 0 {
 		return &Constant{
-			Value:        intDatum,
-			RetType:      intFieldType,
-			DeferredExpr: con.DeferredExpr,
+			Value:         intDatum,
+			RetType:       intFieldType,
+			DeferredExpr:  con.DeferredExpr,
+			DeferredParam: con.DeferredParam,
 		}, false
 	}
 	switch op {
@@ -1158,9 +1160,10 @@ func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Consta
 				return con, true
 			}
 			return &Constant{
-				Value:        intDatum,
-				RetType:      intFieldType,
-				DeferredExpr: con.DeferredExpr,
+				Value:         intDatum,
+				RetType:       intFieldType,
+				DeferredExpr:  con.DeferredExpr,
+				DeferredParam: con.DeferredParam,
 			}, false
 		}
 	}

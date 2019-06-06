@@ -149,7 +149,9 @@ func foldConstant(expr Expression) (Expression, bool) {
 		}
 		return &Constant{Value: value, RetType: x.RetType}, false
 	case *Constant:
-		if x.DeferredExpr != nil {
+		if x.DeferredParam != nil {
+			return &Constant{Value: x.DeferredParam.Value(), RetType: x.RetType, DeferredExpr: x.DeferredExpr, DeferredParam: x.DeferredParam}, true
+		} else if x.DeferredExpr != nil {
 			value, err := x.DeferredExpr.Eval(chunk.Row{})
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("fold expression to constant", zap.String("expression", x.ExplainInfo()), zap.Error(err))

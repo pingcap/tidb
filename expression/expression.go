@@ -282,6 +282,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		}
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	case *Constant:
+		// DeferredParam no need to fold constant.
 		if x.DeferredExpr != nil {
 			return FoldConstant(x)
 		}

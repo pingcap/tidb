@@ -561,7 +561,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		}
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
-			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil {
+			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.DeferredParam == nil {
 				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil || ret {
 					continue

@@ -51,15 +51,31 @@ var (
 
 // Constant stands for a constant value.
 type Constant struct {
-	Value        types.Datum
-	RetType      *types.FieldType
-	DeferredExpr Expression // parameter getter expression
-	hashcode     []byte
+	Value         types.Datum
+	RetType       *types.FieldType
+	DeferredExpr  Expression // parameter getter expression
+	DeferredParam *DeferredParam
+	hashcode      []byte
+}
+
+// DeferredParam indicates const is deferred param.
+type DeferredParam struct {
+	ctx   sessionctx.Context
+	order int
+}
+
+// Value returns real param value.
+func (d *DeferredParam) Value() types.Datum {
+	sessionVars := d.ctx.GetSessionVars()
+	return sessionVars.PreparedParams[d.order]
 }
 
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
-	if c.DeferredExpr != nil {
+	if c.DeferredParam != nil {
+		dt := c.DeferredParam.Value()
+		c.Value.SetValue(dt.GetValue())
+	} else if c.DeferredExpr != nil {
 		dt, err := c.Eval(chunk.Row{})
 		if err != nil {
 			logutil.Logger(context.Background()).Error("eval constant failed", zap.Error(err))
@@ -77,7 +93,7 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
-	if c.DeferredExpr != nil {
+	if c.DeferredExpr != nil || c.DeferredParam != nil {
 		con := *c
 		return &con
 	}
@@ -91,7 +107,18 @@ func (c *Constant) GetType() *types.FieldType {
 
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
-	if c.DeferredExpr != nil {
+	if c.DeferredParam != nil {
+		dt := c.DeferredParam.Value()
+		if dt.IsNull() {
+			c.Value.SetNull()
+			return c.Value, nil
+		}
+		val, err := dt.ConvertTo(c.DeferredParam.ctx.GetSessionVars().StmtCtx, c.RetType)
+		if err != nil {
+			return dt, err
+		}
+		c.Value.SetValue(val.GetValue())
+	} else if c.DeferredExpr != nil {
 		if sf, sfOK := c.DeferredExpr.(*ScalarFunction); sfOK {
 			dt, err := sf.Eval(chunk.Row{})
 			if err != nil {
@@ -113,7 +140,17 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 
 // EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, error) {
-	if c.DeferredExpr != nil {
+	if c.DeferredParam != nil {
+		dt := c.DeferredParam.Value()
+		if dt.IsNull() {
+			return 0, true, nil
+		}
+		val, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return 0, true, err
+		}
+		c.Value.SetInt64(val)
+	} else if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return 0, true, err
@@ -140,7 +177,17 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 
 // EvalReal returns real representation of Constant.
 func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool, error) {
-	if c.DeferredExpr != nil {
+	if c.DeferredParam != nil {
+		dt := c.DeferredParam.Value()
+		if dt.IsNull() {
+			return 0, true, nil
+		}
+		val, err := dt.ToFloat64(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return 0, true, err
+		}
+		c.Value.SetFloat64(val)
+	} else if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return 0, true, err
@@ -167,7 +214,17 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool,
 
 // EvalString returns string representation of Constant.
 func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool, error) {
-	if c.DeferredExpr != nil {
+	if c.DeferredParam != nil {
+		dt := c.DeferredParam.Value()
+		if dt.IsNull() {
+			return "", true, nil
+		}
+		val, err := dt.ToString()
+		if err != nil {
+			return "", true, err
+		}
+		c.Value.SetString(val)
+	} else if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return "", true, err
@@ -191,7 +248,13 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool
 
 // EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDecimal, bool, error) {
-	if c.DeferredExpr != nil {
+	if c.DeferredParam != nil {
+		dt := c.DeferredParam.Value()
+		if dt.IsNull() {
+			return nil, true, nil
+		}
+		c.Value.SetValue(dt.GetValue())
+	} else if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return nil, true, err
@@ -211,7 +274,21 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDe
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
 func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time, isNull bool, err error) {
-	if c.DeferredExpr != nil {
+	if c.DeferredParam != nil {
+		dt := c.DeferredParam.Value()
+		if dt.IsNull() {
+			return types.Time{}, true, nil
+		}
+		val, err := dt.ToString()
+		if err != nil {
+			return types.Time{}, true, err
+		}
+		tim, err := types.ParseDatetime(ctx.GetSessionVars().StmtCtx, val)
+		if err != nil {
+			return types.Time{}, true, err
+		}
+		c.Value.SetMysqlTime(tim)
+	} else if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return types.Time{}, true, err
@@ -238,7 +315,21 @@ func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time
 
 // EvalDuration returns Duration representation of Constant.
 func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.Duration, isNull bool, err error) {
-	if c.DeferredExpr != nil {
+	if c.DeferredParam != nil {
+		dt := c.DeferredParam.Value()
+		if dt.IsNull() {
+			return types.Duration{}, true, err
+		}
+		val, err := dt.ToString()
+		if err != nil {
+			return types.Duration{}, true, err
+		}
+		dur, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, val, types.MaxFsp)
+		if err != nil {
+			return types.Duration{}, true, err
+		}
+		c.Value.SetMysqlDuration(dur)
+	} else if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return types.Duration{}, true, err
@@ -265,7 +356,18 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.
 
 // EvalJSON returns JSON representation of Constant.
 func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSON, bool, error) {
-	if c.DeferredExpr != nil {
+	if c.DeferredParam != nil {
+		dt := c.DeferredParam.Value()
+		if dt.IsNull() {
+			return json.BinaryJSON{}, true, nil
+		}
+		val, err := dt.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeJSON))
+		if err != nil {
+			return json.BinaryJSON{}, true, err
+		}
+		c.Value.SetMysqlJSON(val.GetMysqlJSON())
+		c.GetType().Tp = mysql.TypeJSON
+	} else if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return json.BinaryJSON{}, true, err
@@ -277,7 +379,6 @@ func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSO
 		if err != nil {
 			return json.BinaryJSON{}, true, err
 		}
-		fmt.Println("const eval json", val.GetMysqlJSON().String())
 		c.Value.SetMysqlJSON(val.GetMysqlJSON())
 		c.GetType().Tp = mysql.TypeJSON
 	} else {
