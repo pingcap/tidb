@@ -47,6 +47,10 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 type joinReOrderSolver struct {
 }
 
+func (s *joinReOrderSolver) getFlag() uint64 {
+	return 0
+}
+
 type jrNode struct {
 	p       LogicalPlan
 	cumCost float64

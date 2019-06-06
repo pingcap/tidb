@@ -81,7 +81,13 @@ func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expressio
 }
 
 // decorrelateSolver tries to convert apply plan to join plan.
-type decorrelateSolver struct{}
+type decorrelateSolver struct {
+	flag uint64
+}
+
+func (s *decorrelateSolver) getFlag() uint64 {
+	return s.flag
+}
 
 func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
 	defaultValueMap := make(map[int]*expression.Constant)
@@ -96,6 +102,51 @@ func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]
 	return defaultValueMap
 }
 
+func (s *decorrelateSolver) tryToTransSemiJoinToInnerJoin(j *LogicalJoin) LogicalPlan {
+	if j.JoinType != SemiJoin {
+		return j
+	}
+	if len(j.RightConditions) > 0 || len(j.OtherConditions) > 0 {
+		return j
+	}
+	if len(j.EqualConditions) == 0 {
+		return j
+	}
+	s.flag |= flagBuildKeyInfo2
+	s.flag |= flagEliminateAgg
+	keySchema := expression.NewSchema(make([]*expression.Column, 0, len(j.EqualConditions))...)
+	for _, cond := range j.EqualConditions {
+		keySchema.Append(cond.GetArgs()[1].(*expression.Column))
+	}
+	child := j.children[1]
+	plan4Agg := LogicalAggregation{
+		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, keySchema.Len()),
+		GroupByItems: expression.Column2Exprs(keySchema.Columns),
+	}.Init(j.ctx)
+	plan4Agg.collectGroupByColumns()
+	for _, col := range keySchema.Columns {
+		aggDesc := aggregation.NewAggFuncDesc(j.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, aggDesc)
+	}
+	plan4Agg.SetChildren(child)
+	plan4Agg.SetSchema(keySchema.Clone())
+	// Distinct will be rewritten as first_row, we reset the type here since the return type
+	// of first_row is not always the same as the column arg of first_row.
+	for i, col := range plan4Agg.schema.Columns {
+		col.RetType = plan4Agg.AggFuncs[i].RetTp
+	}
+	j.SetChildren(j.children[0], plan4Agg)
+	j.JoinType = InnerJoin
+	// Now the inner join always returns all columns from children. So we need to add a projection here.
+	proj := LogicalProjection{
+		Exprs: expression.Column2Exprs(j.schema.Columns),
+	}.Init(j.ctx)
+	proj.SetSchema(j.schema)
+	j.SetSchema(expression.MergeSchema(j.children[0].Schema(), j.children[1].Schema()))
+	proj.SetChildren(j)
+	return proj
+}
+
 // optimize implements logicalOptRule interface.
 func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	if apply, ok := p.(*LogicalApply); ok {
@@ -106,7 +157,8 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
 			join.self = join
-			p = join
+
+			p = s.tryToTransSemiJoinToInnerJoin(join)
 		} else if sel, ok := innerPlan.(*LogicalSelection); ok {
 			// If the inner plan is a selection, we add this condition to join predicates.
 			// Notice that no matter what kind of join is, it's always right.

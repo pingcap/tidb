@@ -25,6 +25,10 @@ import (
 type maxMinEliminator struct {
 }
 
+func (a *maxMinEliminator) getFlag() uint64 {
+	return 0
+}
+
 func (a *maxMinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 	a.eliminateMaxMin(p)
 	return p, nil

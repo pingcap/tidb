@@ -28,6 +28,10 @@ type aggregationEliminator struct {
 	aggregationEliminateChecker
 }
 
+func (a *aggregationEliminator) getFlag() uint64 {
+	return 0
+}
+
 type aggregationEliminateChecker struct {
 }
 

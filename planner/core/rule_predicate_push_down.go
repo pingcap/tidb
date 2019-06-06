@@ -23,6 +23,10 @@ import (
 
 type ppdSolver struct{}
 
+func (s *ppdSolver) getFlag() uint64 {
+	return 0
+}
+
 func (s *ppdSolver) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil)
 	return p, nil

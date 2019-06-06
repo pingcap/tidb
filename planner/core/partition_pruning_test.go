@@ -28,6 +28,10 @@ type testPartitionPruningSuite struct {
 	partitionProcessor
 }
 
+func (s *testPartitionPruningSuite) getFlag() uint64 {
+	return 0
+}
+
 func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt("create table t (d datetime not null)", "", "")

@@ -103,6 +103,10 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 type projectionEliminater struct {
 }
 
+func (pe *projectionEliminater) getFlag() uint64 {
+	return 0
+}
+
 // optimize implements the logicalOptRule interface.
 func (pe *projectionEliminater) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)

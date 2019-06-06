@@ -945,19 +945,22 @@ func (s *testSuite2) TestHashJoin(c *C) {
 	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("0"))
 	tk.MustExec("set @@tidb_init_chunk_size=1;")
 	result := tk.MustQuery("explain analyze select /*+ TIDB_HJ(t1, t2) */ * from t1 where exists (select a from t2 where t1.a = t2.a);")
-	// HashLeftJoin_9 7992.00 root semi join, inner:TableReader_15, equal:[eq(test.t1.a, test.t2.a)] time:219.863µs, loops:1, rows:0
-	// ├─TableReader_12 9990.00 root data:Selection_11 time:9.129µs, loops:1, rows:1
-	// │ └─Selection_11 9990.00 cop not(isnull(test.t1.a))
-	// │   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo time:0s, loops:0, rows:5
-	// └─TableReader_15 9990.00 root data:Selection_14 time:12.983µs, loops:1, rows:0
-	//   └─Selection_14 9990.00 cop not(isnull(test.t2.a))
-	//       └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo time:0s, loops:0, rows:0
+	// Projection_10 9990.00 root test.t1.a, test.t1.b
+	// └─HashLeftJoin_11 9990.00 root inner join, inner join, inner:HashAgg_21, equal:[eq(test.t1.a, test.t2.a)] time:219.863µs, loops:1, rows:0
+	//   ├─TableReader_15 9990.00 root data:Selection_14 time:9.129µs, loops:1, rows:1
+	//   │ └─Selection_14 9990.00 cop not(isnull(test.t1.a))
+	//   │   └─TableScan_13 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo time:0s, loops:0, rows:5
+	//   └─HashAgg_21 7992.00 root group by:col_1, funcs:firstrow(col_0)
+	//     └─TableReader_22 7992.00 root data:HashAgg_16 time:12.983µs, loops:1, rows:0
+	//	     └─HashAgg_16 7992.00 cop group by:test.t2.a, funcs:firstrow(test.t2.a)
+	//         └─Selection_20 9990.00 cop not(isnull(test.t2.a))
+	//           └─TableScan_19 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo time:0s, loops:0, rows:0
 	row := result.Rows()
-	c.Assert(len(row), Equals, 7)
-	outerExecInfo := row[1][4].(string)
+	c.Assert(len(row), Equals, 10)
+	outerExecInfo := row[2][4].(string)
 	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
 	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "5")
-	innerExecInfo := row[4][4].(string)
+	innerExecInfo := row[5][4].(string)
 	c.Assert(innerExecInfo[len(innerExecInfo)-1:], Equals, "0")
 }
 

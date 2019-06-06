@@ -159,23 +159,23 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select a from t where exists(select 1 from t as x where x.a = t.a) and exists(select 1 from t as x where x.a = t.a)",
-			best: "Join{Join{DataScan(t)->DataScan(x)}(test.t.a,test.x.a)->DataScan(x)}(test.t.a,test.x.a)->Projection",
+			best: "Join{Join{DataScan(t)->DataScan(x)->Projection}(test.t.a,test.x.a)->Projection->DataScan(x)->Projection}(test.t.a,test.x.a)->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > k.b * 2 + 1",
-			best: "DataScan(t)->Aggr(sum(test.t.c),firstrow(test.t.a),firstrow(test.t.b))->Projection->Projection",
+			best: "DataScan(t)->Projection->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > 1 and k.b > 2",
-			best: "DataScan(t)->Aggr(sum(test.t.c),firstrow(test.t.a),firstrow(test.t.b))->Projection->Projection",
+			best: "DataScan(t)->Projection->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select k.a, sum(k.s) as ss from (select a, sum(b) as s from t group by a) k group by k.a) l where l.a > 2",
-			best: "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Projection->Aggr(sum(k.s),firstrow(test.k.a))->Projection->Projection",
+			best: "DataScan(t)->Projection->Projection->Projection->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select a, sum(b) as s from t group by a) k where a > s",
-			best: "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Sel([gt(cast(test.t.a), 2_col_0)])->Projection->Projection",
+			best: "DataScan(t)->Sel([gt(cast(test.t.a), cast(test.t.b))])->Projection->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select a, sum(b) as s from t group by a + 1) k where a > 1",
@@ -186,8 +186,8 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			best: "Dual->Sel([gt(test.k.a, 1)])->Projection",
 		},
 		{
-			sql:  "select a, count(a) cnt from t group by a having cnt < 1",
-			best: "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Sel([lt(2_col_0, 1)])->Projection",
+			sql:  "select b, count(b) cnt from t group by b having cnt < 1",
+			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.b))->Sel([lt(2_col_0, 1)])->Projection",
 		},
 		// issue #3873
 		{
@@ -699,7 +699,7 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		},
 		{
 			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
-			best: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,test.s.a)->Aggr(firstrow(2_col_0),firstrow(test.t.a),count(test.s.b))->Projection->Projection",
+			best: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,test.s.a)->Projection->Projection->Projection",
 		},
 		{
 			// Semi-join with agg cannot decorrelate.
@@ -708,19 +708,19 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		},
 		{
 			sql:  "select (select count(s.b) k from t s where s.a = t.a having k != 0) from t",
-			best: "Join{DataScan(t)->DataScan(s)->Aggr(count(test.s.b),firstrow(test.s.a))}(test.t.a,test.s.a)->Projection->Projection->Projection",
+			best: "Join{DataScan(t)->DataScan(s)->Projection}(test.t.a,test.s.a)->Projection->Projection->Projection",
 		},
 		{
 			sql:  "select (select count(s.b) k from t s where s.a = t1.a) from t t1, t t2",
-			best: "Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Aggr(count(test.s.b),firstrow(test.s.a))}(test.t1.a,test.s.a)->Projection->Projection->Projection",
+			best: "Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Projection}(test.t1.a,test.s.a)->Projection->Projection->Projection",
 		},
 		{
 			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-			best: "Join{DataScan(t)->DataScan(s)->Aggr(count(1),firstrow(test.s.a))}(test.t.a,test.s.a)->Projection->Projection->Projection",
+			best: "Join{DataScan(t)->DataScan(s)->Projection}(test.t.a,test.s.a)->Projection->Projection->Projection",
 		},
 		{
 			sql:  "select a from t where a in (select a from t s group by t.b)",
-			best: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(test.s.a))->Projection}(test.t.a,test.s.a)->Projection",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(test.s.a))->Projection->Projection}(test.t.a,test.s.a)->Projection->Projection",
 		},
 		{
 			// This will be resolved as in sub query.
@@ -744,7 +744,7 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		{
 			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			best: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(test.s.d,test.k.d)(test.s.c,test.k.c)->Aggr(sum(test.s.a))->Projection}->Projection",
+			best: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)->Aggr(firstrow(test.k.d),firstrow(test.k.c))}(test.s.d,test.k.d)(test.s.c,test.k.c)->Projection->Aggr(sum(test.s.a))->Projection}->Projection",
 		},
 		{
 			sql:  "select t1.b from t t1 where t1.b = (select max(t2.a) from t t2 where t1.b=t2.b)",

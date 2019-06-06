@@ -21,6 +21,10 @@ import (
 
 type buildKeySolver struct{}
 
+func (s *buildKeySolver) getFlag() uint64 {
+	return 0
+}
+
 func (s *buildKeySolver) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	lp.buildKeyInfo()
 	return lp, nil

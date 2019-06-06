@@ -26,6 +26,10 @@ import (
 type columnPruner struct {
 }
 
+func (s *columnPruner) getFlag() uint64 {
+	return 0
+}
+
 func (s *columnPruner) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	err := lp.PruneColumns(lp.Schema().Columns)
 	return lp, err

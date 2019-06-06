@@ -37,6 +37,7 @@ const (
 	flagPrunColumns uint64 = 1 << iota
 	flagBuildKeyInfo
 	flagDecorrelate
+	flagBuildKeyInfo2
 	flagEliminateAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
@@ -52,6 +53,7 @@ var optRuleList = []logicalOptRule{
 	&columnPruner{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
+	&buildKeySolver{},
 	&aggregationEliminator{},
 	&projectionEliminater{},
 	&maxMinEliminator{},
@@ -66,6 +68,7 @@ var optRuleList = []logicalOptRule{
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
 	optimize(LogicalPlan) (LogicalPlan, error)
+	getFlag() uint64
 }
 
 // BuildLogicalPlan used to build logical plan from ast.Node.
@@ -133,6 +136,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 		if err != nil {
 			return nil, err
 		}
+		flag |= rule.getFlag()
 	}
 	return logic, err
 }

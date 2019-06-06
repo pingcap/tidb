@@ -22,6 +22,10 @@ import (
 type pushDownTopNOptimizer struct {
 }
 
+func (s *pushDownTopNOptimizer) getFlag() uint64 {
+	return 0
+}
+
 func (s *pushDownTopNOptimizer) optimize(p LogicalPlan) (LogicalPlan, error) {
 	return p.pushDownTopN(nil), nil
 }

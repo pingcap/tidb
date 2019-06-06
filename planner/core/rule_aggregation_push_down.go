@@ -28,6 +28,10 @@ type aggregationPushDownSolver struct {
 	aggregationEliminateChecker
 }
 
+func (a *aggregationPushDownSolver) getFlag() uint64 {
+	return 0
+}
+
 // isDecomposable checks if an aggregate function is decomposable. An aggregation function $F$ is decomposable
 // if there exist aggregation functions F_1 and F_2 such that F(S_1 union all S_2) = F_2(F_1(S_1),F_1(S_2)),
 // where S_1 and S_2 are two sets of values. We call S_1 and S_2 partial groups.

@@ -39,6 +39,10 @@ import (
 // partitionProcessor is here because it's easier to prune partition after predicate push down.
 type partitionProcessor struct{}
 
+func (s *partitionProcessor) getFlag() uint64 {
+	return 0
+}
+
 func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	return s.rewriteDataSource(lp)
 }
