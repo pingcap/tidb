@@ -1632,47 +1632,6 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 	schema := expression.TableInfo2SchemaWithDBName(b.ctx, node.Table.Schema, tblInfo)
 	mockTablePlan.SetSchema(schema)
 
-	convertValue2ColumnType := func(valuesItem []ast.ExprNode) ([]types.Datum, error) {
-		values := make([]types.Datum, 0, len(valuesItem))
-		for j, valueItem := range valuesItem {
-			var expr expression.Expression
-			var err error
-			switch x := valueItem.(type) {
-			case *driver.ValueExpr:
-				expr = &expression.Constant{
-					Value:   x.Datum,
-					RetType: &x.Type,
-				}
-			default:
-				expr, _, err = b.rewrite(valueItem, mockTablePlan, nil, true)
-				if err != nil {
-					return nil, err
-				}
-			}
-			constant, ok := expr.(*expression.Constant)
-			if !ok {
-				return nil, errors.New("expect constant values")
-			}
-			value, err := constant.Eval(chunk.Row{})
-			if err != nil {
-				return nil, err
-			}
-			colOffset := indexInfo.Columns[j].Offset
-			value1, err := value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[colOffset].FieldType)
-			if err != nil {
-				if !types.ErrTruncated.Equal(err) {
-					return nil, err
-				}
-				valStr, err1 := value.ToString()
-				if err1 != nil {
-					return nil, err
-				}
-				return nil, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for index column '%.192s'", valStr, tblInfo.Columns[colOffset].Name.O)
-			}
-			values = append(values, value1)
-		}
-		return values, nil
-	}
 	p := &SplitRegion{
 		TableInfo: tblInfo,
 		IndexInfo: indexInfo,
@@ -1684,7 +1643,7 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 			if len(valuesItem) > len(indexInfo.Columns) {
 				return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
 			}
-			values, err := convertValue2ColumnType(valuesItem)
+			values, err := b.convertValue2ColumnType(valuesItem, mockTablePlan, indexInfo, tblInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -1702,7 +1661,7 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 		if len(valuesItem) > len(indexInfo.Columns) {
 			return nil, errors.Errorf("Split index region `%v` Column count doesn't match value count at %v", indexInfo.Name, name)
 		}
-		return convertValue2ColumnType(valuesItem)
+		return b.convertValue2ColumnType(valuesItem, mockTablePlan, indexInfo, tblInfo)
 	}
 	lowerValues, err := checkLowerUpperValue(node.SplitOpt.Lower, "lower")
 	if err != nil {
@@ -1722,6 +1681,48 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 	}
 	p.Num = int(node.SplitOpt.Num)
 	return p, nil
+}
+
+func (b *PlanBuilder) convertValue2ColumnType(valuesItem []ast.ExprNode, mockTablePlan LogicalPlan, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]types.Datum, error) {
+	values := make([]types.Datum, 0, len(valuesItem))
+	for j, valueItem := range valuesItem {
+		var expr expression.Expression
+		var err error
+		switch x := valueItem.(type) {
+		case *driver.ValueExpr:
+			expr = &expression.Constant{
+				Value:   x.Datum,
+				RetType: &x.Type,
+			}
+		default:
+			expr, _, err = b.rewrite(valueItem, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		constant, ok := expr.(*expression.Constant)
+		if !ok {
+			return nil, errors.New("expect constant values")
+		}
+		value, err := constant.Eval(chunk.Row{})
+		if err != nil {
+			return nil, err
+		}
+		colOffset := indexInfo.Columns[j].Offset
+		value1, err := value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[colOffset].FieldType)
+		if err != nil {
+			if !types.ErrTruncated.Equal(err) {
+				return nil, err
+			}
+			valStr, err1 := value.ToString()
+			if err1 != nil {
+				return nil, err
+			}
+			return nil, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for index column '%.192s'", valStr, tblInfo.Columns[colOffset].Name.O)
+		}
+		values = append(values, value1)
+	}
+	return values, nil
 }
 
 func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
