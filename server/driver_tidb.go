@@ -336,7 +336,7 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 }
 
 // ShowProcess implements QueryCtx ShowProcess method.
-func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
+func (tc *TiDBContext) ShowProcess() *util.ProcessInfo {
 	return tc.session.ShowProcess()
 }
 
