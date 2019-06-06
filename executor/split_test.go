@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/pingcap/tidb/tablecodec"
 	"math"
 	"math/rand"
 
@@ -281,6 +282,77 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, math.MaxInt64, nil)
 		c.Assert(err, IsNil)
 		idx = searchLessEqualIdx(valueList, idxValue)
+		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
+	}
+}
+
+func (s *testSplitIndex) TestSplitTable(c *C) {
+	tbInfo := &model.TableInfo{
+		Name: model.NewCIStr("t1"),
+		ID:   rand.Int63(),
+		Columns: []*model.ColumnInfo{
+			{
+				Name:         model.NewCIStr("c0"),
+				ID:           1,
+				Offset:       1,
+				DefaultValue: 0,
+				State:        model.StatePublic,
+				FieldType:    *types.NewFieldType(mysql.TypeLong),
+			},
+		},
+	}
+	// range is 0 ~ 100, and split into 10 region.
+	// So 10 regions range is like below:
+	// region1: -inf ~ 10
+	// region2: [10 ~ 20)
+	// region3: [20 ~ 30)
+	// region4: [30 ~ 40)
+	// region5: [40 ~ 50)
+	// region6: [50 ~ 60)
+	// region7: [60 ~ 70)
+	// region8: [70 ~ 80)
+	// region9: [80 ~ 90 )
+	// region10: [90 ~ +inf)
+	ctx := mock.NewContext()
+	e := &SplitTableRegionExec{
+		baseExecutor: newBaseExecutor(ctx, nil, nil),
+		tableInfo:    tbInfo,
+		lower:        []types.Datum{types.NewDatum(0)},
+		upper:        []types.Datum{types.NewDatum(100)},
+		num:          10,
+	}
+	valueList, err := e.getSplitTableKeys()
+	c.Assert(err, IsNil)
+	c.Assert(len(valueList), Equals, e.num-1)
+
+	cases := []struct {
+		value        int
+		lessEqualIdx int
+	}{
+		{-1, -1},
+		{0, -1},
+		{1, -1},
+		{10, 0},
+		{11, 0},
+		{20, 1},
+		{21, 1},
+		{31, 2},
+		{41, 3},
+		{51, 4},
+		{61, 5},
+		{71, 6},
+		{81, 7},
+		{91, 8},
+		{100, 8},
+		{1000, 8},
+	}
+
+	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
+	for _, ca := range cases {
+		// test for minInt64 handle
+		key := tablecodec.EncodeRecordKey(recordPrefix, int64(ca.value))
+		c.Assert(err, IsNil)
+		idx := searchLessEqualIdx(valueList, key)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 }

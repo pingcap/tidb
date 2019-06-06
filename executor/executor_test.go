@@ -3791,7 +3791,7 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
 }
 
-func (s *testSuite) TestSplitIndexRegion(c *C) {
+func (s *testSuite) TestSplitRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -3802,6 +3802,7 @@ func (s *testSuite) TestSplitIndexRegion(c *C) {
 	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
 
+	// Test for split index region.
 	// Check min value is more than max value.
 	tk.MustExec(`split table t index idx1 between (0) and (1000000000) regions 10`)
 	_, err = tk.Exec(`split table t index idx1 between (2,'a') and (1,'c') regions 10`)
@@ -3831,7 +3832,39 @@ func (s *testSuite) TestSplitIndexRegion(c *C) {
 	// Test truncate error msg.
 	_, err = tk.Exec(`split table t index idx1 between ("aa") and (1000000000) regions 0`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for index column 'b'")
+	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column 'b'")
+
+	// Test for split table region.
+	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
+	// Check min value is more than upper value.
+	_, err = tk.Exec(`split table t between (2) and (1) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table t region lower value 2 should less than the upper value 1")
+
+	// Check min value is invalid.
+	_, err = tk.Exec(`split table t between () and (1) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region lower value count should be 1")
+
+	// Check upper value is invalid.
+	_, err = tk.Exec(`split table t between (1) and () regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region upper value count should be 1")
+
+	// Check pre-split region num is too large.
+	_, err = tk.Exec(`split table t between (0) and (1000000000) regions 10000`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region num is exceed the limit 1000")
+
+	// Check pre-split region num 0 is invalid.
+	_, err = tk.Exec(`split table t between (0) and (1000000000) regions 0`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region num should more than 0")
+
+	// Test truncate error msg.
+	_, err = tk.Exec(`split table t between ("aa") and (1000000000) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column '_tidb_rowid'")
 }
 
 func (s *testSuite) TestIssue10435(c *C) {
