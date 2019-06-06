@@ -165,6 +165,18 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	return ver, nil
 }
 
+func checkSchemaExistAndCancelNotExistJob(t *meta.Meta, job *model.Job) (*model.DBInfo, error) {
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if dbInfo == nil {
+		job.State = model.JobStateCancelled
+		return nil, infoschema.ErrDatabaseDropExists.GenWithStackByArgs("")
+	}
+	return dbInfo, nil
+}
+
 func getIDs(tables []*model.TableInfo) []int64 {
 	ids := make([]int64, 0, len(tables))
 	for _, t := range tables {
