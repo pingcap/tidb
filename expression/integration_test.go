@@ -4353,3 +4353,16 @@ func (s *testIntegrationSuite) TestIssue10181(c *C) {
 	tk.MustExec(`insert into t values(9223372036854775807), (18446744073709551615)`)
 	tk.MustQuery(`select * from t where a > 9223372036854775807-0.5 order by a`).Check(testkit.Rows(`9223372036854775807`, `18446744073709551615`))
 }
+
+func (s *testIntegrationSuite) TestMySQLExtAssignment(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@autocommit := on;")
+	tk.MustExec("set autocommit := on;")
+	tk.MustExec("set session autocommit := on;")
+	tk.MustExec("set global autocommit := on;")
+	tk.MustExec("set @count := 100;")
+	tk.MustExec("set @count := @count + 5;")
+}
