@@ -317,8 +317,5 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 }
 
 func (e *RuntimeStats) String() string {
-	if e == nil {
-		return ""
-	}
 	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 }
