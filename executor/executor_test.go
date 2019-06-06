@@ -1696,10 +1696,6 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 // TestGeneratedColumnRead tests select generated columns from table.
 // They should be calculated from their generation expressions.
 func (s *testSuite) TestGeneratedColumnRead(c *C) {
-	defer func(b bool) {
-		config.GetGlobalConfig().Status.RecordQPSbyDB = b
-	}(config.GetGlobalConfig().Status.RecordQPSbyDB)
-	config.GetGlobalConfig().Status.RecordQPSbyDB = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored, e int as (c*2))`)
@@ -2016,10 +2012,6 @@ func (s *testSuite) TestTableScan(c *C) {
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {
-	defer func(b bool) {
-		config.GetGlobalConfig().Status.RecordQPSbyDB = b
-	}(config.GetGlobalConfig().Status.RecordQPSbyDB)
-	config.GetGlobalConfig().Status.RecordQPSbyDB = true
 	se, err := session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	se.GetSessionVars().TxnCtx.InfoSchema = domain.GetDomain(se).InfoSchema()
