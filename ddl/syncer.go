@@ -174,7 +174,8 @@ func (s *schemaVersionSyncer) storeSession(session *concurrency.Session) {
 func (s *schemaVersionSyncer) Done() <-chan struct{} {
 	failpoint.Inject("ErrorMockSessionDone", func(val failpoint.Value) {
 		if val.(bool) {
-			s.loadSession().Close()
+			err := s.loadSession().Close()
+			logutil.Logger(context.Background()).Info("close session failed", zap.Error(err))
 		}
 	})
 

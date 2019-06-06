@@ -3,20 +3,20 @@ module github.com/pingcap/tidb
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/StackExchange/wmi v0.0.0-20180725035823-b12b22c5341f // indirect
+	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
-	github.com/boltdb/bolt v1.3.1 // indirect
-	github.com/chzyer/logex v1.1.10 // indirect
-	github.com/chzyer/readline v0.0.0-20171208011716-f6d7a1f6fbf3 // indirect
-	github.com/chzyer/test v0.0.0-20180213035817-a1ea475d72b1 // indirect
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
 	github.com/coreos/bbolt v1.3.2 // indirect
 	github.com/coreos/etcd v3.3.13+incompatible
+	github.com/coreos/go-semver v0.2.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142 // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
+	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385 // indirect
+	github.com/ghodss/yaml v1.0.1-0.20190212211648-25d852aebe32 // indirect
 	github.com/go-ole/go-ole v1.2.1 // indirect
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
 	github.com/gogo/protobuf v1.2.0 // indirect
@@ -28,12 +28,12 @@ require (
 	github.com/gorilla/mux v1.6.2
 	github.com/gorilla/websocket v1.4.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
+	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.5.1 // indirect
+	github.com/jonboulle/clockwork v0.1.0 // indirect
 	github.com/json-iterator/go v1.1.6 // indirect
-	github.com/juju/ratelimit v1.0.1 // indirect
 	github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5
 	github.com/kr/pretty v0.1.0 // indirect
-	github.com/mattn/go-shellwords v1.0.3 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.1 // indirect
@@ -46,7 +46,6 @@ require (
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
-	github.com/pingcap/errcode v0.0.0-20180921232412-a1a7271709d9 // indirect
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190422094118-d8535965f59b
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3 // indirect
@@ -66,19 +65,18 @@ require (
 	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181020040650-a97a25d856ca // indirect
 	github.com/sirupsen/logrus v1.2.0
+	github.com/soheilhy/cmux v0.1.4 // indirect
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/struCoder/pidusage v0.1.2
-	github.com/syndtr/goleveldb v0.0.0-20180815032940-ae2bd5eed72d // indirect
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6 // indirect
 	github.com/twinj/uuid v1.0.0
 	github.com/uber-go/atomic v1.3.2 // indirect
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
 	github.com/uber/jaeger-lib v1.5.0 // indirect
-	github.com/ugorji/go v1.1.5-pre // indirect
 	github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d // indirect
-	github.com/urfave/negroni v0.3.0 // indirect
-	go.etcd.io/etcd v0.0.0-20190320044326-77d4b742cdbf
+	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
+	go.etcd.io/bbolt v1.3.2 // indirect
 	go.uber.org/atomic v1.3.2
 	go.uber.org/zap v1.9.1
 	golang.org/x/net v0.0.0-20190108225652-1e06a53dbb7e
