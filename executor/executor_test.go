@@ -3841,7 +3841,7 @@ func (s *testSuite) TestSplitRegion(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table t region lower value 2 should less than the upper value 1")
 
-	// Check min value is invalid.
+	// Check the lower value is invalid.
 	_, err = tk.Exec(`split table t between () and (1) regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table region lower value count should be 1")
