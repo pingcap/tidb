@@ -211,8 +211,8 @@ type SplitTableRegionExec struct {
 	baseExecutor
 
 	tableInfo  *model.TableInfo
-	lower      []types.Datum
-	upper      []types.Datum
+	lower      types.Datum
+	upper      types.Datum
 	num        int
 	valueLists [][]types.Datum
 }
@@ -278,19 +278,19 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 			isUnsigned = mysql.HasUnsignedFlag(pkCol.Flag)
 		}
 	}
-	step := uint64(0)
-	lowerValue := int64(0)
+	var step uint64
+	var lowerValue int64
 	if isUnsigned {
-		lowerRecordID := e.lower[0].GetUint64()
-		upperRecordID := e.upper[0].GetUint64()
+		lowerRecordID := e.lower.GetUint64()
+		upperRecordID := e.upper.GetUint64()
 		if upperRecordID <= lowerRecordID {
 			return nil, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
 		}
 		step = (upperRecordID - lowerRecordID) / uint64(e.num)
 		lowerValue = int64(lowerRecordID)
 	} else {
-		lowerRecordID := e.lower[0].GetInt64()
-		upperRecordID := e.upper[0].GetInt64()
+		lowerRecordID := e.lower.GetInt64()
+		upperRecordID := e.upper.GetInt64()
 		if upperRecordID <= lowerRecordID {
 			return nil, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
 		}

@@ -1278,8 +1278,8 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 	return &SplitTableRegionExec{
 		baseExecutor: base,
 		tableInfo:    v.TableInfo,
-		lower:        v.Lower,
-		upper:        v.Upper,
+		lower:        v.Lower[0],
+		upper:        v.Upper[0],
 		num:          v.Num,
 		valueLists:   v.ValueLists,
 	}
