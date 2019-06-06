@@ -117,7 +117,7 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 		if err != nil {
 			return dt, err
 		}
-		c.Value.SetValue(val.GetValue())
+		return val, nil
 	} else if c.DeferredExpr != nil {
 		if sf, sfOK := c.DeferredExpr.(*ScalarFunction); sfOK {
 			dt, err := sf.Eval(chunk.Row{})
@@ -133,6 +133,32 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 				return dt, err
 			}
 			c.Value.SetValue(val.GetValue())
+		}
+	}
+	return c.Value, nil
+}
+
+// UnsafeEval returns datum maybe not match const's type.
+// but it will be cast soon, so use this to reduce duplicate cast.
+func (c *Constant) UnsafeEval(_ chunk.Row) (types.Datum, error) {
+	if c.DeferredParam != nil {
+		dt := c.DeferredParam.Value()
+		if dt.IsNull() {
+			c.Value.SetNull()
+			return c.Value, nil
+		}
+		return dt, nil
+	} else if c.DeferredExpr != nil {
+		if sf, sfOK := c.DeferredExpr.(*ScalarFunction); sfOK {
+			dt, err := sf.Eval(chunk.Row{})
+			if err != nil {
+				return c.Value, err
+			}
+			if dt.IsNull() {
+				c.Value.SetNull()
+				return c.Value, nil
+			}
+			return dt, nil
 		}
 	}
 	return c.Value, nil

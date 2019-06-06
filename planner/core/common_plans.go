@@ -401,6 +401,8 @@ type Insert struct {
 	GenCols InsertGeneratedColumns
 
 	SelectPlan PhysicalPlan
+
+	NotAllConstant bool
 }
 
 // Update represents Update plan.

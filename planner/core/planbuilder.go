@@ -1463,6 +1463,10 @@ func (b *PlanBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan 
 		if err != nil {
 			return err
 		}
+		_, isConstant := expr.(*expression.Constant)
+		if !isConstant {
+			insertPlan.NotAllConstant = true
+		}
 		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
 			Col:  exprCols[i],
 			Expr: expr,
@@ -1524,6 +1528,10 @@ func (b *PlanBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 			}
 			if err != nil {
 				return err
+			}
+			_, isConstant := expr.(*expression.Constant)
+			if !isConstant {
+				insertPlan.NotAllConstant = true
 			}
 			exprList = append(exprList, expr)
 		}
