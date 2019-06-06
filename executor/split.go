@@ -255,6 +255,8 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 	return nil
 }
 
+const minRegionStepValue = 1000
+
 func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 	var keys [][]byte
 	if e.num > 0 {
@@ -295,8 +297,8 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 		step = uint64(upperRecordID-lowerRecordID) / uint64(e.num)
 		lowerValue = lowerRecordID
 	}
-	if step < 1 {
-		return nil, errors.Errorf("Split table %s region step value should more than 0, step %v is invalid", e.tableInfo.Name, step)
+	if step < minRegionStepValue {
+		return nil, errors.Errorf("Split table %s region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
 	}
 
 	recordID := lowerValue

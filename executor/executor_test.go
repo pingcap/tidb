@@ -3865,6 +3865,11 @@ func (s *testSuite) TestSplitRegion(c *C) {
 	_, err = tk.Exec(`split table t between ("aa") and (1000000000) regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column '_tidb_rowid'")
+
+	// Test split table region step is too small.
+	_, err = tk.Exec(`split table t between (0) and (100) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table t region step value should more than 1000, step 10 is invalid")
 }
 
 func (s *testSuite) TestIssue10435(c *C) {

@@ -16,7 +16,6 @@ package executor
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/pingcap/tidb/tablecodec"
 	"math"
 	"math/rand"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -303,7 +303,7 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	}
 	// range is 0 ~ 100, and split into 10 region.
 	// So 10 regions range is like below:
-	// region1: -inf ~ 10
+	// region1: [-inf ~ 10)
 	// region2: [10 ~ 20)
 	// region3: [20 ~ 30)
 	// region4: [30 ~ 40)

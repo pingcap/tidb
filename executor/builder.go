@@ -1283,7 +1283,6 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 		num:          v.Num,
 		valueLists:   v.ValueLists,
 	}
-
 }
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
