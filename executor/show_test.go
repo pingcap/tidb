@@ -97,16 +97,6 @@ func (s *testSuite2) TestShowDatabasesInfoSchemaFirst(c *C) {
 	tk.MustExec(`drop database BBBB`)
 }
 
-// mockSessionManager is a mocked session manager that wraps one session
-// it returns only this session's current process info as processlist for test.
-type mockSessionManager struct {
-	session.Session
-}
-
-// Kill implements the SessionManager.Kill interface.
-func (msm *mockSessionManager) Kill(cid uint64, query bool) {
-}
-
 func (s *testSuite2) TestShowWarnings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
