@@ -4072,7 +4072,14 @@ func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
 
 func (s *testIntegrationSuite) TestIssue9732(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer s.cleanEnv(c)
+	r := tk.MustQuery("select @@sql_mode")
+	m := fmt.Sprintf("%v", r.Rows()[0])
+	m = strings.Trim(m, "[]")
+	tk.MustExec(fmt.Sprintf("set sql_mode='%v'", m+",NO_ZERO_DATE"))
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set sql_mode='%v'", m))
+		s.cleanEnv(c)
+	}()
 
 	tk.MustQuery(`select monthname(str_to_date(null, '%m')), monthname(str_to_date(null, '%m')),
 monthname(str_to_date(1, '%m')), monthname(str_to_date(0, '%m'));`).Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
