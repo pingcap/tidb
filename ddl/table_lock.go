@@ -192,13 +192,13 @@ func unlockTables(t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, 
 // unlockTable uses to unlock table lock that hold by the session.
 func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) (needUpdateTableInfo bool) {
 	if !tbInfo.IsLocked() {
-		return
+		return false
 	}
 	sessionIndex := findSessionInfoIndex(tbInfo.Lock.Sessions, arg.SessionInfo)
 	if sessionIndex < 0 {
 		// When session clean table lock, session maybe send unlock table even the table lock maybe not hold by the session.
-		// so just return nil here.
-		return
+		// so just ignore and return here.
+		return false
 	}
 	oldSessionInfo := tbInfo.Lock.Sessions
 	tbInfo.Lock.Sessions = oldSessionInfo[:sessionIndex]
