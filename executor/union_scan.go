@@ -249,7 +249,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 
 // For index reader and index look up reader, Because update does't write index to txn memBuffer when the idx column
 // was unchanged. So the `memIndexReader` and `memIndexLookUpReader` can't read the index from txn memBuffer.
-// This function use to get the miss row by handle if the handle was in dirtyTable.addedRows.
+// This function is used to get the missing row by the handle if the handle was in dirtyTable.addedRows.
 func (us *UnionScanExec) getMissIndexRowsByHandle(handle int64) error {
 	reader := us.children[0]
 	switch reader.(type) {
