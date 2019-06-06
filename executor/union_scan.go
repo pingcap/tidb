@@ -104,7 +104,7 @@ type UnionScanExec struct {
 	belowHandleIndex int
 
 	addedRows           [][]types.Datum
-	checkedHandles      map[int64]struct{}
+	memIdxHandles       map[int64]struct{}
 	cursor4AddRows      int
 	sortErr             error
 	snapshotRows        [][]types.Datum
@@ -129,15 +129,17 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	case *IndexReaderExecutor:
 		mIdxReader := buildMemIndexReader(us, x)
 		us.addedRows, err = mIdxReader.getMemRows()
-		us.checkedHandles = mIdxReader.checkedHandles
+		us.memIdxHandles = mIdxReader.memIdxHandles
 	case *IndexLookUpExecutor:
 		mIdxLookUpReader := buildMemIndexLookUpReader(us, x)
 		us.addedRows, err = mIdxLookUpReader.getMemRows()
-		us.checkedHandles = mIdxLookUpReader.idxReader.checkedHandles
+		us.memIdxHandles = mIdxLookUpReader.idxReader.memIdxHandles
 	}
-
+	if err != nil {
+		return err
+	}
 	us.snapshotChunkBuffer = us.newFirstChunk()
-	return err
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -260,7 +262,7 @@ func (us *UnionScanExec) getMissIndexRowsByHandle(handle int64) error {
 		return nil
 	}
 	// Don't miss in memBuffer reader.
-	if _, ok := us.checkedHandles[handle]; ok {
+	if _, ok := us.memIdxHandles[handle]; ok {
 		return nil
 	}
 	ds, err := us.getMemRow(handle)
