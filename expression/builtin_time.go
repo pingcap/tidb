@@ -1084,21 +1084,45 @@ func (b *builtinDayNameSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinDayNameSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
-func (b *builtinDayNameSig) evalString(row chunk.Row) (string, bool, error) {
+func (b *builtinDayNameSig) evalIndex(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return 0, isNull, err
 	}
 	if arg.InvalidZero() {
-		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String())))
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
 	}
 	// Monday is 0, ... Sunday = 6 in MySQL
 	// but in go, Sunday is 0, ... Saturday is 6
 	// w will do a conversion.
 	res := (int64(arg.Time.Weekday()) + 6) % 7
-	return types.WeekdayNames[res], false, nil
+	return res, false, nil
+}
+
+// evalString evals a builtinDayNameSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
+func (b *builtinDayNameSig) evalString(row chunk.Row) (string, bool, error) {
+	idx, isNull, err := b.evalIndex(row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return types.WeekdayNames[idx], false, nil
+}
+
+func (b *builtinDayNameSig) evalReal(row chunk.Row) (float64, bool, error) {
+	idx, isNull, err := b.evalIndex(row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	return float64(idx), false, nil
+}
+
+func (b *builtinDayNameSig) evalInt(row chunk.Row) (int64, bool, error) {
+	idx, isNull, err := b.evalIndex(row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	return idx, false, nil
 }
 
 type dayOfMonthFunctionClass struct {
