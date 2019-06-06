@@ -73,6 +73,8 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 			tbInfo.Lock.State = model.TableLockStatePreLock
 			tbInfo.Lock.TS = t.StartTS
 			ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
+		// If the state of the lock is public, It means the lock is a read lock and already locked by other session,
+		// so this request of lock table doesn't need pre-lock state, just update the TS and table info is ok.
 		case model.TableLockStatePreLock, model.TableLockStatePublic:
 			tbInfo.Lock.State = model.TableLockStatePublic
 			tbInfo.Lock.TS = t.StartTS
@@ -114,6 +116,8 @@ func lockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
 		tbInfo.Lock.Sessions = append(tbInfo.Lock.Sessions, arg.SessionInfo)
 		return nil
 	}
+	// If the state of the lock is in pre-lock, then the lock must be locked by the current request. So we can just return here.
+	// Because the lock/unlock job must be serial execution in DDL owner now.
 	if tbInfo.Lock.State == model.TableLockStatePreLock {
 		return nil
 	}
