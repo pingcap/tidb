@@ -948,6 +948,8 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 		t, err = ParseTime(sc, d.GetString(), mysql.TypeTimestamp, fsp)
 	case KindInt64:
 		t, err = ParseTimeFromNum(sc, d.GetInt64(), mysql.TypeTimestamp, fsp)
+	case KindMysqlDecimal:
+		t, err = ParseTimeFromFloatString(sc, d.GetMysqlDecimal().String(), mysql.TypeTimestamp, fsp)
 	default:
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
@@ -985,6 +987,8 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 			return ret, errors.Trace(err)
 		}
 		t, err = t.RoundFrac(sc, fsp)
+	case KindMysqlDecimal:
+		t, err = ParseTimeFromFloatString(sc, d.GetMysqlDecimal().String(), tp, fsp)
 	case KindString, KindBytes:
 		t, err = ParseTime(sc, d.GetString(), tp, fsp)
 	case KindInt64:
