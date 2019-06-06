@@ -259,7 +259,7 @@ func (us *UnionScanExec) getMissIndexRowsByHandle(handle int64) error {
 	if _, ok := us.dirty.addedRows[handle]; !ok {
 		return nil
 	}
-	// Doesn't miss in memBuffer reader.
+	// Don't miss in memBuffer reader.
 	if _, ok := us.checkedHandles[handle]; ok {
 		return nil
 	}
