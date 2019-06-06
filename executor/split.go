@@ -229,8 +229,8 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 		return err
 	}
 	regionIDs := make([]uint64, 0, len(splitKeys))
-	for _, idxKey := range splitKeys {
-		regionID, err := s.SplitRegionAndScatter(idxKey)
+	for _, key := range splitKeys {
+		regionID, err := s.SplitRegionAndScatter(key)
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("split table region failed",
 				zap.String("table", e.tableInfo.Name.L),
