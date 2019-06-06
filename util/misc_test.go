@@ -168,7 +168,7 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 
 	// Test for RandomBuf.
 	buf := RandomBuf(5)
-	c.Assert(len(buf) == 5, IsTrue)
+	c.Assert(len(buf), Equals, 5)
 	c.Assert(bytes.Contains(buf, []byte("$")), IsFalse)
 	c.Assert(bytes.Contains(buf, []byte{0}), IsFalse)
 }
