@@ -520,7 +520,7 @@ func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary 
 		return errs
 	}
 	if err := mvcc.db.Write(batch, nil); err != nil {
-		return nil
+		return []error{err}
 	}
 
 	return errs
@@ -544,7 +544,11 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 		if dec.lock.startTS != startTS {
 			errDeadlock := mvcc.deadlockDetector.Detect(startTS, dec.lock.startTS, farm.Fingerprint64(mutation.Key))
 			if errDeadlock != nil {
-				return errDeadlock
+				return &ErrDeadlock{
+					LockKey:        mutation.Key,
+					LockTS:         dec.lock.startTS,
+					DealockKeyHash: errDeadlock.KeyHash,
+				}
 			}
 			return dec.lock.lockErr(mutation.Key)
 		}
@@ -555,10 +559,11 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 	}
 
 	lock := mvccLock{
-		startTS: startTS,
-		primary: primary,
-		op:      kvrpcpb.Op_PessimisticLock,
-		ttl:     ttl,
+		startTS:     startTS,
+		primary:     primary,
+		op:          kvrpcpb.Op_PessimisticLock,
+		ttl:         ttl,
+		forUpdateTS: forUpdateTS,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
 	writeValue, err := lock.MarshalBinary()
@@ -567,6 +572,53 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 	}
 
 	batch.Put(writeKey, writeValue)
+	return nil
+}
+
+// PessimisticRollback implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) PessimisticRollback(keys [][]byte, startTS, forUpdateTS uint64) []error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	anyError := false
+	batch := &leveldb.Batch{}
+	errs := make([]error, 0, len(keys))
+	for _, key := range keys {
+		err := pessimisticRollbackKey(mvcc.db, batch, key, startTS, forUpdateTS)
+		errs = append(errs, err)
+		if err != nil {
+			anyError = true
+		}
+	}
+	if anyError {
+		return errs
+	}
+	if err := mvcc.db.Write(batch, nil); err != nil {
+		return []error{err}
+	}
+	return errs
+}
+
+func pessimisticRollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, forUpdateTS uint64) error {
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	dec := lockDecoder{
+		expectKey: key,
+	}
+	ok, err := dec.Decode(iter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
+		lock := dec.lock
+		if lock.op == kvrpcpb.Op_PessimisticLock && lock.startTS == startTS && lock.forUpdateTS <= forUpdateTS {
+			batch.Delete(startKey)
+		}
+	}
 	return nil
 }
 
@@ -607,7 +659,7 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 		return errs
 	}
 	if err := mvcc.db.Write(batch, nil); err != nil {
-		return nil
+		return []error{err}
 	}
 
 	return errs
