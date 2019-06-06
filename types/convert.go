@@ -209,7 +209,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 		intStr = "0"
 	}
 	if sc.ShouldClipToZero() && intStr[0] == '-' {
-		return 0, overflow(str, tp)
+		return 0, overflow(intStr, tp)
 	}
 
 	var round uint64
