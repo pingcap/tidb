@@ -130,6 +130,8 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("update t set a=a+1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
+	tk.MustQuery("select * from t use index (idx) order by b desc").Check(testkit.Rows("3 2", "2 1"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 
@@ -138,6 +140,7 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("update t set b=b+1 where a=2")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 2", "3 2"))
+	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("2 2", "3 2"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 
@@ -163,6 +166,8 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
 	tk.MustExec("update t set b=b+2 where a=2")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 3", "3 2"))
+	tk.MustQuery("select * from t use index (idx) order by b desc").Check(testkit.Rows("2 3", "3 2"))
+	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("3 2", "2 3"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
