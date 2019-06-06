@@ -473,7 +473,7 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 		ttlResp, err := s.etcdCli.TimeToLive(childCtx, lease.ID)
 		cancelFunc()
 		if err != nil {
-			logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, failed to get TTL.", zap.String("leaseID", leaseID), zap.Error(err))
+			logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, failed to get one TTL.", zap.String("leaseID", leaseID), zap.Error(err))
 			failedGetIDs++
 			continue
 		}
