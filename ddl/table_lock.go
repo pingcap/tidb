@@ -57,7 +57,8 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	if arg.IndexOfLock < len(arg.LockTables) {
 		job.SchemaID = arg.LockTables[arg.IndexOfLock].SchemaID
 		job.TableID = arg.LockTables[arg.IndexOfLock].TableID
-		tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+		var tbInfo *model.TableInfo
+		tbInfo, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 		if err != nil {
 			return ver, err
 		}
@@ -175,9 +176,8 @@ func unlockTables(t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, 
 			arg.IndexOfUnlock++
 			job.Args = []interface{}{arg}
 			return ver, nil
-		} else {
-			return ver, err
 		}
+		return ver, err
 	}
 
 	needUpdateTableInfo := unlockTable(tbInfo, arg)
