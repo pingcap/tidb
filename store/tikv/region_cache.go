@@ -405,7 +405,7 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 
 	r, err := c.loadRegionByID(bo, regionID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	c.mu.Lock()
@@ -430,7 +430,7 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[Regio
 			var err error
 			lastLoc, err = c.LocateKey(bo, k)
 			if err != nil {
-				return nil, first, errors.Trace(err)
+				return nil, first, err
 			}
 		}
 		id := lastLoc.Region
@@ -447,7 +447,7 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 	for {
 		curRegion, err := c.LocateKey(bo, startKey)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		regionIDs = append(regionIDs, curRegion.Region.id)
 		if curRegion.Contains(endKey) {
@@ -556,7 +556,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 		if backoffErr != nil {
 			err := bo.Backoff(BoPDRPC, backoffErr)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 		var meta *metapb.Region
@@ -603,7 +603,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 		if backoffErr != nil {
 			err := bo.Backoff(BoPDRPC, backoffErr)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 		meta, leader, err := c.pdClient.GetRegionByID(bo.ctx, regionID)

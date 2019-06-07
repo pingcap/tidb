@@ -93,26 +93,26 @@ func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.Background())
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			txn, err := hookCtx.Txn(true)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
+				checkErr = errs[0]
 				return
 			}
 			txn, err = hookCtx.Txn(true)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			checkErr = txn.Commit(context.Background())

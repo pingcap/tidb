@@ -65,7 +65,7 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 		defer terror.Call(rss[0].Close)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	rs := rss[0]
@@ -74,7 +74,7 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if req.NumRows() == 0 {
 			break
@@ -83,11 +83,11 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			startKey, err := hex.DecodeString(row.GetString(2))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			endKey, err := hex.DecodeString(row.GetString(3))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			ranges = append(ranges, DelRangeTask{
 				JobID:     row.GetInt64(0),
@@ -106,7 +106,7 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	return RemoveFromGCDeleteRange(ctx, dr.JobID, dr.ElementID)
@@ -116,14 +116,14 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) error {
 	sql := fmt.Sprintf(completeDeleteRangeSQL, jobID, elementID)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	return errors.Trace(err)
+	return err
 }
 
 // DeleteDoneRecord removes a record from gc_delete_range_done table.
 func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(deleteDoneRecordSQL, dr.JobID, dr.ElementID)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	return errors.Trace(err)
+	return err
 }
 
 // UpdateDeleteRange is only for emulator.
@@ -132,7 +132,7 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	return errors.Trace(err)
+	return err
 }
 
 // LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
@@ -160,7 +160,7 @@ func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 		sql := fmt.Sprintf(loadGlobalVarsSQL, nameList)
 		rows, _, err := sctx.ExecRestrictedSQL(ctx, sql)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		for _, row := range rows {
 			varName := row.GetString(0)

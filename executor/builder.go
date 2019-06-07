@@ -1151,7 +1151,7 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 	}
 	b.startTS = startTS
 	if b.startTS == 0 {
-		return 0, errors.Trace(ErrGetStartTS)
+		return 0, ErrGetStartTS
 	}
 	return startTS, nil
 }
@@ -2092,7 +2092,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 				}
 				tmpKvRanges, err := distsql.IndexRangesToKVRanges(sc, tableID, indexID, ranges, nil)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				kvRanges = append(kvRanges, tmpKvRanges...)
 			}

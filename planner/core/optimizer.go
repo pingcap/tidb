@@ -104,7 +104,7 @@ func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 		return nil, err
 	}
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
-		return nil, errors.Trace(ErrCartesianProductUnsupported)
+		return nil, ErrCartesianProductUnsupported
 	}
 	physical, err := physicalOptimize(logic)
 	if err != nil {

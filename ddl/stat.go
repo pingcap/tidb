@@ -55,12 +55,12 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 		var err1 error
 		ddlInfo, err1 = admin.GetDDLInfo(txn)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
-		return errors.Trace(err1)
+		return err1
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	m[ddlSchemaVersion] = ddlInfo.SchemaVer

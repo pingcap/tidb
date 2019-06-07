@@ -48,7 +48,7 @@ type WindowExec struct {
 // Close implements the Executor Close interface.
 func (e *WindowExec) Close() error {
 	e.childResults = nil
-	return errors.Trace(e.baseExecutor.Close())
+	return e.baseExecutor.Close()
 }
 
 // Next implements the Executor Next interface.
@@ -72,7 +72,7 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.RecordBatch) error {
 		err := e.consumeOneGroup(ctx, chk.Chunk)
 		if err != nil {
 			e.executed = true
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -81,21 +81,21 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.RecordBatch) error {
 func (e *WindowExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) error {
 	var err error
 	if err = e.fetchChildIfNecessary(ctx, chk); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
 		e.meetNewGroup, err = e.groupChecker.meetNewGroup(e.inputRow)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if e.meetNewGroup {
 			err := e.consumeGroupRows()
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			err = e.appendResult2Chunk(chk)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		e.remainingRowsInGroup++
@@ -114,7 +114,7 @@ func (e *WindowExec) consumeGroupRows() (err error) {
 	}
 	e.groupRows, err = e.processor.consumeGroupRows(e.ctx, e.groupRows)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -127,20 +127,20 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk
 	// Before fetching a new batch of input, we should consume the last group rows.
 	err = e.consumeGroupRows()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	childResult := e.children[0].newFirstChunk()
 	err = e.children[0].Next(ctx, &chunk.RecordBatch{Chunk: childResult})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	e.childResults = append(e.childResults, childResult)
 	// No more data.
 	if childResult.NumRows() == 0 {
 		e.executed = true
 		err = e.appendResult2Chunk(chk)
-		return errors.Trace(err)
+		return err
 	}
 
 	e.inputIter = chunk.NewIterator4Chunk(childResult)

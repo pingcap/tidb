@@ -82,7 +82,7 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		e.result = e.newFirstChunk()
 		err := e.fetchAll()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		iter := chunk.NewIterator4Chunk(e.result)
 		for colIdx := 0; colIdx < e.Schema().Len(); colIdx++ {
@@ -210,7 +210,7 @@ func (e *ShowExec) fetchShowEngines() error {
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for _, row := range rows {
 		e.result.AppendRow(row)
@@ -341,7 +341,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
@@ -366,7 +366,7 @@ func (e *ShowExec) fetchShowColumns() error {
 	tb, err := e.getTable()
 
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
@@ -405,7 +405,7 @@ func (e *ShowExec) fetchShowColumns() error {
 			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && strings.ToUpper(defaultValStr) != strings.ToUpper(ast.CurrentTimestamp) {
 				timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
 				if err != nil {
-					return errors.Trace(err)
+					return err
 				}
 				defaultValStr = timeValue.GetMysqlTime().String()
 			}
@@ -448,7 +448,7 @@ func (e *ShowExec) fetchShowColumns() error {
 func (e *ShowExec) fetchShowIndex() error {
 	tb, err := e.getTable()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -557,7 +557,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 			value, ok, err = variable.GetScopeNoneSystemVar(v.Name)
 		}
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !ok {
 			unreachedVars = append(unreachedVars, v.Name)
@@ -568,7 +568,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	if len(unreachedVars) != 0 {
 		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		for _, varName := range unreachedVars {
 			varValue, ok := systemVars[varName]
@@ -585,7 +585,7 @@ func (e *ShowExec) fetchShowStatus() error {
 	sessionVars := e.ctx.GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for status, v := range statusVars {
 		if e.GlobalScope && v.Scope == variable.ScopeSession {
@@ -597,7 +597,7 @@ func (e *ShowExec) fetchShowStatus() error {
 		}
 		value, err := types.ToString(v.Value)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		e.appendRow([]interface{}{status, value})
 	}
@@ -630,7 +630,7 @@ func escape(cis model.CIStr, sqlMode mysql.SQLMode) string {
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	sqlMode := e.ctx.GetSessionVars().SQLMode
@@ -698,7 +698,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 					if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr {
 						timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
 						if err != nil {
-							return errors.Trace(err)
+							return err
 						}
 						defaultValStr = timeValue.GetMysqlTime().String()
 					}
@@ -787,7 +787,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		// It's campatible with MySQL.
 		if autoIncID > 1 {
@@ -821,7 +821,7 @@ func (e *ShowExec) fetchShowCreateView() error {
 
 	tb, err := e.getTable()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if !tb.Meta().IsView() {
@@ -942,7 +942,7 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		mysql.SystemDB, mysql.UserTable, e.User.Username, e.User.Hostname)
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if len(rows) == 0 {
 		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
@@ -971,7 +971,7 @@ func (e *ShowExec) fetchShowGrants() error {
 	}
 	gs, err := checker.ShowGrants(e.ctx, e.User, e.Roles)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for _, g := range gs {
 		e.appendRow([]interface{}{g})
@@ -1055,16 +1055,16 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	registry, err := createRegistry(config.GetGlobalConfig().Path)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = registry.Close()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	for _, n := range nodes {
@@ -1078,11 +1078,11 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 func createRegistry(urls string) (*node.EtcdRegistry, error) {
 	ectdEndpoints, err := utils.ParseHostPortAddr(urls)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	cli, err := etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, node.DefaultRootPath, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return node.NewEtcdRegistry(cli, etcdDialTimeout), nil

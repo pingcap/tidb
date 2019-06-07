@@ -270,7 +270,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 
 	err := splitRanges(bo, cache, ranges, appendTask)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if desc {
@@ -290,7 +290,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 	for ranges.len() > 0 {
 		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		// Iterate to the first range that is not complete in the region.
@@ -346,7 +346,7 @@ func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRang
 
 	err := splitRanges(bo, cache, &ranges, appendRange)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return ret, nil
 }
@@ -598,12 +598,12 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	}
 
 	if resp.err != nil {
-		return nil, errors.Trace(resp.err)
+		return nil, resp.err
 	}
 
 	err := it.store.CheckVisibility(it.req.StartTs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return resp, nil
 }
@@ -625,7 +625,7 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	for len(remainTasks) > 0 {
 		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
 		if err != nil {
-			resp := &copResponse{err: errors.Trace(err)}
+			resp := &copResponse{err: err}
 			worker.sendToRespCh(resp, respCh, true)
 			return
 		}
@@ -665,7 +665,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = sender.storeAddr
@@ -744,7 +744,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 	for {
 		remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp}, task, ch, lastRange)
 		if err != nil || len(remainedTasks) != 0 {
-			return remainedTasks, errors.Trace(err)
+			return remainedTasks, err
 		}
 		resp, err = stream.Recv()
 		if err != nil {
@@ -753,7 +753,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 
 			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
@@ -771,7 +771,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCContext, resp *copResponse, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange) ([]*copTask, error) {
 	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
 		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
@@ -781,11 +781,11 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			zap.Stringer("lock", lockErr))
 		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
-			return nil, errors.Trace(err1)
+			return nil, err1
 		}
 		if msBeforeExpired > 0 {
 			if err := bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.New(lockErr.String())); err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 		return worker.buildCopTasksFromRemain(bo, lastRange, task)
@@ -797,7 +797,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			zap.Uint64("regionID", task.region.id),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	// When the request is using streaming API, the `Range` is not nil.
 	if resp.pbResp.Range != nil {

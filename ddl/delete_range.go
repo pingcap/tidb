@@ -84,13 +84,13 @@ func newDelRangeManager(store kv.Storage, sessPool *sessionPool) delRangeManager
 func (dr *delRange) addDelRangeJob(job *model.Job) error {
 	ctx, err := dr.sessPool.get()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer dr.sessPool.put(ctx)
 
 	err = insertJobIntoDeleteRangeTable(ctx, job)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if !dr.storeSupport {
 		dr.emulatorCh <- struct{}{}
@@ -103,11 +103,11 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 func (dr *delRange) removeFromGCDeleteRange(jobID, tableID int64) error {
 	ctx, err := dr.sessPool.get()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer dr.sessPool.put(ctx)
 	err = util.RemoveFromGCDeleteRange(ctx, jobID, tableID)
-	return errors.Trace(err)
+	return err
 }
 
 // start implements delRangeManager interface.
@@ -139,7 +139,7 @@ func (dr *delRange) startEmulator() {
 		}
 		if IsEmulatorGCEnable() {
 			err := dr.doDelRangeWork()
-			terror.Log(errors.Trace(err))
+			terror.Log(err)
 		}
 	}
 }
@@ -163,20 +163,20 @@ func (dr *delRange) doDelRangeWork() error {
 	ctx, err := dr.sessPool.get()
 	if err != nil {
 		logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator get session failed", zap.Error(err))
-		return errors.Trace(err)
+		return err
 	}
 	defer dr.sessPool.put(ctx)
 
 	ranges, err := util.LoadDeleteRanges(ctx, math.MaxInt64)
 	if err != nil {
 		logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator load tasks failed", zap.Error(err))
-		return errors.Trace(err)
+		return err
 	}
 
 	for _, r := range ranges {
 		if err := dr.doTask(ctx, r); err != nil {
 			logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator do task failed", zap.Error(err))
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -191,7 +191,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 		err := kv.RunInNewTxn(dr.store, false, func(txn kv.Transaction) error {
 			iter, err := txn.Iter(oldStartKey, r.EndKey)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			defer iter.Close()
 
@@ -204,25 +204,25 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 				newStartKey = iter.Key().Next()
 
 				if err := iter.Next(); err != nil {
-					return errors.Trace(err)
+					return err
 				}
 			}
 
 			for _, key := range dr.keys {
 				err := txn.Delete(key)
 				if err != nil && !kv.ErrNotExist.Equal(err) {
-					return errors.Trace(err)
+					return err
 				}
 			}
 			return nil
 		})
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if finish {
 			if err := util.CompleteDeleteRange(ctx, r); err != nil {
 				logutil.Logger(ddlLogCtx).Error("[ddl] delRange emulator complete task failed", zap.Error(err))
-				return errors.Trace(err)
+				return err
 			}
 			logutil.Logger(ddlLogCtx).Info("[ddl] delRange emulator complete task", zap.Int64("jobID", r.JobID), zap.Int64("elementID", r.ElementID))
 			break
@@ -241,7 +241,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error {
 	now, err := getNowTSO(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	s := ctx.(sqlexec.SQLExecutor)
@@ -249,13 +249,13 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 	case model.ActionDropSchema:
 		var tableIDs []int64
 		if err := job.DecodeArgs(&tableIDs); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		for _, tableID := range tableIDs {
 			startKey := tablecodec.EncodeTablePrefix(tableID)
 			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 			if err := doInsert(s, job.ID, tableID, startKey, endKey, now); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	case model.ActionDropTable, model.ActionTruncateTable:
@@ -264,14 +264,14 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		var startKey kv.Key
 		var physicalTableIDs []int64
 		if err := job.DecodeArgs(startKey, &physicalTableIDs); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if len(physicalTableIDs) > 0 {
 			for _, pid := range physicalTableIDs {
 				startKey = tablecodec.EncodeTablePrefix(pid)
 				endKey := tablecodec.EncodeTablePrefix(pid + 1)
 				if err := doInsert(s, job.ID, pid, startKey, endKey, now); err != nil {
-					return errors.Trace(err)
+					return err
 				}
 			}
 			return nil
@@ -282,7 +282,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		var physicalTableID int64
 		if err := job.DecodeArgs(&physicalTableID); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		startKey := tablecodec.EncodeTablePrefix(physicalTableID)
 		endKey := tablecodec.EncodeTablePrefix(physicalTableID + 1)
@@ -293,14 +293,14 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		var indexID int64
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if len(partitionIDs) > 0 {
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
 				if err := doInsert(s, job.ID, indexID, startKey, endKey, now); err != nil {
-					return errors.Trace(err)
+					return err
 				}
 			}
 		} else {
@@ -314,14 +314,14 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		var indexID int64
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if len(partitionIDs) > 0 {
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
 				if err := doInsert(s, job.ID, indexID, startKey, endKey, now); err != nil {
-					return errors.Trace(err)
+					return err
 				}
 			}
 		} else {
@@ -339,14 +339,14 @@ func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, end
 	endKeyEncoded := hex.EncodeToString(endKey)
 	sql := fmt.Sprintf(insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
 	_, err := s.Execute(context.Background(), sql)
-	return errors.Trace(err)
+	return err
 }
 
 // getNowTS gets the current timestamp, in TSO.
 func getNowTSO(ctx sessionctx.Context) (uint64, error) {
 	currVer, err := ctx.GetStore().CurrentVersion()
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	return currVer.Ver, nil
 }

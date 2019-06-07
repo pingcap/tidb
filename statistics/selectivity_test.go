@@ -118,14 +118,14 @@ func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.Chec
 func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	session.SetSchemaLease(0)
 	session.SetStatsLease(statsLease)
 	domain.RunAutoAnalyze = false
 	do, err := session.BootstrapSession(store)
 	do.SetStatsUpdating(true)
-	return store, do, errors.Trace(err)
+	return store, do, err
 }
 
 func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {

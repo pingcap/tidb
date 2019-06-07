@@ -184,7 +184,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	}
 	err := h.RecalculateExpectCount(q)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	rate := q.CalcErrorRate()
 	if rate >= MinLogErrorRate && (q.Actual() >= MinLogScanCount || q.Expected >= MinLogScanCount) {
@@ -290,13 +290,13 @@ func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if updated {
 			h.globalMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if updated {
 			delete(h.globalMap, id)
@@ -320,7 +320,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
@@ -328,7 +328,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 
 	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	startTS := txn.StartTS()
 	var sql string
@@ -362,7 +362,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
-	return errors.Trace(err)
+	return err
 }
 
 // DumpStatsFeedbackToKV dumps the stats feedback to KV.
@@ -384,7 +384,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 		successCount++
 	}
 	h.feedback = h.feedback[successCount:]
-	return errors.Trace(err)
+	return err
 }
 
 // DumpFeedbackToKV dumps the given feedback to physical kv layer.
@@ -408,7 +408,7 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 	} else {
 		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // UpdateStatsByLocalFeedback will update statistics by the local feedback.
@@ -491,7 +491,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	sql := "select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index"
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if len(rows) == 0 || err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	var groupedRows [][]chunk.Row
@@ -509,7 +509,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 
 	for _, rows := range groupedRows {
 		if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -521,7 +521,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	physicalTableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
 	defer func() {
 		if err == nil {
-			err = errors.Trace(h.deleteOutdatedFeedback(physicalTableID, histID, isIndex))
+			err = h.deleteOutdatedFeedback(physicalTableID, histID, isIndex)
 		}
 	}()
 	h.mu.Lock()
@@ -565,7 +565,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		}
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
-	return errors.Trace(err)
+	return err
 }
 
 func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
@@ -575,14 +575,14 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	h.mu.ctx.GetSessionVars().BatchDelete = false
 	h.mu.Unlock()
-	return errors.Trace(err)
+	return err
 }
 
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch) error {
 	hist = statistics.UpdateHistogram(hist, q)
 	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, 0)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
-	return errors.Trace(err)
+	return err
 }
 
 const (
@@ -688,11 +688,11 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 	}
 	s, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, start, time.UTC)
 	if err != nil {
-		return s, s, errors.Trace(err)
+		return s, s, err
 	}
 	e, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, end, time.UTC)
 	if err != nil {
-		return s, e, errors.Trace(err)
+		return s, e, err
 	}
 	return s, e, nil
 }
@@ -929,7 +929,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	expected := 0.0
 	if isIndex {
@@ -942,7 +942,7 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		expected *= c.GetIncreaseFactor(t.Count)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	q.Expected = int64(expected)
 	return nil
@@ -953,11 +953,11 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 	if q.Tp == statistics.IndexType {
 		lower, err := codec.EncodeKey(sc, nil, ran.LowVal[0])
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		upper, err := codec.EncodeKey(sc, nil, ran.HighVal[0])
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		ran.LowVal[0].SetBytes(lower)
 		ran.HighVal[0].SetBytes(upper)
@@ -1001,7 +1001,7 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 	for i, r := range ranges {
 		q.Feedback = append(q.Feedback, statistics.Feedback{Lower: &r.LowVal[0], Upper: &r.HighVal[0], Count: int64(counts[i] * adjustFactor)})
 	}
-	return errors.Trace(h.DumpFeedbackToKV(q))
+	return h.DumpFeedbackToKV(q)
 }
 
 // DumpFeedbackForIndex dumps the feedback for index.
@@ -1064,7 +1064,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 			continue
 		}
 	}
-	return errors.Trace(h.DumpFeedbackToKV(q))
+	return h.DumpFeedbackToKV(q)
 }
 
 // minAdjustFactor is the minimum adjust factor of each index feedback.

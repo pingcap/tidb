@@ -1239,33 +1239,33 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 		hookCtx.Store = store
 		err := hookCtx.NewTxn(context.Background())
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 			return
 		}
 		jobIDs := []int64{job.ID}
 		txn, err := hookCtx.Txn(true)
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 			return
 		}
 		errs, err := admin.CancelJobs(txn, jobIDs)
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 			return
 		}
 		// It only tests cancel one DDL job.
 		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
+			checkErr = errs[0]
 			return
 		}
 		txn, err = hookCtx.Txn(true)
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 			return
 		}
 		err = txn.Commit(context.Background())
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 		}
 	}
 	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr

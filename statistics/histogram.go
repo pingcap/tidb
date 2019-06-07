@@ -152,7 +152,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 	for row := oldIter.Begin(); row != oldIter.End(); row = oldIter.Next() {
 		datum, err := tablecodec.DecodeColumnValue(row.GetBytes(0), tp, timeZone)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		hg.Bounds.AppendDatum(0, &datum)
 	}
@@ -168,7 +168,7 @@ func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType
 		d := row.GetDatum(0, hg.Tp)
 		d, err := d.ConvertTo(sc, tp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		hist.Bounds.AppendDatum(0, &d)
 	}
@@ -218,11 +218,11 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 	}
 	decodedVals, err := codec.DecodeRange(value.GetBytes(), idxCols)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	str, err := types.DatumsToString(decodedVals, true)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	return str, nil
 }
@@ -230,9 +230,9 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 // BucketToString change the given bucket to string format.
 func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols)
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols)
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
 }
 
@@ -551,7 +551,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	lLen := lh.Len()
 	cmp, err := lh.GetUpper(lLen-1).CompareDatum(sc, rh.GetLower(0))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	offset := int64(0)
 	if cmp == 0 {
@@ -715,7 +715,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
-		return float64(count), errors.Trace(err)
+		return float64(count), err
 	}
 	return c.Histogram.equalRowCount(val), nil
 }
@@ -726,7 +726,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 	for _, rg := range ranges {
 		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		if cmp == 0 {
 			// the point case.
@@ -734,7 +734,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 				var cnt float64
 				cnt, err = c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 				if err != nil {
-					return 0, errors.Trace(err)
+					return 0, err
 				}
 				rowCount += cnt
 			}
@@ -751,7 +751,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		if rg.LowExclude && !rg.LowVal[0].IsNull() {
 			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, err
 			}
 			cnt -= lowCnt
 		}
@@ -761,7 +761,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		if !rg.HighExclude {
 			highCnt, err := c.equalRowCount(sc, rg.HighVal[0], modifyCount)
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, err
 			}
 			cnt += highCnt
 		}

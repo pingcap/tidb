@@ -49,7 +49,7 @@ func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 	for {
 		loc, err := s.regionCache.LocateKey(bo, splitKey)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if bytes.Equal(splitKey, loc.StartKey) {
 			logutil.Logger(context.Background()).Info("skip split region",
@@ -58,16 +58,16 @@ func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 		}
 		res, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		regionErr, err := res.GetRegionError()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if regionErr != nil {
 			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			continue
 		}
@@ -88,7 +88,7 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 		if err != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			continue
 		}
@@ -126,7 +126,7 @@ func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
 			err = bo.Backoff(BoRegionMiss, errors.New("wait scatter region timeout"))
 		}
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 

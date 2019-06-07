@@ -73,7 +73,7 @@ func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
 func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	defer func() {
 		if err = file.Close(); err != nil {

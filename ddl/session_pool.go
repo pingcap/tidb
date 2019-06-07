@@ -54,7 +54,7 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 	// no need to protect sg.resPool
 	resource, err := sg.resPool.Get()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	ctx := resource.(sessionctx.Context)

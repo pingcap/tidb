@@ -73,7 +73,7 @@ func parseExpression(expr string) (node ast.ExprNode, err error) {
 func simpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNode, error) {
 	nr := nameResolver{tblInfo, nil}
 	if _, ok := node.Accept(&nr); !ok {
-		return nil, errors.Trace(nr.err)
+		return nil, nr.err
 	}
 	return node, nil
 }

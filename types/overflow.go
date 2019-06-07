@@ -117,7 +117,7 @@ func MulInt64(a int64, b int64) (int64, error) {
 	}
 
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 
 	if negative {

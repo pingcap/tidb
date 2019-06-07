@@ -231,7 +231,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 	if len(security.ClusterSSLCA) != 0 {
 		tlsConfig, err := security.ToTLSConfig()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
@@ -272,7 +272,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		if err != nil {
 			// Cleanup if the initialization fails.
 			a.Close()
-			return errors.Trace(err)
+			return err
 		}
 		a.v[i] = conn
 
@@ -282,7 +282,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			streamClient, err := tikvClient.BatchCommands(context.TODO())
 			if err != nil {
 				a.Close()
-				return errors.Trace(err)
+				return err
 			}
 			batchClient := &batchCommandsClient{
 				target:                 a.target,
@@ -321,7 +321,7 @@ func (a *connArray) Close() {
 	for i, c := range a.v {
 		if c != nil {
 			err := c.Close()
-			terror.Log(errors.Trace(err))
+			terror.Log(err)
 			a.v[i] = nil
 		}
 	}
@@ -619,19 +619,19 @@ func sendBatchRequest(
 	case connArray.batchCommandsCh <- entry:
 	case <-ctx1.Done():
 		logutil.Logger(context.Background()).Warn("send request is timeout", zap.String("to", addr))
-		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
+		return nil, gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout")
 	}
 
 	select {
 	case res, ok := <-entry.res:
 		if !ok {
-			return nil, errors.Trace(entry.err)
+			return nil, entry.err
 		}
 		return tikvrpc.FromBatchCommandsResponse(res), nil
 	case <-ctx1.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
 		logutil.Logger(context.Background()).Warn("send request is canceled", zap.String("to", addr))
-		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
+		return nil, gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout")
 	}
 }
 
@@ -650,7 +650,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	connArray, err := c.getConnArray(addr)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
@@ -680,7 +680,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	defer cancel()
 	resp, err := tikvrpc.CallRPC(ctx1, client, req)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	// Put the lease object to the timeout channel, so it would be checked periodically.
@@ -696,7 +696,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	first, err = copStream.Recv()
 	if err != nil {
 		if errors.Cause(err) != io.EOF {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		logutil.Logger(context.Background()).Debug("copstream returns nothing for the request.")
 	}

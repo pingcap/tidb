@@ -68,7 +68,7 @@ func (bj BinaryJSON) Unquote() (string, error) {
 		tmp := string(hack.String(bj.GetString()))
 		s, err := unquoteString(tmp)
 		if err != nil {
-			return "", errors.Trace(err)
+			return "", err
 		}
 		// Remove prefix and suffix '"'.
 		slen := len(s)
@@ -115,7 +115,7 @@ func unquoteString(s string) (string, error) {
 				}
 				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
 				if err != nil {
-					return "", errors.Trace(err)
+					return "", err
 				}
 				ret.Write(char[0:size])
 				i += 4
@@ -137,12 +137,12 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	size, err = hex.Decode(char[0:2], s)
 	if err != nil || size != 2 {
 		// The unicode must can be represented in 2 bytes.
-		return char, 0, errors.Trace(err)
+		return char, 0, err
 	}
 	var unicode uint16
 	err = binary.Read(bytes.NewReader(char[0:2]), binary.BigEndian, &unicode)
 	if err != nil {
-		return char, 0, errors.Trace(err)
+		return char, 0, err
 	}
 	size = utf8.RuneLen(rune(unicode))
 	utf8.EncodeRune(char[0:size], rune(unicode))

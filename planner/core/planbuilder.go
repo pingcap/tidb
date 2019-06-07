@@ -777,7 +777,7 @@ func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		if len(partitionNames) != 0 {
-			return nil, nil, errors.Trace(ddl.ErrPartitionMgmtOnNonpartitioned)
+			return nil, nil, ddl.ErrPartitionMgmtOnNonpartitioned
 		}
 		return []int64{tblInfo.ID}, []string{""}, nil
 	}

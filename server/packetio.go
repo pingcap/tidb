@@ -77,7 +77,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 		}
 	}
 	if _, err := io.ReadFull(p.bufReadConn, header[:]); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	sequence := header[3]
@@ -96,7 +96,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 		}
 	}
 	if _, err := io.ReadFull(p.bufReadConn, data); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return data, nil
 }
@@ -104,7 +104,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 func (p *packetIO) readPacket() ([]byte, error) {
 	data, err := p.readOnePacket()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if len(data) < mysql.MaxPayloadLen {
@@ -115,7 +115,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 	for {
 		buf, err := p.readOnePacket()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		data = append(data, buf...)
@@ -140,9 +140,9 @@ func (p *packetIO) writePacket(data []byte) error {
 		data[3] = p.sequence
 
 		if n, err := p.bufWriter.Write(data[:4+mysql.MaxPayloadLen]); err != nil {
-			return errors.Trace(mysql.ErrBadConn)
+			return mysql.ErrBadConn
 		} else if n != (4 + mysql.MaxPayloadLen) {
-			return errors.Trace(mysql.ErrBadConn)
+			return mysql.ErrBadConn
 		} else {
 			p.sequence++
 			length -= mysql.MaxPayloadLen
@@ -156,10 +156,10 @@ func (p *packetIO) writePacket(data []byte) error {
 	data[3] = p.sequence
 
 	if n, err := p.bufWriter.Write(data); err != nil {
-		terror.Log(errors.Trace(err))
-		return errors.Trace(mysql.ErrBadConn)
+		terror.Log(err)
+		return mysql.ErrBadConn
 	} else if n != len(data) {
-		return errors.Trace(mysql.ErrBadConn)
+		return mysql.ErrBadConn
 	} else {
 		p.sequence++
 		return nil
@@ -169,7 +169,7 @@ func (p *packetIO) writePacket(data []byte) error {
 func (p *packetIO) flush() error {
 	err := p.bufWriter.Flush()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return err
 }

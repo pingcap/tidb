@@ -180,7 +180,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 		req := records.NewRecordBatch()
 		err := records.Next(ctx, req)
 		if err != nil {
-			return 0, nil, errors.Trace(err)
+			return 0, nil, err
 		}
 		if req.NumRows() == 0 {
 			break
@@ -190,7 +190,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 			datums := RowToDatums(row, records.Fields())
 			err = b.Iterate(datums[0])
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, nil, err
 			}
 		}
 	}
@@ -206,7 +206,7 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 	for {
 		err := records.Next(ctx, req)
 		if err != nil {
-			return 0, nil, nil, errors.Trace(err)
+			return 0, nil, nil, err
 		}
 		if req.NumRows() == 0 {
 			break
@@ -215,12 +215,12 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 			datums := RowToDatums(row, records.Fields())
 			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
 			if err != nil {
-				return 0, nil, nil, errors.Trace(err)
+				return 0, nil, nil, err
 			}
 			data := types.NewBytesDatum(buf)
 			err = b.Iterate(data)
 			if err != nil {
-				return 0, nil, nil, errors.Trace(err)
+				return 0, nil, nil, err
 			}
 			cms.InsertBytes(buf)
 		}

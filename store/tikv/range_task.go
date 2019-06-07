@@ -150,7 +150,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.Binary("endKey", endKey),
 				zap.Duration("cost time", time.Since(startTime)),
 				zap.Error(err))
-			return errors.Trace(err)
+			return err
 		}
 		task := &kv.KeyRange{
 			StartKey: key,
@@ -190,7 +190,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.Binary("endKey", endKey),
 				zap.Duration("cost time", time.Since(startTime)),
 				zap.Error(w.err))
-			return errors.Trace(w.err)
+			return w.err
 		}
 	}
 

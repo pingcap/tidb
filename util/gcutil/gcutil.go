@@ -36,7 +36,7 @@ func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_enable")
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	if len(rows) != 1 {
 		return false, errors.New("can not get 'tikv_gc_enable'")
@@ -48,21 +48,21 @@ func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 func DisableGC(ctx sessionctx.Context) error {
 	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "false", "Current GC enable status")
 	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
-	return errors.Trace(err)
+	return err
 }
 
 // EnableGC will enable GC enable variable.
 func EnableGC(ctx sessionctx.Context) error {
 	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "true", "Current GC enable status")
 	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
-	return errors.Trace(err)
+	return err
 }
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.
 func ValidateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 	safePointTS, err := GetGCSafePoint(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if safePointTS > snapshotTS {
 		return variable.ErrSnapshotTooOld.GenWithStackByArgs(model.TSConvert2Time(safePointTS).String())
@@ -83,7 +83,7 @@ func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
 	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_safe_point")
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	if len(rows) != 1 {
 		return 0, errors.New("can not get 'tikv_gc_safe_point'")
@@ -91,7 +91,7 @@ func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
 	safePointString := rows[0].GetString(0)
 	safePointTime, err := util.CompatibleParseGCTime(safePointString)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	ts := variable.GoTimeToTS(safePointTime)
 	return ts, nil

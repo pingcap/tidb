@@ -235,14 +235,14 @@ func DecodeComparableUvarint(b []byte) ([]byte, uint64, error) {
 	first := b[0]
 	b = b[1:]
 	if first < negativeTagEnd {
-		return nil, 0, errors.Trace(errDecodeInvalid)
+		return nil, 0, errDecodeInvalid
 	}
 	if first <= positiveTagStart {
 		return b, uint64(first) - negativeTagEnd, nil
 	}
 	length := int(first) - positiveTagStart
 	if len(b) < length {
-		return nil, 0, errors.Trace(errDecodeInsufficient)
+		return nil, 0, errDecodeInsufficient
 	}
 	var v uint64
 	for _, c := range b[:length] {
@@ -254,7 +254,7 @@ func DecodeComparableUvarint(b []byte) ([]byte, uint64, error) {
 // DecodeComparableVarint decodes mem-comparable varint.
 func DecodeComparableVarint(b []byte) ([]byte, int64, error) {
 	if len(b) == 0 {
-		return nil, 0, errors.Trace(errDecodeInsufficient)
+		return nil, 0, errDecodeInsufficient
 	}
 	first := b[0]
 	if first >= negativeTagEnd && first <= positiveTagStart {
@@ -270,15 +270,15 @@ func DecodeComparableVarint(b []byte) ([]byte, int64, error) {
 		length = int(first) - positiveTagStart
 	}
 	if len(b) < length {
-		return nil, 0, errors.Trace(errDecodeInsufficient)
+		return nil, 0, errDecodeInsufficient
 	}
 	for _, c := range b[:length] {
 		v = (v << 8) | uint64(c)
 	}
 	if first > positiveTagStart && v > math.MaxInt64 {
-		return nil, 0, errors.Trace(errDecodeInvalid)
+		return nil, 0, errDecodeInvalid
 	} else if first < negativeTagEnd && v <= math.MaxInt64 {
-		return nil, 0, errors.Trace(errDecodeInvalid)
+		return nil, 0, errDecodeInvalid
 	}
 	return b[length:], int64(v), nil
 }

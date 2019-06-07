@@ -367,7 +367,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		if prewriteValue != nil {
 			prewriteData, err := prewriteValue.Marshal()
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			info := &binloginfo.BinlogInfo{
 				Data: &binlog.Binlog{
@@ -521,7 +521,7 @@ func (s *session) String() string {
 		data["preparedStmtCount"] = len(sessVars.PreparedStmts)
 	}
 	b, err := json.MarshalIndent(data, "", "  ")
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	return string(b)
 }
 
@@ -1342,7 +1342,7 @@ func getHostByIP(ip string) []string {
 		return []string{variable.DefHostname}
 	}
 	addrs, err := net.LookupAddr(ip)
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	return addrs
 }
 

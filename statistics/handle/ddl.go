@@ -72,14 +72,14 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	startTS := txn.StartTS()
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", startTS, physicalID))
@@ -110,14 +110,14 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	startTS := txn.StartTS()
 	// First of all, we update the version.
@@ -180,7 +180,7 @@ func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error)
 		_, err = exec.Execute(ctx, "commit")
 	} else {
 		_, err1 := exec.Execute(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
+		terror.Log(err1)
 	}
-	return errors.Trace(err)
+	return err
 }

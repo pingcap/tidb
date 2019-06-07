@@ -150,7 +150,7 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 		if ran.IsPoint() {
 			value, err = e.getRowFromPoint(ran)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			e.cursor++
 			if value == nil {
@@ -163,7 +163,7 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 		}
 		value, err = e.getRowFromRange(ran)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if value == nil {
 			e.seekKey = nil
@@ -182,18 +182,18 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(val) == 0 {
 		return nil, nil
 	}
 	handle, err := tablecodec.DecodeRowKey(ran.StartKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	row, err := getRowData(e.Columns, e.colIDs, handle, val)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return row, nil
 }
@@ -218,7 +218,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	}
 	if pair.Err != nil {
 		// TODO: Handle lock error.
-		return nil, errors.Trace(pair.Err)
+		return nil, pair.Err
 	}
 	if pair.Key == nil {
 		return nil, nil
@@ -237,11 +237,11 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 
 	handle, err := tablecodec.DecodeRowKey(pair.Key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	row, err := getRowData(e.Columns, e.colIDs, handle, pair.Value)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return row, nil
 }
@@ -335,7 +335,7 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 		if ran.IsPoint() && e.isUnique() {
 			value, err = e.getRowFromPoint(ran)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			e.cursor++
 			if value == nil {
@@ -347,7 +347,7 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 		} else {
 			value, err = e.getRowFromRange(ran)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if value == nil {
 				e.cursor++
@@ -368,7 +368,7 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 func (e *indexScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(val) == 0 {
 		return nil, nil
@@ -379,7 +379,7 @@ func (e *indexScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 func (e *indexScanExec) decodeIndexKV(pair Pair) ([][]byte, error) {
 	values, b, err := tablecodec.CutIndexKeyNew(pair.Key, e.colsLen)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(b) > 0 {
 		if e.pkStatus != pkColNotExists {
@@ -388,7 +388,7 @@ func (e *indexScanExec) decodeIndexKV(pair Pair) ([][]byte, error) {
 	} else if e.pkStatus != pkColNotExists {
 		handle, err := decodeHandle(pair.Value)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		var handleDatum types.Datum
 		if e.pkStatus == pkColIsUnsigned {
@@ -398,7 +398,7 @@ func (e *indexScanExec) decodeIndexKV(pair Pair) ([][]byte, error) {
 		}
 		handleBytes, err := codec.EncodeValue(nil, b, handleDatum)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		values = append(values, handleBytes)
 	}
@@ -426,7 +426,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	}
 	if pair.Err != nil {
 		// TODO: Handle lock error.
-		return nil, errors.Trace(pair.Err)
+		return nil, pair.Err
 	}
 	if pair.Key == nil {
 		return nil, nil
@@ -484,7 +484,7 @@ func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.Sta
 	for _, expr := range exprs {
 		data, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 		if data.IsNull() {
 			return false, nil
@@ -492,7 +492,7 @@ func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.Sta
 
 		isBool, err := data.ToBool(ctx)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 		if isBool == 0 {
 			return false, nil
@@ -512,7 +512,7 @@ func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 	for {
 		value, err = e.src.Next(ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if value == nil {
 			return nil, nil
@@ -520,11 +520,11 @@ func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 
 		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		match, err := evalBool(e.conditions, e.row, e.evalCtx.sc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if match {
 			return value, nil
@@ -572,14 +572,14 @@ func (e *topNExec) Counts() []int64 {
 func (e *topNExec) innerNext(ctx context.Context) (bool, error) {
 	value, err := e.src.Next(ctx)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	if value == nil {
 		return false, nil
 	}
 	err = e.evalTopN(value)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	return true, nil
 }
@@ -596,7 +596,7 @@ func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
 		for {
 			hasMore, err := e.innerNext(ctx)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if !hasMore {
 				break
@@ -622,19 +622,19 @@ func (e *topNExec) evalTopN(value [][]byte) error {
 	}
 	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for i, expr := range e.orderByExprs {
 		newRow.key[i], err = expr.Eval(chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
 	if e.heap.tryToAddRow(newRow) {
 		newRow.data = append(newRow.data, value...)
 	}
-	return errors.Trace(e.heap.err)
+	return e.heap.err
 }
 
 type limitExec struct {
@@ -684,7 +684,7 @@ func (e *limitExec) Next(ctx context.Context) (value [][]byte, err error) {
 
 	value, err = e.src.Next(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if value == nil {
 		return nil, nil
@@ -705,7 +705,7 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, value []byte) ([][]byte, error) {
 	values, err := tablecodec.CutRowNew(value, colIDs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if values == nil {
 		values = make([][]byte, len(colIDs))
@@ -724,7 +724,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 			}
 			handleData, err1 := codec.EncodeValue(nil, nil, handleDatum)
 			if err1 != nil {
-				return nil, errors.Trace(err1)
+				return nil, err1
 			}
 			values[offset] = handleData
 			continue
@@ -751,7 +751,7 @@ func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, p
 	for _, expr := range pbExprs {
 		e, err := expression.PBToExpr(expr, fieldTps, sc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		exprs = append(exprs, e)
 	}
@@ -762,5 +762,5 @@ func decodeHandle(data []byte) (int64, error) {
 	var h int64
 	buf := bytes.NewBuffer(data)
 	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, errors.Trace(err)
+	return h, err
 }

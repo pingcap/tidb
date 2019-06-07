@@ -297,7 +297,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 			points := rb.build(item)
 			ranges, err := points2Ranges(sc, points, newTpSlice[0])
 			if err != nil {
-				return nil, nil, false, errors.Trace(err)
+				return nil, nil, false, err
 			}
 			totalRanges = append(totalRanges, ranges...)
 			newAccessItems = append(newAccessItems, item)
@@ -308,7 +308,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 
 	totalRanges, err := unionRanges(sc, totalRanges)
 	if err != nil {
-		return nil, nil, false, errors.Trace(err)
+		return nil, nil, false, err
 	}
 
 	return totalRanges, []expression.Expression{expression.ComposeDNFCondition(sctx, newAccessItems...)}, hasResidual, nil
@@ -343,7 +343,7 @@ func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expre
 		if sf, ok := conditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			ranges, accesses, hasResidual, err := detachDNFCondAndBuildRangeForIndex(sctx, sf, cols, newTpSlice, lengths)
 			if err != nil {
-				return res, errors.Trace(err)
+				return res, err
 			}
 			res.Ranges = ranges
 			res.AccessConds = accesses

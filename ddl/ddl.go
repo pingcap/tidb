@@ -429,7 +429,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	// Otherwise, we needn't do that.
 	if RunWorker {
 		err := d.ownerManager.CampaignOwner(ctx)
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 
 		d.workers = make(map[workerType]*worker, 2)
 		d.sessPool = newSessionPool(ctxPool)
@@ -515,10 +515,10 @@ func (d *ddl) genGlobalID() (int64, error) {
 		})
 
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
+		return err
 	})
 
-	return globalID, errors.Trace(err)
+	return globalID, err
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
@@ -565,7 +565,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
 	err := d.addDDLJob(ctx, job)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
@@ -608,7 +608,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 
 		if historyJob.Error != nil {
-			return errors.Trace(historyJob.Error)
+			return historyJob.Error
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
@@ -619,7 +619,7 @@ func (d *ddl) callHookOnChanged(err error) error {
 	defer d.mu.RUnlock()
 
 	err = d.mu.hook.OnChanged(err)
-	return errors.Trace(err)
+	return err
 }
 
 // SetBinlogClient implements DDL.SetBinlogClient interface.

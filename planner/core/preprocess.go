@@ -51,7 +51,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema,
 		optFn(&v)
 	}
 	node.Accept(&v)
-	return errors.Trace(v.err)
+	return v.err
 }
 
 type preprocessorFlag uint8
@@ -690,7 +690,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		currentDB := p.ctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
-			p.err = errors.Trace(ErrNoDB)
+			p.err = ErrNoDB
 			return
 		}
 		tn.Schema = model.NewCIStr(currentDB)

@@ -272,7 +272,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	}
 	select {
 	case <-b.ctx.Done():
-		return errors.Trace(err)
+		return err
 	default:
 	}
 

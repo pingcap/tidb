@@ -126,7 +126,7 @@ func setManagerSessionTTL() error {
 	}
 	ttl, err := strconv.Atoi(ttlStr)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	ManagerSessionTTL = ttl
 	return nil
@@ -140,13 +140,13 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 	failedCnt := 0
 	for i := 0; i < retryCnt; i++ {
 		if err = contextDone(ctx, err); err != nil {
-			return etcdSession, errors.Trace(err)
+			return etcdSession, err
 		}
 
 		failpoint.Inject("closeClient", func(val failpoint.Value) {
 			if val.(bool) {
 				if err := etcdCli.Close(); err != nil {
-					failpoint.Return(etcdSession, errors.Trace(err))
+					failpoint.Return(etcdSession, err)
 				}
 			}
 		})
@@ -154,7 +154,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 		failpoint.Inject("closeGrpc", func(val failpoint.Value) {
 			if val.(bool) {
 				if err := etcdCli.ActiveConnection().Close(); err != nil {
-					failpoint.Return(etcdSession, errors.Trace(err))
+					failpoint.Return(etcdSession, err)
 				}
 			}
 		})
@@ -173,7 +173,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 		time.Sleep(newSessionRetryInterval)
 		failedCnt++
 	}
-	return etcdSession, errors.Trace(err)
+	return etcdSession, err
 }
 
 // CampaignOwner implements Manager.CampaignOwner interface.
@@ -181,7 +181,7 @@ func (m *ownerManager) CampaignOwner(ctx context.Context) error {
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
 	session, err := NewSession(ctx, logPrefix, m.etcdCli, NewSessionDefaultRetryCnt, ManagerSessionTTL)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	go m.campaignLoop(ctx, session)
 	return nil
@@ -198,7 +198,7 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 	err := elec.Resign(childCtx)
 	cancel()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	logutil.Logger(m.logCtx).Warn("resign ddl owner success")
@@ -296,7 +296,7 @@ func (m *ownerManager) revokeSession(logPrefix string, leaseID clientv3.LeaseID)
 func (m *ownerManager) GetOwnerID(ctx context.Context) (string, error) {
 	resp, err := m.etcdCli.Get(ctx, m.key, clientv3.WithFirstCreate()...)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	if len(resp.Kvs) == 0 {
 		return "", concurrency.ErrElectionNoLeader
@@ -310,7 +310,7 @@ func GetOwnerInfo(ctx, logCtx context.Context, elec *concurrency.Election, id st
 	if err != nil {
 		// If no leader elected currently, it returns ErrElectionNoLeader.
 		logutil.Logger(logCtx).Info("failed to get leader", zap.Error(err))
-		return "", errors.Trace(err)
+		return "", err
 	}
 	ownerID := string(resp.Kvs[0].Value)
 	logutil.Logger(logCtx).Info("get owner", zap.String("ownerID", ownerID))
@@ -368,7 +368,7 @@ func init() {
 func contextDone(ctx context.Context, err error) error {
 	select {
 	case <-ctx.Done():
-		return errors.Trace(ctx.Err())
+		return ctx.Err()
 	default:
 	}
 	// Sometime the ctx isn't closed, but the etcd client is closed,
@@ -377,7 +377,7 @@ func contextDone(ctx context.Context, err error) error {
 	if terror.ErrorEqual(err, context.Canceled) ||
 		terror.ErrorEqual(err, context.DeadlineExceeded) ||
 		terror.ErrorEqual(err, grpc.ErrClientConnClosing) {
-		return errors.Trace(err)
+		return err
 	}
 
 	return nil

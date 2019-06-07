@@ -187,13 +187,13 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err := p.LoadUserTable(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	err = p.LoadDBTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			return err
 		}
 		log.Warn("mysql.db maybe missing")
 	}
@@ -201,7 +201,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err = p.LoadTablesPrivTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			return err
 		}
 		log.Warn("mysql.tables_priv missing")
 	}
@@ -209,7 +209,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err = p.LoadDefaultRoles(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			return err
 		}
 		log.Warn("mysql.default_roles missing")
 	}
@@ -217,7 +217,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err = p.LoadColumnsPrivTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			return err
 		}
 		log.Warn("mysql.columns_priv missing")
 	}
@@ -225,7 +225,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err = p.LoadRoleGraph(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			return err
 		}
 		log.Warn("mysql.role_edges missing")
 	}
@@ -247,7 +247,7 @@ func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
 	p.RoleGraph = make(map[string]roleGraphEdgesTable)
 	err := p.loadTable(ctx, "select FROM_USER, FROM_HOST, TO_USER, TO_HOST from mysql.role_edges;", p.decodeRoleEdgesTable)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -256,7 +256,7 @@ func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
 func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Create_view_priv,Show_view_priv,Index_priv,Create_user_priv,Trigger_priv,Create_role_priv,Drop_role_priv,account_locked from mysql.user;", p.decodeUserTableRow)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	// See https://dev.mysql.com/doc/refman/8.0/en/connection-access.html
 	// When multiple matches are possible, the server must determine which of them to use. It resolves this issue as follows:
@@ -374,7 +374,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	ctx := context.Background()
 	tmp, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	rs := tmp[0]
 	defer terror.Call(rs.Close)
@@ -384,7 +384,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if req.NumRows() == 0 {
 			return nil
@@ -393,7 +393,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			err = decodeTableRow(row, fs)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
@@ -546,7 +546,7 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row chunk.Row, fs []*ast.Resu
 			var err error
 			value.Timestamp, err = row.GetTime(i).Time.GoTime(time.Local)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		case f.ColumnAsName.L == "column_priv":
 			value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
@@ -973,7 +973,7 @@ func (h *Handle) Update(ctx sessionctx.Context) error {
 	var priv MySQLPrivilege
 	err := priv.LoadAll(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	h.priv.Store(&priv)

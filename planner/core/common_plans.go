@@ -161,11 +161,11 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	}
 	prepared, ok := vars.PreparedStmts[e.ExecID]
 	if !ok {
-		return errors.Trace(ErrStmtNotFound)
+		return ErrStmtNotFound
 	}
 
 	if len(prepared.Params) != len(e.UsingVars) {
-		return errors.Trace(ErrWrongParamCount)
+		return ErrWrongParamCount
 	}
 
 	for i, usingVar := range e.UsingVars {

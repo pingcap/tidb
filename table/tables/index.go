@@ -67,10 +67,10 @@ func (c *indexIter) Close() {
 // Next returns current key and moves iterator to the next step.
 func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 	if !c.it.Valid() {
-		return nil, 0, errors.Trace(io.EOF)
+		return nil, 0, io.EOF
 	}
 	if !c.it.Key().HasPrefix(c.prefix) {
-		return nil, 0, errors.Trace(io.EOF)
+		return nil, 0, io.EOF
 	}
 	// get indexedValues
 	buf := c.it.Key()[len(c.prefix):]

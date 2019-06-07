@@ -57,7 +57,7 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 		TLS:              tlsConfig,
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return cli, nil
 }
@@ -72,7 +72,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
 	etcdAddrs, disableGC, err := parsePath(path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
@@ -82,7 +82,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	})
 
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
@@ -93,17 +93,17 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 	tlsConfig, err := security.ToTLSConfig()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	spkv, err := NewEtcdSafePointKV(etcdAddrs, tlsConfig)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if txnLocalLatches.Enabled {
 		s.EnableTxnLocalLatches(txnLocalLatches.Capacity)
@@ -177,7 +177,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool) (*tikvStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	store := &tikvStore{
 		clusterID:   pdClient.GetClusterID(context.TODO()),
@@ -224,7 +224,7 @@ func (s *tikvStore) StartGCWorker() error {
 
 	gcWorker, err := NewGCHandlerFunc(s, s.pdClient)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	gcWorker.Start()
 	s.gcWorker = gcWorker
@@ -255,7 +255,7 @@ func (s *tikvStore) runSafePointChecker() {
 func (s *tikvStore) Begin() (kv.Transaction, error) {
 	txn, err := newTiKVTxn(s)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	metrics.TiKVTxnCounter.Inc()
 	return txn, nil
@@ -265,7 +265,7 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	txn, err := newTikvTxnWithStartTS(s, startTS)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	metrics.TiKVTxnCounter.Inc()
 	return txn, nil
@@ -290,7 +290,7 @@ func (s *tikvStore) Close() error {
 
 	close(s.closed)
 	if err := s.client.Close(); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if s.txnLatches != nil {
@@ -308,7 +308,7 @@ func (s *tikvStore) CurrentVersion() (kv.Version, error) {
 	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
 	startTS, err := s.getTimestampWithRetry(bo)
 	if err != nil {
-		return kv.NewVersion(0), errors.Trace(err)
+		return kv.NewVersion(0), err
 	}
 	return kv.NewVersion(startTS), nil
 }
@@ -331,7 +331,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 		}
 		err = bo.Backoff(BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 	}
 }
@@ -403,7 +403,7 @@ func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	var u *url.URL
 	u, err = url.Parse(path)
 	if err != nil {
-		err = errors.Trace(err)
+		err = err
 		return
 	}
 	if strings.ToLower(u.Scheme) != "tikv" {

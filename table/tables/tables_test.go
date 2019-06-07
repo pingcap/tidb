@@ -163,7 +163,7 @@ func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) 
 	cnt := 0
 	txn, err := ctx.Txn(true)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	err = util.ScanMetaWithPrefix(txn, prefix, func(k kv.Key, v []byte) bool {
 		cnt++

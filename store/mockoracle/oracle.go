@@ -67,7 +67,7 @@ func (o *MockOracle) GetTimestamp(context.Context) (uint64, error) {
 	defer o.Unlock()
 
 	if o.stop {
-		return 0, errors.Trace(errStopped)
+		return 0, errStopped
 	}
 	physical := oracle.GetPhysical(time.Now().Add(o.offset))
 	ts := oracle.ComposeTS(physical, 0)

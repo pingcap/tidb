@@ -56,14 +56,14 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	info.Jobs = make([]*model.Job, 0, 2)
 	job, err := t.GetDDLJobByIdx(0)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if job != nil {
 		info.Jobs = append(info.Jobs, job)
 	}
 	addIdxJob, err := t.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if addIdxJob != nil {
 		info.Jobs = append(info.Jobs, addIdxJob)
@@ -71,7 +71,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 
 	info.SchemaVer, err = t.GetSchemaVersion()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if addIdxJob == nil {
 		return info, nil
@@ -79,7 +79,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 
 	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return info, nil
@@ -120,7 +120,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 
 	jobs, err := GetDDLJobs(txn)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	errs := make([]error, len(ids))
@@ -153,7 +153,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			// Make sure RawArgs isn't overwritten.
 			err := job.DecodeArgs(job.RawArgs)
 			if err != nil {
-				errs[i] = errors.Trace(err)
+				errs[i] = err
 				continue
 			}
 			if job.Type == model.ActionAddIndex {
@@ -162,7 +162,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				err = t.UpdateDDLJob(int64(j), job, true)
 			}
 			if err != nil {
-				errs[i] = errors.Trace(err)
+				errs[i] = err
 			}
 		}
 		if !found {
@@ -175,13 +175,13 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
 	cnt, err := t.DDLJobQueueLen(jobListKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	jobs := make([]*model.Job, cnt)
 	for i := range jobs {
 		jobs[i], err = t.GetDDLJobByIdx(int64(i), jobListKey)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	return jobs, nil
@@ -192,11 +192,11 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	jobs := append(generalJobs, addIdxJobs...)
 	sort.Sort(jobArray(jobs))
@@ -229,7 +229,7 @@ func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error)
 	t := meta.NewMeta(txn)
 	jobs, err := t.GetLastNHistoryDDLJobs(maxNumJobs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	jobsLen := len(jobs)
@@ -259,7 +259,7 @@ type RecordData struct {
 func getCount(ctx sessionctx.Context, sql string) (int64, error) {
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(ctx, sql)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	if len(rows) != 1 {
 		return 0, errors.Errorf("can not get count, sql %s result rows %d", sql, len(rows))
@@ -275,13 +275,13 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for _, idx := range indices {
 		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if tblCnt != idxCnt {
 			return errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
@@ -299,7 +299,7 @@ func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex tab
 	[]*RecordData, []types.Datum, error) {
 	it, _, err := kvIndex.Seek(sc, txn, startVals)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	defer it.Close()
 
@@ -310,7 +310,7 @@ func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex tab
 		if terror.ErrorEqual(err1, io.EOF) {
 			return idxRows, nextIndexVals(curVals), nil
 		} else if err1 != nil {
-			return nil, nil, errors.Trace(err1)
+			return nil, nil, err1
 		}
 		idxRows = append(idxRows, &RecordData{Handle: h, Values: val})
 		limit--
@@ -321,7 +321,7 @@ func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex tab
 	if terror.ErrorEqual(err, io.EOF) {
 		return idxRows, nextIndexVals(curVals), nil
 	} else if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 
 	return idxRows, nextVals, nil
@@ -334,7 +334,7 @@ func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex tab
 func CompareIndexData(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
 	err := checkIndexAndRecord(sessCtx, txn, t, idx, genExprs)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	return CheckRecordAndIndex(sessCtx, txn, t, idx, genExprs)
@@ -376,7 +376,7 @@ func adjustDatumKind(vals1, vals2 []types.Datum) {
 func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
 	it, err := idx.SeekFirst(txn)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer it.Close()
 
@@ -387,7 +387,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 
 	fieldTypes, err := getIndexFieldTypes(t, idx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	sc := sessCtx.GetSessionVars().StmtCtx
@@ -396,12 +396,12 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if terror.ErrorEqual(err, io.EOF) {
 			break
 		} else if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		vals1, err = tablecodec.UnflattenDatums(vals1, fieldTypes, sessCtx.GetSessionVars().Location())
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		vals2, err := rowWithCols(sessCtx, txn, t, h, cols, rowDecoder)
 		vals2 = tables.TruncateIndexValuesIfNeeded(t.Meta(), idx.Meta(), vals2)
@@ -410,7 +410,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			err = ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record, nil)
 		}
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		adjustDatumKind(vals1, vals2)
 		if !compareDatumSlice(sc, vals1, vals2) {
@@ -455,7 +455,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 				// NULL value is regarded as its default value.
 				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
 				if err != nil {
-					return false, errors.Trace(err)
+					return false, err
 				}
 				vals1[i] = colDefVal
 			}
@@ -467,7 +467,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
 		}
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
@@ -479,7 +479,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
 
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	return nil
@@ -504,7 +504,7 @@ func scanTableData(sessCtx sessionctx.Context, retriever kv.Retriever, t table.T
 	}
 	err := iterRecords(sessCtx, retriever, t, startKey, cols, filterFunc, nil)
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, 0, err
 	}
 
 	if len(records) == 0 {
@@ -533,12 +533,12 @@ func ScanSnapshotTableRecord(sessCtx sessionctx.Context, store kv.Storage, ver k
 	[]*RecordData, int64, error) {
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, 0, err
 	}
 
 	records, nextHandle, err := ScanTableRecord(sessCtx, snap, t, startHandle, limit)
 
-	return records, nextHandle, errors.Trace(err)
+	return records, nextHandle, err
 }
 
 // CompareTableRecord compares data and the corresponding table data one by one.
@@ -578,7 +578,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	}
 	err := iterRecords(sessCtx, txn, t, startKey, t.Cols(), filterFunc, nil)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	for h, vals := range m {
@@ -618,7 +618,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 	key := t.RecordKey(h)
 	value, err := txn.Get(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
@@ -640,7 +640,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 
 	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, h, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	for i, col := range cols {
@@ -662,7 +662,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 			// NULL value is regarded as its default value.
 			colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			v[i] = colDefVal
 			continue
@@ -680,7 +680,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 
 	it, err := retriever.Iter(startKey, keyUpperBound)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer it.Close()
 
@@ -699,12 +699,12 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		// get row handle
 		handle, err := tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
@@ -720,13 +720,13 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		rk := t.RecordKey(handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 

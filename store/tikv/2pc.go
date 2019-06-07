@@ -184,7 +184,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for _, lockKey := range txn.lockKeys {
 		muEx, ok := mutations[string(lockKey)]
@@ -256,7 +256,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		logutil.Logger(context.Background()).Error("commit failed",
 			zap.Uint64("conn", c.connID),
 			zap.Error(err))
-		return errors.Trace(err)
+		return err
 	}
 
 	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: len(keys)}
@@ -314,7 +314,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(action.MetricsTag()).Observe(float64(len(groups)))
@@ -337,7 +337,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		// primary should be committed/cleanup first
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		batches = batches[1:]
 	}
@@ -360,7 +360,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // doActionOnBatches does action to batches in parallel.
@@ -390,7 +390,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				zap.Error(e),
 				zap.Uint64("txnStartTS", c.startTS))
 		}
-		return errors.Trace(e)
+		return e
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
@@ -445,7 +445,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 			}
 		}
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func (c *twoPhaseCommitter) keyValueSize(key []byte) int {
@@ -495,23 +495,23 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if regionErr != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			err = c.prewriteKeys(bo, batch.keys)
-			return errors.Trace(err)
+			return err
 		}
 		prewriteResp := resp.Prewrite
 		if prewriteResp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return ErrBodyMissing
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
@@ -529,13 +529,13 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				logutil.Logger(context.Background()).Debug("key already exists",
 					zap.Uint64("conn", c.connID),
 					zap.Binary("key", key))
-				return errors.Trace(conditionPair.Err())
+				return conditionPair.Err()
 			}
 
 			// Extract lock from key error
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return err1
 			}
 			logutil.Logger(context.Background()).Debug("prewrite encounters lock",
 				zap.Uint64("conn", c.connID),
@@ -545,13 +545,13 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		start := time.Now()
 		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		atomic.AddInt64(&c.detail.ResolveLockTime, int64(time.Since(start)))
 		if msBeforeExpired > 0 {
 			err = bo.BackoffWithMaxSleep(BoTxnLock, int(msBeforeExpired), errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
@@ -589,23 +589,23 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if regionErr != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			err = c.pessimisticLockKeys(bo, batch.keys)
-			return errors.Trace(err)
+			return err
 		}
 		lockResp := resp.PessimisticLock
 		if lockResp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return ErrBodyMissing
 		}
 		keyErrs := lockResp.GetErrors()
 		if len(keyErrs) == 0 {
@@ -620,7 +620,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 				if conditionPair == nil {
 					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
 				}
-				return errors.Trace(conditionPair.Err())
+				return conditionPair.Err()
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
 				return &ErrDeadlock{Deadlock: deadlock}
@@ -629,13 +629,13 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			// Extract lock from key error
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return err1
 			}
 			locks = append(locks, lock)
 		}
 		_, err = c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		// Because we already waited on tikv, no need to Backoff here.
 	}
@@ -653,19 +653,19 @@ func (c *twoPhaseCommitter) pessimisticRollbackSingleBatch(bo *Backoffer, batch 
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if regionErr != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			err = c.pessimisticRollbackKeys(bo, batch.keys)
-			return errors.Trace(err)
+			return err
 		}
 		return nil
 	}
@@ -732,28 +732,28 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
 	isPrimary := bytes.Equal(batch.keys[0], c.primary())
 	if isPrimary && sender.rpcError != nil {
-		c.setUndeterminedErr(errors.Trace(sender.rpcError))
+		c.setUndeterminedErr(sender.rpcError)
 	}
 
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if regionErr != nil {
 		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		// re-split keys and commit again.
 		err = c.commitKeys(bo, batch.keys)
-		return errors.Trace(err)
+		return err
 	}
 	commitResp := resp.Commit
 	if commitResp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return ErrBodyMissing
 	}
 	// Here we can make sure tikv has processed the commit primary key request. So
 	// we can clean undetermined error.
@@ -770,7 +770,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 			logutil.Logger(context.Background()).Error("2PC failed commit key after primary key committed",
 				zap.Error(err),
 				zap.Uint64("txnStartTS", c.startTS))
-			return errors.Trace(err)
+			return err
 		}
 		// The transaction maybe rolled back by concurrent transactions.
 		logutil.Logger(context.Background()).Debug("2PC failed commit primary key",
@@ -801,26 +801,26 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 	}
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if regionErr != nil {
 		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = c.cleanupKeys(bo, batch.keys)
-		return errors.Trace(err)
+		return err
 	}
 	if keyErr := resp.BatchRollback.GetError(); keyErr != nil {
 		err = errors.Errorf("conn%d 2PC cleanup failed: %s", c.connID, keyErr)
 		logutil.Logger(context.Background()).Debug("2PC failed cleanup key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -853,7 +853,7 @@ func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) err
 		c.txn.commitTS = c.commitTS
 		c.writeFinishBinlog(binlog.BinlogType_Commit, int64(c.commitTS))
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // execute executes the two-phase commit protocol.
@@ -892,14 +892,14 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
-			return errors.Trace(binlogErr)
+			return binlogErr
 		}
 	}
 	if err != nil {
 		logutil.Logger(ctx).Debug("2PC failed on prewrite",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
-		return errors.Trace(err)
+		return err
 	}
 
 	start = time.Now()
@@ -908,7 +908,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		logutil.Logger(ctx).Warn("2PC get commitTS failed",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
-		return errors.Trace(err)
+		return err
 	}
 	c.detail.GetCommitTsTime = time.Since(start)
 
@@ -917,11 +917,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		err = errors.Errorf("conn%d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
 			c.connID, c.startTS, commitTS)
 		logutil.Logger(context.Background()).Error("invalid transaction", zap.Error(err))
-		return errors.Trace(err)
+		return err
 	}
 	c.commitTS = commitTS
 	if err = c.checkSchemaValid(); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	failpoint.Inject("tmpMaxTxnTime", func(val failpoint.Value) {
@@ -947,13 +947,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				zap.Error(err),
 				zap.NamedError("rpcErr", undeterminedErr),
 				zap.Uint64("txnStartTS", c.startTS))
-			err = errors.Trace(terror.ErrResultUndetermined)
+			err = terror.ErrResultUndetermined
 		}
 		if !c.mu.committed {
 			logutil.Logger(ctx).Debug("2PC failed on commit",
 				zap.Error(err),
 				zap.Uint64("txnStartTS", c.startTS))
-			return errors.Trace(err)
+			return err
 		}
 		logutil.Logger(ctx).Debug("2PC succeed with error",
 			zap.Error(err),
@@ -971,7 +971,7 @@ func (c *twoPhaseCommitter) checkSchemaValid() error {
 	if ok {
 		err := checker.Check(c.commitTS)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -990,7 +990,7 @@ func (c *twoPhaseCommitter) prewriteBinlog() chan error {
 			bin.PrewriteKey = c.keys[0]
 		}
 		err := binInfo.WriteBinlog(c.store.clusterID)
-		ch <- errors.Trace(err)
+		ch <- err
 	}()
 	return ch
 }

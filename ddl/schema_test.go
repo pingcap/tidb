@@ -271,12 +271,12 @@ func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return dbInfo, nil
 }

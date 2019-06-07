@@ -37,11 +37,11 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 	sql := fmt.Sprintf("select table_id from mysql.stats_meta where version < %d", h.LastUpdateVersion()-offset)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for _, row := range rows {
 		if err := h.gcTableStats(is, row.GetInt64(0)); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -51,20 +51,20 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 	sql := fmt.Sprintf("select is_index, hist_id from mysql.stats_histograms where table_id = %d", physicalID)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	// The table has already been deleted in stats and acknowledged to all tidb,
 	// we can safely remove the meta info now.
 	if len(rows) == 0 {
 		sql := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", physicalID)
 		_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
-		return errors.Trace(err)
+		return err
 	}
 	h.mu.Lock()
 	tbl, ok := h.getTableByPhysicalID(is, physicalID)
 	h.mu.Unlock()
 	if !ok {
-		return errors.Trace(h.DeleteTableStatsFromKV(physicalID))
+		return h.DeleteTableStatsFromKV(physicalID)
 	}
 	tblInfo := tbl.Meta()
 	for _, row := range rows {
@@ -87,7 +87,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		}
 		if !find {
 			if err := h.deleteHistStatsFromKV(physicalID, histID, int(isIndex)); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
@@ -102,14 +102,14 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	startTS := txn.StartTS()
 	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
@@ -139,14 +139,14 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	startTS := txn.StartTS()
 	// We only update the version so that other tidb will know that this table is deleted.

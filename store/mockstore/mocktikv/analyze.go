@@ -62,7 +62,7 @@ func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coproces
 func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
 	ranges, err := h.extractKVRanges(req.Ranges, false)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	e := &indexScanExec{
 		colsLen:        int(analyzeReq.IdxReq.NumColumns),
@@ -83,7 +83,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 	for {
 		values, err = e.Next(ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if values == nil {
 			break
@@ -97,7 +97,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		}
 		err = statsBuilder.Iterate(types.NewBytesDatum(value))
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	hg := statistics.HistogramToProto(statsBuilder.Hist())
@@ -107,7 +107,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &coprocessor.Response{Data: data}, nil
 }
@@ -121,7 +121,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	sc := flagsToStatementContext(analyzeReq.Flags)
 	sc.TimeZone, err = constructTimeZone("", int(analyzeReq.TimeZoneOffset))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	evalCtx := &evalContext{sc: sc}
@@ -129,7 +129,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	evalCtx.setColumnInfo(columns)
 	ranges, err := h.extractKVRanges(req.Ranges, false)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	e := &analyzeColumnsExec{
 		tblExec: &tableScanExec{
@@ -174,7 +174,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	}
 	collectors, pkBuilder, err := builder.CollectColumnStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	colResp := &tipb.AnalyzeColumnsResp{}
 	if pkID != -1 {
@@ -185,7 +185,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	}
 	data, err := proto.Marshal(colResp)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &coprocessor.Response{Data: data}, nil
 }
@@ -198,7 +198,7 @@ func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
 func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error) {
 	values, err := e.tblExec.Next(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if values == nil {
 		return nil, nil
@@ -218,7 +218,7 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.RecordBatch) e
 	req.Reset()
 	row, err := e.getNext(ctx)
 	if row == nil || err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for i := 0; i < len(row); i++ {
 		req.AppendDatum(i, &row[i])

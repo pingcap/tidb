@@ -119,7 +119,7 @@ func closeAll(objs ...Closeable) error {
 		}
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -661,7 +661,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 				doneCh: doneCh,
 			}
 			if err != nil {
-				err = errors.Trace(err4Panic)
+				err = err4Panic
 			}
 		}
 	}()

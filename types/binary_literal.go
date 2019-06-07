@@ -166,7 +166,7 @@ func ParseBitStr(s string) (BinaryLiteral, error) {
 		strPosition := i << 3
 		val, err := strconv.ParseUint(s[strPosition:strPosition+8], 2, 8)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		buf[i] = byte(val)
 	}
@@ -212,7 +212,7 @@ func ParseHexStr(s string) (BinaryLiteral, error) {
 	}
 	buf, err := hex.DecodeString(s)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return buf, nil
 }

@@ -326,7 +326,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 		sort.Sort(us)
 	}
 	if us.sortErr != nil {
-		return errors.Trace(us.sortErr)
+		return us.sortErr
 	}
 	return nil
 }
@@ -340,7 +340,7 @@ func (us *UnionScanExec) Len() int {
 func (us *UnionScanExec) Less(i, j int) bool {
 	cmp, err := us.compare(us.addedRows[i], us.addedRows[j])
 	if err != nil {
-		us.sortErr = errors.Trace(err)
+		us.sortErr = err
 		return true
 	}
 	return cmp < 0

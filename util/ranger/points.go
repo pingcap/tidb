@@ -104,7 +104,7 @@ func rangePointLess(sc *stmtctx.StatementContext, a, b point) (bool, error) {
 	if cmp != 0 {
 		return cmp < 0, nil
 	}
-	return rangePointEqualValueLess(a, b), errors.Trace(err)
+	return rangePointEqualValueLess(a, b), err
 }
 
 func rangePointEqualValueLess(a, b point) bool {
@@ -455,12 +455,12 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
 	if err != nil {
-		r.err = errors.Trace(err)
+		r.err = err
 		return fullRange
 	}
 	pattern, err := pdt.ToString()
 	if err != nil {
-		r.err = errors.Trace(err)
+		r.err = err
 		return fullRange
 	}
 	if pattern == "" {
@@ -471,7 +471,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 	lowValue := make([]byte, 0, len(pattern))
 	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(chunk.Row{})
 	if err != nil {
-		r.err = errors.Trace(err)
+		r.err = err
 		return fullRange
 	}
 	escape := byte(edt.GetInt64())

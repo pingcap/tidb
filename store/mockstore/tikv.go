@@ -33,7 +33,7 @@ type MockDriver struct {
 func (d MockDriver) Open(path string) (kv.Storage, error) {
 	u, err := url.Parse(path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if !strings.EqualFold(u.Scheme, "mocktikv") {
 		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
@@ -105,7 +105,7 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 
 	client, pdClient, err := mocktikv.NewTiKVAndPDClient(opt.cluster, opt.mvccStore, opt.path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return tikv.NewTestTiKVStore(client, pdClient, opt.clientHijack, opt.pdClientHijack, opt.txnLocalLatches)

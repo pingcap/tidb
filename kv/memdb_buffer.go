@@ -88,7 +88,7 @@ func (m *memDbBuffer) Get(k Key) ([]byte, error) {
 // Set associates key with value.
 func (m *memDbBuffer) Set(k Key, v []byte) error {
 	if len(v) == 0 {
-		return errors.Trace(ErrCannotSetNilValue)
+		return ErrCannotSetNilValue
 	}
 	if len(k)+len(v) > m.entrySizeLimit {
 		return ErrEntryTooLarge.GenWithStackByArgs(m.entrySizeLimit, len(k)+len(v))
@@ -101,13 +101,13 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 	if m.Len() > int(m.bufferLenLimit) {
 		return ErrTxnTooLarge.GenWithStack("transaction too large, len:%d", m.Len())
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // Delete removes the entry from buffer with provided key.
 func (m *memDbBuffer) Delete(k Key) error {
 	err := m.db.Put(k, nil)
-	return errors.Trace(err)
+	return err
 }
 
 // Size returns sum of keys and values length.
@@ -159,17 +159,17 @@ func (i *memDbIter) Close() {
 func WalkMemBuffer(memBuf MemBuffer, f func(k Key, v []byte) error) error {
 	iter, err := memBuf.Iter(nil, nil)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	defer iter.Close()
 	for iter.Valid() {
 		if err = f(iter.Key(), iter.Value()); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = iter.Next()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 

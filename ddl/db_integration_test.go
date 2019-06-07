@@ -1108,10 +1108,10 @@ func (s *testIntegrationSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
+		return err1
 	})
 
-	return job, errors.Trace(err)
+	return job, err
 }
 
 func (s *testIntegrationSuite1) TestCreateTableTooLarge(c *C) {

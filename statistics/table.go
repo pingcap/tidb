@@ -221,7 +221,7 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 	}
 	result, err := c.equalRowCount(sc, value, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.Count)
-	return result, errors.Trace(err)
+	return result, err
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
@@ -238,7 +238,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 	}
 	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount)
 	result *= c.GetIncreaseFactor(coll.Count)
-	return result, errors.Trace(err)
+	return result, err
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
@@ -249,7 +249,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	}
 	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount)
 	result *= c.GetIncreaseFactor(coll.Count)
-	return result, errors.Trace(err)
+	return result, err
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
@@ -270,7 +270,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)
 	}
 	result *= idx.GetIncreaseFactor(coll.Count)
-	return result, errors.Trace(err)
+	return result, err
 }
 
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
@@ -372,7 +372,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
 			count, err := idx.GetRowCount(sc, []*ranger.Range{ran}, coll.ModifyCount)
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, err
 			}
 			totalCount += count
 			continue
@@ -381,7 +381,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		// use CM Sketch to estimate the equal conditions
 		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		val := types.NewBytesDatum(bytes)
 		if idx.outOfRange(val) {
@@ -421,7 +421,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 				count, err = coll.GetRowCountByColumnRanges(sc, colID, []*ranger.Range{&rang})
 			}
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, err
 			}
 			selectivity = selectivity * count / float64(idx.TotalRowCount())
 		}
@@ -475,7 +475,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 		count := tableRowCount
 		i, err := indexRange.PrefixEqualLen(sc)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		if i == colsLen && !indexRange.LowExclude && !indexRange.HighExclude {
 			totalCount += 1.0
@@ -486,7 +486,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 		}
 		rowCount, err := GetPseudoRowCountByColumnRanges(sc, tableRowCount, []*ranger.Range{indexRange}, i)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		count = count / tableRowCount * rowCount
 		// If the condition is a = 1, b = 1, c = 1, d = 1, we think every a=1, b=1, c=1 only filtrate 1/100 data,
@@ -522,7 +522,7 @@ func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 		} else {
 			compare, err1 := ran.LowVal[colIdx].CompareDatum(sc, &ran.HighVal[colIdx])
 			if err1 != nil {
-				return 0, errors.Trace(err1)
+				return 0, err1
 			}
 			if compare == 0 {
 				rowCount += tableRowCount / pseudoEqualRate
@@ -531,7 +531,7 @@ func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 			}
 		}
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 	}
 	if rowCount > tableRowCount {

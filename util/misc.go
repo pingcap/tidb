@@ -45,12 +45,12 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		var retryAble bool
 		retryAble, err = f()
 		if err == nil || !retryAble {
-			return errors.Trace(err)
+			return err
 		}
 		sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
 		time.Sleep(sleepTime)
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // GetStack gets the stacktrace.

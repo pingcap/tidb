@@ -26,7 +26,7 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	if err := job.DecodeArgs(dbInfo); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	dbInfo.ID = schemaID
@@ -38,12 +38,12 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 			// The database already exists, can't create it, we should cancel this job now.
 			job.State = model.JobStateCancelled
 		}
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	switch dbInfo.State {
@@ -52,7 +52,7 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		dbInfo.State = model.StatePublic
 		err = t.CreateDatabase(dbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, err
 		}
 		// Finish this job.
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
@@ -95,7 +95,7 @@ func checkSchemaNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64
 func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
 	dbs, err := t.ListDatabases()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	for _, db := range dbs {
@@ -113,13 +113,13 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	var toCharset, toCollate string
 	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
@@ -131,10 +131,10 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	dbInfo.Collate = toCollate
 
 	if err = t.UpdateDatabase(dbInfo); err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	if ver, err = updateSchemaVersion(t, job); err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	return ver, nil
@@ -143,12 +143,12 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	switch dbInfo.State {
 	case model.StatePublic:
@@ -166,12 +166,12 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		var tables []*model.TableInfo
 		tables, err = t.ListTables(job.SchemaID)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, err
 		}
 
 		err = t.UpdateDatabase(dbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, err
 		}
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			break
@@ -187,13 +187,13 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = errors.Errorf("invalid db state %v", dbInfo.State)
 	}
 
-	return ver, errors.Trace(err)
+	return ver, err
 }
 
 func checkSchemaExistAndCancelNotExistJob(t *meta.Meta, job *model.Job) (*model.DBInfo, error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if dbInfo == nil {
 		job.State = model.JobStateCancelled

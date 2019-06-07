@@ -47,7 +47,7 @@ type Helper struct {
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	tikvReq := &tikvrpc.Request{
@@ -65,7 +65,7 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 			zap.Binary("endKey", keyLocation.EndKey),
 			zap.Reflect("kvResp", kvResp),
 			zap.Error(err))
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return kvResp.MvccGetByKey, nil
 }
@@ -119,13 +119,13 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	}
 	req, err := http.NewRequest("GET", protocol+pdHosts[0]+rw, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	timeout, cancelFunc := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
 	cancelFunc()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	defer func() {
 		err = resp.Body.Close()
@@ -136,7 +136,7 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	var regionResp StoreHotRegionInfos
 	err = json.NewDecoder(resp.Body).Decode(&regionResp)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	metric := make(map[uint64]RegionMetric)
 	for _, hotRegions := range regionResp.AsLeader {
@@ -295,7 +295,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 			frame.TableID = tablecodec.DecodeTableID(key)
 			return frame, nil
 		}
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	// key start with tablePrefix must be either record key or index key
@@ -420,13 +420,13 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	}
 	req, err := http.NewRequest("GET", protocol+pdHosts[0]+pdapi.Regions, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	timeout, cancelFunc := context.WithTimeout(context.Background(), 5*time.Second)
 	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
 	defer cancelFunc()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	defer func() {
 		err = resp.Body.Close()
@@ -437,7 +437,7 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
 	err = json.NewDecoder(resp.Body).Decode(&regionsInfo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &regionsInfo, nil
 }
@@ -499,13 +499,13 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	}
 	req, err := http.NewRequest("GET", protocol+pdHosts[0]+pdapi.Stores, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	timeout, cancelFunc := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
 	defer cancelFunc()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	defer func() {
 		err = resp.Body.Close()
@@ -516,7 +516,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	var storesStat StoresStat
 	err = json.NewDecoder(resp.Body).Decode(&storesStat)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &storesStat, nil
 }

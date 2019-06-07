@@ -99,7 +99,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		if ctx == nil {
 			// If the region is not found in cache, it must be out
@@ -115,7 +115,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		s.storeAddr = ctx.Addr
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		if retry {
 			continue
@@ -123,12 +123,12 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		if regionErr != nil {
 			retry, err := s.onRegionError(bo, ctx, regionErr)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, err
 			}
 			if retry {
 				continue
@@ -140,13 +140,13 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 
 func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
-		return nil, false, errors.Trace(e)
+		return nil, false, e
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
-			return nil, false, errors.Trace(e)
+			return nil, false, e
 		}
 		return nil, true, nil
 	}
@@ -156,14 +156,14 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled {
-		return errors.Trace(err)
+		return err
 	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
 		return errTiDBShuttingDown
 	}
 	if grpc.Code(errors.Cause(err)) == codes.Canceled {
 		select {
 		case <-bo.ctx.Done():
-			return errors.Trace(err)
+			return err
 		default:
 			// If we don't cancel, but the error code is Canceled, it must be from grpc remote.
 			// This may happen when tikv is killed and exiting.
@@ -179,7 +179,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
 	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
-	return errors.Trace(err)
+	return err
 }
 
 // needReloadRegion checks is all peers has sent failed, if so need reload.
@@ -231,7 +231,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		}
 
 		if err = bo.Backoff(boType, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 
 		return true, nil
@@ -251,7 +251,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 			zap.Stringer("EpochNotMatch", epochNotMatch),
 			zap.Stringer("ctx", ctx))
 		err = s.regionCache.OnRegionEpochNotMatch(bo, ctx, epochNotMatch.CurrentRegions)
-		return false, errors.Trace(err)
+		return false, err
 	}
 	if regionErr.GetServerIsBusy() != nil {
 		logutil.Logger(context.Background()).Warn("tikv reports `ServerIsBusy` retry later",
@@ -259,7 +259,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 			zap.Stringer("ctx", ctx))
 		err = bo.Backoff(boServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 		return true, nil
 	}

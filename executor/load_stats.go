@@ -78,7 +78,7 @@ func (e *LoadStatsExec) Open(ctx context.Context) error {
 func (e *LoadStatsInfo) Update(data []byte) error {
 	jsonTbl := &handle.JSONTable{}
 	if err := json.Unmarshal(data, jsonTbl); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	do := domain.GetDomain(e.Ctx)
 	h := do.StatsHandle()

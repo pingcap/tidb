@@ -124,20 +124,20 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 			// As we do not know the origin length, just use a custom value here.
 			lowVal, err = codec.DecodeRange(low.GetBytes(), 4)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			highVal, err = codec.DecodeRange(high.GetBytes(), 4)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		} else {
 			_, lowInt, err := codec.DecodeInt(val.Lower.GetBytes())
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			_, highInt, err := codec.DecodeInt(val.Upper.GetBytes())
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			lowVal = []types.Datum{types.NewIntDatum(lowInt)}
 			highVal = []types.Datum{types.NewIntDatum(highInt)}
@@ -707,11 +707,11 @@ func encodePKFeedback(q *QueryFeedback) (*queryFeedback, error) {
 		}
 		_, low, err := codec.DecodeInt(fb.Lower.GetBytes())
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		_, high, err := codec.DecodeInt(fb.Upper.GetBytes())
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		pb.IntRanges = append(pb.IntRanges, low, high)
 		pb.Counts = append(pb.Counts, fb.Count)
@@ -742,11 +742,11 @@ func encodeColumnFeedback(q *QueryFeedback) (*queryFeedback, error) {
 	for _, fb := range q.Feedback {
 		lowerBytes, err := codec.EncodeKey(&sc, nil, *fb.Lower)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		upperBytes, err := codec.EncodeKey(&sc, nil, *fb.Upper)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		pb.ColumnRanges = append(pb.ColumnRanges, lowerBytes, upperBytes)
 		pb.Counts = append(pb.Counts, fb.Count)
@@ -767,13 +767,13 @@ func EncodeFeedback(q *QueryFeedback) ([]byte, error) {
 		pb, err = encodeColumnFeedback(q)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	err = enc.Encode(pb)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return buf.Bytes(), nil
 }
@@ -816,11 +816,11 @@ func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback) error {
 	for i := 0; i < len(pb.ColumnRanges); i += 2 {
 		low, err := codec.DecodeRange(pb.ColumnRanges[i], 1)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		high, err := codec.DecodeRange(pb.ColumnRanges[i+1], 1)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		q.Feedback = append(q.Feedback, Feedback{&low[0], &high[0], pb.Counts[i/2], 0})
 	}
@@ -834,7 +834,7 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, isUnsigned bool) 
 	pb := &queryFeedback{}
 	err := dec.Decode(pb)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 {
 		decodeFeedbackForIndex(q, pb, c)
@@ -843,7 +843,7 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, isUnsigned bool) 
 	} else {
 		err := decodeFeedbackForColumn(q, pb)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil

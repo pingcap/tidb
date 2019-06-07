@@ -84,18 +84,18 @@ func (t *TxStructure) decodeHashDataKey(ek kv.Key) ([]byte, []byte, error) {
 
 	ek, key, err = codec.DecodeBytes(ek, nil)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 
 	ek, tp, err = codec.DecodeUint(ek)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	} else if TypeFlag(tp) != HashData {
 		return nil, nil, errInvalidHashKeyFlag.GenWithStack("invalid encoded hash data key flag %c", byte(tp))
 	}
 
 	_, field, err = codec.DecodeBytes(ek, nil)
-	return key, field, errors.Trace(err)
+	return key, field, err
 }
 
 func (t *TxStructure) hashDataKeyPrefix(key []byte) kv.Key {

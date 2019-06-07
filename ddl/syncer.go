@@ -115,7 +115,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 	var err error
 	for i := 0; i < retryCnt; i++ {
 		if isContextDone(ctx) {
-			return errors.Trace(ctx.Err())
+			return ctx.Err()
 		}
 
 		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
@@ -127,7 +127,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		logutil.Logger(ddlLogCtx).Warn("[ddl] etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(keyOpRetryInterval)
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // Init implements SchemaSyncer.Init interface.
@@ -143,12 +143,12 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 		Then(clientv3.OpPut(DDLGlobalSchemaVersion, InitialVersion)).
 		Commit()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
 	session, err := owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionDefaultRetryCnt, SyncerSessionTTL)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	s.storeSession(session)
 
@@ -158,7 +158,7 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 
 	err = PutKVToEtcd(ctx, s.etcdCli, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.loadSession().Lease()))
-	return errors.Trace(err)
+	return err
 }
 
 func (s *schemaVersionSyncer) loadSession() *concurrency.Session {
@@ -186,7 +186,7 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 	// NewSession's context will affect the exit of the session.
 	session, err := owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionRetryUnlimited, SyncerSessionTTL)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	s.storeSession(session)
 
@@ -195,7 +195,7 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 	err = PutKVToEtcd(childCtx, s.etcdCli, putKeyRetryUnlimited, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.loadSession().Lease()))
 
-	return errors.Trace(err)
+	return err
 }
 
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
@@ -234,7 +234,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, version int
 		clientv3.WithLease(s.loadSession().Lease()))
 
 	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return errors.Trace(err)
+	return err
 }
 
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
@@ -245,7 +245,7 @@ func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx context.Context, vers
 	// Otherwise, we'd better set the original global version.
 	err := PutKVToEtcd(ctx, s.etcdCli, putKeyRetryUnlimited, DDLGlobalSchemaVersion, ver)
 	metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerUpdateGlobalVersion, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return errors.Trace(err)
+	return err
 }
 
 // RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
@@ -257,7 +257,7 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 	}()
 
 	err = DeleteKeyFromEtcd(s.selfSchemaVerPath, s.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
-	return errors.Trace(err)
+	return err
 }
 
 // DeleteKeyFromEtcd deletes key value from etcd.
@@ -273,7 +273,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 		}
 		logutil.Logger(ddlLogCtx).Warn("[ddl] etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
@@ -300,7 +300,7 @@ func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx context.Context) (int64, 
 		}
 
 		if isContextDone(ctx) {
-			err = errors.Trace(ctx.Err())
+			err = ctx.Err()
 			return 0, err
 		}
 
@@ -341,7 +341,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 	for {
 		if isContextDone(ctx) {
 			// ctx is canceled or timeout.
-			err = errors.Trace(ctx.Err())
+			err = ctx.Err()
 			return err
 		}
 

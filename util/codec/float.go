@@ -48,7 +48,7 @@ func EncodeFloat(b []byte, v float64) []byte {
 // DecodeFloat decodes a float from a byte slice generated with EncodeFloat before.
 func DecodeFloat(b []byte) ([]byte, float64, error) {
 	b, u, err := DecodeUint(b)
-	return b, decodeCmpUintToFloat(u), errors.Trace(err)
+	return b, decodeCmpUintToFloat(u), err
 }
 
 // EncodeFloatDesc encodes a float v into a byte slice which can be sorted lexicographically later.
@@ -61,5 +61,5 @@ func EncodeFloatDesc(b []byte, v float64) []byte {
 // DecodeFloatDesc decodes a float from a byte slice generated with EncodeFloatDesc before.
 func DecodeFloatDesc(b []byte) ([]byte, float64, error) {
 	b, u, err := DecodeUintDesc(b)
-	return b, decodeCmpUintToFloat(u), errors.Trace(err)
+	return b, decodeCmpUintToFloat(u), err
 }

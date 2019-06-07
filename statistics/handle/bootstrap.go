@@ -66,7 +66,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (StatsCache, error) {
 		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	tables := StatsCache{}
 	req := rc[0].NewRecordBatch()
@@ -74,7 +74,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (StatsCache, error) {
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if req.NumRows() == 0 {
 			break
@@ -106,7 +106,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables Stat
 			cms, err := statistics.LoadCMSketchWithTopN(h.restrictedExec, row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetBytes(6))
 			if err != nil {
 				cms = nil
-				terror.Log(errors.Trace(err))
+				terror.Log(err)
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 			table.Indices[hist.ID] = &statistics.Index{Histogram: *hist, CMSketch: cms, Info: idxInfo, StatsVer: row.GetInt64(8), Flag: row.GetInt64(10), LastAnalyzePos: row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))}
@@ -145,14 +145,14 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables StatsCache
 		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	req := rc[0].NewRecordBatch()
 	iter := chunk.NewIterator4Chunk(req.Chunk)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if req.NumRows() == 0 {
 			break
@@ -217,14 +217,14 @@ func (h *Handle) initStatsBuckets(tables StatsCache) error {
 		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	req := rc[0].NewRecordBatch()
 	iter := chunk.NewIterator4Chunk(req.Chunk)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if req.NumRows() == 0 {
 			break
@@ -255,15 +255,15 @@ func (h *Handle) initStatsBuckets(tables StatsCache) error {
 func (h *Handle) InitStats(is infoschema.InfoSchema) error {
 	tables, err := h.initStatsMeta(is)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = h.initStatsHistograms(is, tables)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = h.initStatsBuckets(tables)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	h.StatsCache.Store(tables)
 	return nil

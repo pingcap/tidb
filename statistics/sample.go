@@ -92,11 +92,11 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 	c.FMSketch.mergeFMSketch(rc.FMSketch)
 	if rc.CMSketch != nil {
 		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 	}
 	for _, item := range rc.Samples {
 		err := c.collect(sc, item.Value)
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 	}
 }
 
@@ -148,7 +148,7 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 		}
 		c.Count++
 		if err := c.FMSketch.InsertValue(sc, d); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if c.CMSketch != nil {
 			c.CMSketch.InsertBytes(d.GetBytes())
@@ -222,7 +222,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 	for {
 		err := s.RecordSet.Next(ctx, req)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		if req.NumRows() == 0 {
 			return collectors, s.PkBuilder, nil
@@ -235,14 +235,14 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			if s.PkBuilder != nil {
 				err = s.PkBuilder.Iterate(datums[0])
 				if err != nil {
-					return nil, nil, errors.Trace(err)
+					return nil, nil, err
 				}
 				datums = datums[1:]
 			}
 			for i, val := range datums {
 				err = collectors[i].collect(s.Sc, val)
 				if err != nil {
-					return nil, nil, errors.Trace(err)
+					return nil, nil, err
 				}
 			}
 		}

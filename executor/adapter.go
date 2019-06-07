@@ -543,7 +543,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	b := newExecutorBuilder(ctx, a.InfoSchema)
 	e := b.build(a.Plan)
 	if b.err != nil {
-		return nil, errors.Trace(b.err)
+		return nil, b.err
 	}
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.

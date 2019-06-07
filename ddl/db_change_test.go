@@ -324,11 +324,11 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 		for j, c := range info.cases {
 			c.session, err = session.CreateSession4Test(store)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			_, err = c.session.Execute(context.Background(), "use "+useDB)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			// It's used to debug.
 			c.session.SetConnectionID(uint64(i*10 + j))
@@ -348,7 +348,7 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 		for j := 0; j < t.execCases; j++ {
 			sqlInfo.cases[j].rawStmt, err = p.ParseOneStmt(sqlInfo.sql, charset, collation)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
@@ -364,7 +364,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		se.PrepareTxnCtx(ctx)
 		sctx := se.(sessionctx.Context)
 		if err = executor.ResetContextOfStmt(sctx, c.rawStmt); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
 		if c.expectedCompileErr != nil {
@@ -375,7 +375,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 			}
 		}
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -396,11 +396,11 @@ func (t *testExecInfo) execSQL(idx int) error {
 			}
 		}
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = c.session.CommitTxn(context.TODO())
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil

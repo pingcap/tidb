@@ -132,13 +132,13 @@ func (c *Context) NewTxn(context.Context) error {
 	if c.txn.Valid() {
 		err := c.txn.Commit(c.ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
 	txn, err := c.Store.Begin()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	c.txn.Transaction = txn
 	return nil
@@ -146,7 +146,7 @@ func (c *Context) NewTxn(context.Context) error {
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
-	return errors.Trace(c.NewTxn(ctx))
+	return c.NewTxn(ctx)
 }
 
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
@@ -161,7 +161,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		}
 		txn, err := c.Store.BeginWithStartTS(startTS)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		txn.SetCap(membufCap)
 		c.txn.Transaction = txn

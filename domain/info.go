@@ -126,7 +126,7 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	}
 	infoBuf, err := json.Marshal(is.info)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	str := string(hack.String(infoBuf))
 	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
@@ -181,7 +181,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 	for i := 0; i < retryCnt; i++ {
 		select {
 		case <-ctx.Done():
-			err = errors.Trace(ctx.Err())
+			err = ctx.Err()
 			return nil, err
 		default:
 		}
@@ -199,13 +199,13 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			if err != nil {
 				logutil.Logger(context.Background()).Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
 					zap.Error(err))
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			allInfo[info.ID] = info
 		}
 		return allInfo, nil
 	}
-	return nil, errors.Trace(err)
+	return nil, err
 }
 
 // getServerInfo gets self tidb server information.

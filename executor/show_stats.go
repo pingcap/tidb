@@ -143,13 +143,13 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 	for _, col := range statsTbl.Columns {
 		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	for _, idx := range statsTbl.Indices {
 		err := e.bucketsToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -165,11 +165,11 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 	for i := 0; i < hist.Len(); i++ {
 		lowerBoundStr, err := statistics.ValueToString(hist.GetLower(i), numOfCols)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		upperBoundStr, err := statistics.ValueToString(hist.GetUpper(i), numOfCols)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		e.appendRow([]interface{}{
 			dbName,

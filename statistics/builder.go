@@ -56,7 +56,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 	}
 	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).CompareDatum(b.sc, &data)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if cmp == 0 {
 		// The new item has the same value as current bucket value, to ensure that
@@ -135,7 +135,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		cmp, err := hg.GetUpper(bucketIdx).CompareDatum(sc, &samples[i].Value)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		totalCount := float64(i+1) * sampleFactor
 		if cmp == 0 {

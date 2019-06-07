@@ -94,11 +94,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	// TODO: generate multiple global ID for paritions, reduce the times of obtaining the global ID from the storage.
 	if s.Partition.Tp == model.PartitionTypeRange {
 		if err := buildRangePartitionDefinitions(ctx, d, s, pi); err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	} else if s.Partition.Tp == model.PartitionTypeHash {
 		if err := buildHashPartitionDefinitions(ctx, d, s, pi); err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	return pi, nil
@@ -109,7 +109,7 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Create
 	for i := 0; i < len(defs); i++ {
 		pid, err := d.genGlobalID()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		defs[i].ID = pid
 		defs[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
@@ -122,7 +122,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Creat
 	for _, def := range s.Partition.Definitions {
 		pid, err := d.genGlobalID()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
@@ -167,7 +167,7 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	switch v := expr.(type) {
 	case *ast.FuncCastExpr, *ast.CaseExpr:
-		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		return ErrPartitionFunctionIsNotAllowed
 	case *ast.FuncCallExpr:
 		// check function which allowed in partitioning expressions
 		// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
@@ -180,26 +180,26 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 			if len(v.Args) == 1 {
 				col, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, v.Args[0])
 				if err != nil {
-					return errors.Trace(err)
+					return err
 				}
 				if col.GetType().Tp != mysql.TypeTimestamp {
-					return errors.Trace(errWrongExprInPartitionFunc)
+					return errWrongExprInPartitionFunc
 				}
 				return nil
 			}
 		}
-		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		return ErrPartitionFunctionIsNotAllowed
 	case *ast.BinaryOperationExpr:
 		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
 		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
 		switch v.Op {
 		case opcode.Or, opcode.And, opcode.Xor, opcode.LeftShift, opcode.RightShift, opcode.BitNeg, opcode.Div:
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+			return ErrPartitionFunctionIsNotAllowed
 		}
 		return nil
 	case *ast.UnaryOperationExpr:
 		if v.Op == opcode.BitNeg {
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+			return ErrPartitionFunctionIsNotAllowed
 		}
 	}
 	return nil
@@ -220,7 +220,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
 				// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
 				if !validRangePartitionType(col) && fmt.Sprintf("`%s`", name) == exprStr {
-					return errors.Trace(ErrNotAllowedTypeInPartition.GenWithStackByArgs(exprStr))
+					return ErrNotAllowedTypeInPartition.GenWithStackByArgs(exprStr)
 				}
 			}
 		}
@@ -228,7 +228,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 
 	e, err := expression.ParseSimpleExprWithTableInfo(ctx, exprStr, tblInfo)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if e.GetType().EvalType() == types.ETInt {
 		return nil
@@ -257,12 +257,12 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	var prevRangeValue interface{}
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
-			return errors.Trace(ErrPartitionMaxvalue)
+			return ErrPartitionMaxvalue
 		}
 
 		currentRangeValue, fromExpr, err := getRangeValue(ctx, tblInfo, defs[i].LessThan[0], isUnsignedBigint)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if fromExpr {
 			// Constant fold the expression.
@@ -276,11 +276,11 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo,
 
 		if isUnsignedBigint {
 			if currentRangeValue.(uint64) <= prevRangeValue.(uint64) {
-				return errors.Trace(ErrRangeNotIncreasing)
+				return ErrRangeNotIncreasing
 			}
 		} else {
 			if currentRangeValue.(int64) <= prevRangeValue.(int64) {
-				return errors.Trace(ErrRangeNotIncreasing)
+				return ErrRangeNotIncreasing
 			}
 		}
 		prevRangeValue = currentRangeValue
@@ -337,12 +337,12 @@ func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 	for _, def := range oldDefs {
 		if strings.EqualFold(def.Name.L, strings.ToLower(partName)) {
 			if len(oldDefs) == 1 {
-				return errors.Trace(ErrDropLastPartition)
+				return ErrDropLastPartition
 			}
 			return nil
 		}
 	}
-	return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs(partName))
+	return ErrDropPartitionNonExistent.GenWithStackByArgs(partName)
 }
 
 // removePartitionInfo each ddl job deletes a partition.
@@ -367,22 +367,22 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partName string
 	if err := job.DecodeArgs(&partName); err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
 	err = checkDropTablePartition(tblInfo, partName)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	physicalTableID := removePartitionInfo(tblInfo, partName)
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	// Finish this job.
@@ -398,15 +398,15 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	var oldID int64
 	if err := job.DecodeArgs(&oldID); err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
-		return ver, errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+		return ver, ErrPartitionMgmtOnNonpartitioned
 	}
 
 	var find bool
@@ -415,7 +415,7 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		if def.ID == oldID {
 			pid, err1 := t.GenGlobalID()
 			if err != nil {
-				return ver, errors.Trace(err1)
+				return ver, err1
 			}
 			def.ID = pid
 			find = true
@@ -428,7 +428,7 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	// Finish this job.
@@ -440,7 +440,7 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	if piDefs > uint64(PartitionCountLimit) {
-		return errors.Trace(ErrTooManyPartitions)
+		return ErrTooManyPartitions
 	}
 	return nil
 }
@@ -454,7 +454,7 @@ func checkNoHashPartitions(ctx sessionctx.Context, partitionNum uint64) error {
 
 func checkNoRangePartitions(partitionNum int) error {
 	if partitionNum == 0 {
-		return errors.Trace(ErrPartitionsMustBeDefined)
+		return ErrPartitionsMustBeDefined
 	}
 	return nil
 }
@@ -521,7 +521,7 @@ func checkPartitionKeysConstraint(sctx sessionctx.Context, partExpr string, idxC
 func extractPartitionColumns(sctx sessionctx.Context, partExpr string, tblInfo *model.TableInfo) ([]*expression.Column, error) {
 	e, err := expression.ParseSimpleExprWithTableInfo(sctx, partExpr, tblInfo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return expression.ExtractColumns(e), nil
 }
@@ -553,7 +553,7 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	for _, def := range tblInfo.Partition.Definitions {
 		pid, err := t.GenGlobalID()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		var newDef model.PartitionDefinition

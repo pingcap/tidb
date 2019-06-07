@@ -132,7 +132,7 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, nil, nil, 0, errors.Trace(err)
+		return nil, nil, nil, nil, 0, err
 	}
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
@@ -140,7 +140,7 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 	err = job.DecodeArgs(col, pos, &offset)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, nil, 0, errors.Trace(err)
+		return nil, nil, nil, nil, 0, err
 	}
 
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
@@ -159,7 +159,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	if job.IsRollingback() {
 		ver, err = onDropColumn(t, job)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, err
 		}
 		return ver, nil
 	}
@@ -172,13 +172,13 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 
 	tblInfo, columnInfo, col, pos, offset, err := checkAddColumn(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	if columnInfo == nil {
 		columnInfo, offset, err = createColumnInfo(tblInfo, col, pos)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, err
 		}
 		logutil.Logger(ddlLogCtx).Info("[ddl] run add column job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offset))
 		// Set offset arg to job.
@@ -187,7 +187,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		}
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, err
 		}
 	}
 
@@ -215,7 +215,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, err
 		}
 
 		// Finish this job.
@@ -225,13 +225,13 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		err = ErrInvalidColumnState.GenWithStack("invalid column state %v", columnInfo.State)
 	}
 
-	return ver, errors.Trace(err)
+	return ver, err
 }
 
 func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, colInfo, err := checkDropColumn(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	originalState := colInfo.State
@@ -254,7 +254,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			// More info about this problem, see PR#9115.
 			colInfo.OriginDefaultValue, err = generateOriginDefaultValue(colInfo)
 			if err != nil {
-				return ver, errors.Trace(err)
+				return ver, err
 			}
 		}
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != colInfo.State)
@@ -275,7 +275,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, err
 		}
 
 		// Finish this job.
@@ -287,21 +287,21 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	default:
 		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
-	return ver, errors.Trace(err)
+	return ver, err
 }
 
 func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 
 	var colName model.CIStr
 	err = job.DecodeArgs(&colName)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
@@ -311,7 +311,7 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 	}
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	return tblInfo, colInfo, nil
 }
@@ -321,7 +321,7 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err := job.DecodeArgs(newCol)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	return updateColumn(t, job, newCol, &newCol.Name)
@@ -335,7 +335,7 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 	err := job.DecodeArgs(newCol, oldColName, pos, &modifyColumnTp)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	return w.doModifyColumn(t, job, newCol, oldColName, pos, modifyColumnTp)
@@ -345,19 +345,19 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, modifyColumnTp byte) (ver int64, _ error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
 	if job.IsRollingback() {
 		ver, err = rollbackModifyColumnJob(t, tblInfo, job, oldCol, modifyColumnTp)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, err
 		}
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 		return ver, nil
@@ -387,7 +387,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) && !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
 		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
@@ -456,7 +456,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	if err != nil {
 		// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
 		job.State = model.JobStateRollingback
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
@@ -469,7 +469,7 @@ func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 	sql := fmt.Sprintf("select count(*) from `%s`.`%s` where `%s` is null limit 1;", schema.L, table.L, oldCol.L)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	rowCount := rows[0].GetInt64(0)
 	if rowCount != 0 {
@@ -484,7 +484,7 @@ func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
@@ -496,7 +496,7 @@ func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldCol
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
@@ -536,7 +536,7 @@ func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.
 		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.PreventNullInsertFlag
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, err
 		}
 	}
 	return ver, nil
@@ -548,7 +548,7 @@ func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.get()
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	defer w.sessPool.put(ctx)
 
@@ -556,13 +556,13 @@ func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 	err = checkForNullValue(ctx, oldCol.Tp == newCol.Tp, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
 	if err != nil {
 		job.State = model.JobStateRollingback
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	// Prevent this field from inserting null values.
 	tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
 	ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
-	return ver, errors.Trace(err)
+	return ver, err
 }
 
 func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
@@ -572,7 +572,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 		zeroVal := table.GetZeroValue(col)
 		odValue, err = zeroVal.ToString()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 

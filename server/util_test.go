@@ -31,11 +31,11 @@ var _ = Suite(&testUtilSuite{})
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	session.SetSchemaLease(0)
 	dom, err := session.BootstrapSession(store)
-	return store, dom, errors.Trace(err)
+	return store, dom, err
 }
 
 type testUtilSuite struct {

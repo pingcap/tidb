@@ -148,7 +148,7 @@ func EOFAsNil(err error) error {
 	if terror.ErrorEqual(err, io.EOF) {
 		return nil
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // InvOp2 returns an invalid operation error.

@@ -78,23 +78,23 @@ func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolve
 		KeyPath:  security.ClusterSSLKey,
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
 
 	tlsConfig, err := security.ToTLSConfig()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	spkv, err := NewEtcdSafePointKV(etcdAddrs, tlsConfig)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), false)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return s.lockResolver, nil
 }
@@ -202,7 +202,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 
 		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 		txnInfos[l.TxnID] = uint64(status)
 	}
@@ -227,25 +227,25 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 	startTime = time.Now()
 	resp, err := lr.store.SendReq(bo, req, loc, readTimeoutShort)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 
 	if regionErr != nil {
 		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 		return false, nil
 	}
 
 	cmdResp := resp.ResolveLock
 	if cmdResp == nil {
-		return false, errors.Trace(ErrBodyMissing)
+		return false, ErrBodyMissing
 	}
 	if keyErr := cmdResp.GetError(); keyErr != nil {
 		return false, errors.Errorf("unexpected resolve err: %s", keyErr)
@@ -301,7 +301,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary)
 		if err != nil {
 			msBeforeTxnExpired = 0
-			err = errors.Trace(err)
+			err = err
 			return
 		}
 
@@ -314,7 +314,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 		err = lr.resolveLock(bo, l, status, cleanRegions)
 		if err != nil {
 			msBeforeTxnExpired = 0
-			err = errors.Trace(err)
+			err = err
 			return
 		}
 	}
@@ -328,7 +328,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (msBeforeTxnE
 func (lr *LockResolver) GetTxnStatus(txnID uint64, primary []byte) (TxnStatus, error) {
 	bo := NewBackoffer(context.Background(), cleanupMaxBackoff)
 	status, err := lr.getTxnStatus(bo, txnID, primary)
-	return status, errors.Trace(err)
+	return status, err
 }
 
 func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte) (TxnStatus, error) {
@@ -349,26 +349,26 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
 		if err != nil {
-			return status, errors.Trace(err)
+			return status, err
 		}
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return status, errors.Trace(err)
+			return status, err
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return status, errors.Trace(err)
+			return status, err
 		}
 		if regionErr != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return status, errors.Trace(err)
+				return status, err
 			}
 			continue
 		}
 		cmdResp := resp.Cleanup
 		if cmdResp == nil {
-			return status, errors.Trace(ErrBodyMissing)
+			return status, ErrBodyMissing
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
@@ -391,7 +391,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if _, ok := cleanRegions[loc.Region]; ok {
 			return nil
@@ -407,22 +407,22 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		}
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if regionErr != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			continue
 		}
 		cmdResp := resp.ResolveLock
 		if cmdResp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return ErrBodyMissing
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)

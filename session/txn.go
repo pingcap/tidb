@@ -176,7 +176,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		if err1 := st.Transaction.Rollback(); err1 != nil {
 			logutil.Logger(context.Background()).Error("rollback error", zap.Error(err1))
 		}
-		return errors.Trace(st.doNotCommit)
+		return st.doNotCommit
 	}
 
 	// mockCommitError8942 is used for PR #8942.

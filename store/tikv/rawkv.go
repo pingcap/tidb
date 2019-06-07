@@ -70,7 +70,7 @@ func NewRawKVClient(pdAddrs []string, security config.Security) (*RawKVClient, e
 		KeyPath:  security.ClusterSSLKey,
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &RawKVClient{
 		clusterID:   pdCli.GetClusterID(context.TODO()),
@@ -112,11 +112,11 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	}
 	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	cmdResp := resp.RawGet
 	if cmdResp == nil {
-		return nil, errors.Trace(ErrBodyMissing)
+		return nil, ErrBodyMissing
 	}
 	if cmdResp.GetError() != "" {
 		return nil, errors.New(cmdResp.GetError())
@@ -137,12 +137,12 @@ func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
 	resp, err := c.sendBatchReq(bo, keys, tikvrpc.CmdRawBatchGet)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	cmdResp := resp.RawBatchGet
 	if cmdResp == nil {
-		return nil, errors.Trace(ErrBodyMissing)
+		return nil, ErrBodyMissing
 	}
 
 	keyToValue := make(map[string][]byte, len(keys))
@@ -177,11 +177,11 @@ func (c *RawKVClient) Put(key, value []byte) error {
 	}
 	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	cmdResp := resp.RawPut
 	if cmdResp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return ErrBodyMissing
 	}
 	if cmdResp.GetError() != "" {
 		return errors.New(cmdResp.GetError())
@@ -206,7 +206,7 @@ func (c *RawKVClient) BatchPut(keys, values [][]byte) error {
 	}
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
 	err := c.sendBatchPut(bo, keys, values)
-	return errors.Trace(err)
+	return err
 }
 
 // Delete deletes a key-value pair from TiKV.
@@ -222,11 +222,11 @@ func (c *RawKVClient) Delete(key []byte) error {
 	}
 	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	cmdResp := resp.RawDelete
 	if cmdResp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return ErrBodyMissing
 	}
 	if cmdResp.GetError() != "" {
 		return errors.New(cmdResp.GetError())
@@ -244,11 +244,11 @@ func (c *RawKVClient) BatchDelete(keys [][]byte) error {
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
 	resp, err := c.sendBatchReq(bo, keys, tikvrpc.CmdRawBatchDelete)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	cmdResp := resp.RawBatchDelete
 	if cmdResp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return ErrBodyMissing
 	}
 	if cmdResp.GetError() != "" {
 		return errors.New(cmdResp.GetError())
@@ -274,11 +274,11 @@ func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
 		var actualEndKey []byte
 		resp, actualEndKey, err = c.sendDeleteRangeReq(startKey, endKey)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		cmdResp := resp.RawDeleteRange
 		if cmdResp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return ErrBodyMissing
 		}
 		if cmdResp.GetError() != "" {
 			return errors.New(cmdResp.GetError())
@@ -299,7 +299,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 	defer func() { tikvRawkvCmdHistogramWithRawScan.Observe(time.Since(start).Seconds()) }()
 
 	if limit > MaxRawKVScanLimit {
-		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
+		return nil, nil, ErrMaxScanLimitExceeded
 	}
 
 	for len(keys) < limit {
@@ -313,11 +313,11 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 		}
 		resp, loc, err := c.sendReq(startKey, req, false)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		cmdResp := resp.RawScan
 		if cmdResp == nil {
-			return nil, nil, errors.Trace(ErrBodyMissing)
+			return nil, nil, ErrBodyMissing
 		}
 		for _, pair := range cmdResp.Kvs {
 			keys = append(keys, pair.Key)
@@ -345,7 +345,7 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 	}()
 
 	if limit > MaxRawKVScanLimit {
-		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
+		return nil, nil, ErrMaxScanLimitExceeded
 	}
 
 	for len(keys) < limit {
@@ -360,11 +360,11 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 		}
 		resp, loc, err := c.sendReq(startKey, req, true)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		cmdResp := resp.RawScan
 		if cmdResp == nil {
-			return nil, nil, errors.Trace(ErrBodyMissing)
+			return nil, nil, ErrBodyMissing
 		}
 		for _, pair := range cmdResp.Kvs {
 			keys = append(keys, pair.Key)
@@ -390,20 +390,20 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 			loc, err = c.regionCache.LocateKey(bo, key)
 		}
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		if regionErr != nil {
 			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, err
 			}
 			continue
 		}
@@ -414,7 +414,7 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*
 func (c *RawKVClient) sendBatchReq(bo *Backoffer, keys [][]byte, cmdType tikvrpc.CmdType) (*tikvrpc.Response, error) { // split the keys
 	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	var batches []batch
@@ -482,18 +482,18 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 
 	batchResp := singleBatchResp{}
 	if err != nil {
-		batchResp.err = errors.Trace(err)
+		batchResp.err = err
 		return batchResp
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
-		batchResp.err = errors.Trace(err)
+		batchResp.err = err
 		return batchResp
 	}
 	if regionErr != nil {
 		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
-			batchResp.err = errors.Trace(err)
+			batchResp.err = err
 			return batchResp
 		}
 		resp, err = c.sendBatchReq(bo, batch.keys, cmdType)
@@ -508,7 +508,7 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 	case tikvrpc.CmdRawBatchDelete:
 		cmdResp := resp.RawBatchDelete
 		if cmdResp == nil {
-			batchResp.err = errors.Trace(ErrBodyMissing)
+			batchResp.err = ErrBodyMissing
 			return batchResp
 		}
 		if cmdResp.GetError() != "" {
@@ -530,7 +530,7 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 	for {
 		loc, err := c.regionCache.LocateKey(bo, startKey)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 
 		actualEndKey := endKey
@@ -548,16 +548,16 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 
 		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		if regionErr != nil {
 			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, err
 			}
 			continue
 		}
@@ -572,7 +572,7 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 	}
 	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	var batches []batch
 	// split the keys by size and RegionVerID
@@ -599,7 +599,7 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 			}
 		}
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func appendKeyBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte, limit int) []batch {
@@ -658,16 +658,16 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	resp, err := sender.SendReq(bo, req, batch.regionID, readTimeoutShort)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if regionErr != nil {
 		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		// recursive call
 		return c.sendBatchPut(bo, batch.keys, batch.values)
@@ -675,7 +675,7 @@ func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
 
 	cmdResp := resp.RawBatchPut
 	if cmdResp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return ErrBodyMissing
 	}
 	if cmdResp.GetError() != "" {
 		return errors.New(cmdResp.GetError())

@@ -80,15 +80,15 @@ func encodeRow(b []byte, row *comparableRow) ([]byte, error) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	body, err = codec.EncodeKey(sc, body, row.key...)
 	if err != nil {
-		return b, errors.Trace(err)
+		return b, err
 	}
 	body, err = codec.EncodeKey(sc, body, row.val...)
 	if err != nil {
-		return b, errors.Trace(err)
+		return b, err
 	}
 	body, err = codec.EncodeKey(sc, body, types.NewIntDatum(row.handle))
 	if err != nil {
-		return b, errors.Trace(err)
+		return b, err
 	}
 
 	binary.BigEndian.PutUint64(head, uint64(len(body)))
@@ -112,7 +112,7 @@ func decodeRow(fd *os.File) (*comparableRow, error) {
 		return nil, errors.New("incorrect header")
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	rowSize := int(binary.BigEndian.Uint64(head))
@@ -123,12 +123,12 @@ func decodeRow(fd *os.File) (*comparableRow, error) {
 		return nil, errors.New("incorrect row")
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	dcod, err = codec.Decode(rowBytes, keySize+valSize+1)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return &comparableRow{
@@ -157,7 +157,7 @@ func decodeMeta(fd *os.File) error {
 		if n != 24 {
 			return errors.New("incorrect meta data")
 		}
-		return errors.Trace(err)
+		return err
 	}
 
 	scale = int(binary.BigEndian.Uint64(meta[:8]))
@@ -194,7 +194,7 @@ func export() error {
 	fileName := path.Join(tmpDir, "data.out")
 	outputFile, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer terror.Call(outputFile.Close)
 
@@ -206,11 +206,11 @@ func export() error {
 	for i := 1; i <= scale; i++ {
 		outputBytes, err = encodeRow(outputBytes, nextRow(r, keySize, valSize))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		_, err = outputFile.Write(outputBytes)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		outputBytes = outputBytes[:0]
 	}
@@ -230,13 +230,13 @@ func load(ratio int) ([]*comparableRow, error) {
 		return nil, errors.New("data file (data.out) does not exist")
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	defer terror.Call(fd.Close)
 
 	err = decodeMeta(fd)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	cLogf("\tnumber of rows = %d, key size = %d, value size = %d", scale, keySize, valSize)
@@ -251,7 +251,7 @@ func load(ratio int) ([]*comparableRow, error) {
 	for i := 1; i <= totalRows; i++ {
 		row, err = decodeRow(fd)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		rows = append(rows, row)
 	}

@@ -99,12 +99,12 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 		mu.Unlock()
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	err = s.store.CheckVisibility(s.version.Ver)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return m, nil
@@ -113,7 +113,7 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
 	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	tikvTxnRegionsNumHistogramWithSnapshot.Observe(float64(len(groups)))
@@ -127,7 +127,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		return nil
 	}
 	if len(batches) == 1 {
-		return errors.Trace(s.batchGetSingleRegion(bo, batches[0], collectF))
+		return s.batchGetSingleRegion(bo, batches[0], collectF)
 	}
 	ch := make(chan error)
 	for _, batch1 := range batches {
@@ -146,7 +146,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 			err = e
 		}
 	}
-	return errors.Trace(err)
+	return err
 }
 
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
@@ -167,23 +167,23 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		}
 		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutMedium)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if regionErr != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			err = s.batchGetKeysByRegions(bo, pending, collectF)
-			return errors.Trace(err)
+			return err
 		}
 		batchGetResp := resp.BatchGet
 		if batchGetResp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return ErrBodyMissing
 		}
 		var (
 			lockedKeys [][]byte
@@ -197,7 +197,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			}
 			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			lockedKeys = append(lockedKeys, lock.Key)
 			locks = append(locks, lock)
@@ -205,12 +205,12 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		if len(lockedKeys) > 0 {
 			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, locks)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			if msBeforeExpired > 0 {
 				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 				if err != nil {
-					return errors.Trace(err)
+					return err
 				}
 			}
 			pending = lockedKeys
@@ -225,7 +225,7 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 	ctx := context.WithValue(context.Background(), txnStartKey, s.version.Ver)
 	val, err := s.get(NewBackoffer(ctx, getMaxBackoff), k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(val) == 0 {
 		return nil, kv.ErrNotExist
@@ -250,41 +250,41 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if regionErr != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			continue
 		}
 		cmdGetResp := resp.Get
 		if cmdGetResp == nil {
-			return nil, errors.Trace(ErrBodyMissing)
+			return nil, ErrBodyMissing
 		}
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
 			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			msBeforeExpired, err := s.store.lockResolver.ResolveLocks(bo, []*Lock{lock})
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if msBeforeExpired > 0 {
 				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 			}
 			continue
@@ -296,13 +296,13 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 // Iter return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	scanner, err := newScanner(s, k, upperBound, scanBatchSize, false)
-	return scanner, errors.Trace(err)
+	return scanner, err
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	scanner, err := newScanner(s, nil, k, scanBatchSize, true)
-	return scanner, errors.Trace(err)
+	return scanner, err
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
@@ -329,7 +329,7 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	if keyErr.Abort != "" {
 		err := errors.Errorf("tikv aborts txn: %s", keyErr.GetAbort())
 		logutil.Logger(context.Background()).Warn("error", zap.Error(err))
-		return errors.Trace(err)
+		return err
 	}
 	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }

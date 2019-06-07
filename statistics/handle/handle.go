@@ -142,7 +142,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	sql := fmt.Sprintf("SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %d order by version", lastVersion)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	tables := make([]*statistics.Table, 0, len(rows))
@@ -268,11 +268,11 @@ func (h *Handle) LoadNeededHistograms() error {
 		}
 		hg, err := h.histogramFromStorage(col.TableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation, nil)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		cms, err := h.cmSketchFromStorage(col.TableID, 0, col.ColumnID, nil)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		tbl.Columns[c.ID] = &statistics.Column{
 			PhysicalID: col.TableID,
@@ -327,7 +327,7 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64, history
 		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(rows) == 0 {
 		return nil, nil
@@ -357,11 +357,11 @@ func (h *Handle) indexStatsFromStorage(row chunk.Row, table *statistics.Table, t
 		if idx == nil || idx.LastUpdateVersion < histVer {
 			hg, err := h.histogramFromStorage(table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0, historyStatsExec)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			cms, err := h.cmSketchFromStorage(table.PhysicalID, 1, idxInfo.ID, historyStatsExec)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag, LastAnalyzePos: row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))}
 		}
@@ -409,7 +409,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 		if notNeedLoad {
 			count, err := h.columnCountFromStorage(table.PhysicalID, histID)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			col = &statistics.Column{
 				PhysicalID:     table.PhysicalID,
@@ -427,11 +427,11 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
 			hg, err := h.histogramFromStorage(table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation, historyStatsExec)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			cms, err := h.cmSketchFromStorage(table.PhysicalID, 0, colInfo.ID, historyStatsExec)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			col = &statistics.Column{
 				PhysicalID:     table.PhysicalID,
@@ -501,11 +501,11 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
 			if err := h.indexStatsFromStorage(row, table, tableInfo, historyStatsExec); err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		} else {
 			if err := h.columnStatsFromStorage(row, table, tableInfo, loadAll, historyStatsExec); err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 	}
@@ -520,14 +520,14 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	version := txn.StartTS()
@@ -618,14 +618,14 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
 	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	var sql string
 	version := txn.StartTS()
@@ -646,7 +646,7 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 		rows, fields, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bucketSize := len(rows)
 	hg := statistics.NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
@@ -664,12 +664,12 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			lowerBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 			upperBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 		totalCount += count
@@ -683,7 +683,7 @@ func (h *Handle) columnCountFromStorage(tableID, colID int64) (int64, error) {
 	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	if rows[0].IsNull(0) {
 		return 0, nil

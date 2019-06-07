@@ -54,13 +54,13 @@ func ParseFrac(s string, fsp int) (v int, overflow bool, err error) {
 
 	fsp, err = CheckFsp(fsp)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, false, err
 	}
 
 	if fsp >= len(s) {
 		tmp, e := strconv.ParseInt(s, 10, 64)
 		if e != nil {
-			return 0, false, errors.Trace(e)
+			return 0, false, e
 		}
 		v = int(float64(tmp) * math.Pow10(MaxFsp-len(s)))
 		return
@@ -69,7 +69,7 @@ func ParseFrac(s string, fsp int) (v int, overflow bool, err error) {
 	// Round when fsp < string length.
 	tmp, e := strconv.ParseInt(s[:fsp+1], 10, 64)
 	if e != nil {
-		return 0, false, errors.Trace(e)
+		return 0, false, e
 	}
 	tmp = (tmp + 5) / 10
 

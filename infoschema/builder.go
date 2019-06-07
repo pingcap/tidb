@@ -97,7 +97,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		// All types except DropTableOrView.
 		err := b.applyCreateTable(m, dbInfo, newTableID, alloc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	return tblIDs, nil
@@ -116,7 +116,7 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if di == nil {
 		// When we apply an old schema diff, the database may has been dropped already, so we need to fall back to
@@ -132,7 +132,7 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if di == nil {
 		// This should never happen.
@@ -182,7 +182,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, alloc autoid.Allocator) error {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if tblInfo == nil {
 		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
@@ -201,7 +201,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
@@ -312,7 +312,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
@@ -320,7 +320,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 	for _, driver := range drivers {
 		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	// TODO: Update INFORMATION_SCHEMA schema to use virtual table.
@@ -345,7 +345,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		var tbl table.Table
 		tbl, err := tableFromMeta(alloc, t)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]

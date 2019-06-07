@@ -36,14 +36,14 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	if err1 != nil {
-		return ver, errors.Trace(err1)
+		return ver, err1
 	}
 
 	if kv.ErrKeyExists.Equal(err) {
 		return ver, kv.ErrKeyExists.GenWithStack("Duplicate for key %s", indexInfo.Name.O)
 	}
 
-	return ver, errors.Trace(err)
+	return ver, err
 }
 
 // convertNotStartAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
@@ -52,7 +52,7 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	var (
@@ -64,7 +64,7 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	indexInfo := tblInfo.FindIndexByName(indexName.L)
@@ -79,7 +79,7 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	job.State = model.JobStateRollingback
 	tblInfo, columnInfo, col, _, _, err := checkAddColumn(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	if columnInfo == nil {
 		job.State = model.JobStateCancelled
@@ -93,7 +93,7 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	job.Args = []interface{}{col.Name}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	return ver, errCancelledDDLJob
 }
@@ -101,7 +101,7 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tblInfo, colInfo, err := checkDropColumn(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	// StatePublic means when the job is not running yet.
@@ -119,7 +119,7 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tblInfo, indexInfo, err := checkDropIndex(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
 	originalState := indexInfo.State
@@ -140,7 +140,7 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	job.Args = []interface{}{indexInfo.Name}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
 	return ver, errCancelledDDLJob
@@ -163,7 +163,7 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	return cancelOnlyNotHandledJob(job)
 }
@@ -171,7 +171,7 @@ func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err 
 func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
 	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, job.SchemaID)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	// To simplify the rollback logic, cannot be canceled after job start to run.
 	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
@@ -186,7 +186,7 @@ func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
 func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	return cancelOnlyNotHandledJob(job)
 }
@@ -194,7 +194,7 @@ func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err
 func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	// To simplify the rollback logic, cannot be canceled after job start to run.
 	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
@@ -209,7 +209,7 @@ func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
 func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tblInfo, from, _, err := checkRenameIndex(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	// Here rename index is done in a transaction, if the job is not completed, it can be canceled.
 	idx := tblInfo.FindIndexByName(from.L)
@@ -218,7 +218,7 @@ func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errCancelledDDLJob
 	}
 	job.State = model.JobStateRunning
-	return ver, errors.Trace(err)
+	return ver, err
 }
 
 func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
@@ -236,7 +236,7 @@ func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
 func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 	return cancelOnlyNotHandledJob(job)
 }

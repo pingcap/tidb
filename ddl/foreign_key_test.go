@@ -144,7 +144,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		var t table.Table
 		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err != nil {
-			hookErr = errors.Trace(err)
+			hookErr = err
 			return
 		}
 		fk := getForeignKey(t, "c1_fk")
@@ -189,7 +189,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		var t table.Table
 		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err != nil {
-			hookErr = errors.Trace(err)
+			hookErr = err
 			return
 		}
 		fk := getForeignKey(t, "c1_fk")

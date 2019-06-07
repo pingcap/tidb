@@ -1273,7 +1273,7 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		return nil
 	}
 	if result.err != nil {
-		return errors.Trace(result.err)
+		return result.err
 	}
 
 	req.SwapColumns(result.chk)

@@ -32,19 +32,19 @@ func ExecMultiSQLInGoroutine(c *check.C, s kv.Storage, dbName string, multiSQL [
 	go func() {
 		se, err := session.CreateSession4Test(s)
 		if err != nil {
-			done <- errors.Trace(err)
+			done <- err
 			return
 		}
 		defer se.Close()
 		_, err = se.Execute(context.Background(), "use "+dbName)
 		if err != nil {
-			done <- errors.Trace(err)
+			done <- err
 			return
 		}
 		for _, sql := range multiSQL {
 			rs, err := se.Execute(context.Background(), sql)
 			if err != nil {
-				done <- errors.Trace(err)
+				done <- err
 				return
 			}
 			if rs != nil {

@@ -30,7 +30,7 @@ import (
 func (c *CMSketch) insert(val *types.Datum) error {
 	bytes, err := codec.EncodeValue(nil, nil, *val)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	c.InsertBytes(bytes)
 	return nil
@@ -41,7 +41,7 @@ func prepareCMSWithTopN(d, w int32, vals []*types.Datum, n uint32, total uint64)
 	for _, v := range vals {
 		bytes, err := codec.EncodeValue(nil, nil, *v)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		data = append(data, bytes)
 	}
@@ -57,7 +57,7 @@ func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) 
 		val := types.NewIntDatum(int64(zipf.Uint64()))
 		err := cms.insert(&val)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		mp[val.GetInt64()]++
 	}
@@ -85,7 +85,7 @@ func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
 	for num, count := range mp {
 		estimate, err := cms.queryValue(sc, types.NewIntDatum(num))
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		var diff uint64
 		if uint64(count) > estimate {

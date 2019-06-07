@@ -268,7 +268,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle int64, col *table.Column, columnValue interface{}, isExist bool) error {
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer func() {
 		if txn, err1 := ctx.Txn(true); err1 == nil {
@@ -278,7 +278,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	key := t.RecordKey(handle)
 	txn, err := ctx.Txn(true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	data, err := txn.Get(key)
 	if !isExist {
@@ -287,13 +287,13 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 		}
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	colMap := make(map[int64]*types.FieldType)
 	colMap[col.ID] = &col.FieldType
 	rowMap, err := tablecodec.DecodeRow(data, colMap, ctx.GetSessionVars().Location())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	val, ok := rowMap[col.ID]
 	if isExist {
@@ -311,15 +311,15 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 func (s *testColumnSuite) checkNoneColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = s.checkColumnKVExist(ctx, t, handle, col, columnValue, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = s.testGetColumn(t, col.Name.L, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -327,11 +327,11 @@ func (s *testColumnSuite) checkNoneColumn(ctx sessionctx.Context, d *ddl, tblInf
 func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	i := int64(0)
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -342,29 +342,29 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if i != 1 {
 		return errors.Errorf("expect 1, got %v", i)
 	}
 	err = s.checkColumnKVExist(ctx, t, handle, col, columnValue, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	// Test add a new row.
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	newHandle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	rows := [][]types.Datum{row, newRow}
@@ -378,7 +378,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if i != 2 {
 		return errors.Errorf("expect 2, got %v", i)
@@ -386,21 +386,21 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 
 	err = s.checkColumnKVExist(ctx, t, handle, col, columnValue, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	// Test remove a row.
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	err = t.RemoveRecord(ctx, newHandle, newRow)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	i = int64(0)
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -408,7 +408,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if i != 1 {
@@ -416,11 +416,11 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 	}
 	err = s.checkColumnKVExist(ctx, t, newHandle, col, columnValue, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = s.testGetColumn(t, col.Name.L, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -428,11 +428,11 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	i := int64(0)
@@ -444,7 +444,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if i != 1 {
 		return errors.Errorf("expect 1, got %v", i)
@@ -452,23 +452,23 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 
 	err = s.checkColumnKVExist(ctx, t, handle, col, columnValue, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// Test add a new row.
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	newHandle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	rows := [][]types.Datum{row, newRow}
@@ -482,7 +482,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if i != 2 {
 		return errors.Errorf("expect 2, got %v", i)
@@ -490,21 +490,21 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 
 	err = s.checkColumnKVExist(ctx, t, newHandle, col, columnValue, true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	// Test remove a row.
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	err = t.RemoveRecord(ctx, newHandle, newRow)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	i = int64(0)
@@ -513,7 +513,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if i != 1 {
 		return errors.Errorf("expect 1, got %v", i)
@@ -521,11 +521,11 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 
 	err = s.checkColumnKVExist(ctx, t, newHandle, col, columnValue, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = s.testGetColumn(t, col.Name.L, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -533,11 +533,11 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	i := int64(0)
@@ -549,7 +549,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if i != 1 {
 		return errors.Errorf("expect 1 got %v", i)
@@ -558,17 +558,17 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	// Test add a new row.
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	newHandle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	rows := [][]types.Datum{row, newRow}
@@ -582,7 +582,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if i != 2 {
 		return errors.Errorf("expect 2, got %v", i)
@@ -590,22 +590,22 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 
 	err = s.checkColumnKVExist(ctx, t, newHandle, col, columnValue, true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// Test remove a row.
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	err = t.RemoveRecord(ctx, newHandle, newRow)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	i = int64(0)
@@ -614,14 +614,14 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if i != 1 {
 		return errors.Errorf("expect 1, got %v", i)
 	}
 	err = s.testGetColumn(t, col.Name.L, false)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -629,11 +629,11 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	i := int64(0)
@@ -646,7 +646,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if i != 1 {
 		return errors.Errorf("expect 1, got %v", i)
@@ -655,17 +655,17 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	// Test add a new row.
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33), int64(44))
 	handle, err = t.AddRecord(ctx, newRow)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	rows := [][]types.Datum{updatedRow, newRow}
@@ -685,17 +685,17 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	// Test remove a row.
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	err = t.RemoveRecord(ctx, handle, newRow)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	err = ctx.NewTxn(context.Background())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	i = int64(0)
@@ -707,7 +707,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 		return true, nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if i != 1 {
 		return errors.Errorf("expect 1, got %v", i)
@@ -715,7 +715,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 
 	err = s.testGetColumn(t, newCol.Name.L, true)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -725,15 +725,15 @@ func (s *testColumnSuite) checkAddColumn(state model.SchemaState, d *ddl, tblInf
 	var err error
 	switch state {
 	case model.StateNone:
-		err = errors.Trace(s.checkNoneColumn(ctx, d, tblInfo, handle, newCol, columnValue))
+		err = s.checkNoneColumn(ctx, d, tblInfo, handle, newCol, columnValue)
 	case model.StateDeleteOnly:
-		err = errors.Trace(s.checkDeleteOnlyColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
+		err = s.checkDeleteOnlyColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue)
 	case model.StateWriteOnly:
-		err = errors.Trace(s.checkWriteOnlyColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
+		err = s.checkWriteOnlyColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue)
 	case model.StateWriteReorganization, model.StateDeleteReorganization:
-		err = errors.Trace(s.checkReorganizationColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
+		err = s.checkReorganizationColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue)
 	case model.StatePublic:
-		err = errors.Trace(s.checkPublicColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
+		err = s.checkPublicColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue)
 	}
 	return err
 }
@@ -789,7 +789,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err1 != nil {
-			hookErr = errors.Trace(err1)
+			hookErr = err1
 			return
 		}
 		newCol := table.FindCol(t.(*tables.Table).Columns, newColName)
@@ -799,7 +799,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 		err1 = s.checkAddColumn(newCol.State, d, tblInfo, handle, newCol, oldRow, defaultColValue)
 		if err1 != nil {
-			hookErr = errors.Trace(err1)
+			hookErr = err1
 			return
 		}
 
@@ -876,7 +876,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		}
 		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err1 != nil {
-			hookErr = errors.Trace(err1)
+			hookErr = err1
 			return
 		}
 		col := table.FindCol(t.(*tables.Table).Columns, colName)

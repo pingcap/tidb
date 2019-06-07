@@ -66,7 +66,7 @@ func (e *DDLExec) toErr(err error) error {
 	}
 	schemaInfoErr := checker.Check(txn.StartTS())
 	if schemaInfoErr != nil {
-		return errors.Trace(schemaInfoErr)
+		return schemaInfoErr
 	}
 	return err
 }
@@ -389,7 +389,7 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 		schemaName = e.ctx.GetSessionVars().CurrentDB
 	}
 	if schemaName == "" {
-		return nil, nil, errors.Trace(core.ErrNoDB)
+		return nil, nil, core.ErrNoDB
 	}
 	// TODO: only search recent `e.JobNum` DDL jobs.
 	for i := len(jobs) - 1; i > 0; i-- {

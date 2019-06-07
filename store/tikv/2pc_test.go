@@ -330,10 +330,10 @@ func errMsgMustContain(c *C, err error, msg string) {
 func newTwoPhaseCommitterWithInit(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
 	c, err := newTwoPhaseCommitter(txn, connID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if err = c.initKeysAndMutations(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return c, nil
 }

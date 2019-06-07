@@ -44,7 +44,7 @@ func UnquoteChar(s string, quote byte) (value []byte, tail string, err error) {
 	// easy cases
 	switch c := s[0]; {
 	case c == quote:
-		err = errors.Trace(ErrSyntax)
+		err = ErrSyntax
 		return
 	case c >= utf8.RuneSelf:
 		r, size := utf8.DecodeRuneInString(s)
@@ -60,7 +60,7 @@ func UnquoteChar(s string, quote byte) (value []byte, tail string, err error) {
 	}
 	// hard case: c is backslash
 	if len(s) <= 1 {
-		err = errors.Trace(ErrSyntax)
+		err = ErrSyntax
 		return
 	}
 	c := s[1]
@@ -99,15 +99,15 @@ func UnquoteChar(s string, quote byte) (value []byte, tail string, err error) {
 func Unquote(s string) (t string, err error) {
 	n := len(s)
 	if n < 2 {
-		return "", errors.Trace(ErrSyntax)
+		return "", ErrSyntax
 	}
 	quote := s[0]
 	if quote != s[n-1] {
-		return "", errors.Trace(ErrSyntax)
+		return "", ErrSyntax
 	}
 	s = s[1 : n-1]
 	if quote != '"' && quote != '\'' {
-		return "", errors.Trace(ErrSyntax)
+		return "", ErrSyntax
 	}
 	// Avoid allocation. No need to convert if there is no '\'
 	if strings.IndexByte(s, '\\') == -1 && strings.IndexByte(s, quote) == -1 {
@@ -117,7 +117,7 @@ func Unquote(s string) (t string, err error) {
 	for len(s) > 0 {
 		mb, ss, err := UnquoteChar(s, quote)
 		if err != nil {
-			return "", errors.Trace(err)
+			return "", err
 		}
 		s = ss
 		buf = append(buf, mb...)

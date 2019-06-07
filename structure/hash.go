@@ -59,7 +59,7 @@ func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
-	return value, errors.Trace(err)
+	return value, err
 }
 
 func (t *TxStructure) hashFieldIntegerVal(val int64) []byte {
@@ -83,38 +83,38 @@ func (t *TxStructure) HInc(key []byte, field []byte, step int64) (int64, error) 
 			var err error
 			base, err = strconv.ParseInt(string(oldValue), 10, 64)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 		base += step
 		return t.hashFieldIntegerVal(base), nil
 	})
 
-	return base, errors.Trace(err)
+	return base, err
 }
 
 // HGetInt64 gets int64 value of a hash field.
 func (t *TxStructure) HGetInt64(key []byte, field []byte) (int64, error) {
 	value, err := t.HGet(key, field)
 	if err != nil || value == nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 
 	var n int64
 	n, err = strconv.ParseInt(string(value), 10, 64)
-	return n, errors.Trace(err)
+	return n, err
 }
 
 func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []byte) ([]byte, error)) error {
 	dataKey := t.encodeHashDataKey(key, field)
 	oldValue, err := t.loadHashValue(dataKey)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	newValue, err := fn(oldValue)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// Check if new value is equal to old value.
@@ -123,19 +123,19 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 	}
 
 	if err = t.readWriter.Set(dataKey, newValue); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if oldValue == nil {
 		meta.FieldCount++
 		if err = t.readWriter.Set(metaKey, meta.Value()); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
@@ -147,7 +147,7 @@ func (t *TxStructure) HLen(key []byte) (int64, error) {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	return meta.FieldCount, nil
 }
@@ -160,7 +160,7 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return errors.Trace(err)
+		return err
 	}
 
 	var value []byte
@@ -169,12 +169,12 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 
 		value, err = t.loadHashValue(dataKey)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		if value != nil {
 			if err = t.readWriter.Delete(dataKey); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 
 			meta.FieldCount--
@@ -187,7 +187,7 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 		err = t.readWriter.Set(metaKey, meta.Value())
 	}
 
-	return errors.Trace(err)
+	return err
 }
 
 // HKeys gets all the fields in a hash.
@@ -198,7 +198,7 @@ func (t *TxStructure) HKeys(key []byte) ([][]byte, error) {
 		return nil
 	})
 
-	return keys, errors.Trace(err)
+	return keys, err
 }
 
 // HGetAll gets all the fields and values in a hash.
@@ -213,7 +213,7 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 		return nil
 	})
 
-	return res, errors.Trace(err)
+	return res, err
 }
 
 // HGetLastN gets latest N fields and values in hash.
@@ -230,7 +230,7 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 		}
 		return true, nil
 	})
-	return res, errors.Trace(err)
+	return res, err
 }
 
 // HClear removes the hash value of the key.
@@ -238,26 +238,26 @@ func (t *TxStructure) HClear(key []byte) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return errors.Trace(err)
+		return err
 	}
 
 	err = t.iterateHash(key, func(field []byte, value []byte) error {
 		k := t.encodeHashDataKey(key, field)
-		return errors.Trace(t.readWriter.Delete(k))
+		return t.readWriter.Delete(k)
 	})
 
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
-	return errors.Trace(t.readWriter.Delete(metaKey))
+	return t.readWriter.Delete(metaKey)
 }
 
 func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.reader.Iter(dataPrefix, dataPrefix.PrefixNext())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	var field []byte
@@ -269,16 +269,16 @@ func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error)
 
 		_, field, err = t.decodeHashDataKey(it.Key())
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		if err = fn(field, it.Value()); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		err = it.Next()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
@@ -289,7 +289,7 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.reader.IterReverse(dataPrefix.PrefixNext())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	var field []byte
@@ -300,17 +300,17 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 
 		_, field, err = t.decodeHashDataKey(it.Key())
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		more, err := fn(field, it.Value())
 		if !more || err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		err = it.Next()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -322,7 +322,7 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 		err = nil
 	}
 	if err != nil {
-		return hashMeta{}, errors.Trace(err)
+		return hashMeta{}, err
 	}
 
 	meta := hashMeta{FieldCount: 0}
@@ -345,7 +345,7 @@ func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
 		v = nil
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return v, nil

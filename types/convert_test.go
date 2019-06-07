@@ -44,7 +44,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	sc.TimeZone = time.UTC
 	ret, err := d.ConvertTo(sc, target)
 	if err != nil {
-		return ret.GetValue(), errors.Trace(err)
+		return ret.GetValue(), err
 	}
 	return ret.GetValue(), nil
 }

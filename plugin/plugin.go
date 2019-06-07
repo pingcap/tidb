@@ -168,7 +168,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 		var pName string
 		pName, _, err = ID(pluginID).Decode()
 		if err != nil {
-			err = errors.Trace(err)
+			err = err
 			return
 		}
 		// Check duplicate.
@@ -288,12 +288,12 @@ func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 	plugin.Path = filepath.Join(dir, string(pluginID)+LibrarySuffix)
 	plugin.library, err = gplugin.Open(plugin.Path)
 	if err != nil {
-		err = errors.Trace(err)
+		err = err
 		return
 	}
 	manifestSym, err := plugin.library.Lookup(ManifestSymbol)
 	if err != nil {
-		err = errors.Trace(err)
+		err = err
 		return
 	}
 	manifest, ok := manifestSym.(func() *Manifest)
@@ -303,7 +303,7 @@ func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 	}
 	pName, pVersion, err := pluginID.Decode()
 	if err != nil {
-		err = errors.Trace(err)
+		err = err
 		return
 	}
 	plugin.Manifest = manifest()

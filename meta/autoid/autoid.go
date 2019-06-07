@@ -92,7 +92,7 @@ func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 		m := meta.NewMeta(txn)
 		autoID, err1 = m.GetAutoTableID(alloc.dbID, tableID)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 		return nil
 	})

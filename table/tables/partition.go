@@ -76,19 +76,19 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 		partitionExpr, err = generateHashPartitionExpr(tblInfo)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	ret.partitionExpr = partitionExpr
 
 	if err := initTableIndices(&ret.tableCommon); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	partitions := make(map[int64]*partition)
 	for _, p := range pi.Definitions {
 		var t partition
 		err := initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		partitions[p.ID] = &t
 	}
@@ -157,7 +157,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		locateExprs = append(locateExprs, exprs[0])
 
@@ -182,7 +182,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
 		buf.Reset()
@@ -210,7 +210,7 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
 		buf.Reset()
@@ -219,7 +219,7 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
 		logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if col, ok := exprs[0].(*expression.Column); ok {
 		column = col
@@ -252,7 +252,7 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 		idx, err = t.locateHashPartition(ctx, pi, r)
 	}
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	return pi.Definitions[idx].ID, nil
 }
@@ -275,7 +275,7 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		return ret > 0
 	})
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	if isNull {
 		idx = 0
@@ -284,14 +284,14 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		// The data does not belong to any of the partition returns `table has no partition for value %s`.
 		e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 
 		ret, _, err2 := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 		if err2 != nil {
-			return 0, errors.Trace(err2)
+			return 0, err2
 		}
-		return 0, errors.Trace(table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("%d", ret)))
+		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("%d", ret))
 	}
 	return idx, nil
 }
@@ -326,7 +326,7 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.Datum) (table.Table, error) {
 	pid, err := t.locatePartition(ctx, t.Meta().GetPartitionInfo(), r)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return t.partitions[pid], nil
 }
@@ -336,7 +336,7 @@ func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, op
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 
 	tbl := t.GetPartition(pid)
@@ -348,7 +348,7 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []typ
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	tbl := t.GetPartition(pid)
@@ -362,11 +362,11 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 	partitionInfo := t.meta.GetPartitionInfo()
 	from, err := t.locatePartition(ctx, partitionInfo, currData)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	to, err := t.locatePartition(ctx, partitionInfo, newData)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// The old and new data locate in different partitions.
@@ -374,7 +374,7 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 	if from != to {
 		_, err = t.GetPartition(to).AddRecord(ctx, newData)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		// UpdateRecord should be side effect free, but there're two steps here.
 		// What would happen if step1 succeed but step2 meets error? It's hard
@@ -385,7 +385,7 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
 		if err != nil {
 			logutil.Logger(context.Background()).Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
-			return errors.Trace(err)
+			return err
 		}
 		return nil
 	}
@@ -403,5 +403,5 @@ func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 			return def.ID, nil
 		}
 	}
-	return -1, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
+	return -1, table.ErrUnknownPartition.GenWithStackByArgs(parName, meta.Name.O)
 }

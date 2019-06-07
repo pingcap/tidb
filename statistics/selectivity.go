@@ -191,7 +191,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		if col != nil {
 			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, nil, err
 			}
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
 			if colInfo.IsHandle {
@@ -199,14 +199,14 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				var cnt float64
 				cnt, err = coll.GetRowCountByIntColumnRanges(sc, id, ranges)
 				if err != nil {
-					return 0, nil, errors.Trace(err)
+					return 0, nil, err
 				}
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
 				continue
 			}
 			cnt, err := coll.GetRowCountByColumnRanges(sc, id, ranges)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, nil, err
 			}
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
 		}
@@ -220,11 +220,11 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			}
 			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, nil, err
 			}
 			cnt, err := coll.GetRowCountByIndexRanges(sc, id, ranges)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, nil, err
 			}
 			selectivity := cnt / float64(coll.Count)
 			nodes = append(nodes, &StatsNode{

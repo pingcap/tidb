@@ -198,12 +198,12 @@ func (s *TestDDLSuite) startServers() (err error) {
 		// Open log file.
 		logFP, err := os.OpenFile(fmt.Sprintf("%s%d", logFilePrefix, i), os.O_RDWR, 0766)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		s.procs[i], err = s.startServer(i, logFP)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
@@ -215,12 +215,12 @@ func (s *TestDDLSuite) killServer(proc *os.Process) error {
 	err := proc.Kill()
 	if err != nil {
 		log.Errorf("kill server failed err %v", err)
-		return errors.Trace(err)
+		return err
 	}
 	_, err = proc.Wait()
 	if err != nil {
 		log.Errorf("kill server, wait failed err %v", err)
-		return errors.Trace(err)
+		return err
 	}
 
 	time.Sleep(1 * time.Second)
@@ -235,7 +235,7 @@ func (s *TestDDLSuite) stopServers() error {
 		if s.procs[i] != nil {
 			err := s.killServer(s.procs[i].Process)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			s.procs[i] = nil
 		}
@@ -268,7 +268,7 @@ func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 	cmd.Stdout = fp
 	err := cmd.Start()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	time.Sleep(500 * time.Millisecond)
 
@@ -302,13 +302,13 @@ func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
 	}
 	if err != nil {
 		log.Errorf("restart server addr %v failed %v, take time %v", addr, err, time.Since(startTime))
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	db.SetMaxOpenConns(10)
 
 	_, err = db.Exec("use test_ddl")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	log.Infof("start server %s ok %v", addr, err)
@@ -336,11 +336,11 @@ func (s *TestDDLSuite) restartServerRand() error {
 	log.Warnf("begin to restart %s", server.addr)
 	err := s.killServer(server.Process)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	s.procs[i], err = s.startServer(i, server.logFP)
-	return errors.Trace(err)
+	return err
 }
 
 func isRetryError(err error) bool {

@@ -50,7 +50,7 @@ func (t *topNSorter) Less(i, j int) bool {
 
 		ret, err := v1.CompareDatum(t.sc, &v2)
 		if err != nil {
-			t.err = errors.Trace(err)
+			t.err = err
 			return true
 		}
 
@@ -99,7 +99,7 @@ func (t *topNHeap) Less(i, j int) bool {
 
 		ret, err := v1.CompareDatum(t.sc, &v2)
 		if err != nil {
-			t.err = errors.Trace(err)
+			t.err = err
 			return true
 		}
 

@@ -122,7 +122,7 @@ func PKCS7Unpad(data []byte, blockSize int) ([]byte, error) {
 func AESEncryptWithECB(str, key []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	mode := newECBEncrypter(cb)
 	return aesEncrypt(str, mode)
@@ -132,7 +132,7 @@ func AESEncryptWithECB(str, key []byte) ([]byte, error) {
 func AESDecryptWithECB(cryptStr, key []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	mode := newECBDecrypter(cb)
 	return aesDecrypt(cryptStr, mode)
@@ -157,7 +157,7 @@ func DeriveKeyMySQL(key []byte, blockSize int) []byte {
 func AESEncryptWithCBC(str, key []byte, iv []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	mode := cipher.NewCBCEncrypter(cb, iv)
 	return aesEncrypt(str, mode)
@@ -167,7 +167,7 @@ func AESEncryptWithCBC(str, key []byte, iv []byte) ([]byte, error) {
 func AESDecryptWithCBC(cryptStr, key []byte, iv []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	mode := cipher.NewCBCDecrypter(cb, iv)
 	return aesDecrypt(cryptStr, mode)
@@ -177,7 +177,7 @@ func AESDecryptWithCBC(cryptStr, key []byte, iv []byte) ([]byte, error) {
 func AESEncryptWithOFB(plainStr []byte, key []byte, iv []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	mode := cipher.NewOFB(cb, iv)
 	crypted := make([]byte, len(plainStr))
@@ -189,7 +189,7 @@ func AESEncryptWithOFB(plainStr []byte, key []byte, iv []byte) ([]byte, error) {
 func AESDecryptWithOFB(cipherStr []byte, key []byte, iv []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	mode := cipher.NewOFB(cb, iv)
 	plainStr := make([]byte, len(cipherStr))
@@ -213,7 +213,7 @@ func AESEncryptWithCFB(cryptStr, key []byte, iv []byte) ([]byte, error) {
 func AESDecryptWithCFB(cryptStr, key []byte, iv []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	cfb := cipher.NewCFBDecrypter(cb, []byte(iv))
 	dst := make([]byte, len(cryptStr))

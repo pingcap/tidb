@@ -196,7 +196,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 				index = arrayIndexAsterisk
 			} else {
 				if index, err = strconv.Atoi(indexStr); err != nil {
-					err = errors.Trace(err)
+					err = err
 					return
 				}
 			}

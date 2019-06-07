@@ -75,7 +75,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		} else if !exists {
 			pwd, ok := user.EncodedPassword()
 			if !ok {
-				return errors.Trace(ErrPasswordFormat)
+				return ErrPasswordFormat
 			}
 			user := fmt.Sprintf(`('%s', '%s', '%s')`, user.User.Hostname, user.User.Username, pwd)
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)

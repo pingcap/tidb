@@ -73,7 +73,7 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
 	startTS, err := store.getTimestampWithRetry(bo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return newTikvTxnWithStartTS(store, startTS)
 }
@@ -133,12 +133,12 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 		return nil, err
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	err = txn.store.CheckVisibility(txn.startTS)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return ret, nil
@@ -157,7 +157,7 @@ func (txn *tikvTxn) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 			continue
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if len(val) != 0 {
 			bufferValues[i] = val
@@ -165,7 +165,7 @@ func (txn *tikvTxn) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	}
 	storageValues, err := txn.snapshot.BatchGet(shrinkKeys)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	for i, key := range keys {
 		if bufferValues[i] == nil {
@@ -266,11 +266,11 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if committer == nil {
 		committer, err = newTwoPhaseCommitter(txn, connID)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	if err := committer.initKeysAndMutations(); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if len(committer.keys) == 0 {
 		return nil
@@ -292,7 +292,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.executeAndWriteFinishBinlog(ctx)
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
-		return errors.Trace(err)
+		return err
 	}
 
 	// latches enabled
@@ -312,7 +312,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		lock.SetCommitTS(committer.commitTS)
 	}
 	logutil.Logger(ctx).Debug("[kv] txnLatches enabled while txn retryable", zap.Error(err))
-	return errors.Trace(err)
+	return err
 }
 
 func (txn *tikvTxn) close() {

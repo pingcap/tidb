@@ -232,7 +232,7 @@ func (e *ExecuteExec) Build(b *executorBuilder) error {
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))
-		return errors.Trace(b.err)
+		return b.err
 	}
 	e.stmtExec = stmtExec
 	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
@@ -252,7 +252,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return errors.Trace(plannercore.ErrStmtNotFound)
+		return plannercore.ErrStmtNotFound
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {

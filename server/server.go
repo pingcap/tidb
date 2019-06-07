@@ -236,14 +236,14 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			int(cfg.ProxyProtocol.HeaderTimeout))
 		if errProxy != nil {
 			logutil.Logger(context.Background()).Error("ProxyProtocol networks parameter invalid")
-			return nil, errors.Trace(errProxy)
+			return nil, errProxy
 		}
 		logutil.Logger(context.Background()).Info("server is running MySQL protocol (through PROXY protocol)", zap.String("host", s.cfg.Host))
 		s.listener = pplistener
 	}
 
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	// Init rand seed for randomBuf()
@@ -323,11 +323,11 @@ func (s *Server) Run() error {
 			}
 
 			logutil.Logger(context.Background()).Error("accept failed", zap.Error(err))
-			return errors.Trace(err)
+			return err
 		}
 		if s.shouldStopListener() {
 			err = conn.Close()
-			terror.Log(errors.Trace(err))
+			terror.Log(err)
 			break
 		}
 
@@ -340,13 +340,13 @@ func (s *Server) Run() error {
 				if err != nil {
 					logutil.Logger(context.Background()).Error("get peer host failed", zap.Error(err))
 					terror.Log(clientConn.Close())
-					return errors.Trace(err)
+					return err
 				}
 				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host}, plugin.PreAuth, nil)
 				if err != nil {
 					logutil.Logger(context.Background()).Info("do connection event failed", zap.Error(err))
 					terror.Log(clientConn.Close())
-					return errors.Trace(err)
+					return err
 				}
 			}
 			return nil
@@ -358,7 +358,7 @@ func (s *Server) Run() error {
 		go s.onConn(clientConn)
 	}
 	err := s.listener.Close()
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	s.listener = nil
 	for {
 		metrics.ServerEventCounter.WithLabelValues(metrics.EventHang).Inc()
@@ -383,17 +383,17 @@ func (s *Server) Close() {
 
 	if s.listener != nil {
 		err := s.listener.Close()
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 		s.listener = nil
 	}
 	if s.socket != nil {
 		err := s.socket.Close()
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 		s.socket = nil
 	}
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 		s.statusServer = nil
 	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
@@ -407,7 +407,7 @@ func (s *Server) onConn(conn *clientConn) {
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
 		err = conn.Close()
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 		return
 	}
 
@@ -552,7 +552,7 @@ func (s *Server) KillAllConnections() {
 
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
-		terror.Log(errors.Trace(conn.closeWithoutLock()))
+		terror.Log(conn.closeWithoutLock())
 		killConn(conn)
 	}
 }

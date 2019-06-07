@@ -160,7 +160,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 		jobs, err = t.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	for _, job := range jobs {
@@ -169,7 +169,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 		}
 		isDependent, err := curJob.IsDependentOn(job)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isDependent {
 			logutil.Logger(ddlLogCtx).Info("[ddl] current DDL job depends on other job", zap.String("currentJob", curJob.String()), zap.String("dependentJob", job.String()))
@@ -190,18 +190,18 @@ func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		var err error
 		job.ID, err = t.GenGlobalID()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		job.StartTS = txn.StartTS()
 		if err = buildJobDependence(t, job); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = t.EnQueueDDLJob(job)
 
-		return errors.Trace(err)
+		return err
 	})
 	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return errors.Trace(err)
+	return err
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
@@ -212,16 +212,16 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
+		return err1
 	})
 
-	return job, errors.Trace(err)
+	return job, err
 }
 
 // getFirstDDLJob gets the first DDL job form DDL queue.
 func (w *worker) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 	job, err := t.GetDDLJobByIdx(0)
-	return job, errors.Trace(err)
+	return job, err
 }
 
 // handleUpdateJobError handles the too large DDL job.
@@ -238,7 +238,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		job.State = model.JobStateCancelled
 		err = w.finishDDLJob(t, job)
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // updateDDLJob updates the DDL job information.
@@ -251,7 +251,7 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 		logutil.Logger(w.logCtx).Info("[ddl] meet error before update DDL job, shouldn't update raw args", zap.String("job", job.String()))
 		updateRawArgs = false
 	}
-	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
+	return t.UpdateDDLJob(0, job, updateRawArgs)
 }
 
 func (w *worker) deleteRange(job *model.Job) error {
@@ -261,7 +261,7 @@ func (w *worker) deleteRange(job *model.Job) error {
 	} else {
 		err = errInvalidJobVersion.GenWithStackByArgs(job.Version, currentVersion)
 	}
-	return errors.Trace(err)
+	return err
 }
 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
@@ -290,18 +290,18 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		err = finishRecoverTable(w, t, job)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	_, err = t.DeQueueDDLJob()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
 	logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()))
 	err = t.AddHistoryDDLJob(job)
-	return errors.Trace(err)
+	return err
 }
 
 func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
@@ -310,12 +310,12 @@ func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
 	var snapshotTS uint64
 	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if recoverTableCheckFlag == recoverTableCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -328,7 +328,7 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 
 	historyJob, err := t.GetHistoryDDLJob(job.DependencyID)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	if historyJob == nil {
 		return false, nil
@@ -371,10 +371,10 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// We become the owner. Get the first job and run it.
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
-				return errors.Trace(err1)
+				return err1
 			}
 
 			if once {
@@ -388,7 +388,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 					job.State = model.JobStateSynced
 				}
 				err = w.finishDDLJob(t, job)
-				return errors.Trace(err)
+				return err
 			}
 
 			d.mu.RLock()
@@ -401,11 +401,11 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if job.IsCancelled() {
 				txn.Reset()
 				err = w.finishDDLJob(t, job)
-				return errors.Trace(err)
+				return err
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			if job.IsDone() || job.IsRollbackDone() {
 				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
@@ -421,7 +421,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		} else if job == nil {
 			// No job now, return and retry getting later.
 			return nil
@@ -573,7 +573,7 @@ func loadDDLVars(w *worker) error {
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.get()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer w.sessPool.put(ctx)
 	return util.LoadDDLVars(ctx)
@@ -670,7 +670,7 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	schemaVersion, err := t.GenSchemaVersion()
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	diff := &model.SchemaDiff{
 		Version:  schemaVersion,
@@ -681,20 +681,20 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		// Truncate table has two table ID, should be handled differently.
 		err = job.DecodeArgs(&diff.TableID)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		diff.OldTableID = job.TableID
 	} else if job.Type == model.ActionRenameTable {
 		err = job.DecodeArgs(&diff.OldSchemaID)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		diff.TableID = job.TableID
 	} else {
 		diff.TableID = job.TableID
 	}
 	err = t.SetSchemaDiff(diff)
-	return schemaVersion, errors.Trace(err)
+	return schemaVersion, err
 }
 
 func isChanClosed(quitCh chan struct{}) bool {

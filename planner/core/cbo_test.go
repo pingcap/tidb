@@ -751,7 +751,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 
 	session.SetSchemaLease(0)
@@ -763,7 +763,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	}
 
 	dom.SetStatsUpdating(true)
-	return store, dom, errors.Trace(err)
+	return store, dom, err
 }
 
 func BenchmarkOptimize(b *testing.B) {

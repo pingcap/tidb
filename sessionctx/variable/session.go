@@ -672,7 +672,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		// Modes is a list of different modes separated by commas.
 		sqlMode, err2 := mysql.GetSQLMode(val)
 		if err2 != nil {
-			return errors.Trace(err2)
+			return err2
 		}
 		s.StrictSQLMode = sqlMode.HasStrictMode()
 		s.SQLMode = sqlMode

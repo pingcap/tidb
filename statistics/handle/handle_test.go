@@ -434,14 +434,14 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	session.SetSchemaLease(0)
 	session.SetStatsLease(statsLease)
 	domain.RunAutoAnalyze = false
 	do, err := session.BootstrapSession(store)
 	do.SetStatsUpdating(true)
-	return store, do, errors.Trace(err)
+	return store, do, err
 }
 
 func (s *testStatsSuite) TestCorrelation(c *C) {

@@ -41,5 +41,5 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	}
 
 	tikvStore.mock = true
-	return tikvStore, errors.Trace(err)
+	return tikvStore, err
 }

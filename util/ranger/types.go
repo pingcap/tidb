@@ -124,7 +124,7 @@ func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 	for i := 0; i < len(ran.LowVal); i++ {
 		cmp, err := ran.LowVal[i].CompareDatum(sc, &ran.HighVal[i])
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		if cmp != 0 {
 			return i, nil

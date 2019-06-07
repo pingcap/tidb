@@ -83,7 +83,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				var bin []byte
 				bin, err = dec.ToHashKey()
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 				b = append(b, bin...)
 			} else {
@@ -102,7 +102,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			var val uint64
 			val, err = vals[i].GetBinaryLiteral().ToInt(sc)
-			terror.Log(errors.Trace(err))
+			terror.Log(err)
 			b = encodeUnsignedInt(b, val, comparable)
 		case types.KindMysqlJSON:
 			b = append(b, jsonFlag)
@@ -120,7 +120,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 		}
 	}
 
-	return b, errors.Trace(err)
+	return b, err
 }
 
 // EncodeMySQLTime encodes datum of `KindMysqlTime` to []byte.
@@ -228,13 +228,13 @@ func encodeHashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, a
 			if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
 				err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, err
 				}
 			}
 			var v uint64
 			v, err = t.ToPackedUint()
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			b = EncodeUint(b, v)
 		case mysql.TypeDuration:
@@ -247,7 +247,7 @@ func encodeHashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, a
 			dec := row.GetMyDecimal(i)
 			bin, err := dec.ToHashKey()
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			b = append(b, bin...)
 		case mysql.TypeEnum:
@@ -258,7 +258,7 @@ func encodeHashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, a
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			var val uint64
 			val, err = types.BinaryLiteral(row.GetBytes(i)).ToInt(sc)
-			terror.Log(errors.Trace(err))
+			terror.Log(err)
 			b = encodeUnsignedInt(b, val, comparable)
 		case mysql.TypeJSON:
 			b = append(b, jsonFlag)
@@ -269,7 +269,7 @@ func encodeHashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, a
 			return nil, errors.Errorf("unsupport column type for encode %d", allTypes[i].Tp)
 		}
 	}
-	return b, errors.Trace(err)
+	return b, err
 }
 
 // HashValues appends the encoded values to byte slice b, returning the appended
@@ -301,7 +301,7 @@ func Decode(b []byte, size int) ([]types.Datum, error) {
 		var d types.Datum
 		b, d, err = DecodeOne(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		values = append(values, d)
@@ -326,7 +326,7 @@ func DecodeRange(b []byte, size int) ([]types.Datum, error) {
 		var d types.Datum
 		b, d, err = DecodeOne(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		values = append(values, d)
 	}
@@ -416,7 +416,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
 	}
 	if err != nil {
-		return b, d, errors.Trace(err)
+		return b, d, err
 	}
 	return b, d, nil
 }
@@ -426,7 +426,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 func CutOne(b []byte) (data []byte, remain []byte, err error) {
 	l, err := peek(b)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	return b[:l], b[l:], nil
 }
@@ -447,7 +447,7 @@ func SetRawValues(data []byte, values []types.Datum) error {
 	for i := 0; i < len(values); i++ {
 		l, err := peek(data)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		values[i].SetRaw(data[:l:l])
 		data = data[l:]
@@ -485,7 +485,7 @@ func peek(b []byte) (length int, err error) {
 		return 0, errors.Errorf("invalid encoded key flag %v", flag)
 	}
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	length += l
 	return
@@ -571,62 +571,62 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		var v int64
 		b, v, err = DecodeInt(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		appendIntToChunk(v, chk, colIdx, ft)
 	case uintFlag:
 		var v uint64
 		b, v, err = DecodeUint(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		err = appendUintToChunk(v, chk, colIdx, ft, decoder.timezone)
 	case varintFlag:
 		var v int64
 		b, v, err = DecodeVarint(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		appendIntToChunk(v, chk, colIdx, ft)
 	case uvarintFlag:
 		var v uint64
 		b, v, err = DecodeUvarint(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		err = appendUintToChunk(v, chk, colIdx, ft, decoder.timezone)
 	case floatFlag:
 		var v float64
 		b, v, err = DecodeFloat(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		appendFloatToChunk(v, chk, colIdx, ft)
 	case bytesFlag:
 		b, decoder.buf, err = DecodeBytes(b, decoder.buf)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		chk.AppendBytes(colIdx, decoder.buf)
 	case compactBytesFlag:
 		var v []byte
 		b, v, err = DecodeCompactBytes(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		chk.AppendBytes(colIdx, v)
 	case decimalFlag:
 		var dec *types.MyDecimal
 		b, dec, _, _, err = DecodeDecimal(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		chk.AppendMyDecimal(colIdx, dec)
 	case durationFlag:
 		var r int64
 		b, r, err = DecodeInt(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		v := types.Duration{Duration: time.Duration(r), Fsp: ft.Decimal}
 		chk.AppendDuration(colIdx, v)
@@ -634,7 +634,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		var size int
 		size, err = json.PeekBytesAsJSON(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		chk.AppendJSON(colIdx, json.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
 		b = b[size:]
@@ -644,7 +644,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		return nil, errors.Errorf("invalid encoded key flag %v", flag)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return b, nil
 }
@@ -668,12 +668,12 @@ func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.Field
 		var err error
 		err = t.FromPackedUint(val)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, loc)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		chk.AppendTime(colIdx, t)
@@ -687,7 +687,7 @@ func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.Field
 	case mysql.TypeSet:
 		set, err := types.ParseSetValue(ft.Elems, val)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		chk.AppendSet(colIdx, set)
 	case mysql.TypeBit:

@@ -138,7 +138,7 @@ func (b *PlanBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expression
 func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
 	exprNode.Accept(rewriter)
 	if rewriter.err != nil {
-		return nil, nil, errors.Trace(rewriter.err)
+		return nil, nil, rewriter.err
 	}
 	if !asScalar && len(rewriter.ctxStack) == 0 {
 		return nil, rewriter.p, nil
@@ -148,7 +148,7 @@ func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast
 	}
 	rewriter.err = expression.CheckArgsNotMultiColumnRow(rewriter.ctxStack[0])
 	if rewriter.err != nil {
-		return nil, nil, errors.Trace(rewriter.err)
+		return nil, nil, rewriter.err
 	}
 	return rewriter.ctxStack[0], rewriter.p, nil
 }

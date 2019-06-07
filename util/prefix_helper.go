@@ -28,13 +28,13 @@ import (
 func ScanMetaWithPrefix(retriever kv.Retriever, prefix kv.Key, filter func(kv.Key, []byte) bool) error {
 	iter, err := retriever.Iter(prefix, prefix.PrefixNext())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer iter.Close()
 
 	for {
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		if iter.Valid() && iter.Key().HasPrefix(prefix) {
@@ -43,7 +43,7 @@ func ScanMetaWithPrefix(retriever kv.Retriever, prefix kv.Key, filter func(kv.Ke
 			}
 			err = iter.Next()
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		} else {
 			break
@@ -58,20 +58,20 @@ func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix kv.Key) error {
 	var keys []kv.Key
 	iter, err := rm.Iter(prefix, prefix.PrefixNext())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	defer iter.Close()
 	for {
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 
 		if iter.Valid() && iter.Key().HasPrefix(prefix) {
 			keys = append(keys, iter.Key().Clone())
 			err = iter.Next()
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		} else {
 			break
@@ -81,7 +81,7 @@ func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix kv.Key) error {
 	for _, key := range keys {
 		err := rm.Delete(key)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 

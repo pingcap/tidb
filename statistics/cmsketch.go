@@ -240,7 +240,7 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
 func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (uint64, error) {
 	bytes, err := codec.EncodeValue(sc, nil, val)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	return c.QueryBytes(bytes), nil
 }
@@ -386,7 +386,7 @@ func decodeCMSketch(data []byte, topN []*TopNMeta) (*CMSketch, error) {
 	p := &tipb.CMSketch{}
 	err := p.Unmarshal(data)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(p.Rows) == 0 && len(topN) == 0 {
 		return nil, nil

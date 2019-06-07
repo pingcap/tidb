@@ -1318,7 +1318,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 		extractor.curClause = havingClause
 		n, ok := sel.Having.Expr.Accept(extractor)
 		if !ok {
-			return nil, nil, errors.Trace(extractor.err)
+			return nil, nil, extractor.err
 		}
 		sel.Having.Expr = n.(ast.ExprNode)
 	}
@@ -1335,7 +1335,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 			}
 			n, ok := item.Expr.Accept(extractor)
 			if !ok {
-				return nil, nil, errors.Trace(extractor.err)
+				return nil, nil, extractor.err
 			}
 			item.Expr = n.(ast.ExprNode)
 		}
@@ -1851,7 +1851,7 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		resolver.inExpr = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
-			return nil, nil, errors.Trace(resolver.err)
+			return nil, nil, resolver.err
 		}
 		if !resolver.isParam {
 			item.Expr = retExpr.(ast.ExprNode)
@@ -3235,7 +3235,7 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 // We need to resolve the referenced window to get the definition of current window spec.
 func resolveWindowSpec(spec *ast.WindowSpec, specs map[string]*ast.WindowSpec, inStack map[string]bool) error {
 	if inStack[spec.Name.L] {
-		return errors.Trace(ErrWindowCircularityInWindowGraph)
+		return ErrWindowCircularityInWindowGraph
 	}
 	if spec.Ref.L == "" {
 		return nil
@@ -3264,7 +3264,7 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 		spec.OrderBy = ref.OrderBy
 	}
 	if spec.PartitionBy != nil {
-		return errors.Trace(ErrWindowNoChildPartitioning)
+		return ErrWindowNoChildPartitioning
 	}
 	spec.PartitionBy = ref.PartitionBy
 	spec.Ref = model.NewCIStr("")

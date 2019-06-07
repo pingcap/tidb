@@ -65,12 +65,12 @@ func (s *FMSketch) insertHashValue(hashVal uint64) {
 func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) error {
 	bytes, err := codec.EncodeValue(sc, nil, value)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	s.hashFunc.Reset()
 	_, err = s.hashFunc.Write(bytes)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	s.insertHashValue(s.hashFunc.Sum64())
 	return nil
@@ -81,7 +81,7 @@ func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize i
 	for _, value := range values {
 		err := s.InsertValue(sc, value)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, 0, err
 		}
 	}
 	return s, s.NDV(), nil

@@ -159,7 +159,7 @@ func (r *selectResult) getSelectResp() error {
 	for {
 		re := <-r.results
 		if re.err != nil {
-			return errors.Trace(re.err)
+			return re.err
 		}
 		if r.memTracker != nil && r.selectResp != nil {
 			r.memTracker.Consume(-int64(r.selectResp.Size()))
@@ -174,7 +174,7 @@ func (r *selectResult) getSelectResp() error {
 		r.selectResp = new(tipb.SelectResponse)
 		err := r.selectResp.Unmarshal(re.result.GetData())
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if r.memTracker != nil && r.selectResp != nil {
 			r.memTracker.Consume(int64(r.selectResp.Size()))

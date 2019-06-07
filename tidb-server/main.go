@@ -573,7 +573,7 @@ func closeDomainAndStorage() {
 	atomic.StoreUint32(&tikv.ShuttingDown, 1)
 	dom.Close()
 	err := storage.Close()
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 }
 
 func cleanup() {

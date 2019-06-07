@@ -340,12 +340,12 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
 		errs, err := admin.CancelJobs(txn, test.jobIDs)
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 			return checkErr
 		}
 		// It only tests cancel one DDL job.
 		if !terror.ErrorEqual(errs[0], test.cancelRetErrs[0]) {
-			checkErr = errors.Trace(errs[0])
+			checkErr = errs[0]
 			return checkErr
 		}
 	}
@@ -502,12 +502,12 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		hookCtx.Store = store
 		err1 := hookCtx.NewTxn(context.Background())
 		if err1 != nil {
-			checkErr = errors.Trace(err1)
+			checkErr = err1
 			return
 		}
 		txn, err1 = hookCtx.Txn(true)
 		if err1 != nil {
-			checkErr = errors.Trace(err1)
+			checkErr = err1
 			return
 		}
 		mu.Lock()
@@ -518,7 +518,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		}
 		err1 = txn.Commit(context.Background())
 		if err1 != nil {
-			checkErr = errors.Trace(err1)
+			checkErr = err1
 			return
 		}
 	}

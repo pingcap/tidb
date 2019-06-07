@@ -66,22 +66,22 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	ctx = opentracing.ContextWithSpan(ctx, span)
 	recordSets, err := se.Execute(ctx, e.stmtNode.Text())
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	for _, rs := range recordSets {
 		_, err = drainRecordSet(ctx, e.ctx, rs)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if err = rs.Close(); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
 	traces, err := store.Traces(appdash.TracesOpts{})
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// Row format.
@@ -100,7 +100,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	// Json format.
 	data, err := json.Marshal(traces)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// Split json data into rows to avoid the max packet size limitation.
@@ -121,7 +121,7 @@ func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Rec
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
-			return rows, errors.Trace(err)
+			return rows, err
 		}
 		iter := chunk.NewIterator4Chunk(req.Chunk)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {

@@ -186,7 +186,7 @@ func (l *List) Walk(walkFunc ListWalkFunc) error {
 		for j := 0; j < chk.NumRows(); j++ {
 			err := walkFunc(chk.GetRow(j))
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}

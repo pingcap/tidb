@@ -33,12 +33,12 @@ import (
 func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	jsTable := &handle.JSONTable{}
 	err = json.Unmarshal(data, jsTable)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return handle.TableStatsFromJSON(tblInfo, tblInfo.ID, jsTable)
 }

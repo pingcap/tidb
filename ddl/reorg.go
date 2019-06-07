@@ -141,7 +141,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		w.reorgCtx.clean()
-		return errors.Trace(err)
+		return err
 	case <-w.quitCh:
 		logutil.Logger(ddlLogCtx).Info("[ddl] run reorg job quit")
 		w.reorgCtx.setNextHandle(0)
@@ -175,7 +175,7 @@ func (w *worker) isReorgRunnable(d *ddlCtx) error {
 	if !d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
 		logutil.Logger(ddlLogCtx).Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", d.uuid))
-		return errors.Trace(errNotOwner)
+		return errNotOwner
 	}
 	return nil
 }
@@ -249,7 +249,7 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
 	dagPB, err := buildDescTableScanDAG(startTS, tbl, columns, limit)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	ranges := ranger.FullIntRange(false)
 	var builder distsql.RequestBuilder
@@ -263,13 +263,13 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 
 	kvReq, err := builder.Build()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	sctx := newContext(d.store)
 	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(columns), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	result.Fetch(ctx)
 	return result, nil
@@ -294,14 +294,14 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (maxR
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
 	result, err := d.buildDescTableScan(ctx, startTS, tbl, columns, 1)
 	if err != nil {
-		return maxRowID, false, errors.Trace(err)
+		return maxRowID, false, err
 	}
 	defer terror.Call(result.Close)
 
 	chk := chunk.New(getColumnsTypes(columns), 1, 1)
 	err = result.Next(ctx, chk)
 	if err != nil {
-		return maxRowID, false, errors.Trace(err)
+		return maxRowID, false, err
 	}
 
 	if chk.NumRows() == 0 {
@@ -324,13 +324,13 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 			return false, nil
 		})
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, err
 	}
 	var emptyTable bool
 	// Get the end handle of this partition.
 	endHandle, emptyTable, err = d.GetTableMaxRowID(snapshotVer, tbl)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, err
 	}
 	if endHandle < startHandle || emptyTable {
 		logutil.Logger(ddlLogCtx).Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
@@ -355,7 +355,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		var ver kv.Version
 		ver, err = d.store.CurrentVersion()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		} else if ver.Ver <= 0 {
 			return nil, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
 		}
@@ -370,7 +370,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		}
 		start, end, err = getTableRange(d, tb, ver.Ver, job.Priority)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		logutil.Logger(ddlLogCtx).Info("[ddl] job get table range", zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid), zap.Int64("startHandle", start), zap.Int64("endHandle", end))
 
@@ -379,14 +379,14 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		})
 		err = t.UpdateDDLReorgHandle(job, start, end, pid)
 		if err != nil {
-			return &info, errors.Trace(err)
+			return &info, err
 		}
 		// Update info should after data persistent.
 		job.SnapshotVer = ver.Ver
 	} else {
 		start, end, pid, err = t.GetDDLReorgHandle(job)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	info.Job = job
@@ -395,10 +395,10 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	info.EndHandle = end
 	info.PhysicalTableID = pid
 
-	return &info, errors.Trace(err)
+	return &info, err
 }
 
 func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle, physicalTableID int64) error {
 	t := meta.NewMeta(txn)
-	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID))
+	return t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID)
 }

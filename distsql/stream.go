@@ -75,7 +75,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	var stream tipb.StreamResponse
 	err = stream.Unmarshal(resultSubset.GetData())
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	if stream.Error != nil {
 		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
@@ -86,7 +86,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 
 	err = result.Unmarshal(stream.Data)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++

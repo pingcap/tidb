@@ -546,7 +546,7 @@ func (do *Domain) Close() {
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
-		terror.Log(errors.Trace(do.etcdClient.Close()))
+		terror.Log(do.etcdClient.Close())
 	}
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
@@ -610,7 +610,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 				TLS: ebd.TLSConfig(),
 			})
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			do.etcdClient = cli
 		}

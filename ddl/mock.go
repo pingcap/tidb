@@ -103,7 +103,7 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 	for {
 		select {
 		case <-ctx.Done():
-			return errors.Trace(ctx.Err())
+			return ctx.Err()
 		case <-ticker.C:
 			ver := atomic.LoadInt64(&s.selfSchemaVersion)
 			if ver == latestVer {
@@ -141,21 +141,21 @@ func (dr *mockDelRange) clear() {}
 func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints, "", "")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	tbl, err := buildTableInfo(ctx, nil, stmt.Table.Name, cols, newConstraints)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	tbl.ID = tableID
 
 	// The specified charset will be handled in handleTableOptions
 	if err = handleTableOptions(stmt.Options, tbl); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	if err = resolveDefaultTableCharsetAndCollation(tbl, ""); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	return tbl, nil

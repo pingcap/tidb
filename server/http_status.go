@@ -287,6 +287,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 		logutil.Logger(context.Background()).Error("encode json failed", zap.Error(err))
 	} else {
 		_, err = w.Write(js)
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 	}
 }

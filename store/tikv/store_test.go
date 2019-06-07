@@ -120,7 +120,7 @@ func (c *mockPDClient) GetTS(ctx context.Context) (int64, int64, error) {
 	defer c.RUnlock()
 
 	if c.stop {
-		return 0, 0, errors.Trace(errStopped)
+		return 0, 0, errStopped
 	}
 	return c.client.GetTS(ctx)
 }
@@ -134,7 +134,7 @@ func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Regio
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, nil, errStopped
 	}
 	return c.client.GetRegion(ctx, key)
 }
@@ -144,7 +144,7 @@ func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.R
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, nil, errStopped
 	}
 	return c.client.GetPrevRegion(ctx, key)
 }
@@ -154,7 +154,7 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*met
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, nil, errStopped
 	}
 	return c.client.GetRegionByID(ctx, regionID)
 }
@@ -164,7 +164,7 @@ func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.St
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, errors.Trace(errStopped)
+		return nil, errStopped
 	}
 	return c.client.GetStore(ctx, storeID)
 }
@@ -174,7 +174,7 @@ func (c *mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOpti
 	defer c.Unlock()
 
 	if c.stop {
-		return nil, errors.Trace(errStopped)
+		return nil, errStopped
 	}
 	return c.client.GetAllStores(ctx)
 }

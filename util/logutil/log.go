@@ -258,7 +258,7 @@ func InitLogger(cfg *LogConfig) error {
 
 	if len(cfg.File.Filename) != 0 {
 		if err := initFileLog(&cfg.File, nil); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
@@ -267,7 +267,7 @@ func InitLogger(cfg *LogConfig) error {
 		tmp := cfg.File
 		tmp.Filename = cfg.SlowQueryFile
 		if err := initFileLog(&tmp, SlowQueryLogger); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		SlowQueryLogger.Formatter = &slowLogFormatter{}
 	}
@@ -279,7 +279,7 @@ func InitLogger(cfg *LogConfig) error {
 func InitZapLogger(cfg *LogConfig) error {
 	gl, props, err := zaplog.InitLogger(&cfg.Config)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	zaplog.ReplaceGlobals(gl, props)
 
@@ -297,7 +297,7 @@ func InitZapLogger(cfg *LogConfig) error {
 		}
 		sqLogger, _, err := zaplog.InitLogger(sqCfg)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		SlowQueryZapLogger = sqLogger
 	} else {
@@ -311,7 +311,7 @@ func InitZapLogger(cfg *LogConfig) error {
 func SetLevel(level string) error {
 	l := zap.NewAtomicLevel()
 	if err := l.UnmarshalText([]byte(level)); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	zaplog.SetLevel(l.Level())
 	return nil

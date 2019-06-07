@@ -75,7 +75,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, hist
 	for _, def := range pi.Definitions {
 		tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID, historyStatsExec)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if tbl == nil {
 			continue
@@ -107,7 +107,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch)
 	}
@@ -122,14 +122,14 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable) error {
 	table, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, jsonTbl)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	} else {
 		if jsonTbl.Partitions == nil {
@@ -142,34 +142,34 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 			}
 			err := h.loadStatsFromJSON(tableInfo, def.ID, tbl)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
-	return errors.Trace(h.Update(is))
+	return h.Update(is)
 }
 
 func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) error {
 	tbl, err := TableStatsFromJSON(tableInfo, physicalID, jsonTbl)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	for _, col := range tbl.Columns {
 		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, 1)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	for _, idx := range tbl.Indices {
 		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, 1)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	err = h.SaveMetaToStorage(tbl.PhysicalID, tbl.Count, tbl.ModifyCount)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -213,7 +213,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
 			col := &statistics.Column{

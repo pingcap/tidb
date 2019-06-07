@@ -202,17 +202,17 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 func backgroundExec(s kv.Storage, sql string, done chan error) {
 	se, err := session.CreateSession4Test(s)
 	if err != nil {
-		done <- errors.Trace(err)
+		done <- err
 		return
 	}
 	defer se.Close()
 	_, err = se.Execute(context.Background(), "use test_db")
 	if err != nil {
-		done <- errors.Trace(err)
+		done <- err
 		return
 	}
 	_, err = se.Execute(context.Background(), sql)
-	done <- errors.Trace(err)
+	done <- err
 }
 
 func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
@@ -360,22 +360,22 @@ func (s *testDBSuite4) TestCancelAddIndex1(c *C) {
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.Background())
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			txn, err := hookCtx.Txn(true)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 
 			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
+				checkErr = errs[0]
 				return
 			}
 
@@ -435,21 +435,21 @@ func (s *testDBSuite5) TestCancelDropIndex(c *C) {
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.TODO())
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			txn, err := hookCtx.Txn(true)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
+				checkErr = errs[0]
 				return
 			}
 			checkErr = txn.Commit(context.Background())
@@ -504,21 +504,21 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.Background())
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			txn, err := hookCtx.Txn(true)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
+				checkErr = errs[0]
 				return
 			}
 			checkErr = txn.Commit(context.Background())
@@ -554,21 +554,21 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.Background())
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			txn, err := hookCtx.Txn(true)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
+				checkErr = errs[0]
 				return
 			}
 			checkErr = txn.Commit(context.Background())
@@ -624,21 +624,21 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.TODO())
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			txn, err := hookCtx.Txn(true)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
+				checkErr = errs[0]
 				return
 			}
 			checkErr = txn.Commit(context.Background())
@@ -985,21 +985,21 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.Background())
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			txn, err := hookCtx.Txn(true)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
+				checkErr = errs[0]
 				return
 			}
 			checkErr = txn.Commit(context.Background())
@@ -1134,21 +1134,21 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.TODO())
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			txn, err := hookCtx.Txn(true)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = err
 				return
 			}
 			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
+				checkErr = errs[0]
 				return
 			}
 			checkErr = txn.Commit(context.Background())
@@ -2353,35 +2353,35 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 		hookCtx.Store = s.store
 		err := hookCtx.NewTxn(context.Background())
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 			return
 		}
 
 		jobIDs := []int64{job.ID}
 		txn, err := hookCtx.Txn(true)
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 			return
 		}
 		errs, err := admin.CancelJobs(txn, jobIDs)
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 			return
 		}
 		// It only tests cancel one DDL job.
 		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
+			checkErr = errs[0]
 			return
 		}
 
 		txn, err = hookCtx.Txn(true)
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 			return
 		}
 		err = txn.Commit(context.Background())
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = err
 		}
 	}
 

@@ -83,7 +83,7 @@ func Init() {
 
 	go func() {
 		err1 := http.ListenAndServe(":9191", nil)
-		terror.Log(errors.Trace(err1))
+		terror.Log(err1)
 	}()
 }
 
@@ -105,7 +105,7 @@ func batchRW(value []byte) {
 				}
 				key := fmt.Sprintf("key_%d", k)
 				err = txn.Set([]byte(key), value)
-				terror.Log(errors.Trace(err))
+				terror.Log(err)
 				err = txn.Commit(context.Background())
 				if err != nil {
 					txnRolledbackCounter.WithLabelValues("txn").Inc()
@@ -132,7 +132,7 @@ func main() {
 
 	defer terror.Call(resp.Body.Close)
 	text, err1 := ioutil.ReadAll(resp.Body)
-	terror.Log(errors.Trace(err1))
+	terror.Log(err1)
 
 	fmt.Println(string(text))
 

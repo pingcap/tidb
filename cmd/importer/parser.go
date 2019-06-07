@@ -237,7 +237,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 
 	mockTbl, err := ddl.MockTableInfo(mock.NewContext(), stmt, 1)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	t.tblInfo = mockTbl
 
@@ -258,7 +258,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 func parseTableSQL(table *table, sql string) error {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	switch node := stmt.(type) {
@@ -268,7 +268,7 @@ func parseTableSQL(table *table, sql string) error {
 		err = errors.Errorf("invalid statement - %v", stmt.Text())
 	}
 
-	return errors.Trace(err)
+	return err
 }
 
 func parseIndex(table *table, stmt *ast.CreateIndexStmt) error {
@@ -295,7 +295,7 @@ func parseIndexSQL(table *table, sql string) error {
 
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	switch node := stmt.(type) {
@@ -305,5 +305,5 @@ func parseIndexSQL(table *table, sql string) error {
 		err = errors.Errorf("invalid statement - %v", stmt.Text())
 	}
 
-	return errors.Trace(err)
+	return err
 }

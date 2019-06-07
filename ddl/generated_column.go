@@ -38,11 +38,11 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 					// A generated column definition can refer to other
 					// generated columns occurring earilier in the table.
 					err := errGeneratedColumnNonPrior.GenWithStackByArgs()
-					return errors.Trace(err)
+					return err
 				}
 			} else {
 				err := errBadField.GenWithStackByArgs(depCol, "generated column function")
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
@@ -151,14 +151,14 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 			colName = column.Name.L
 		}
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
 	// rule 3
 	if newCol.IsGenerated() {
 		if err := checkIllegalFn4GeneratedColumn(newCol.Name.L, newCol.GeneratedExpr); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil

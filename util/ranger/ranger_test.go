@@ -61,10 +61,10 @@ func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	dom, err := session.BootstrapSession(store)
-	return dom, store, errors.Trace(err)
+	return dom, store, err
 }
 
 func (s *testRangerSuite) TestTableRange(c *C) {

@@ -50,12 +50,12 @@ func (s *testUnitTestSuit) SubstituteCol2CorCol(expr expression.Expression, colI
 		for _, arg := range x.GetArgs() {
 			newArg, err := s.SubstituteCol2CorCol(arg, colIDs)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			newArgs = append(newArgs, newArg)
 		}
 		newSf, err := expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
-		return newSf, errors.Trace(err)
+		return newSf, err
 	case *expression.Column:
 		if _, ok := colIDs[x.UniqueID]; ok {
 			return &expression.CorrelatedColumn{Column: *x}, nil
