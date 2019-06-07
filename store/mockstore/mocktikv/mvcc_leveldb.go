@@ -786,10 +786,7 @@ func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commit
 		return ErrRetryable("txn not found")
 	}
 
-	if err = commitLock(batch, dec.lock, key, startTS, commitTS); err != nil {
-		return err
-	}
-	return nil
+	return commitLock(batch, dec.lock, key, startTS, commitTS)
 }
 
 func commitLock(batch *leveldb.Batch, lock mvccLock, key []byte, startTS, commitTS uint64) error {
@@ -852,10 +849,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 		}
 		// If current transaction's lock exist.
 		if ok && dec.lock.startTS == startTS {
-			if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
-				return err
-			}
-			return nil
+			return rollbackLock(batch, dec.lock, key, startTS)
 		}
 
 		// If current transaction's lock not exist.

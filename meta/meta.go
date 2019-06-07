@@ -282,11 +282,7 @@ func (m *Meta) DropDatabase(dbID int64) error {
 		return err
 	}
 
-	if err := m.txn.HDel(mDBs, dbKey); err != nil {
-		return err
-	}
-
-	return nil
+	return m.txn.HDel(mDBs, dbKey)
 }
 
 // DropTableOrView drops table in database.

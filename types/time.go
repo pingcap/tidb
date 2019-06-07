@@ -1449,11 +1449,7 @@ func checkDateType(t MysqlTime, allowZeroInDate, allowInvalidDate bool) error {
 		return err
 	}
 
-	if err := checkMonthDay(year, month, day, allowInvalidDate); err != nil {
-		return err
-	}
-
-	return nil
+	return checkMonthDay(year, month, day, allowInvalidDate)
 }
 
 func checkDateRange(t MysqlTime) error {
