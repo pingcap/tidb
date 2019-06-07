@@ -52,7 +52,7 @@ implemented as a last in first out stack, which helps to release the unused
 column in the pool. And in most cases, the required length of a new column is
 equal to the previous column put into the column pool.
 
-![the column pool](./the-column-pool.png)
+![the column pool](./imgs/the-column-pool.png)
 
 ## Rationale
 
