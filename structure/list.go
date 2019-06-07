@@ -16,7 +16,6 @@ package structure
 import (
 	"encoding/binary"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 )
 

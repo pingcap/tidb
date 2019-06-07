@@ -16,7 +16,6 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/expression"

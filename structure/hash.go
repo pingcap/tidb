@@ -18,7 +18,6 @@ import (
 	"encoding/binary"
 	"strconv"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 )
 

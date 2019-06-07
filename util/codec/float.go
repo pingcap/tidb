@@ -15,8 +15,6 @@ package codec
 
 import (
 	"math"
-
-	"github.com/pingcap/errors"
 )
 
 func encodeFloatToCmpUint64(f float64) uint64 {

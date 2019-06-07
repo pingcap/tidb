@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/klauspost/cpuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"

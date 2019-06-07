@@ -17,7 +17,6 @@ import (
 	"context"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"

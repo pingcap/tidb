@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"

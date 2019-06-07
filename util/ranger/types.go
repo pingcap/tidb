@@ -18,7 +18,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"

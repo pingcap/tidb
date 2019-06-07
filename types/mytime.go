@@ -15,8 +15,6 @@ package types
 
 import (
 	gotime "time"
-
-	"github.com/pingcap/errors"
 )
 
 // MysqlTime is the internal struct type for Time.

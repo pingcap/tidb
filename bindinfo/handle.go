@@ -17,10 +17,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"

@@ -18,7 +18,6 @@ import (
 	"math"
 	"sort"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"

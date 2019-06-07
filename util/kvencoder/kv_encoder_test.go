@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"

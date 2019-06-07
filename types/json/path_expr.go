@@ -17,8 +17,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/pingcap/errors"
 )
 
 /*

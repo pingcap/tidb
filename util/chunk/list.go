@@ -16,7 +16,6 @@ package chunk
 import (
 	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"

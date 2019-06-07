@@ -18,7 +18,6 @@ package kv
 import (
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/goleveldb/leveldb"
 	"github.com/pingcap/goleveldb/leveldb/comparer"
 	"github.com/pingcap/goleveldb/leveldb/iterator"

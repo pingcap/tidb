@@ -18,7 +18,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"

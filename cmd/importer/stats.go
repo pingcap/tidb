@@ -19,7 +19,6 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	stats "github.com/pingcap/tidb/statistics"
