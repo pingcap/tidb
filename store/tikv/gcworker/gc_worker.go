@@ -546,14 +546,22 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 
 		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
-			return errors.Trace(err)
+			logutil.Logger(ctx).Info("[gc worker] delete range failed on range",
+				zap.String("uuid", w.uuid),
+				zap.Binary("startKey", startKey),
+				zap.Binary("endKey", endKey),
+				zap.Error(err))
 		}
 
 		se := createSession(w.store)
 		err = util.CompleteDeleteRange(se, r)
 		se.Close()
 		if err != nil {
-			return errors.Trace(err)
+			logutil.Logger(ctx).Info("[gc worker] failed to mark delete range task done",
+				zap.String("uuid", w.uuid),
+				zap.Binary("startKey", startKey),
+				zap.Binary("endKey", endKey),
+				zap.Error(err))
 		}
 	}
 	logutil.Logger(ctx).Info("[gc worker] finish delete ranges",
@@ -587,14 +595,22 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error
 
 		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
-			return errors.Trace(err)
+			logutil.Logger(ctx).Info("[gc worker] redo-delete range failed on range",
+				zap.String("uuid", w.uuid),
+				zap.Binary("startKey", startKey),
+				zap.Binary("endKey", endKey),
+				zap.Error(err))
 		}
 
 		se := createSession(w.store)
 		err := util.DeleteDoneRecord(se, r)
 		se.Close()
 		if err != nil {
-			return errors.Trace(err)
+			logutil.Logger(ctx).Info("[gc worker] failed to remove delete_range_done record",
+				zap.String("uuid", w.uuid),
+				zap.Binary("startKey", startKey),
+				zap.Binary("endKey", endKey),
+				zap.Error(err))
 		}
 	}
 	logutil.Logger(ctx).Info("[gc worker] finish redo-delete ranges",
@@ -624,6 +640,7 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 	}
 
 	var wg sync.WaitGroup
+	errChan := make(chan error, len(stores))
 
 	for _, store := range stores {
 		address := store.Address
@@ -633,18 +650,29 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 			defer wg.Done()
 			_, err1 := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.UnsafeDestroyRangeTimeout)
 			if err1 != nil {
+				metrics.GCUnsafeDestroyRangeFailuresCounter.Inc()
 				logutil.Logger(ctx).Error("[gc worker] destroy range on store failed with error",
 					zap.String("uuid", w.uuid),
 					zap.Uint64("storeID", storeID),
 					zap.Error(err))
-				err = err1
 			}
+			errChan <- err1
 		}()
+	}
+
+	for range stores {
+		err1 := <-errChan
+		if err1 != nil {
+			err = err1
+		}
 	}
 
 	wg.Wait()
 
-	return errors.Trace(err)
+	if err != nil {
+		return errors.New("[gc worker] destroy range failed on some stores")
+	}
+	return nil
 }
 
 func (w *GCWorker) getUpStores(ctx context.Context) ([]*metapb.Store, error) {
