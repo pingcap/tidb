@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -252,7 +251,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 	val := row.GetString(col.Index)
 	// See #3644.
 	// Binary type column value will changed after modify the column length.
-	if (ctx.GetSessionVars().StmtCtx.PadCharToFullLength || (mysql.HasBinaryFlag(uint(col.GetType().Tp)) && col.GetType().Charset == charset.CharsetBin)) && col.GetType().Tp == mysql.TypeString {
+	if (ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString) || col.GetType().IsBinaryStr() {
 		valLen := len(val)
 		if valLen < col.RetType.Flen {
 			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
