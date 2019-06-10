@@ -153,7 +153,7 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	)
 	c.Assert(err, IsNil)
 	var dom *domain.Domain
-	session.SetStatsLease(0)
+	session.SetUpdateStatsLease(0)
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -224,7 +224,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	)
 	c.Assert(err, IsNil)
 	var dom *domain.Domain
-	session.SetStatsLease(0)
+	session.SetUpdateStatsLease(0)
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)

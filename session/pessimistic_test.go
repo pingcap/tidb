@@ -55,7 +55,7 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
+	session.SetUpdateStatsLease(0)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }

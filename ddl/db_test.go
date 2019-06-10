@@ -83,7 +83,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 
 	s.lease = 100 * time.Millisecond
 	session.SetSchemaLease(s.lease)
-	session.SetStatsLease(0)
+	session.SetUpdateStatsLease(0)
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
 	ddl.WaitTimeWhenErrorOccured = 0

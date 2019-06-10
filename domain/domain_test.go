@@ -56,7 +56,7 @@ func (*testSuite) TestT(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
 	c.Assert(err, IsNil)
 	defer func() {

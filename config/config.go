@@ -180,7 +180,8 @@ type Performance struct {
 	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
-	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
+	UpdateStatsLease    string  `toml:"update-stats-lease" json:"update-stats-lease"`
+	LoadStatsLease      string  `toml:"load-stats-lease" json:"load-stats-lease"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
@@ -346,7 +347,8 @@ var defaultConf = Config{
 		MaxMemory:           0,
 		TCPKeepAlive:        true,
 		CrossJoin:           true,
-		StatsLease:          "3s",
+		UpdateStatsLease:    "3s",
+		LoadStatsLease:      "3s",
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
 		FeedbackProbability: 0.05,

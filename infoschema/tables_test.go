@@ -47,7 +47,7 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	session.SetStatsLease(0)
+	session.SetUpdateStatsLease(0)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }

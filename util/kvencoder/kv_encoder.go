@@ -248,7 +248,7 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 // initGlobal modify the global domain and store
 func initGlobal() error {
 	// disable stats update.
-	session.SetStatsLease(0)
+	session.SetUpdateStatsLease(0)
 	var err error
 	storeGlobal, domGlobal, err = newMockTikvWithBootstrap()
 	if err == nil {

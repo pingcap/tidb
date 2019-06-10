@@ -60,7 +60,8 @@ type Domain struct {
 	privHandle           *privileges.Handle
 	bindHandle           *bindinfo.BindHandle
 	statsHandle          unsafe.Pointer
-	statsLease           time.Duration
+	updateStatsLease     time.Duration
+	loadStatsLease       time.Duration
 	statsUpdating        sync2.AtomicInt32
 	ddl                  ddl.DDL
 	info                 *InfoSyncer
@@ -576,16 +577,17 @@ func (c *ddlCallback) OnChanged(err error) error {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory) *Domain {
+func NewDomain(store kv.Storage, ddlLease time.Duration, updateStatsLease time.Duration, loadStatsLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	return &Domain{
-		store:           store,
-		SchemaValidator: NewSchemaValidator(ddlLease),
-		exit:            make(chan struct{}),
-		sysSessionPool:  newSessionPool(capacity, factory),
-		statsLease:      statsLease,
-		infoHandle:      infoschema.NewHandle(store),
-		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7, 500),
+		store:            store,
+		SchemaValidator:  NewSchemaValidator(ddlLease),
+		exit:             make(chan struct{}),
+		sysSessionPool:   newSessionPool(capacity, factory),
+		updateStatsLease: updateStatsLease,
+		loadStatsLease:   loadStatsLease,
+		infoHandle:       infoschema.NewHandle(store),
+		slowQuery:        newTopNSlowQueries(30, time.Hour*24*7, 500),
 	}
 }
 
@@ -847,7 +849,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(handle.NewHandle(ctx, do.statsLease)))
+	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(handle.NewHandle(ctx, do.loadStatsLease)))
 }
 
 // StatsUpdating checks if the stats worker is updating.
@@ -872,19 +874,23 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle := handle.NewHandle(ctx, do.statsLease)
+	statsHandle := handle.NewHandle(ctx, do.loadStatsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
-	if do.statsLease <= 0 {
-		return nil
-	}
-	owner := do.newStatsOwner()
-	do.wg.Add(1)
-	do.SetStatsUpdating(true)
-	go do.updateStatsWorker(ctx, owner)
-	if RunAutoAnalyze {
+	if do.loadStatsLease > 0 {
 		do.wg.Add(1)
-		go do.autoAnalyzeWorker(owner)
+		go do.loadStatsWorker()
+	}
+	// Updating stats also depends on the stats cache, so it can update stats only if it could load.
+	if do.updateStatsLease > 0 && do.loadStatsLease > 0 {
+		owner := do.newStatsOwner()
+		do.wg.Add(1)
+		do.SetStatsUpdating(true)
+		go do.updateStatsWorker(ctx, owner)
+		if RunAutoAnalyze {
+			do.wg.Add(1)
+			go do.autoAnalyzeWorker(owner)
+		}
 	}
 	return nil
 }
@@ -906,22 +912,11 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	return statsOwner
 }
 
-func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
-	defer recoverInDomain("updateStatsWorker", false)
-	lease := do.statsLease
-	deltaUpdateDuration := lease * 20
-	loadTicker := time.NewTicker(lease)
+func (do *Domain) loadStatsWorker() {
+	defer recoverInDomain("loadStatsWorker", false)
+	defer do.wg.Done()
+	loadTicker := time.NewTicker(do.loadStatsLease)
 	defer loadTicker.Stop()
-	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
-	defer deltaUpdateTicker.Stop()
-	loadHistogramTicker := time.NewTicker(lease)
-	defer loadHistogramTicker.Stop()
-	gcStatsTicker := time.NewTicker(100 * lease)
-	defer gcStatsTicker.Stop()
-	dumpFeedbackTicker := time.NewTicker(200 * lease)
-	defer dumpFeedbackTicker.Stop()
-	loadFeedbackTicker := time.NewTicker(5 * lease)
-	defer loadFeedbackTicker.Stop()
 	statsHandle := do.StatsHandle()
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
@@ -930,10 +925,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	} else {
 		logutil.Logger(context.Background()).Info("init stats info time", zap.Duration("take time", time.Since(t)))
 	}
-	defer func() {
-		do.SetStatsUpdating(false)
-		do.wg.Done()
-	}()
 	for {
 		select {
 		case <-loadTicker.C:
@@ -941,37 +932,60 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("update stats info failed", zap.Error(err))
 			}
+			err = statsHandle.LoadNeededHistograms()
+			if err != nil {
+				logutil.Logger(context.Background()).Debug("load histograms failed", zap.Error(err))
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+	defer recoverInDomain("updateStatsWorker", false)
+	lease := do.updateStatsLease
+	deltaUpdateTicker := time.NewTicker(20 * lease)
+	defer deltaUpdateTicker.Stop()
+	gcStatsTicker := time.NewTicker(100 * lease)
+	defer gcStatsTicker.Stop()
+	dumpFeedbackTicker := time.NewTicker(200 * lease)
+	defer dumpFeedbackTicker.Stop()
+	loadFeedbackTicker := time.NewTicker(5 * lease)
+	defer loadFeedbackTicker.Stop()
+	statsHandle := do.StatsHandle()
+	defer func() {
+		do.SetStatsUpdating(false)
+		do.wg.Done()
+	}()
+	for {
+		select {
 		case <-do.exit:
 			statsHandle.FlushStats()
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
-			err = statsHandle.HandleDDLEvent(t)
+			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("handle ddl event failed", zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
-			err = statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
+			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("dump stats delta failed", zap.Error(err))
 			}
 			statsHandle.UpdateErrorRate(do.InfoSchema())
-		case <-loadHistogramTicker.C:
-			err = statsHandle.LoadNeededHistograms()
-			if err != nil {
-				logutil.Logger(context.Background()).Debug("load histograms failed", zap.Error(err))
-			}
 		case <-loadFeedbackTicker.C:
 			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
 			if !owner.IsOwner() {
 				continue
 			}
-			err = statsHandle.HandleUpdateStats(do.InfoSchema())
+			err := statsHandle.HandleUpdateStats(do.InfoSchema())
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("update stats using feedback failed", zap.Error(err))
 			}
 		case <-dumpFeedbackTicker.C:
-			err = statsHandle.DumpStatsFeedbackToKV()
+			err := statsHandle.DumpStatsFeedbackToKV()
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("dump stats feedback failed", zap.Error(err))
 			}
@@ -979,7 +993,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if !owner.IsOwner() {
 				continue
 			}
-			err = statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
+			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("GC stats failed", zap.Error(err))
 			}
@@ -990,7 +1004,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	defer recoverInDomain("autoAnalyzeWorker", false)
 	statsHandle := do.StatsHandle()
-	analyzeTicker := time.NewTicker(do.statsLease)
+	analyzeTicker := time.NewTicker(do.updateStatsLease)
 	defer func() {
 		analyzeTicker.Stop()
 		do.wg.Done()

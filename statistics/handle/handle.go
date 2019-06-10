@@ -70,7 +70,7 @@ type Handle struct {
 	// feedback is used to store query feedback info.
 	feedback []*statistics.QueryFeedback
 
-	Lease time.Duration
+	LoadLease time.Duration
 }
 
 // Clear the StatsCache, only for test.
@@ -99,7 +99,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		ddlEventCh: make(chan *util.Event, 100),
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
-		Lease:      lease,
+		LoadLease:  lease,
 		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount.Load()),
 	}
 	// It is safe to use it concurrently because the exec won't touch the ctx.
@@ -133,7 +133,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := DurationToTS(3 * h.Lease)
+	offset := DurationToTS(3 * h.LoadLease)
 	if lastVersion >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -398,11 +398,11 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
 		// We will not load buckets if:
-		// 1. Lease > 0, and:
+		// 1. LoadLease > 0, and:
 		// 2. this column is not handle, and:
 		// 3. the column doesn't has buckets before, and:
 		// 4. loadAll is false.
-		notNeedLoad := h.Lease > 0 &&
+		notNeedLoad := h.LoadLease > 0 &&
 			!isHandle &&
 			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
 			!loadAll

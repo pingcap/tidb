@@ -447,8 +447,9 @@ func setGlobalVars() {
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
-	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
-	session.SetStatsLease(statsLeaseDuration)
+	statsLeaseDuration := parseDuration(cfg.Performance.UpdateStatsLease)
+	session.SetUpdateStatsLease(statsLeaseDuration)
+	session.SetLoadStatsLease(parseDuration(cfg.Performance.LoadStatsLease))
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
