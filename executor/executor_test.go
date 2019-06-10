@@ -296,11 +296,16 @@ func (s *testSuite) TestShow(c *C) {
 	c.Assert(len(tk.MustQuery("show index in t").Rows()), Equals, 1)
 	c.Assert(len(tk.MustQuery("show index from t").Rows()), Equals, 1)
 
-	tk.MustQuery("show charset")
-	tk.MustQuery("show master status")
-	tk.MustQuery("show create database test")
+	tk.MustQuery("show charset").Check(testkit.Rows(
+		"utf8 UTF-8 Unicode utf8_bin 3",
+		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
+		"ascii US ASCII ascii_bin 1",
+		"latin1 Latin1 latin1_bin 1",
+		"binary binary binary 1"))
+	c.Assert(len(tk.MustQuery("show master status").Rows()), Equals, 1)
+	tk.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges")
-	tk.MustQuery("show table status")
+	c.Assert(len(tk.MustQuery("show table status").Rows()), Equals, 1)
 }
 
 func (s *testSuite) TestAdmin(c *C) {
@@ -3064,7 +3069,7 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id bigint unsigned primary key)")
-	var num1, num2 uint64 = math.MaxInt64 + 1, math.MaxInt64 + 2
+	var num1, num2 uint64 = math.MaxInt64+1, math.MaxInt64+2
 	tk.MustExec(fmt.Sprintf("insert into t values(%v), (%v), (1), (2)", num1, num2))
 	num1Str := strconv.FormatUint(num1, 10)
 	num2Str := strconv.FormatUint(num2, 10)
