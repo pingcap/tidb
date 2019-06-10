@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -1412,6 +1413,19 @@ func loadSystemTZ(se *session) (string, error) {
 	return req.GetRow(0).GetString(0), nil
 }
 
+func loadExprPushdownBlacklist(se *session) (err error) {
+	sql := "select HIGH_PRIORITY name from mysql.expr_pushdown_blacklist"
+	rows, _, err := se.ExecRestrictedSQL(se, sql)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		name := row.GetString(0)
+		expression.DefaultExprPushdownBlacklist[strings.ToLower(name)] = struct{}{}
+	}
+	return nil
+}
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	cfg := config.GetGlobalConfig()
@@ -1462,6 +1476,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 	}
+
+	loadExprPushdownBlacklist(se)
 
 	se1, err := createSession(store)
 	if err != nil {
@@ -1567,7 +1583,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 32
+	currentBootstrapVersion = 33
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

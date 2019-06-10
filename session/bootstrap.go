@@ -259,6 +259,11 @@ const (
 		count bigint(64) UNSIGNED NOT NULL,
 		index tbl(table_id, is_index, hist_id)
 	);`
+
+	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
+	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
+		expr_name char(100) NOT NULL
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -336,6 +341,7 @@ const (
 	version30 = 30
 	version31 = 31
 	version32 = 32
+	version33 = 33
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -521,6 +527,10 @@ func upgrade(s Session) {
 
 	if ver < version32 {
 		upgradeToVer29(s)
+	}
+
+	if ver < version33 {
+		upgradeToVer33(s)
 	}
 
 	updateBootstrapVer(s)
@@ -825,6 +835,10 @@ func upgradeToVer32(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index', 'Alter', 'Create View', 'Show View', 'Trigger', 'References')")
 }
 
+func upgradeToVer33(s Session) {
+	doReentrantDDL(s, CreateExprPushdownBlacklist)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -883,6 +897,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateBindInfoTable)
 	// Create stats_topn_store table.
 	mustExecute(s, CreateStatsTopNTable)
+	// Create expr_pushdown_blacklist table.
+	mustExecute(s, CreateExprPushdownBlacklist)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
