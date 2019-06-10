@@ -51,6 +51,7 @@ var (
 	ErrBadDB                       = terror.ClassExecutor.New(mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
 	ErrWrongObject                 = terror.ClassExecutor.New(mysql.ErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
 	ErrRoleNotGranted              = terror.ClassPrivilege.New(mysql.ErrRoleNotGranted, mysql.MySQLErrName[mysql.ErrRoleNotGranted])
+	ErrDeadlock                    = terror.ClassExecutor.New(mysql.ErrLockDeadlock, mysql.MySQLErrName[mysql.ErrLockDeadlock])
 )
 
 func init() {
@@ -67,6 +68,7 @@ func init() {
 		mysql.ErrTableaccessDenied:           mysql.ErrTableaccessDenied,
 		mysql.ErrBadDB:                       mysql.ErrBadDB,
 		mysql.ErrWrongObject:                 mysql.ErrWrongObject,
+		mysql.ErrLockDeadlock:                mysql.ErrLockDeadlock,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }

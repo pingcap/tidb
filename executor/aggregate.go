@@ -789,6 +789,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *StreamAggExec) Close() error {
 	e.childResult = nil
+	e.groupChecker.reset()
 	return e.baseExecutor.Close()
 }
 
@@ -953,4 +954,13 @@ func (e *groupChecker) meetNewGroup(row chunk.Row) (bool, error) {
 		e.curGroupKey = append(e.curGroupKey, *((&v).Copy()))
 	}
 	return !firstGroup, nil
+}
+
+func (e *groupChecker) reset() {
+	if e.curGroupKey != nil {
+		e.curGroupKey = e.curGroupKey[:0]
+	}
+	if e.tmpGroupKey != nil {
+		e.tmpGroupKey = e.tmpGroupKey[:0]
+	}
 }
