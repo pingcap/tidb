@@ -220,7 +220,8 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 	if err != nil {
 		return nil, err
 	}
-	if prepared.UseCache {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if !isTableDual && prepared.UseCache {
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
@@ -478,12 +479,15 @@ type LoadStats struct {
 	Path string
 }
 
-// SplitIndexRegion represents a split index regions plan.
-type SplitIndexRegion struct {
+// SplitRegion represents a split regions plan.
+type SplitRegion struct {
 	baseSchemaProducer
 
-	Table      table.Table
+	TableInfo  *model.TableInfo
 	IndexInfo  *model.IndexInfo
+	Lower      []types.Datum
+	Upper      []types.Datum
+	Num        int
 	ValueLists [][]types.Datum
 }
 
