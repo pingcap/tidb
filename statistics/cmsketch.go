@@ -146,7 +146,7 @@ func (c *CMSketch) calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRat
 		c.defaultValue = 1
 	} else {
 		estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio
-		c.defaultValue = estimateRemainingCount / (estimateNDV - uint64(sampleNDV) + helper.onlyOnceItems)
+		c.defaultValue = estimateRemainingCount / mathutil.MaxUint64(1, estimateNDV-uint64(sampleNDV)+helper.onlyOnceItems)
 	}
 }
 

@@ -840,7 +840,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 				zap.String("equality", equalityString), zap.Uint64("expected equality", equalityCount),
 				zap.String("range", rangeString))
 		} else if colHist := t.ColumnByName(colName); colHist != nil && colHist.Histogram.Len() > 0 {
-			err = convertRangeType(&rang, colHist.Tp, sc.TimeZone)
+			err = convertRangeType(&rang, colHist.Tp, time.UTC)
 			if err == nil {
 				rangeString := colRangeToStr(colHist, &rang, -1, factor)
 				logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
@@ -1041,7 +1041,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{rang})
 			rangeFB.Tp, rangeFB.Hist = statistics.IndexType, &idx.Histogram
 		} else if col := t.ColumnByName(colName); col != nil && col.Histogram.Len() != 0 {
-			err = convertRangeType(rang, col.Tp, sc.TimeZone)
+			err = convertRangeType(rang, col.Tp, time.UTC)
 			if err == nil {
 				rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{rang})
 				rangeFB.Tp, rangeFB.Hist = statistics.ColType, &col.Histogram
