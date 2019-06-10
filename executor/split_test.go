@@ -321,8 +321,8 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	e := &SplitTableRegionExec{
 		baseExecutor: newBaseExecutor(ctx, nil, nil),
 		tableInfo:    tbInfo,
-		lower:        []types.Datum{types.NewDatum(0)},
-		upper:        []types.Datum{types.NewDatum(100)},
+		lower:        types.NewDatum(0),
+		upper:        types.NewDatum(100),
 		num:          10,
 	}
 	valueList, err := e.getSplitTableKeys()
