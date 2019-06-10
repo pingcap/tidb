@@ -630,6 +630,7 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 	anyError := false
 	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
+	txnSize := len(mutations)
 	for _, m := range mutations {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
@@ -649,7 +650,7 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 				continue
 			}
 		}
-		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl)
+		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl, uint64(txnSize))
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
@@ -684,7 +685,7 @@ func checkConflictValue(iter *Iterator, key []byte, startTS uint64) error {
 	return nil
 }
 
-func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
+func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64, txnSize uint64) error {
 	startKey := mvccEncode(mutation.Key, lockVer)
 	iter := newIterator(db, &util.Range{
 		Start: startKey,
@@ -723,6 +724,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		value:   mutation.Value,
 		op:      op,
 		ttl:     ttl,
+		txnSize: txnSize,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
 	writeValue, err := lock.MarshalBinary()
