@@ -87,9 +87,9 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	timeoutString := r.FormValue("timeout")
 	curDB := strings.ToLower(r.FormValue("current_db"))
 	if curDB != "" {
-		_, err = sh.s.Execute(reqCtx, fmt.Sprintf("use %v", curDB))
+		_, err = sh.s.Execute(reqCtx, "use %v" + curDB)
 		if err != nil {
-			serveError(w, http.StatusInternalServerError, fmt.Sprintf("use database failed, err: %v", err))
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("use database %v failed, err: %v", curDB, err))
 			return
 		}
 	}
@@ -99,20 +99,20 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	)
 	if pprofTimeString != "" {
 		pprofTime, err = strconv.Atoi(pprofTimeString)
-	}
-	if err != nil {
-		serveError(w, http.StatusBadRequest, "invalid value for pprof_time")
-		return
+		if err != nil {
+			serveError(w, http.StatusBadRequest, "invalid value for pprof_time, please input a int value larger than 5")
+			return
+		}
 	}
 	if pprofTimeString != "" && pprofTime < 5 {
-		serveError(w, http.StatusBadRequest, "pprof time is too short")
+		serveError(w, http.StatusBadRequest, "pprof time is too short, please input a int value larger than 5")
 	}
 	if timeoutString != "" {
 		timeout, err = strconv.Atoi(timeoutString)
-	}
-	if err != nil {
-		serveError(w, http.StatusBadRequest, "invalid value for timeout")
-		return
+		if err != nil {
+			serveError(w, http.StatusBadRequest, "invalid value for timeout")
+			return
+		}
 	}
 	if timeout < pprofTime {
 		timeout = pprofTime
@@ -129,6 +129,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	for pair := range pairs {
 		jsonTbl, err := sh.getStatsForTable(pair)
 		if err != nil {
+			err = sh.writeErrFile(zw, fmt.Sprintf("%v.%v.stats.err.txt", pair.DBName, pair.TableName), err)
 			terror.Log(err)
 			continue
 		}
@@ -139,11 +140,13 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 		}
 		data, err := json.Marshal(jsonTbl)
 		if err != nil {
+			err = sh.writeErrFile(zw, fmt.Sprintf("%v.%v.stats.err.txt", pair.DBName, pair.TableName), err)
 			terror.Log(err)
 			continue
 		}
 		_, err = statsFw.Write(data)
 		if err != nil {
+			err = sh.writeErrFile(zw, fmt.Sprintf("%v.%v.stats.err.txt", pair.DBName, pair.TableName), err)
 			terror.Log(err)
 			continue
 		}
@@ -151,7 +154,8 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	for pair := range pairs {
 		err = sh.getShowCreateTable(pair, zw)
 		if err != nil {
-			serveError(w, http.StatusInternalServerError, fmt.Sprintf("get schema for %v.%v failed", pair.DBName, pair.TableName))
+			err = sh.writeErrFile(zw, fmt.Sprintf("%v.%v.schema.err.txt", pair.DBName, pair.TableName), err)
+			terror.Log(err)
 			return
 		}
 	}
@@ -162,11 +166,13 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 			defer terror.Call(recordSets[0].Close)
 		}
 		if err != nil {
-			serveError(w, http.StatusInternalServerError, fmt.Sprintf("execute SQL failed, err: %v", err))
+			err = sh.writeErrFile(zw, "explain.err.txt", err)
+			terror.Log(err)
 			return
 		}
 		sRows, err := testkit.ResultSetToStringSlice(reqCtx, sh.s, recordSets[0])
 		if err != nil {
+			err = sh.writeErrFile(zw, "explain.err.txt", err)
 			terror.Log(err)
 			return
 		}
@@ -191,7 +197,8 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 			timer.Stop()
 			cancelFunc()
 			if result.err != nil {
-				serveError(w, http.StatusInternalServerError, fmt.Sprintf("explain analyze SQL failed, err: %v", err))
+				err = sh.writeErrFile(zw, "explain_analyze.err.txt", result.err)
+				terror.Log(err)
 				return
 			}
 			if len(result.rows) == 0 {
@@ -210,10 +217,20 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 		}
 		err = <-errChan
 		if err != nil {
-			serveError(w, http.StatusInternalServerError, fmt.Sprintf("catch cpu profile failed, error: %v", err))
+			err = sh.writeErrFile(zw, "profile.err.txt", err)
+			terror.Log(err)
 			return
 		}
 	}
+}
+
+func (sh *sqlInfoFetcher) writeErrFile(zw *zip.Writer, name string, err error) error {
+	fw, err1 := zw.Create(name)
+	if err1 != nil {
+		return err1
+	}
+	fmt.Fprintf(fw, "error: %v", err)
+	return nil
 }
 
 type explainAnalyzeResult struct {
