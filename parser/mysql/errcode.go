@@ -936,6 +936,7 @@ const (
 	ErrRequireVersionCheckFail    = 8107
 	ErrUnsupportedReloadPlugin    = 8018
 	ErrUnsupportedReloadPluginVar = 8019
+	ErrTableLocked                = 8020
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001
