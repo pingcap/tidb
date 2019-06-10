@@ -190,6 +190,7 @@ type Performance struct {
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -356,6 +357,7 @@ var defaultConf = Config{
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
+		BindInfoLease:       "3s",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
