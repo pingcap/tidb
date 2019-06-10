@@ -1361,7 +1361,7 @@ func (s *session) ClearValue(key fmt.Stringer) {
 func (s *session) Close() {
 	// TODO: do clean table locks when session exited without execute Close.
 	// TODO: do clean table locks when tidb-server was `kill -9`.
-	if config.TableLockEnabled() && s.HasLockedTables() {
+	if s.HasLockedTables() && config.TableLockEnabled() {
 		lockedTables := s.GetAllTableLocks()
 		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
 		if err != nil {
