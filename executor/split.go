@@ -238,7 +238,6 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 			continue
 		}
 		regionIDs = append(regionIDs, regionID)
-
 	}
 	if !e.ctx.GetSessionVars().WaitTableSplitFinish {
 		return nil
