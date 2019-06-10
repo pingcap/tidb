@@ -194,8 +194,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildWindow(v)
 	case *plannercore.SQLBindPlan:
 		return b.buildSQLBindExec(v)
-	case *plannercore.SplitIndexRegion:
-		return b.buildSplitIndexRegion(v)
+	case *plannercore.SplitRegion:
+		return b.buildSplitRegion(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -1261,13 +1261,26 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	return e
 }
 
-func (b *executorBuilder) buildSplitIndexRegion(v *plannercore.SplitIndexRegion) Executor {
+func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor {
 	base := newBaseExecutor(b.ctx, nil, v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
-	return &SplitIndexRegionExec{
+	if v.IndexInfo != nil {
+		return &SplitIndexRegionExec{
+			baseExecutor: base,
+			tableInfo:    v.TableInfo,
+			indexInfo:    v.IndexInfo,
+			lower:        v.Lower,
+			upper:        v.Upper,
+			num:          v.Num,
+			valueLists:   v.ValueLists,
+		}
+	}
+	return &SplitTableRegionExec{
 		baseExecutor: base,
-		table:        v.Table,
-		indexInfo:    v.IndexInfo,
+		tableInfo:    v.TableInfo,
+		lower:        v.Lower[0],
+		upper:        v.Upper[0],
+		num:          v.Num,
 		valueLists:   v.ValueLists,
 	}
 }

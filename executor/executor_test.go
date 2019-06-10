@@ -3791,7 +3791,7 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
 }
 
-func (s *testSuite) TestSplitIndexRegion(c *C) {
+func (s *testSuite) TestSplitRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -3801,6 +3801,75 @@ func (s *testSuite) TestSplitIndexRegion(c *C) {
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
+
+	// Test for split index region.
+	// Check min value is more than max value.
+	tk.MustExec(`split table t index idx1 between (0) and (1000000000) regions 10`)
+	_, err = tk.Exec(`split table t index idx1 between (2,'a') and (1,'c') regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index `idx1` region lower value (2,a) should less than the upper value (1,c)")
+
+	// Check min value is invalid.
+	_, err = tk.Exec(`split table t index idx1 between () and (1) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index `idx1` region lower value count should more than 0")
+
+	// Check max value is invalid.
+	_, err = tk.Exec(`split table t index idx1 between (1) and () regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index `idx1` region upper value count should more than 0")
+
+	// Check pre-split region num is too large.
+	_, err = tk.Exec(`split table t index idx1 between (0) and (1000000000) regions 10000`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index region num exceeded the limit 1000")
+
+	// Check pre-split region num 0 is invalid.
+	_, err = tk.Exec(`split table t index idx1 between (0) and (1000000000) regions 0`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index region num should more than 0")
+
+	// Test truncate error msg.
+	_, err = tk.Exec(`split table t index idx1 between ("aa") and (1000000000) regions 0`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column 'b'")
+
+	// Test for split table region.
+	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
+	// Check the ower value is more than the upper value.
+	_, err = tk.Exec(`split table t between (2) and (1) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table `t` region lower value 2 should less than the upper value 1")
+
+	// Check the lower value is invalid.
+	_, err = tk.Exec(`split table t between () and (1) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region lower value count should be 1")
+
+	// Check upper value is invalid.
+	_, err = tk.Exec(`split table t between (1) and () regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region upper value count should be 1")
+
+	// Check pre-split region num is too large.
+	_, err = tk.Exec(`split table t between (0) and (1000000000) regions 10000`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region num exceeded the limit 1000")
+
+	// Check pre-split region num 0 is invalid.
+	_, err = tk.Exec(`split table t between (0) and (1000000000) regions 0`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region num should more than 0")
+
+	// Test truncate error msg.
+	_, err = tk.Exec(`split table t between ("aa") and (1000000000) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column '_tidb_rowid'")
+
+	// Test split table region step is too small.
+	_, err = tk.Exec(`split table t between (0) and (100) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
 }
 
 func (s *testSuite) TestIssue10435(c *C) {
@@ -3814,47 +3883,6 @@ func (s *testSuite) TestIssue10435(c *C) {
 	tk.MustQuery("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w").Check(
 		testkit.Rows("1", "2", "3", "4", "11", "22", "31", "33", "44", "61", "62", "93", "122", "124", "183", "244"),
 	)
-}
-
-func (s *testSuite) TestIssue10448(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(pk int1 primary key)")
-	tk.MustExec("insert into t values(125)")
-	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 128").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(pk int8 primary key)")
-	tk.MustExec("insert into t values(9223372036854775807)")
-	tk.MustQuery("select * from t where pk = 9223372036854775807").Check(testkit.Rows("9223372036854775807"))
-	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:9223372036854775807"))
-	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(pk int1 unsigned primary key)")
-	tk.MustExec("insert into t values(255)")
-	tk.MustQuery("select * from t where pk = 255").Check(testkit.Rows("255"))
-	tk.MustQuery("desc select * from t where pk = 256").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(pk int8 unsigned primary key)")
-	tk.MustExec("insert into t value(18446744073709551615)")
-	tk.MustQuery("desc select * from t where pk = 18446744073709551615").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:18446744073709551615"))
-	tk.MustQuery("select * from t where pk = 18446744073709551615").Check(testkit.Rows("18446744073709551615"))
-	tk.MustQuery("desc select * from t where pk = 9223372036854775807").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:9223372036854775807"))
-	tk.MustQuery("desc select * from t where pk = 18446744073709551616").Check(testkit.Rows("TableDual_2 0.00 root rows:0"))
-	tk.MustQuery("desc select * from t where pk = 9223372036854775808").Check(testkit.Rows("Point_Get_1 1.00 root table:t, handle:9223372036854775808"))
 }
 
 func (s *testSuite) TestUnsignedFeedback(c *C) {

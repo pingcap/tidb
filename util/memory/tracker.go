@@ -182,9 +182,9 @@ func (t *Tracker) String() string {
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	fmt.Fprintf(buffer, "%s\"%s\"{\n", indent, t.label)
 	if t.bytesLimit > 0 {
-		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.bytesToString(t.bytesLimit))
+		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
 	}
-	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.bytesToString(t.BytesConsumed()))
+	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
 
 	t.mu.Lock()
 	for i := range t.mu.children {
@@ -196,7 +196,8 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	buffer.WriteString(indent + "}\n")
 }
 
-func (t *Tracker) bytesToString(numBytes int64) string {
+// BytesToString converts the memory consumption to a readable string.
+func (t *Tracker) BytesToString(numBytes int64) string {
 	GB := float64(numBytes) / float64(1<<30)
 	if GB > 1 {
 		return fmt.Sprintf("%v GB", GB)
