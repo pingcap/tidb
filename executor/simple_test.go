@@ -439,3 +439,33 @@ func (s *testSuite3) TestUseDB(c *C) {
 	_, err = tk.Exec("USE ``")
 	c.Assert(terror.ErrorEqual(core.ErrNoDB, err), IsTrue, Commentf("err %v", err))
 }
+
+func (s *testSuite3) TestStmtAutoNewTxn(c *C) {
+	// Some statements are like DDL, they commit the previous txn automically.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Fix issue https://github.com/pingcap/tidb/issues/10705
+	tk.MustExec("begin")
+	tk.MustExec("create user 'xxx'@'%';")
+	tk.MustExec("grant all privileges on *.* to 'xxx'@'%';")
+
+	tk.MustExec("create table auto_new (id int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into auto_new values (1)")
+	tk.MustExec("revoke all privileges on *.* from 'xxx'@'%'")
+	tk.MustExec("rollback") // insert statement has already committed
+	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1"))
+
+	// Test the behavior when autocommit is false.
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("insert into auto_new values (2)")
+	tk.MustExec("create user 'yyy'@'%'")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop user 'yyy'@'%'")
+	tk.MustExec("insert into auto_new values (3)")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1", "2"))
+}
