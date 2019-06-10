@@ -22,6 +22,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/pingcap/tidb/ast"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -88,15 +89,13 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := parseExpression(colInfo.GeneratedExprString)
-			if err != nil {
-				return nil, errors.Trace(err)
+			expr, err := parseGenExpr(colInfo.GeneratedExprString, tblInfo)
+			if err == nil {
+				col.GeneratedExpr = expr
+			} else {
+				col.GeneratedExprString = ""
+				log.Errorf("[ddl] parse generated column expression error: %v", err)
 			}
-			expr, err = simpleResolveName(expr, tblInfo)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			col.GeneratedExpr = expr
 		}
 		columns = append(columns, col)
 	}
@@ -114,6 +113,18 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 	t.meta = tblInfo
 	return t, nil
+}
+
+func parseGenExpr(exprStr string, tblInfo *model.TableInfo) (ast.ExprNode, error) {
+	expr, err := parseExpression(exprStr)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	expr, err = simpleResolveName(expr, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return expr, nil
 }
 
 // newTable constructs a Table instance.
