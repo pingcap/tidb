@@ -9,3 +9,4 @@ status-port = 10081
 
 [performance]
 stats-lease = "0"
+load-stats-lease = "0"

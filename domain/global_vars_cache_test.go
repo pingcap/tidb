@@ -39,7 +39,7 @@ func (gvcSuite *testGVCSuite) TestSimple(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 	ddlLease := 50 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
 	c.Assert(err, IsNil)
 	defer dom.Close()

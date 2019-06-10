@@ -47,7 +47,7 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	var err error
 	ds.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
-	session.SetStatsLease(0)
+	session.SetUpdateStatsLease(0)
 	ds.domain, err = session.BootstrapSession(ds.store)
 	c.Assert(err, IsNil)
 	ds.domain.SetStatsUpdating(true)

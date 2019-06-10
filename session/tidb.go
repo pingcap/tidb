@@ -67,7 +67,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	ddlLease := time.Duration(0)
 	statisticLease := time.Duration(0)
 	ddlLease = schemaLease
-	statisticLease = statsLease
+	statisticLease = updatestatsLease
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.Logger(context.Background()).Info("new domain",
 			zap.String("store", store.UUID()),
@@ -75,7 +75,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, loadStatsLease, factory)
 		err1 = d.Init(ddlLease, sysFactory)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
@@ -115,8 +115,11 @@ var (
 	// For production, you should set a big schema lease, like 300s+.
 	schemaLease = 1 * time.Second
 
-	// statsLease is the time for reload stats table.
-	statsLease = 3 * time.Second
+	// updatestatsLease affects the time of updating stats table.
+	updatestatsLease = 3 * time.Second
+
+	// loadStatsLease is the time for loading stats table.
+	loadStatsLease = 3 * time.Second
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -126,9 +129,14 @@ func SetSchemaLease(lease time.Duration) {
 	schemaLease = lease
 }
 
-// SetStatsLease changes the default stats lease time for loading stats info.
-func SetStatsLease(lease time.Duration) {
-	statsLease = lease
+// SetUpdateStatsLease changes the default stats lease time for loading stats info.
+func SetUpdateStatsLease(lease time.Duration) {
+	updatestatsLease = lease
+}
+
+// SetLoadStatsLease changes the default stats lease time for loading stats table.
+func SetLoadStatsLease(lease time.Duration) {
+	loadStatsLease = lease
 }
 
 // Parse parses a query string to raw ast.StmtNode.

@@ -148,8 +148,11 @@ tcp-keep-alive = true
 # Whether support cartesian product.
 cross-join = true
 
-# Stats lease duration, which influences the time of analyze and stats load.
+# Stats lease duration, which influences the time of analyze.
 stats-lease = "3s"
+
+# Load stats duration, which is the interval of loading stats.
+load-stats-lease = "3s"
 
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true

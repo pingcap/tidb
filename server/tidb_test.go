@@ -53,7 +53,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	metrics.RegisterMetrics()
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore()
-	session.SetStatsLease(0)
+	session.SetUpdateStatsLease(0)
 	c.Assert(err, IsNil)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
