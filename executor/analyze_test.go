@@ -14,25 +14,34 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 )
+
+var _ = Suite(&testFastAnalyze{})
 
 func (s *testSuite1) TestAnalyzePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -228,9 +237,6 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
-	for i := 0; i < 3000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
@@ -239,6 +245,9 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	splitKeys := generateTableSplitKeyForInt(tid, []int{600, 1200, 1800, 2400})
 	manipulateCluster(cluster, splitKeys)
 
+	for i := 0; i < 3000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
 	tk.MustExec("analyze table t with 5 buckets")
 
 	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
@@ -246,49 +255,25 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	sTbl := fmt.Sprintln(tbl)
-	matched := false
-	if sTbl == "Table:39 Count:3000\n"+
+	c.Assert(tbl.String(), Equals, "Table:39 Count:3000\n"+
 		"column:1 ndv:3000 totColSize:0\n"+
-		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
+		"num: 603 lower_bound: 0 upper_bound: 658 repeats: 1\n"+
+		"num: 603 lower_bound: 663 upper_bound: 1248 repeats: 1\n"+
+		"num: 603 lower_bound: 1250 upper_bound: 1823 repeats: 1\n"+
+		"num: 603 lower_bound: 1830 upper_bound: 2379 repeats: 1\n"+
+		"num: 588 lower_bound: 2380 upper_bound: 2998 repeats: 1\n"+
 		"column:2 ndv:3000 totColSize:0\n"+
-		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
+		"num: 603 lower_bound: 0 upper_bound: 658 repeats: 1\n"+
+		"num: 603 lower_bound: 663 upper_bound: 1248 repeats: 1\n"+
+		"num: 603 lower_bound: 1250 upper_bound: 1823 repeats: 1\n"+
+		"num: 603 lower_bound: 1830 upper_bound: 2379 repeats: 1\n"+
+		"num: 588 lower_bound: 2380 upper_bound: 2998 repeats: 1\n"+
 		"index:1 ndv:3000\n"+
-		"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-		"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-		"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-		"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-		"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" ||
-		sTbl == "Table:39 Count:3000\n"+
-			"column:2 ndv:3000 totColSize:0\n"+
-			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
-			"column:1 ndv:3000 totColSize:0\n"+
-			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n"+
-			"index:1 ndv:3000\n"+
-			"num: 603 lower_bound: 6 upper_bound: 612 repeats: 1\n"+
-			"num: 603 lower_bound: 621 upper_bound: 1205 repeats: 1\n"+
-			"num: 603 lower_bound: 1207 upper_bound: 1830 repeats: 1\n"+
-			"num: 603 lower_bound: 1831 upper_bound: 2387 repeats: 1\n"+
-			"num: 588 lower_bound: 2390 upper_bound: 2997 repeats: 1\n" {
-		matched = true
-	}
-	c.Assert(matched, Equals, true)
+		"num: 603 lower_bound: 0 upper_bound: 658 repeats: 1\n"+
+		"num: 603 lower_bound: 663 upper_bound: 1248 repeats: 1\n"+
+		"num: 603 lower_bound: 1250 upper_bound: 1823 repeats: 1\n"+
+		"num: 603 lower_bound: 1830 upper_bound: 2379 repeats: 1\n"+
+		"num: 588 lower_bound: 2380 upper_bound: 2998 repeats: 1")
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
@@ -339,4 +324,100 @@ func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 		"test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2", "test t  idx 1 2 3 1 3 3"))
 	tblStats = h.GetTableStats(tblInfo)
 	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(val), Equals, uint64(1))
+}
+
+type testFastAnalyze struct {
+	store   kv.Storage
+	dom     *domain.Domain
+	cluster *mocktikv.Cluster
+	cli     *regionProperityClient
+}
+
+func (s *testFastAnalyze) SetUpSuite(c *C) {
+	cli := &regionProperityClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+	s.cli = cli
+
+	var err error
+	s.cluster = mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(s.cluster)
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+		mockstore.WithCluster(s.cluster),
+	)
+	c.Assert(err, IsNil)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testFastAnalyze) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+type regionProperityClient struct {
+	tikv.Client
+	mu struct {
+		sync.Mutex
+		regionID uint64
+		count    int64
+	}
+}
+
+func (c *regionProperityClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdDebugGetRegionProperties {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.mu.count++
+		// Mock failure once.
+		if req.DebugGetRegionProperties.RegionId == c.mu.regionID {
+			c.mu.regionID = 0
+			return &tikvrpc.Response{}, nil
+		}
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+func (c *regionProperityClient) setFailRegion(regionID uint64) {
+	c.mu.Lock()
+	c.mu.regionID = regionID
+	c.mu.Unlock()
+}
+
+func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tid := tblInfo.Meta().ID
+	// construct 6 regions split by {6, 12, 18, 24, 30}
+	splitKeys := generateTableSplitKeyForInt(tid, []int{6, 12, 18, 24, 30})
+	regionIDs := manipulateCluster(s.cluster, splitKeys)
+	for i := 0; i < 30; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+	s.cli.setFailRegion(regionIDs[4])
+	tk.MustExec("analyze table t")
+	// 4 regions will be sampled, and it will retry the last failed region.
+	c.Assert(s.cli.mu.count, Equals, int64(5))
+	row := tk.MustQuery(`show stats_meta where db_name = "test" and table_name = "t"`).Rows()[0]
+	c.Assert(row[5], Equals, "30")
+}
+
+func (s *testSuite1) TestFailedAnalyzeRequest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/buildStatsFromResult", `return(true)`), IsNil)
+	_, err := tk.Exec("analyze table t")
+	c.Assert(err.Error(), Equals, "mock buildStatsFromResult error")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/buildStatsFromResult"), IsNil)
 }

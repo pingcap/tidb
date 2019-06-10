@@ -39,7 +39,7 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy
+.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
 
@@ -115,6 +115,9 @@ test: checklist checkdep gotest explaintest
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
+
+ddltest:
+	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
 
 upload-coverage: SHELL:=/bin/bash
 upload-coverage:

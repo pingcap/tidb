@@ -33,7 +33,7 @@ func randomFloat() float64 {
 func randomString(n int) string {
 	const alphanum = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	var bytes = make([]byte, n)
-	for i, _ := range bytes {
+	for i := range bytes {
 		bytes[i] = alphanum[randomIntn(len(alphanum))]
 	}
 	return string(bytes)

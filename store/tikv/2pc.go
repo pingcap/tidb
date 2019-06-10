@@ -45,11 +45,17 @@ const (
 	actionCommit
 	actionCleanup
 	actionPessimisticLock
+	actionPessimisticRollback
 )
 
 var (
 	tikvSecondaryLockCleanupFailureCounterCommit   = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
+)
+
+// Global variable set by config file.
+var (
+	PessimisticLockTTL uint64
 )
 
 func (ca twoPhaseCommitAction) String() string {
@@ -62,6 +68,8 @@ func (ca twoPhaseCommitAction) String() string {
 		return "cleanup"
 	case actionPessimisticLock:
 		return "pessimistic_lock"
+	case actionPessimisticRollback:
+		return "pessimistic_rollback"
 	}
 	return "unknown"
 }
@@ -370,6 +378,8 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		singleBatchActionFunc = c.cleanupSingleBatch
 	case actionPessimisticLock:
 		singleBatchActionFunc = c.pessimisticLockSingleBatch
+	case actionPessimisticRollback:
+		singleBatchActionFunc = c.pessimisticRollbackSingleBatch
 	}
 	if len(batches) == 1 {
 		e := singleBatchActionFunc(bo, batches[0])
@@ -471,6 +481,8 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Reque
 			StartVersion:      c.startTS,
 			LockTtl:           c.lockTTL,
 			IsPessimisticLock: isPessimisticLock,
+			ForUpdateTs:       c.forUpdateTS,
+			TxnSize:           uint64(len(batch.keys)),
 		},
 		Context: pb.Context{
 			Priority: c.priority,
@@ -567,7 +579,7 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
 			ForUpdateTs:  c.forUpdateTS,
-			LockTtl:      config.GetGlobalConfig().PessimisticTxn.TTL,
+			LockTtl:      PessimisticLockTTL,
 			IsFirstLock:  c.isFirstLock,
 		},
 		Context: pb.Context{
@@ -611,6 +623,9 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 				}
 				return errors.Trace(conditionPair.Err())
 			}
+			if deadlock := keyErr.Deadlock; deadlock != nil {
+				return &ErrDeadlock{Deadlock: deadlock}
+			}
 
 			// Extract lock from key error
 			lock, err1 := extractLockFromKeyErr(keyErr)
@@ -619,16 +634,41 @@ func (c *twoPhaseCommitter) pessimisticLockSingleBatch(bo *Backoffer, batch batc
 			}
 			locks = append(locks, lock)
 		}
-		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
+		_, err = c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if msBeforeExpired > 0 {
-			err = bo.BackoffWithMaxSleep(BoTxnLock, int(msBeforeExpired), errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
+		// Because we already waited on tikv, no need to Backoff here.
+	}
+}
+
+func (c *twoPhaseCommitter) pessimisticRollbackSingleBatch(bo *Backoffer, batch batchKeys) error {
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdPessimisticRollback,
+		PessimisticRollback: &pb.PessimisticRollbackRequest{
+			StartVersion: c.startTS,
+			ForUpdateTs:  c.forUpdateTS,
+			Keys:         batch.keys,
+		},
+	}
+	for {
+		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
+			err = c.pessimisticRollbackKeys(bo, batch.keys)
+			return errors.Trace(err)
 		}
+		return nil
 	}
 }
 
@@ -800,6 +840,10 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 
 func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionPessimisticLock, keys)
+}
+
+func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {
+	return c.doActionOnKeys(bo, actionPessimisticRollback, keys)
 }
 
 func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) error {

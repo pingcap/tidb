@@ -44,6 +44,7 @@ type jsonColumn struct {
 	NullCount         int64           `json:"null_count"`
 	TotColSize        int64           `json:"tot_col_size"`
 	LastUpdateVersion uint64          `json:"last_update_version"`
+	Correlation       float64         `json:"correlation"`
 }
 
 func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch) *jsonColumn {
@@ -52,6 +53,7 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch) *jso
 		NullCount:         hist.NullCount,
 		TotColSize:        hist.TotColSize,
 		LastUpdateVersion: hist.LastUpdateVersion,
+		Correlation:       hist.Correlation,
 	}
 	if CMSketch != nil {
 		jsonCol.CMSketch = statistics.CMSketchToProto(CMSketch)
@@ -191,7 +193,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				continue
 			}
 			hist := statistics.HistogramFromProto(jsonIdx.Histogram)
-			hist.ID, hist.NullCount, hist.LastUpdateVersion = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion
+			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.Correlation = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.Correlation
 			idx := &statistics.Index{
 				Histogram: *hist,
 				CMSketch:  statistics.CMSketchFromProto(jsonIdx.CMSketch),
@@ -213,7 +215,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize
+			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
 			col := &statistics.Column{
 				PhysicalID: physicalID,
 				Histogram:  *hist,

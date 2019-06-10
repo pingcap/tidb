@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
+	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -69,7 +71,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(schemaID, tbInfo)
+		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -80,6 +82,15 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	default:
 		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
 	}
+}
+
+func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
+	err := checkTableInfoValid(tbInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return t.CreateTableOrView(schemaID, tbInfo)
 }
 
 func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -122,7 +133,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 				return ver, errors.Trace(err)
 			}
 		}
-		err = t.CreateTableOrView(schemaID, tbInfo)
+		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -267,8 +278,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 
 		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
-			if val.(bool) && mockRecoverTableCommitErrOnce {
-				mockRecoverTableCommitErrOnce = false
+			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
 				kv.MockCommitErrorEnable()
 			}
 		})
@@ -286,8 +296,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
-// mockRecoverTableCommitErrOnce uses to make sure `mockRecoverTableCommitErr` only mock error once.
-var mockRecoverTableCommitErrOnce = true
+// mockRecoverTableCommitErrOnce uses to make sure
+// `mockRecoverTableCommitErr` only mock error once.
+var mockRecoverTableCommitErrOnce uint32 = 0
 
 func enableGC(w *worker) error {
 	ctx, err := w.sessPool.get()
@@ -735,7 +746,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	tblInfo.Collate = toCollate
 	// update column charset.
 	for _, col := range tblInfo.Columns {
-		if typesNeedCharset(col.Tp) {
+		if field_types.HasCharset(&col.FieldType) {
 			col.Charset = toCharset
 			col.Collate = toCollate
 		} else {
@@ -800,6 +811,18 @@ func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string
 	}
 
 	return nil
+}
+
+// updateVersionAndTableInfoWithCheck checks table info validate and updates the schema version and the table information
+func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
+	ver int64, err error) {
+	err = checkTableInfoValid(tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	return updateVersionAndTableInfo(t, job, tblInfo, shouldUpdateVer)
+
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.

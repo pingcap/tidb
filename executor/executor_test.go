@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -87,6 +88,7 @@ var _ = Suite(&testSuite{})
 var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
+var _ = Suite(&testSuite4{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
@@ -225,9 +227,9 @@ func (s *testSuite) TestAdmin(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJob, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
-	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJob[0].ID))
-	result.Check(testkit.Rows(historyJob[0].Query))
+	historyJobs, err = admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
+	result.Check(testkit.Rows(historyJobs[0].Query))
 	c.Assert(err, IsNil)
 
 	// check table test
@@ -281,6 +283,22 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD COLUMN c4 bit(10) default 127;")
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
 	tk.MustExec("admin check table t1;")
+
+	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	historyJobs, err = admin.GetHistoryDDLJobs(txn, 20)
+	c.Assert(err, IsNil)
+
+	// Split region for history ddl job queues.
+	m := meta.NewMeta(txn)
+	startKey := meta.DDLJobHistoryKey(m, 0)
+	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
+	s.cluster.SplitKeys(s.mvccStore, startKey, endKey, int(historyJobs[0].ID/5))
+
+	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
+	c.Assert(err, IsNil)
+	c.Assert(historyJobs, DeepEquals, historyJobs2)
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
@@ -2051,6 +2069,10 @@ func (s *testSuite) TestSelectVar(c *C) {
 	// This behavior is different from MySQL.
 	result := tk.MustQuery("select @a, @a := d+1 from t")
 	result.Check(testkit.Rows("<nil> 2", "2 3", "3 2"))
+	// Test for PR #10658.
+	tk.MustExec("select SQL_BIG_RESULT d from t group by d")
+	tk.MustExec("select SQL_SMALL_RESULT d from t group by d")
+	tk.MustExec("select SQL_BUFFER_RESULT d from t group by d")
 }
 
 func (s *testSuite) TestHistoryRead(c *C) {
@@ -2115,6 +2137,28 @@ func (s *testSuite) TestHistoryRead(c *C) {
 
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
+}
+
+func (s *testSuite) TestLowResolutionTSORead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@autocommit=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists low_resolution_tso")
+	tk.MustExec("create table low_resolution_tso(a int)")
+	tk.MustExec("insert low_resolution_tso values (1)")
+
+	// enable low resolution tso
+	c.Assert(tk.Se.GetSessionVars().LowResolutionTSO, IsFalse)
+	tk.Exec("set @@tidb_low_resolution_tso = 'on'")
+	c.Assert(tk.Se.GetSessionVars().LowResolutionTSO, IsTrue)
+
+	time.Sleep(3 * time.Second)
+	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("1"))
+	_, err := tk.Exec("update low_resolution_tso set a = 2")
+	c.Assert(err, NotNil)
+	tk.MustExec("set @@tidb_low_resolution_tso = 'off'")
+	tk.MustExec("update low_resolution_tso set a = 2")
+	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("2"))
 }
 
 func (s *testSuite) TestScanControlSelection(c *C) {
@@ -3747,7 +3791,7 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
 }
 
-func (s *testSuite) TestSplitIndexRegion(c *C) {
+func (s *testSuite) TestSplitRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -3757,6 +3801,88 @@ func (s *testSuite) TestSplitIndexRegion(c *C) {
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
+
+	// Test for split index region.
+	// Check min value is more than max value.
+	tk.MustExec(`split table t index idx1 between (0) and (1000000000) regions 10`)
+	_, err = tk.Exec(`split table t index idx1 between (2,'a') and (1,'c') regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index `idx1` region lower value (2,a) should less than the upper value (1,c)")
+
+	// Check min value is invalid.
+	_, err = tk.Exec(`split table t index idx1 between () and (1) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index `idx1` region lower value count should more than 0")
+
+	// Check max value is invalid.
+	_, err = tk.Exec(`split table t index idx1 between (1) and () regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index `idx1` region upper value count should more than 0")
+
+	// Check pre-split region num is too large.
+	_, err = tk.Exec(`split table t index idx1 between (0) and (1000000000) regions 10000`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index region num exceeded the limit 1000")
+
+	// Check pre-split region num 0 is invalid.
+	_, err = tk.Exec(`split table t index idx1 between (0) and (1000000000) regions 0`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split index region num should more than 0")
+
+	// Test truncate error msg.
+	_, err = tk.Exec(`split table t index idx1 between ("aa") and (1000000000) regions 0`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column 'b'")
+
+	// Test for split table region.
+	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
+	// Check the ower value is more than the upper value.
+	_, err = tk.Exec(`split table t between (2) and (1) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table `t` region lower value 2 should less than the upper value 1")
+
+	// Check the lower value is invalid.
+	_, err = tk.Exec(`split table t between () and (1) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region lower value count should be 1")
+
+	// Check upper value is invalid.
+	_, err = tk.Exec(`split table t between (1) and () regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region upper value count should be 1")
+
+	// Check pre-split region num is too large.
+	_, err = tk.Exec(`split table t between (0) and (1000000000) regions 10000`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region num exceeded the limit 1000")
+
+	// Check pre-split region num 0 is invalid.
+	_, err = tk.Exec(`split table t between (0) and (1000000000) regions 0`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table region num should more than 0")
+
+	// Test truncate error msg.
+	_, err = tk.Exec(`split table t between ("aa") and (1000000000) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column '_tidb_rowid'")
+
+	// Test split table region step is too small.
+	_, err = tk.Exec(`split table t between (0) and (100) regions 10`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
+}
+
+func (s *testSuite) TestIssue10435(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(i int, j int, k int)")
+	tk.MustExec("insert into t1 VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4)")
+	tk.MustExec("INSERT INTO t1 SELECT 10*i,j,5*j FROM t1 UNION SELECT 20*i,j,5*j FROM t1 UNION SELECT 30*i,j,5*j FROM t1")
+
+	tk.MustExec("set @@session.tidb_enable_window_function=1")
+	tk.MustQuery("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w").Check(
+		testkit.Rows("1", "2", "3", "4", "11", "22", "31", "33", "44", "61", "62", "93", "122", "124", "183", "244"),
+	)
 }
 
 func (s *testSuite) TestUnsignedFeedback(c *C) {

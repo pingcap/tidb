@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/pd/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -448,6 +449,7 @@ func setGlobalVars() {
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
+	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
 	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
@@ -489,6 +491,7 @@ func setGlobalVars() {
 	}
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
+	tikv.PessimisticLockTTL = uint64(parseDuration(cfg.PessimisticTxn.TTL).Seconds() * 1000)
 }
 
 func setupLog() {
@@ -513,6 +516,7 @@ func createServer() {
 	svr, err = server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
 	terror.MustNil(err, closeDomainAndStorage)
+	go dom.ExpensiveQueryHandle().Run(svr)
 }
 
 func serverShutdown(isgraceful bool) {
@@ -566,6 +570,7 @@ func runServer() {
 }
 
 func closeDomainAndStorage() {
+	atomic.StoreUint32(&tikv.ShuttingDown, 1)
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))

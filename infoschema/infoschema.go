@@ -46,6 +46,8 @@ var (
 	ErrTableExists = terror.ClassSchema.New(codeTableExists, "Table '%s' already exists")
 	// ErrTableDropExists returns for dropping a non-existent table.
 	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "Unknown table '%s'")
+	// ErrUserDropExists returns for dropping a non-existent user.
+	ErrUserDropExists = terror.ClassSchema.New(codeBadUser, "User %s does not exist.")
 	// ErrColumnExists returns for column already exists.
 	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column name '%s'")
 	// ErrIndexExists returns for index already exists.
@@ -312,6 +314,7 @@ const (
 	codeDatabaseExists   = 1007
 	codeTableExists      = 1050
 	codeBadTable         = 1051
+	codeBadUser          = 3162
 	codeColumnExists     = 1060
 	codeIndexExists      = 1831
 	codeMultiplePriKey   = 1068
@@ -332,6 +335,7 @@ func init() {
 		codeDatabaseExists:      mysql.ErrDBCreateExists,
 		codeTableExists:         mysql.ErrTableExists,
 		codeBadTable:            mysql.ErrBadTable,
+		codeBadUser:             mysql.ErrBadUser,
 		codeColumnExists:        mysql.ErrDupFieldName,
 		codeIndexExists:         mysql.ErrDupIndex,
 		codeMultiplePriKey:      mysql.ErrMultiplePriKey,

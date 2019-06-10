@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 )
@@ -22,6 +23,8 @@ import (
 var (
 	// ErrBodyMissing response body is missing error
 	ErrBodyMissing = errors.New("response body is missing")
+	// When TiDB is closing and send request to tikv fail, do not retry, return this error.
+	errTiDBShuttingDown = errors.New("tidb server shutting down")
 )
 
 // mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
@@ -36,6 +39,17 @@ var (
 	ErrTiKVServerBusy     = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy])
 	ErrGCTooEarly         = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
 )
+
+// ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.
+// It also marks if the deadlock is retryable.
+type ErrDeadlock struct {
+	*kvrpcpb.Deadlock
+	IsRetryable bool
+}
+
+func (d *ErrDeadlock) Error() string {
+	return d.Deadlock.String()
+}
 
 func init() {
 	tikvMySQLErrCodes := map[terror.ErrCode]uint16{

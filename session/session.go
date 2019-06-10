@@ -122,7 +122,7 @@ type Session interface {
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
-	ShowProcess() util.ProcessInfo
+	ShowProcess() *util.ProcessInfo
 	// PrePareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
@@ -560,7 +560,7 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
 		return nil
 	}
-	return errors.New("current transaction is aborted, commands ignored until end of transaction block")
+	return errors.New("current transaction is aborted, commands ignored until end of transaction block:" + s.txn.doNotCommit.Error())
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
@@ -909,19 +909,22 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	pi := util.ProcessInfo{
-		ID:      s.sessionVars.ConnectionID,
-		DB:      s.sessionVars.CurrentDB,
-		Command: command,
-		Plan:    s.currentPlan,
-		Time:    t,
-		State:   s.Status(),
-		Info:    sql,
+		ID:            s.sessionVars.ConnectionID,
+		DB:            s.sessionVars.CurrentDB,
+		Command:       command,
+		Plan:          s.currentPlan,
+		Time:          t,
+		State:         s.Status(),
+		Info:          sql,
+		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
+		StmtCtx:       s.sessionVars.StmtCtx,
+		StatsInfo:     plannercore.GetStatsInfo,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
 	}
-	s.processInfo.Store(pi)
+	s.processInfo.Store(&pi)
 }
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) ([]sqlexec.RecordSet, error) {
@@ -1476,7 +1479,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	dom.InitExpensiveQueryHandle()
 	if raw, ok := store.(tikv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
@@ -1564,7 +1567,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 31
+	currentBootstrapVersion = 32
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1625,6 +1628,19 @@ var builtinGlobalVariable = []string{
 	variable.WaitTimeout,
 	variable.InteractiveTimeout,
 	variable.MaxPreparedStmtCount,
+	variable.InitConnect,
+	variable.TxnIsolation,
+	variable.TxReadOnly,
+	variable.TransactionIsolation,
+	variable.TransactionReadOnly,
+	variable.NetBufferLength,
+	variable.QueryCacheType,
+	variable.QueryCacheSize,
+	variable.CharacterSetServer,
+	variable.AutoIncrementIncrement,
+	variable.CollationServer,
+	variable.NetWriteTimeout,
+
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,
@@ -1653,6 +1669,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBDisableTxnAutoRetry,
 	variable.TiDBEnableWindowFunction,
 	variable.TiDBEnableFastAnalyze,
+	variable.TiDBExpensiveQueryTimeThreshold,
 }
 
 var (
@@ -1739,9 +1756,15 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		CreateTime:    time.Now(),
 	}
 	if !s.sessionVars.IsAutocommit() {
-		txnConf := config.GetGlobalConfig().PessimisticTxn
-		if txnConf.Enable && (txnConf.Default || s.sessionVars.PessimisticLock) {
-			s.sessionVars.TxnCtx.IsPessimistic = true
+		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
+		if pessTxnConf.Enable {
+			txnMode := s.sessionVars.TxnMode
+			if txnMode == "" && pessTxnConf.Default {
+				txnMode = ast.Pessimistic
+			}
+			if txnMode == ast.Pessimistic {
+				s.sessionVars.TxnCtx.IsPessimistic = true
+			}
 		}
 	}
 }
@@ -1780,11 +1803,11 @@ func (s *session) GetStore() kv.Storage {
 	return s.store
 }
 
-func (s *session) ShowProcess() util.ProcessInfo {
-	var pi util.ProcessInfo
+func (s *session) ShowProcess() *util.ProcessInfo {
+	var pi *util.ProcessInfo
 	tmp := s.processInfo.Load()
 	if tmp != nil {
-		pi = tmp.(util.ProcessInfo)
+		pi = tmp.(*util.ProcessInfo)
 	}
 	return pi
 }
