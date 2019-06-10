@@ -4398,3 +4398,28 @@ func (s *testIntegrationSuite) TestIssue10181(c *C) {
 	tk.MustExec(`insert into t values(9223372036854775807), (18446744073709551615)`)
 	tk.MustQuery(`select * from t where a > 9223372036854775807-0.5 order by a`).Check(testkit.Rows(`9223372036854775807`, `18446744073709551615`))
 }
+
+func (s *testIntegrationSuite) TestIssue9763(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`CREATE TABLE t1 (a datetime not null);`)
+	tk.MustExec(`insert ignore into t1 values (0);`)
+	tk.MustQuery(`select * from t1 where a is null;`).Check(testkit.Rows(`0000-00-00 00:00:00`))
+
+	tk.MustExec(`drop table if exists t2;`)
+	tk.MustExec(`CREATE TABLE t2 (a date not null);`)
+	tk.MustExec(`insert ignore into t2 values (0);`)
+	tk.MustQuery(`select * from t2 where a is null;`).Check(testkit.Rows(`0000-00-00`))
+
+	tk.MustExec(`drop table if exists t3;`)
+	tk.MustExec(`CREATE TABLE t3 (a datetime);`)
+	tk.MustExec(`insert ignore into t3 values (0);`)
+	c.Assert(len(tk.MustQuery(`select * from t3 where a is null;`).Rows()), Equals, 0)
+
+	tk.MustExec(`drop table if exists t4;`)
+	tk.MustExec(`CREATE TABLE t4 (a date);`)
+	tk.MustExec(`insert ignore into t4 values (0);`)
+	c.Assert(len(tk.MustQuery(`select * from t4 where a is null;`).Rows()), Equals, 0)
+}
