@@ -932,6 +932,7 @@ var MySQLErrName = map[uint16]string{
 	ErrRequireVersionCheckFail:    "Plugin %s require %s be %v but got %v",
 	ErrUnsupportedReloadPlugin:    "Plugin %s isn't loaded so cannot be reloaded",
 	ErrUnsupportedReloadPluginVar: "Reload plugin with different sysVar is unsupported %v",
+	ErrTableLocked:                "Table '%s' was locked in %s by %v",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:    "PD server timeout",
