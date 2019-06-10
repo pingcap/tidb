@@ -86,15 +86,14 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		if colInfo.Offset != i {
 			log.Errorf("[tables] table %#v schema is wrong, no.%d col %#v, cols len %v", tblInfo, i, tblInfo.Columns[i], colsLen)
 		}
-
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
 			expr, err := parseGenExpr(colInfo.GeneratedExprString, tblInfo)
 			if err == nil {
 				col.GeneratedExpr = expr
 			} else {
+				log.Errorf("[ddl] parse table: %#v, column: %#v generated column expression error: %v",tblInfo, colInfo, err)
 				col.GeneratedExprString = ""
-				log.Errorf("[ddl] parse generated column expression error: %v", err)
 			}
 		}
 		columns = append(columns, col)
