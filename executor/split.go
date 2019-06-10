@@ -22,6 +22,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -126,9 +127,9 @@ func (e *SplitIndexRegionExec) getSplitIdxKeys() ([][]byte, error) {
 		lowerStr, err1 := datumSliceToString(e.lower)
 		upperStr, err2 := datumSliceToString(e.upper)
 		if err1 != nil || err2 != nil {
-			return nil, errors.Errorf("Split index region `%v` lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
+			return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, e.lower, e.upper)
 		}
-		return nil, errors.Errorf("Split index region `%v` lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
+		return nil, errors.Errorf("Split index `%v` region lower value %v should less than the upper value %v", e.indexInfo.Name, lowerStr, upperStr)
 	}
 	return getValuesList(lowerIdxKey, upperIdxKey, e.num, idxKeys), nil
 }
@@ -203,4 +204,107 @@ func datumSliceToString(ds []types.Datum) (string, error) {
 	}
 	str += ")"
 	return str, nil
+}
+
+// SplitTableRegionExec represents a split table regions executor.
+type SplitTableRegionExec struct {
+	baseExecutor
+
+	tableInfo  *model.TableInfo
+	lower      types.Datum
+	upper      types.Datum
+	num        int
+	valueLists [][]types.Datum
+}
+
+// Next implements the Executor Next interface.
+func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) error {
+	store := e.ctx.GetStore()
+	s, ok := store.(splitableStore)
+	if !ok {
+		return nil
+	}
+	splitKeys, err := e.getSplitTableKeys()
+	if err != nil {
+		return err
+	}
+	regionIDs := make([]uint64, 0, len(splitKeys))
+	for _, key := range splitKeys {
+		regionID, err := s.SplitRegionAndScatter(key)
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("split table region failed",
+				zap.String("table", e.tableInfo.Name.L),
+				zap.Error(err))
+			continue
+		}
+		regionIDs = append(regionIDs, regionID)
+	}
+	if !e.ctx.GetSessionVars().WaitTableSplitFinish {
+		return nil
+	}
+	for _, regionID := range regionIDs {
+		err := s.WaitScatterRegionFinish(regionID)
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("wait scatter region failed",
+				zap.Uint64("regionID", regionID),
+				zap.String("table", e.tableInfo.Name.L),
+				zap.Error(err))
+		}
+	}
+	return nil
+}
+
+var minRegionStepValue = uint64(1000)
+
+func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
+	var keys [][]byte
+	if e.num > 0 {
+		keys = make([][]byte, 0, e.num)
+	} else {
+		keys = make([][]byte, 0, len(e.valueLists))
+	}
+	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
+	if len(e.valueLists) > 0 {
+		for _, v := range e.valueLists {
+			key := tablecodec.EncodeRecordKey(recordPrefix, v[0].GetInt64())
+			keys = append(keys, key)
+		}
+		return keys, nil
+	}
+	isUnsigned := false
+	if e.tableInfo.PKIsHandle {
+		if pkCol := e.tableInfo.GetPkColInfo(); pkCol != nil {
+			isUnsigned = mysql.HasUnsignedFlag(pkCol.Flag)
+		}
+	}
+	var step uint64
+	var lowerValue int64
+	if isUnsigned {
+		lowerRecordID := e.lower.GetUint64()
+		upperRecordID := e.upper.GetUint64()
+		if upperRecordID <= lowerRecordID {
+			return nil, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+		}
+		step = (upperRecordID - lowerRecordID) / uint64(e.num)
+		lowerValue = int64(lowerRecordID)
+	} else {
+		lowerRecordID := e.lower.GetInt64()
+		upperRecordID := e.upper.GetInt64()
+		if upperRecordID <= lowerRecordID {
+			return nil, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+		}
+		step = uint64(upperRecordID-lowerRecordID) / uint64(e.num)
+		lowerValue = lowerRecordID
+	}
+	if step < minRegionStepValue {
+		return nil, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
+	}
+
+	recordID := lowerValue
+	for i := 1; i < e.num; i++ {
+		recordID += int64(step)
+		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
+		keys = append(keys, key)
+	}
+	return keys, nil
 }
