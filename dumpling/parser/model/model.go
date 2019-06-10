@@ -15,6 +15,7 @@ package model
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
@@ -230,9 +231,96 @@ type TableInfo struct {
 	Compression string `json:"compression"`
 
 	View *ViewInfo `json:"view"`
+	// Lock represent the table lock info.
+	Lock *TableLockInfo `json:"Lock"`
 
 	// Version means the version of the table info.
 	Version uint16 `json:"version"`
+}
+
+// TableLockInfo provides meta data describing a table lock.
+type TableLockInfo struct {
+	Tp TableLockType
+	// Use array because there may be multiple sessions holding the same read lock.
+	Sessions []SessionInfo
+	State    TableLockState
+	// TS is used to record the timestamp this table lock been locked.
+	TS uint64
+}
+
+// SessionInfo contain the session ID and the server ID.
+type SessionInfo struct {
+	ServerID  string
+	SessionID uint64
+}
+
+func (s SessionInfo) String() string {
+	return "server: " + s.ServerID + "_session: " + strconv.FormatUint(s.SessionID, 10)
+}
+
+// TableLockTpInfo is composed by schema ID, table ID and table lock type.
+type TableLockTpInfo struct {
+	SchemaID int64
+	TableID  int64
+	Tp       TableLockType
+}
+
+// TableLockState is the state for table lock.
+type TableLockState byte
+
+const (
+	// TableLockStateNone means this table lock is absent.
+	TableLockStateNone TableLockState = iota
+	// TableLockStatePreLock means this table lock is pre-lock state. Other session doesn't hold this lock should't do corresponding operation according to the lock type.
+	TableLockStatePreLock
+	// TableLockStatePublic means this table lock is public state.
+	TableLockStatePublic
+)
+
+// String implements fmt.Stringer interface.
+func (t TableLockState) String() string {
+	switch t {
+	case TableLockStatePreLock:
+		return "pre-lock"
+	case TableLockStatePublic:
+		return "public"
+	default:
+		return "none"
+	}
+}
+
+// TableLockType is the type of the table lock.
+type TableLockType byte
+
+const (
+	TableLockNone TableLockType = iota
+	// TableLockRead means the session with this lock can read the table (but not write it).
+	// Multiple sessions can acquire a READ lock for the table at the same time.
+	// Other sessions can read the table without explicitly acquiring a READ lock.
+	TableLockRead
+	// TableLockReadLocal is not supported.
+	TableLockReadLocal
+	// TableLockWrite means only the session with this lock has write/read permission.
+	// Only the session that holds the lock can access the table. No other session can access it until the lock is released.
+	TableLockWrite
+	// TableLockWriteLocal means the session with this lock has write/read permission, and the other session still has read permission.
+	TableLockWriteLocal
+)
+
+func (t TableLockType) String() string {
+	switch t {
+	case TableLockNone:
+		return "NONE"
+	case TableLockRead:
+		return "READ"
+	case TableLockReadLocal:
+		return "READ LOCAL"
+	case TableLockWriteLocal:
+		return "WRITE LOCAL"
+	case TableLockWrite:
+		return "WRITE"
+	}
+	return ""
 }
 
 // GetPartitionInfo returns the partition information.
@@ -343,6 +431,11 @@ func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 		}
 	}
 	return nil
+}
+
+// IsLocked checks whether the table was locked.
+func (t *TableInfo) IsLocked() bool {
+	return t.Lock != nil && len(t.Lock.Sessions) > 0
 }
 
 // NewExtraHandleColInfo mocks a column info for extra handle column.
