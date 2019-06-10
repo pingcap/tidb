@@ -196,6 +196,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildSQLBindExec(v)
 	case *plannercore.SplitRegion:
 		return b.buildSplitRegion(v)
+	case *plannercore.SplitRegionStatus:
+		return b.buildSplitRegionStatus(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -1282,6 +1284,14 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 		upper:        v.Upper[0],
 		num:          v.Num,
 		valueLists:   v.ValueLists,
+	}
+}
+
+func (b *executorBuilder) buildSplitRegionStatus(v *plannercore.SplitRegionStatus) Executor {
+	return &SplitTableRegionStatusExec{
+		tableInfo:    v.TableInfo,
+		indexInfo:    v.IndexInfo,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
 }
 

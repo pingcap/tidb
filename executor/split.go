@@ -17,17 +17,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -47,6 +52,7 @@ type SplitIndexRegionExec struct {
 type splitableStore interface {
 	SplitRegionAndScatter(splitKey kv.Key) (uint64, error)
 	WaitScatterRegionFinish(regionID uint64) error
+	CheckScatterRegionFinished(regionID uint64) (bool, error)
 }
 
 // Next implements the Executor Next interface.
@@ -307,4 +313,209 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+// SplitTableRegionStatusExec represents a split regions status executor.
+type SplitTableRegionStatusExec struct {
+	baseExecutor
+
+	tableInfo *model.TableInfo
+	indexInfo *model.IndexInfo
+	cursor    int
+	regions   []regionMeta
+}
+
+// RegionMeta contains a region's peer detail
+type regionMeta struct {
+	region        *metapb.Region
+	leader        *metapb.Peer
+	start         string
+	end           string
+	scatterFinish bool
+}
+
+// Open implements the Executor Open interface.
+func (e *SplitTableRegionStatusExec) Open(ctx context.Context) error {
+	store := e.ctx.GetStore()
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return nil
+	}
+	splitStore, ok := store.(splitableStore)
+	if !ok {
+		return nil
+	}
+
+	regionCache := tikvStore.GetRegionCache()
+	var regions []regionMeta
+	var err error
+	if e.indexInfo != nil {
+		regions, err = e.getIndexRegions(regionCache, splitStore)
+
+	} else {
+		regions, err = e.getTableRegions(regionCache, splitStore)
+	}
+	if err != nil {
+		return err
+	}
+	e.regions = regions
+	e.cursor = 0
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *SplitTableRegionStatusExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	store := e.ctx.GetStore()
+	if _, ok := store.(tikv.Storage); !ok {
+		return nil
+	}
+
+	req.GrowAndReset(e.maxChunkSize)
+	if e.cursor >= len(e.regions) {
+		return nil
+	}
+	numCurBatch := mathutil.Min(req.Capacity(), len(e.regions)-e.cursor)
+	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+		req.AppendUint64(0, e.regions[i].region.Id)
+		req.AppendString(1, e.regions[i].start)
+		req.AppendString(2, e.regions[i].end)
+		req.AppendUint64(3, e.regions[i].leader.Id)
+		peers := ""
+		for i, peer := range e.regions[i].region.Peers {
+			if i > 0 {
+				peers += ", "
+			}
+			peers += strconv.FormatUint(peer.Id, 10)
+		}
+		req.AppendString(4, peers)
+		if e.regions[i].scatterFinish {
+			req.AppendInt64(5, 1)
+		} else {
+			req.AppendInt64(5, 0)
+		}
+	}
+	e.cursor += numCurBatch
+	return nil
+}
+
+func (e *SplitTableRegionStatusExec) getTableRegions(regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
+	uniqueRegionMap := make(map[uint64]struct{})
+	// for record
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.tableInfo.ID)
+	recordRegionIDs, err := regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+	if err != nil {
+		return nil, err
+	}
+	recordRegions, err := getRegionMeta(regionCache, recordRegionIDs, uniqueRegionMap)
+	if err != nil {
+		return nil, err
+	}
+
+	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
+	tablePrefix := tablecodec.GenTablePrefix(e.tableInfo.ID)
+	decodeRegionsKey(recordRegions, tablePrefix, recordPrefix, nil)
+	regions := recordRegions
+
+	// for indices
+	for _, index := range e.tableInfo.Indices {
+		if index.State != model.StatePublic {
+			continue
+		}
+		startKey, endKey := tablecodec.GetTableIndexKeyRange(e.tableInfo.ID, index.ID)
+		rIDs, err := regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+		if err != nil {
+			return nil, err
+		}
+		indexRegions, err := getRegionMeta(regionCache, rIDs, uniqueRegionMap)
+		if err != nil {
+			return nil, err
+		}
+		indexPrefix := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, index.ID)
+		decodeRegionsKey(indexRegions, tablePrefix, recordPrefix, indexPrefix)
+		regions = append(regions, indexRegions...)
+	}
+	err = checkRegionsStatus(s, regions)
+	if err != nil {
+		return nil, err
+	}
+	return regions, nil
+}
+
+func (e *SplitTableRegionStatusExec) getIndexRegions(regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
+	uniqueRegionMap := make(map[uint64]struct{})
+	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
+	tablePrefix := tablecodec.GenTablePrefix(e.tableInfo.ID)
+	indexPrefix := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, e.indexInfo.ID)
+
+	startKey, endKey := tablecodec.GetTableIndexKeyRange(e.tableInfo.ID, e.indexInfo.ID)
+	rIDs, err := regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+	if err != nil {
+		return nil, err
+	}
+	indexRegions, err := getRegionMeta(regionCache, rIDs, uniqueRegionMap)
+	if err != nil {
+		return nil, err
+	}
+	decodeRegionsKey(indexRegions, tablePrefix, recordPrefix, indexPrefix)
+	err = checkRegionsStatus(s, indexRegions)
+	if err != nil {
+		return nil, err
+	}
+	return indexRegions, nil
+}
+
+func checkRegionsStatus(store splitableStore, regions []regionMeta) error {
+	for i := range regions {
+		scatterFinish, err := store.CheckScatterRegionFinished(regions[i].region.Id)
+		if err != nil {
+			return err
+		}
+		regions[i].scatterFinish = scatterFinish
+	}
+	return nil
+}
+
+func decodeRegionsKey(regions []regionMeta, tablePrefix, recordPrefix, indexPrefix []byte) {
+	for i := range regions {
+		regions[i].start = decodeRegionKey(regions[i].region.StartKey, tablePrefix, recordPrefix, indexPrefix)
+		regions[i].end = decodeRegionKey(regions[i].region.EndKey, tablePrefix, recordPrefix, indexPrefix)
+	}
+}
+
+func decodeRegionKey(key, tablePrefix, recordPrefix, indexPrefix []byte) string {
+	if len(indexPrefix) > 0 && bytes.HasPrefix(key, indexPrefix) {
+		return fmt.Sprintf("t_i_%x", key[len(indexPrefix):])
+	} else if len(recordPrefix) > 0 && bytes.HasPrefix(key, recordPrefix) {
+		_, handle, err := codec.DecodeInt(key[len(recordPrefix):])
+		if err == nil {
+			return "t_r_" + strconv.FormatInt(handle, 10)
+		}
+	}
+	if len(tablePrefix) > 0 && bytes.HasPrefix(key, tablePrefix) {
+		return fmt.Sprintf("t_%x", key[len(tablePrefix):])
+	}
+	return fmt.Sprintf("%x", key)
+}
+
+func getRegionMeta(regionCache *tikv.RegionCache, regionIDs []uint64, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+	regions := make([]regionMeta, 0, len(regionIDs))
+	for _, regionID := range regionIDs {
+		meta, leader, err := regionCache.PDClient().GetRegionByID(context.TODO(), regionID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if meta == nil {
+			return nil, errors.Errorf("region not found for regionID %q", regionID)
+		}
+		if _, ok := uniqueRegionMap[meta.Id]; ok {
+			continue
+		}
+		uniqueRegionMap[meta.Id] = struct{}{}
+		regions = append(regions, regionMeta{
+			region: meta,
+			leader: leader,
+		})
+	}
+	return regions, nil
 }

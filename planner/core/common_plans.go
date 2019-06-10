@@ -491,6 +491,14 @@ type SplitRegion struct {
 	ValueLists [][]types.Datum
 }
 
+// SplitRegionStatus represents a split regions status plan.
+type SplitRegionStatus struct {
+	baseSchemaProducer
+
+	TableInfo *model.TableInfo
+	IndexInfo *model.IndexInfo
+}
+
 // DDL represents a DDL statement plan.
 type DDL struct {
 	baseSchemaProducer

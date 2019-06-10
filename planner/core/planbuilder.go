@@ -282,6 +282,9 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildChange(x)
 	case *ast.SplitRegionStmt:
 		return b.buildSplitRegion(x)
+	case *ast.SplitRegionStatusStmt:
+		return b.buildSplitRegionStatus(x)
+
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -978,6 +981,17 @@ func buildShowDDLJobsFields() *expression.Schema {
 	schema.Append(buildColumn("", "ROW_COUNT", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "START_TIME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
+	return schema
+}
+
+func buildSplitRegionStatusFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema.Append(buildColumn("", "REGION_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "START_KEY", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_Key", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "LEADER_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "PEERS", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCATTER_FINISH", mysql.TypeTiny, 1))
 	return schema
 }
 
@@ -1796,6 +1810,22 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 		return nil, errors.Errorf("Split table region num should more than 0")
 	}
 	p.Num = int(node.SplitOpt.Num)
+	return p, nil
+}
+
+func (b *PlanBuilder) buildSplitRegionStatus(node *ast.SplitRegionStatusStmt) (Plan, error) {
+	tblInfo := node.Table.TableInfo
+	p := &SplitRegionStatus{
+		TableInfo: tblInfo,
+	}
+	if len(node.IndexName.L) != 0 {
+		indexInfo := tblInfo.FindIndexByName(node.IndexName.L)
+		if indexInfo == nil {
+			return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
+		}
+		p.IndexInfo = indexInfo
+	}
+	p.SetSchema(buildSplitRegionStatusFields())
 	return p, nil
 }
 

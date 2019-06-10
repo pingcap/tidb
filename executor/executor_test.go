@@ -3870,6 +3870,10 @@ func (s *testSuite) TestSplitRegion(c *C) {
 	_, err = tk.Exec(`split table t between (0) and (100) regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
+
+	// Check split region status.
+	tk.MustExec(`split table t status`)
+	tk.MustExec(`split table t index idx1 status`)
 }
 
 func (s *testSuite) TestIssue10435(c *C) {
