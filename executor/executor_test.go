@@ -17,8 +17,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/util/gcutil"
 	"math"
 	"os"
 	"strconv"
@@ -43,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -64,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -95,7 +95,7 @@ var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
-var _ = Suite(&testFastAnalyze{})
+var _ = Suite(&testRecoverTable{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
