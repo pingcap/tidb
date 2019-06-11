@@ -2107,15 +2107,16 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	switch meta.Partition.Type {
-	// Coalesce partition can only be used on hash/key partitions.
-	default:
-		return errors.Trace(ErrCoalesceOnlyOnHashPartition)
-
 	// We don't support coalesce partitions hash type partition now.
 	case model.PartitionTypeHash:
 		return errors.Trace(ErrUnsupportedCoalescePartition)
 
+	// Key type partition cannot be constructed currently, ignoring it for now.
 	case model.PartitionTypeKey:
+
+	// Coalesce partition can only be used on hash/key partitions.
+	default:
+		return errors.Trace(ErrCoalesceOnlyOnHashPartition)
 	}
 
 	return errors.Trace(err)
