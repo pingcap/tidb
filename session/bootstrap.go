@@ -262,7 +262,7 @@ const (
 
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
 	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
-		expr_name char(100) NOT NULL
+		name char(100) NOT NULL
 	);`
 )
 

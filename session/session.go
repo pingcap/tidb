@@ -1419,10 +1419,12 @@ func loadExprPushdownBlacklist(se *session) (err error) {
 	if err != nil {
 		return err
 	}
+	newBlacklist := make(map[string]struct{})
 	for _, row := range rows {
 		name := row.GetString(0)
-		expression.DefaultExprPushdownBlacklist[strings.ToLower(name)] = struct{}{}
+		newBlacklist[strings.ToLower(name)] = struct{}{}
 	}
+	expression.DefaultExprPushdownBlacklist.Store(newBlacklist)
 	return nil
 }
 
@@ -1477,7 +1479,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	loadExprPushdownBlacklist(se)
+	err = loadExprPushdownBlacklist(se)
+	if err != nil {
+		return nil, err
+	}
 
 	se1, err := createSession(store)
 	if err != nil {
