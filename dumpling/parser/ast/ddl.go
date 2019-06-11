@@ -14,10 +14,14 @@
 package ast
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	. "github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/parser/types"
 )
 
@@ -862,6 +866,13 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Select = node.(ResultSetNode)
 	}
+	if n.Partition != nil {
+		node, ok := n.Partition.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Partition = node.(*PartitionOptions)
+	}
 
 	return v.Leave(n)
 }
@@ -1307,6 +1318,10 @@ const (
 	TableOptionShardRowID
 	TableOptionPreSplitRegion
 	TableOptionPackKeys
+	TableOptionTablespace
+	TableOptionNodegroup
+	TableOptionDataDirectory
+	TableOptionIndexDirectory
 )
 
 // RowFormat types
@@ -1461,6 +1476,21 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord("DEFAULT")
 		ctx.WritePlain(" /* TableOptionPackKeys is not supported */ ")
+	case TableOptionTablespace:
+		ctx.WriteKeyWord("TABLESPACE ")
+		ctx.WritePlain("= ")
+		ctx.WriteName(n.StrValue)
+	case TableOptionNodegroup:
+		ctx.WriteKeyWord("NODEGROUP ")
+		ctx.WritePlainf("= %d", n.UintValue)
+	case TableOptionDataDirectory:
+		ctx.WriteKeyWord("DATA DIRECTORY ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case TableOptionIndexDirectory:
+		ctx.WriteKeyWord("INDEX DIRECTORY ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
@@ -1545,6 +1575,9 @@ const (
 	AlterTableCoalescePartitions
 	AlterTableDropPartition
 	AlterTableTruncatePartition
+	AlterTablePartition
+	AlterTableEnableKeys
+	AlterTableDisableKeys
 
 	// TODO: Add more actions
 )
@@ -1621,6 +1654,8 @@ type AlterTableSpec struct {
 	Comment         string
 	FromKey         model.CIStr
 	ToKey           model.CIStr
+	Partition       *PartitionOptions
+	PartitionNames  []model.CIStr
 	PartDefinitions []*PartitionDefinition
 	Num             uint64
 }
@@ -1773,10 +1808,28 @@ func (n *AlterTableSpec) Restore(ctx *RestoreCtx) error {
 		ctx.WritePlainf("%d", n.Num)
 	case AlterTableDropPartition:
 		ctx.WriteKeyWord("DROP PARTITION ")
-		ctx.WriteName(n.Name)
+		for i, name := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(name.O)
+		}
 	case AlterTableTruncatePartition:
 		ctx.WriteKeyWord("TRUNCATE PARTITION ")
-		ctx.WriteName(n.Name)
+		for i, name := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(name.O)
+		}
+	case AlterTablePartition:
+		if err := n.Partition.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.Partition")
+		}
+	case AlterTableEnableKeys:
+		ctx.WriteKeyWord("ENABLE KEYS")
+	case AlterTableDisableKeys:
+		ctx.WriteKeyWord("DISABLE KEYS")
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
@@ -1845,7 +1898,7 @@ func (n *AlterTableStmt) Restore(ctx *RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while restore AlterTableStmt.Table")
 	}
 	for i, spec := range n.Specs {
-		if i == 0 {
+		if i == 0 || spec.Tp == AlterTablePartition {
 			ctx.WritePlain(" ")
 		} else {
 			ctx.WritePlain(", ")
@@ -1911,100 +1964,501 @@ func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+var (
+	ErrNoParts                              = terror.ClassDDL.NewStd(mysql.ErrNoParts)
+	ErrPartitionColumnList                  = terror.ClassDDL.NewStd(mysql.ErrPartitionColumnList)
+	ErrPartitionRequiresValues              = terror.ClassDDL.NewStd(mysql.ErrPartitionRequiresValues)
+	ErrPartitionsMustBeDefined              = terror.ClassDDL.NewStd(mysql.ErrPartitionsMustBeDefined)
+	ErrPartitionWrongNoPart                 = terror.ClassDDL.NewStd(mysql.ErrPartitionWrongNoPart)
+	ErrPartitionWrongNoSubpart              = terror.ClassDDL.NewStd(mysql.ErrPartitionWrongNoSubpart)
+	ErrPartitionWrongValues                 = terror.ClassDDL.NewStd(mysql.ErrPartitionWrongValues)
+	ErrRowSinglePartitionField              = terror.ClassDDL.NewStd(mysql.ErrRowSinglePartitionField)
+	ErrSubpartition                         = terror.ClassDDL.NewStd(mysql.ErrSubpartition)
+	ErrSystemVersioningWrongPartitions      = terror.ClassDDL.NewStd(mysql.ErrSystemVersioningWrongPartitions)
+	ErrTooManyValues                        = terror.ClassDDL.NewStd(mysql.ErrTooManyValues)
+	ErrWrongPartitionTypeExpectedSystemTime = terror.ClassDDL.NewStd(mysql.ErrWrongPartitionTypeExpectedSystemTime)
+)
+
+type SubPartitionDefinition struct {
+	Name    model.CIStr
+	Options []*TableOption
+}
+
+func (spd *SubPartitionDefinition) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("SUBPARTITION ")
+	ctx.WriteName(spd.Name.O)
+	for i, opt := range spd.Options {
+		ctx.WritePlain(" ")
+		if err := opt.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore SubPartitionDefinition.Options[%d]", i)
+		}
+	}
+	return nil
+}
+
+type PartitionDefinitionClause interface {
+	restore(ctx *RestoreCtx) error
+	acceptInPlace(v Visitor) bool
+	// Validate checks if the clause is consistent with the given options.
+	// `pt` can be 0 and `columns` can be -1 to skip checking the clause against
+	// the partition type or number of columns in the expression list.
+	Validate(pt model.PartitionType, columns int) error
+}
+
+type PartitionDefinitionClauseNone struct{}
+
+func (n *PartitionDefinitionClauseNone) restore(ctx *RestoreCtx) error {
+	return nil
+}
+
+func (n *PartitionDefinitionClauseNone) acceptInPlace(v Visitor) bool {
+	return true
+}
+
+func (n *PartitionDefinitionClauseNone) Validate(pt model.PartitionType, columns int) error {
+	switch pt {
+	case 0:
+	case model.PartitionTypeRange:
+		return ErrPartitionRequiresValues.GenWithStackByArgs("RANGE", "LESS THAN")
+	case model.PartitionTypeList:
+		return ErrPartitionRequiresValues.GenWithStackByArgs("LIST", "IN")
+	case model.PartitionTypeSystemTime:
+		return ErrSystemVersioningWrongPartitions
+	}
+	return nil
+}
+
+type PartitionDefinitionClauseLessThan struct {
+	Exprs []ExprNode
+}
+
+func (n *PartitionDefinitionClauseLessThan) restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord(" VALUES LESS THAN ")
+	ctx.WritePlain("(")
+	for i, expr := range n.Exprs {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore PartitionDefinitionClauseLessThan.Exprs[%d]", i)
+		}
+	}
+	ctx.WritePlain(")")
+	return nil
+}
+
+func (n *PartitionDefinitionClauseLessThan) acceptInPlace(v Visitor) bool {
+	for i, expr := range n.Exprs {
+		newExpr, ok := expr.Accept(v)
+		if !ok {
+			return false
+		}
+		n.Exprs[i] = newExpr.(ExprNode)
+	}
+	return true
+}
+
+func (n *PartitionDefinitionClauseLessThan) Validate(pt model.PartitionType, columns int) error {
+	switch pt {
+	case model.PartitionTypeRange, 0:
+	default:
+		return ErrPartitionWrongValues.GenWithStackByArgs("RANGE", "LESS THAN")
+	}
+
+	switch {
+	case columns == 0 && len(n.Exprs) != 1:
+		return ErrTooManyValues.GenWithStackByArgs("RANGE")
+	case columns > 0 && len(n.Exprs) != columns:
+		return ErrPartitionColumnList
+	}
+	return nil
+}
+
+type PartitionDefinitionClauseIn struct {
+	Values [][]ExprNode
+}
+
+func (n *PartitionDefinitionClauseIn) restore(ctx *RestoreCtx) error {
+	// we special-case an empty list of values to mean MariaDB's "DEFAULT" clause.
+	if len(n.Values) == 0 {
+		ctx.WriteKeyWord(" DEFAULT")
+		return nil
+	}
+
+	ctx.WriteKeyWord(" VALUES IN ")
+	ctx.WritePlain("(")
+	for i, valList := range n.Values {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if len(valList) == 1 {
+			if err := valList[0].Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore PartitionDefinitionClauseIn.Values[%d][0]", i)
+			}
+		} else {
+			ctx.WritePlain("(")
+			for j, val := range valList {
+				if j != 0 {
+					ctx.WritePlain(", ")
+				}
+				if err := val.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore PartitionDefinitionClauseIn.Values[%d][%d]", i, j)
+				}
+			}
+			ctx.WritePlain(")")
+		}
+	}
+	ctx.WritePlain(")")
+	return nil
+}
+
+func (n *PartitionDefinitionClauseIn) acceptInPlace(v Visitor) bool {
+	for _, valList := range n.Values {
+		for j, val := range valList {
+			newVal, ok := val.Accept(v)
+			if !ok {
+				return false
+			}
+			valList[j] = newVal.(ExprNode)
+		}
+	}
+	return true
+}
+
+func (n *PartitionDefinitionClauseIn) Validate(pt model.PartitionType, columns int) error {
+	switch pt {
+	case model.PartitionTypeList, 0:
+	default:
+		return ErrPartitionWrongValues.GenWithStackByArgs("LIST", "IN")
+	}
+
+	if len(n.Values) == 0 {
+		return nil
+	}
+
+	expectedColCount := len(n.Values[0])
+	for _, val := range n.Values[1:] {
+		if len(val) != expectedColCount {
+			return ErrPartitionColumnList
+		}
+	}
+
+	switch {
+	case columns == 0 && expectedColCount != 1:
+		return ErrRowSinglePartitionField
+	case columns > 0 && expectedColCount != columns:
+		return ErrPartitionColumnList
+	}
+	return nil
+}
+
+type PartitionDefinitionClauseHistory struct {
+	Current bool
+}
+
+func (n *PartitionDefinitionClauseHistory) restore(ctx *RestoreCtx) error {
+	if n.Current {
+		ctx.WriteKeyWord(" CURRENT")
+	} else {
+		ctx.WriteKeyWord(" HISTORY")
+	}
+	return nil
+}
+
+func (n *PartitionDefinitionClauseHistory) acceptInPlace(v Visitor) bool {
+	return true
+}
+
+func (n *PartitionDefinitionClauseHistory) Validate(pt model.PartitionType, columns int) error {
+	switch pt {
+	case 0, model.PartitionTypeSystemTime:
+	default:
+		return ErrWrongPartitionTypeExpectedSystemTime
+	}
+
+	return nil
+}
+
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	Name     model.CIStr
-	LessThan []ExprNode
-	MaxValue bool
-	Comment  string
+	Name    model.CIStr
+	Clause  PartitionDefinitionClause
+	Options []*TableOption
+	Sub     []*SubPartitionDefinition
+}
+
+// Comment returns the comment option given to this definition.
+// The second return value indicates if the comment option exists.
+func (n *PartitionDefinition) Comment() (string, bool) {
+	for _, opt := range n.Options {
+		if opt.Tp == TableOptionComment {
+			return opt.StrValue, true
+		}
+	}
+	return "", false
+}
+
+func (n *PartitionDefinition) acceptInPlace(v Visitor) bool {
+	return n.Clause.acceptInPlace(v)
 }
 
 // Restore implements Node interface.
 func (n *PartitionDefinition) Restore(ctx *RestoreCtx) error {
 	ctx.WriteKeyWord("PARTITION ")
 	ctx.WriteName(n.Name.O)
-	if n.LessThan != nil {
-		ctx.WriteKeyWord(" VALUES LESS THAN ")
-		ctx.WritePlain("(")
-		for k, less := range n.LessThan {
-			if k != 0 {
-				ctx.WritePlain(", ")
+
+	if err := n.Clause.restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore PartitionDefinition.Clause")
+	}
+
+	for i, opt := range n.Options {
+		ctx.WritePlain(" ")
+		if err := opt.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore PartitionDefinition.Options[%d]", i)
+		}
+	}
+
+	if len(n.Sub) > 0 {
+		ctx.WritePlain(" (")
+		for i, spd := range n.Sub {
+			if i != 0 {
+				ctx.WritePlain(",")
 			}
-			if err := less.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore PartitionDefinition.LessThan[%d]", k)
+			if err := spd.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore PartitionDefinition.Sub[%d]", i)
 			}
 		}
 		ctx.WritePlain(")")
 	}
-	if n.Comment != "" {
-		ctx.WriteKeyWord(" COMMENT ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.Comment)
-	}
+
 	return nil
 }
 
-// PartitionOptions specifies the partition options.
-type PartitionOptions struct {
-	Tp          model.PartitionType
-	Expr        ExprNode
+// PartitionMethod describes how partitions or subpartitions are constructed.
+type PartitionMethod struct {
+	// Tp is the type of the partition function
+	Tp model.PartitionType
+	// Linear is a modifier to the HASH and KEY type for choosing a different
+	// algorithm
+	Linear bool
+	// Expr is an expression used as argument of HASH, RANGE, LIST and
+	// SYSTEM_TIME types
+	Expr ExprNode
+	// ColumnNames is a list of column names used as argument of KEY,
+	// RANGE COLUMNS and LIST COLUMNS types
 	ColumnNames []*ColumnName
-	Definitions []*PartitionDefinition
-	Num         uint64
+	// Unit is a time unit used as argument of SYSTEM_TIME type
+	Unit ValueExpr
+	// Limit is a row count used as argument of the SYSTEM_TIME type
+	Limit uint64
+
+	// Num is the number of (sub)partitions required by the method.
+	Num uint64
 }
 
-func (n *PartitionOptions) Restore(ctx *RestoreCtx) error {
-	ctx.WriteKeyWord("PARTITION BY ")
-	switch n.Tp {
-	case model.PartitionTypeRange:
-		ctx.WriteKeyWord("RANGE ")
-	case model.PartitionTypeHash:
-		ctx.WriteKeyWord("HASH ")
-	case model.PartitionTypeList:
-		return errors.New("TiDB Parser ignore the `PartitionTypeList` type now")
-	default:
-		return errors.Errorf("invalid model.PartitionType: %d", n.Tp)
+// Restore implements the Node interface
+func (n *PartitionMethod) Restore(ctx *RestoreCtx) error {
+	if n.Linear {
+		ctx.WriteKeyWord("LINEAR ")
 	}
+	ctx.WriteKeyWord(n.Tp.String())
 
-	if n.Expr != nil {
-		ctx.WritePlain("(")
-		if err := n.Expr.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore PartitionOptions Expr")
+	switch {
+	case n.Tp == model.PartitionTypeSystemTime:
+		if n.Expr != nil && n.Unit != nil {
+			ctx.WriteKeyWord(" INTERVAL ")
+			if err := n.Expr.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore PartitionMethod.Expr")
+			}
+
+			// Here the Unit string should not be quoted.
+			// TODO: This is a temporary workaround that should be changed once something like "Keyword Expression" is implemented.
+			var sb strings.Builder
+			if err := n.Unit.Restore(NewRestoreCtx(0, &sb)); err != nil {
+				return errors.Annotate(err, "An error occurred while restore PartitionMethod.Unit")
+			}
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(sb.String())
 		}
-		ctx.WritePlain(") ")
-	}
-	if len(n.ColumnNames) > 0 {
-		ctx.WriteKeyWord("COLUMNS")
-		ctx.WritePlain("(")
+
+	case n.Expr != nil:
+		ctx.WritePlain(" (")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore PartitionMethod.Expr")
+		}
+		ctx.WritePlain(")")
+
+	default:
+		if n.Tp == model.PartitionTypeRange || n.Tp == model.PartitionTypeList {
+			ctx.WriteKeyWord(" COLUMNS")
+		}
+		ctx.WritePlain(" (")
 		for i, col := range n.ColumnNames {
 			if i > 0 {
 				ctx.WritePlain(",")
 			}
 			if err := col.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while splicing PartitionOptions ColumnName: [%v]", i)
+				return errors.Annotatef(err, "An error occurred while splicing PartitionMethod.ColumnName[%d]", i)
 			}
 		}
-		ctx.WritePlain(") ")
+		ctx.WritePlain(")")
 	}
-	if n.Num > 0 {
-		ctx.WriteKeyWord("PARTITIONS ")
+
+	if n.Limit > 0 {
+		ctx.WriteKeyWord(" LIMIT ")
+		ctx.WritePlainf("%d", n.Limit)
+	}
+
+	return nil
+}
+
+// acceptInPlace is like Node.Accept but does not allow replacing the node itself.
+func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
+	if n.Expr != nil {
+		expr, ok := n.Expr.Accept(v)
+		if !ok {
+			return false
+		}
+		n.Expr = expr.(ExprNode)
+	}
+	for i, colName := range n.ColumnNames {
+		newColName, ok := colName.Accept(v)
+		if !ok {
+			return false
+		}
+		n.ColumnNames[i] = newColName.(*ColumnName)
+	}
+	if n.Unit != nil {
+		unit, ok := n.Unit.Accept(v)
+		if !ok {
+			return false
+		}
+		n.Unit = unit.(ValueExpr)
+	}
+	return true
+}
+
+// PartitionOptions specifies the partition options.
+type PartitionOptions struct {
+	node
+	PartitionMethod
+	Sub         *PartitionMethod
+	Definitions []*PartitionDefinition
+}
+
+// Validate checks if the partition is well-formed.
+func (n *PartitionOptions) Validate() error {
+	// if both a partition list and the partition numbers are specified, their values must match
+	if n.Num != 0 && len(n.Definitions) != 0 && n.Num != uint64(len(n.Definitions)) {
+		return ErrPartitionWrongNoPart
+	}
+	// now check the subpartition count
+	if len(n.Definitions) > 0 {
+		// ensure the subpartition count for every partitions are the same
+		// then normalize n.Num and n.Sub.Num so equality comparison works.
+		n.Num = uint64(len(n.Definitions))
+
+		subDefCount := len(n.Definitions[0].Sub)
+		for _, pd := range n.Definitions[1:] {
+			if len(pd.Sub) != subDefCount {
+				return ErrPartitionWrongNoSubpart
+			}
+		}
+		if n.Sub != nil {
+			if n.Sub.Num != 0 && subDefCount != 0 && n.Sub.Num != uint64(subDefCount) {
+				return ErrPartitionWrongNoSubpart
+			}
+			if subDefCount != 0 {
+				n.Sub.Num = uint64(subDefCount)
+			}
+		} else if subDefCount != 0 {
+			return ErrSubpartition
+		}
+	}
+
+	switch n.Tp {
+	case model.PartitionTypeHash, model.PartitionTypeKey:
+		if n.Num == 0 {
+			n.Num = 1
+		}
+	case model.PartitionTypeRange, model.PartitionTypeList:
+		if len(n.Definitions) == 0 {
+			return ErrPartitionsMustBeDefined.GenWithStackByArgs(n.Tp)
+		}
+	case model.PartitionTypeSystemTime:
+		if len(n.Definitions) < 2 {
+			return ErrSystemVersioningWrongPartitions
+		}
+	}
+
+	for _, pd := range n.Definitions {
+		// ensure the partition definition types match the methods,
+		// e.g. RANGE partitions only allows VALUES LESS THAN
+		if err := pd.Clause.Validate(n.Tp, len(n.ColumnNames)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (n *PartitionOptions) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("PARTITION BY ")
+	if err := n.PartitionMethod.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore PartitionOptions.PartitionMethod")
+	}
+
+	if n.Num > 0 && len(n.Definitions) == 0 {
+		ctx.WriteKeyWord(" PARTITIONS ")
 		ctx.WritePlainf("%d", n.Num)
 	}
 
+	if n.Sub != nil {
+		ctx.WriteKeyWord(" SUBPARTITION BY ")
+		if err := n.Sub.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore PartitionOptions.Sub")
+		}
+		if n.Sub.Num > 0 {
+			ctx.WriteKeyWord(" SUBPARTITIONS ")
+			ctx.WritePlainf("%d", n.Sub.Num)
+		}
+	}
+
 	if len(n.Definitions) > 0 {
-		ctx.WritePlain("(")
+		ctx.WritePlain(" (")
 		for i, def := range n.Definitions {
 			if i > 0 {
 				ctx.WritePlain(",")
 			}
 			if err := def.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while splicing PartitionOptions Definitions: [%v]", i)
+				return errors.Annotatef(err, "An error occurred while restore PartitionOptions.Definitions[%d]", i)
 			}
 		}
 		ctx.WritePlain(")")
 	}
 
 	return nil
+}
+
+func (n *PartitionOptions) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*PartitionOptions)
+	if !n.PartitionMethod.acceptInPlace(v) {
+		return n, false
+	}
+	if n.Sub != nil && !n.Sub.acceptInPlace(v) {
+		return n, false
+	}
+	for _, def := range n.Definitions {
+		if !def.acceptInPlace(v) {
+			return n, false
+		}
+	}
+	return v.Leave(n)
 }
 
 // RecoverTableStmt is a statement to recover dropped table.
