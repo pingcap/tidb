@@ -103,7 +103,11 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	e.resultHandler = &tableResultHandler{}
 	if e.feedback != nil && e.feedback.Hist != nil {
 		// EncodeInt don't need *statement.Context.
-		e.ranges = e.feedback.Hist.SplitRange(nil, e.ranges, false)
+		var ok bool
+		e.ranges, ok = e.feedback.Hist.SplitRange(nil, e.ranges, false)
+		if !ok {
+			e.feedback.Invalidate()
+		}
 	}
 	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)

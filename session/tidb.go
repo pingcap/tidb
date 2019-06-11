@@ -163,6 +163,9 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 		if !sessVars.InTxn() {
 			logutil.Logger(context.Background()).Info("rollbackTxn for ddl/autocommit error.")
 			se.RollbackTxn(ctx)
+		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
+			logutil.Logger(context.Background()).Info("rollbackTxn for deadlock error", zap.Uint64("txn", se.txn.StartTS()))
+			se.RollbackTxn(ctx)
 		}
 		return meetsErr
 	}

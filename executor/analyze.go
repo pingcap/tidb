@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -164,12 +165,8 @@ type analyzeTask struct {
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- analyzeResult, isCloseChanThread bool) {
+	var task *analyzeTask
 	defer func() {
-		e.wg.Done()
-		if isCloseChanThread {
-			e.wg.Wait()
-			close(resultCh)
-		}
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
@@ -178,11 +175,18 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- analyzeResult{
 				Err: errAnalyzeWorkerPanic,
+				job: task.job,
 			}
+		}
+		e.wg.Done()
+		if isCloseChanThread {
+			e.wg.Wait()
+			close(resultCh)
 		}
 	}()
 	for {
-		task, ok := <-taskCh
+		var ok bool
+		task, ok = <-taskCh
 		if !ok {
 			break
 		}
@@ -295,6 +299,11 @@ func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error
 }
 
 func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, error) {
+	failpoint.Inject("buildStatsFromResult", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, nil, errors.New("mock buildStatsFromResult error"))
+		}
+	})
 	hist := &statistics.Histogram{}
 	var cms *statistics.CMSketch
 	if needCMS {
@@ -335,7 +344,10 @@ func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool)
 		return nil, nil, err
 	}
 	defer func() {
-		err = closeAll(e.result, e.countNullRes)
+		err1 := closeAll(e.result, e.countNullRes)
+		if err == nil {
+			err = err1
+		}
 	}()
 	hist, cms, err = e.buildStatsFromResult(e.result, true)
 	if err != nil {
@@ -587,12 +599,12 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
 	defer func() {
-		e.wg.Done()
 		if *needRebuild == true {
 			for ok := true; ok; _, ok = <-e.sampLocs {
 				// Do nothing, just clear the channel.
 			}
 		}
+		e.wg.Done()
 	}()
 	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
 	for {
@@ -641,12 +653,55 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 	}
 }
 
-// buildSampTask returns tow variables, the first bool is whether the task meets region error
+// getNextSampleKey gets the next sample key after last failed request. It only retries the needed region.
+// Different from other requests, each request range must be the whole region because the region row count
+// is only for a whole region. So we need to first find the longest successive prefix ranges of previous request,
+// then the next sample key should be the last range that could align with the region bound.
+func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) (kv.Key, error) {
+	if len(e.sampTasks) == 0 {
+		e.scanTasks = e.scanTasks[:0]
+		return startKey, nil
+	}
+	sort.Slice(e.sampTasks, func(i, j int) bool {
+		return bytes.Compare(e.sampTasks[i].Location.StartKey, e.sampTasks[j].Location.StartKey) < 0
+	})
+	// The sample task should be consecutive with scan task.
+	if len(e.scanTasks) > 0 && bytes.Equal(e.scanTasks[0].StartKey, startKey) && !bytes.Equal(e.scanTasks[0].EndKey, e.sampTasks[0].Location.StartKey) {
+		e.scanTasks = e.scanTasks[:0]
+		e.sampTasks = e.sampTasks[:0]
+		return startKey, nil
+	}
+	prefixLen := 0
+	for ; prefixLen < len(e.sampTasks)-1; prefixLen++ {
+		if !bytes.Equal(e.sampTasks[prefixLen].Location.EndKey, e.sampTasks[prefixLen+1].Location.StartKey) {
+			break
+		}
+	}
+	// Find the last one that could align with region bound.
+	for ; prefixLen >= 0; prefixLen-- {
+		loc, err := e.cache.LocateKey(bo, e.sampTasks[prefixLen].Location.EndKey)
+		if err != nil {
+			return nil, err
+		}
+		if bytes.Compare(loc.StartKey, e.sampTasks[prefixLen].Location.EndKey) == 0 {
+			startKey = loc.StartKey
+			break
+		}
+	}
+	e.sampTasks = e.sampTasks[:prefixLen+1]
+	for i := len(e.scanTasks) - 1; i >= 0; i-- {
+		if bytes.Compare(startKey, e.scanTasks[i].EndKey) < 0 {
+			e.scanTasks = e.scanTasks[:i]
+		}
+	}
+	return startKey, nil
+}
+
+// buildSampTask returns two variables, the first bool is whether the task meets region error
 // and need to rebuild.
 func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
 	bo := tikv.NewBackoffer(context.Background(), 500)
-	e.rowCount = 0
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
 	sampTasksForRoutine := make([][]*AnalyzeFastTask, e.concurrency)
@@ -674,10 +729,17 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.physicalTableID)
-	// extract all regions contain the table
-	e.scanTasks = e.scanTasks[:0]
-	e.sampTasks = e.sampTasks[:0]
-	targetKey := startKey
+	targetKey, err := e.getNextSampleKey(bo, startKey)
+	if err != nil {
+		return false, err
+	}
+	e.rowCount = 0
+	for _, task := range e.sampTasks {
+		cnt := task.EndOffset - task.BeginOffset
+		task.BeginOffset = e.rowCount
+		task.EndOffset = e.rowCount + cnt
+		e.rowCount += cnt
+	}
 	for {
 		// Search for the region which contains the targetKey.
 		loc, err := e.cache.LocateKey(bo, targetKey)
@@ -691,7 +753,7 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 		targetKey = loc.EndKey
 
 		// If the KV pairs in the region all belonging to the table, add it to the sample task.
-		if bytes.Compare(startKey, loc.StartKey) <= 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
+		if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
 			e.sampLocs <- loc
 			continue
 		}
@@ -893,7 +955,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, randKey))
 		}
 
-		var kvMap map[string][]byte
+		kvMap := make(map[string][]byte, len(keys))
 		for _, key := range keys {
 			var iter kv.Iterator
 			iter, *err = snapshot.Iter(key, endKey)
@@ -1075,13 +1137,13 @@ func (e *AnalyzeTestFastExec) TestFastSample() error {
 
 type analyzeIndexIncrementalExec struct {
 	AnalyzeIndexExec
-	index *statistics.Index
+	oldHist *statistics.Histogram
+	oldCMS  *statistics.CMSketch
 }
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
-	idx := idxExec.index
-	highBound := idx.Histogram.GetUpper(idx.Len() - 1)
-	values, err := codec.Decode(highBound.GetBytes(), len(idxExec.idxInfo.Columns))
+	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
+	values, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
@@ -1090,16 +1152,12 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
-	oldHist, oldCMS, err := idx.RemoveUpperBound(idxExec.ctx.GetSessionVars().StmtCtx, values)
+	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, idxExec.oldHist, hist, int(idxExec.maxNumBuckets))
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
-	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, oldHist, hist, int(idxExec.maxNumBuckets))
-	if err != nil {
-		return analyzeResult{Err: err, job: idxExec.job}
-	}
-	if oldCMS != nil && cms != nil {
-		err = cms.MergeCMSketch(oldCMS)
+	if idxExec.oldCMS != nil && cms != nil {
+		err = cms.MergeCMSketch4IncrementalAnalyze(idxExec.oldCMS)
 		if err != nil {
 			return analyzeResult{Err: err, job: idxExec.job}
 		}
@@ -1120,26 +1178,24 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 
 type analyzePKIncrementalExec struct {
 	AnalyzeColumnsExec
-	pkStats *statistics.Column
+	oldHist *statistics.Histogram
 }
 
 func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
-	pkStats := colExec.pkStats
-	high := pkStats.GetUpper(pkStats.Len() - 1)
 	var maxVal types.Datum
 	if mysql.HasUnsignedFlag(colExec.pkInfo.Flag) {
 		maxVal = types.NewUintDatum(math.MaxUint64)
 	} else {
 		maxVal = types.NewIntDatum(math.MaxInt64)
 	}
-	ran := ranger.Range{LowVal: []types.Datum{*high}, LowExclude: true, HighVal: []types.Datum{maxVal}}
+	startPos := *colExec.oldHist.GetUpper(colExec.oldHist.Len() - 1)
+	ran := ranger.Range{LowVal: []types.Datum{startPos}, LowExclude: true, HighVal: []types.Datum{maxVal}}
 	hists, _, err := colExec.buildStats([]*ranger.Range{&ran})
 	if err != nil {
 		return analyzeResult{Err: err, job: colExec.job}
 	}
 	hist := hists[0]
-	oldHist := pkStats.Histogram.Copy()
-	hist, err = statistics.MergeHistograms(colExec.ctx.GetSessionVars().StmtCtx, oldHist, hist, int(colExec.maxNumBuckets))
+	hist, err = statistics.MergeHistograms(colExec.ctx.GetSessionVars().StmtCtx, colExec.oldHist, hist, int(colExec.maxNumBuckets))
 	if err != nil {
 		return analyzeResult{Err: err, job: colExec.job}
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/util/logutil"
@@ -171,6 +172,13 @@ func (s *schemaVersionSyncer) storeSession(session *concurrency.Session) {
 
 // Done implements SchemaSyncer.Done interface.
 func (s *schemaVersionSyncer) Done() <-chan struct{} {
+	failpoint.Inject("ErrorMockSessionDone", func(val failpoint.Value) {
+		if val.(bool) {
+			err := s.loadSession().Close()
+			logutil.Logger(context.Background()).Info("close session failed", zap.Error(err))
+		}
+	})
+
 	return s.loadSession().Done()
 }
 

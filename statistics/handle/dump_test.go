@@ -40,7 +40,7 @@ func (s *testStatsSuite) TestConversion(c *C) {
 
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta())
+	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
 	c.Assert(err, IsNil)
 	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
 	c.Assert(err, IsNil)
@@ -78,7 +78,7 @@ PARTITION BY RANGE ( a ) (
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
-	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo)
+	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil)
 	c.Assert(err, IsNil)
 	pi := tableInfo.GetPartitionInfo()
 	originTables := make([]*statistics.Table, 0, len(pi.Definitions))
@@ -113,7 +113,7 @@ func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
 	tk.MustExec("alter table t drop column a")
 	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	_, err = h.DumpStatsToJSON("test", table.Meta())
+	_, err = h.DumpStatsToJSON("test", table.Meta(), nil)
 	c.Assert(err, IsNil)
 }
 
@@ -150,7 +150,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	c.Assert(cmsFromStore, NotNil)
 	c.Check(cms.Equal(cmsFromStore), IsTrue)
 
-	jsonTable, err := h.DumpStatsToJSON("test", tableInfo)
+	jsonTable, err := h.DumpStatsToJSON("test", tableInfo, nil)
 	c.Check(err, IsNil)
 	err = h.LoadStatsFromJSON(is, jsonTable)
 	c.Check(err, IsNil)

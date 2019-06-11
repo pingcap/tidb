@@ -940,6 +940,19 @@ func (p *MySQLPrivilege) getDefaultRoles(user, host string) []*auth.RoleIdentity
 	return ret
 }
 
+func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
+	key := user + "@" + host
+	edgeTable, ok := p.RoleGraph[key]
+	ret := make([]*auth.RoleIdentity, 0, len(edgeTable.roleList))
+	if !ok {
+		return nil
+	}
+	for _, r := range edgeTable.roleList {
+		ret = append(ret, r)
+	}
+	return ret
+}
+
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
 	priv atomic.Value

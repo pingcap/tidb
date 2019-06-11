@@ -345,6 +345,10 @@ type DataSource struct {
 	isPartition     bool
 	physicalTableID int64
 	partitionNames  []model.CIStr
+
+	// handleCol represents the handle column for the datasource, either the
+	// int primary key column or extra handle column.
+	handleCol *expression.Column
 }
 
 // accessPath tells how we access one index or just access table.
@@ -376,19 +380,21 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	path.tableFilters = ds.pushedDownConds
 	var pkCol *expression.Column
 	columnLen := len(ds.schema.Columns)
-	if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
-		pkCol = ds.schema.Columns[columnLen-1]
-	} else if ds.tableInfo.PKIsHandle {
+	isUnsigned := false
+	if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
+	} else if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
+		pkCol = ds.schema.Columns[columnLen-1]
 	}
 	if pkCol == nil {
-		path.ranges = ranger.FullIntRange(false)
+		path.ranges = ranger.FullIntRange(isUnsigned)
 		return false, nil
 	}
 
-	path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
+	path.ranges = ranger.FullIntRange(isUnsigned)
 	if len(ds.pushedDownConds) == 0 {
 		return false, nil
 	}
@@ -449,6 +455,26 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	return noIntervalRange, err
 }
 
+func (ds *DataSource) getHandleCol() *expression.Column {
+	if ds.handleCol != nil {
+		return ds.handleCol
+	}
+
+	if !ds.tableInfo.PKIsHandle {
+		ds.handleCol = ds.newExtraHandleSchemaCol()
+		return ds.handleCol
+	}
+
+	for i, col := range ds.Columns {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			ds.handleCol = ds.schema.Columns[i]
+			break
+		}
+	}
+
+	return ds.handleCol
+}
+
 // deriveIndexPathStats will fulfill the information that the accessPath need.
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
@@ -457,6 +483,13 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
+		handleCol := ds.getHandleCol()
+		if handleCol != nil {
+			path.idxCols = append(path.idxCols, handleCol)
+			path.idxColLens = append(path.idxColLens, types.UnspecifiedLength)
+		}
+	}
 	eqOrInCount := 0
 	if len(path.idxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
@@ -684,15 +717,15 @@ type FrameBound struct {
 type LogicalWindow struct {
 	logicalSchemaProducer
 
-	WindowFuncDesc *aggregation.WindowFuncDesc
-	PartitionBy    []property.Item
-	OrderBy        []property.Item
-	Frame          *WindowFrame
+	WindowFuncDescs []*aggregation.WindowFuncDesc
+	PartitionBy     []property.Item
+	OrderBy         []property.Item
+	Frame           *WindowFrame
 }
 
-// GetWindowResultColumn returns the column storing the result of the window function.
-func (p *LogicalWindow) GetWindowResultColumn() *expression.Column {
-	return p.schema.Columns[p.schema.Len()-1]
+// GetWindowResultColumns returns the columns storing the result of the window function.
+func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
+	return p.schema.Columns[p.schema.Len()-len(p.WindowFuncDescs):]
 }
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the specified schema.

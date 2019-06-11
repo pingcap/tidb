@@ -82,6 +82,7 @@ type Config struct {
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
+	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic_txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
@@ -186,6 +187,7 @@ type Performance struct {
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -291,6 +293,18 @@ type Plugin struct {
 	Load string `toml:"load" json:"load"`
 }
 
+// PessimisticTxn is the config for pessimistic transaction.
+type PessimisticTxn struct {
+	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
+	Enable bool `toml:"enable" json:"enable"`
+	// Starts a pessimistic transaction by default when Enable is true.
+	Default bool `toml:"default" json:"default"`
+	// The max count of retry for a single statement in a pessimistic transaction.
+	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+	// The pessimistic lock ttl.
+	TTL string `toml:"ttl" json:"ttl"`
+}
+
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -339,6 +353,7 @@ var defaultConf = Config{
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
+		BindInfoLease:       "3s",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -373,6 +388,12 @@ var defaultConf = Config{
 	Binlog: Binlog{
 		WriteTimeout: "15s",
 		Strategy:     "range",
+	},
+	PessimisticTxn: PessimisticTxn{
+		Enable:        false,
+		Default:       false,
+		MaxRetryCount: 256,
+		TTL:           "30s",
 	},
 }
 
@@ -534,6 +555,17 @@ func (c *Config) Valid() error {
 	}
 	if c.TiKVClient.MaxTxnTimeUse == 0 {
 		return fmt.Errorf("max-txn-time-use should be greater than 0")
+	}
+	if c.PessimisticTxn.TTL != "" {
+		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
+		if err != nil {
+			return err
+		}
+		minDur := time.Second * 15
+		maxDur := time.Second * 60
+		if dur < minDur || dur > maxDur {
+			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]", dur, minDur, maxDur)
+		}
 	}
 	return nil
 }

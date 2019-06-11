@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -54,23 +55,24 @@ import (
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store           kv.Storage
-	infoHandle      *infoschema.Handle
-	privHandle      *privileges.Handle
-	bindHandle      *bindinfo.BindHandle
-	statsHandle     unsafe.Pointer
-	statsLease      time.Duration
-	statsUpdating   sync2.AtomicInt32
-	ddl             ddl.DDL
-	info            *InfoSyncer
-	m               sync.Mutex
-	SchemaValidator SchemaValidator
-	sysSessionPool  *sessionPool
-	exit            chan struct{}
-	etcdClient      *clientv3.Client
-	wg              sync.WaitGroup
-	gvc             GlobalVariableCache
-	slowQuery       *topNSlowQueries
+	store                kv.Storage
+	infoHandle           *infoschema.Handle
+	privHandle           *privileges.Handle
+	bindHandle           *bindinfo.BindHandle
+	statsHandle          unsafe.Pointer
+	statsLease           time.Duration
+	statsUpdating        sync2.AtomicInt32
+	ddl                  ddl.DDL
+	info                 *InfoSyncer
+	m                    sync.Mutex
+	SchemaValidator      SchemaValidator
+	sysSessionPool       *sessionPool
+	exit                 chan struct{}
+	etcdClient           *clientv3.Client
+	wg                   sync.WaitGroup
+	gvc                  GlobalVariableCache
+	slowQuery            *topNSlowQueries
+	expensiveQueryHandle *expensivequery.Handle
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -475,8 +477,8 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 			// The schema maybe changed, must reload schema then the schema validator can restart.
 			exitLoop := do.mustReload()
+			// domain is cosed.
 			if exitLoop {
-				// domain is closed.
 				logutil.Logger(context.Background()).Error("domain is closed, exit loadSchemaInLoop")
 				return
 			}
@@ -500,10 +502,8 @@ func (do *Domain) mustRestartSyncer() error {
 			return nil
 		}
 		// If the domain has stopped, we return an error immediately.
-		select {
-		case <-do.exit:
+		if do.isClose() {
 			return err
-		default:
 		}
 		time.Sleep(time.Second)
 		logutil.Logger(context.Background()).Info("restart the schema syncer failed", zap.Error(err))
@@ -520,21 +520,28 @@ func (do *Domain) mustReload() (exitLoop bool) {
 			return false
 		}
 
-		logutil.Logger(context.Background()).Info("reload the schema failed", zap.Error(err))
 		// If the domain is closed, we returns immediately.
-		select {
-		case <-do.exit:
-			logutil.Logger(context.Background()).Info("domain is closed")
+		logutil.Logger(context.Background()).Info("reload the schema failed", zap.Error(err))
+		if do.isClose() {
 			return true
-		default:
 		}
-
 		time.Sleep(200 * time.Millisecond)
 	}
 }
 
+func (do *Domain) isClose() bool {
+	select {
+	case <-do.exit:
+		logutil.Logger(context.Background()).Info("domain is closed")
+		return true
+	default:
+	}
+	return false
+}
+
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
+	startTime := time.Now()
 	if do.ddl != nil {
 		terror.Log(do.ddl.Stop())
 	}
@@ -548,7 +555,7 @@ func (do *Domain) Close() {
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
 	do.wg.Wait()
-	logutil.Logger(context.Background()).Info("domain closed")
+	logutil.Logger(context.Background()).Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
 type ddlCallback struct {
@@ -625,7 +632,16 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
 	ctx := context.Background()
 	callback := &ddlCallback{do: do}
+	d := do.ddl
 	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
+	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
+		if val.(bool) {
+			if err := do.ddl.Stop(); err != nil {
+				logutil.Logger(context.Background()).Error("stop DDL failed", zap.Error(err))
+			}
+			do.ddl = d
+		}
+	})
 
 	err := do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
@@ -793,7 +809,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.bindHandle = bindinfo.NewBindHandle(ctx)
 	err := do.bindHandle.Update(true)
-	if err != nil {
+	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
 
@@ -803,7 +819,6 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
 }
 
 func (do *Domain) loadBindInfoLoop() {
-	duration := 3 * time.Second
 	do.wg.Add(1)
 	go func() {
 		defer do.wg.Done()
@@ -812,7 +827,7 @@ func (do *Domain) loadBindInfoLoop() {
 			select {
 			case <-do.exit:
 				return
-			case <-time.After(duration):
+			case <-time.After(bindinfo.Lease):
 			}
 			err := do.bindHandle.Update(false)
 			if err != nil {
@@ -823,7 +838,6 @@ func (do *Domain) loadBindInfoLoop() {
 }
 
 func (do *Domain) handleInvalidBindTaskLoop() {
-	handleInvalidTaskDuration := 3 * time.Second
 	do.wg.Add(1)
 	go func() {
 		defer do.wg.Done()
@@ -832,7 +846,7 @@ func (do *Domain) handleInvalidBindTaskLoop() {
 			select {
 			case <-do.exit:
 				return
-			case <-time.After(handleInvalidTaskDuration):
+			case <-time.After(bindinfo.Lease):
 			}
 			do.bindHandle.DropInvalidBindRecord()
 		}
@@ -1006,6 +1020,16 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	}
 }
 
+// ExpensiveQueryHandle returns the expensive query handle.
+func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
+	return do.expensiveQueryHandle
+}
+
+// InitExpensiveQueryHandle init the expensive query handler.
+func (do *Domain) InitExpensiveQueryHandle() {
+	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+}
+
 const privilegeKey = "/tidb/privilege"
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
@@ -1051,7 +1075,8 @@ var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
 	ErrInfoSchemaExpired = terror.ClassDomain.New(codeInfoSchemaExpired, "Information schema is out of date.")
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged, "Information schema is changed.")
+	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged,
+		"Information schema is changed. "+kv.TxnRetryableMark)
 )
 
 func init() {

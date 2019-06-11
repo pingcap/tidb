@@ -135,6 +135,11 @@ func (m *Meta) tableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
 }
 
+// DDLJobHistoryKey is only used for testing.
+func DDLJobHistoryKey(m *Meta, jobID int64) []byte {
+	return m.txn.EncodeHashDataKey(mDDLJobHistoryKey, m.jobIDKey(jobID))
+}
+
 // GenAutoTableIDKeyValue generates meta key by dbID, tableID and corresponding value by autoID.
 func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
 	dbKey := m.dbKey(dbID)
@@ -637,10 +642,23 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	jobs := make([]*model.Job, 0, len(pairs))
-	for _, pair := range pairs {
+	return decodeAndSortJob(pairs)
+}
+
+// GetLastNHistoryDDLJobs gets latest N history ddl jobs.
+func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
+	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey, num)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return decodeAndSortJob(pairs)
+}
+
+func decodeAndSortJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
+	jobs := make([]*model.Job, 0, len(jobPairs))
+	for _, pair := range jobPairs {
 		job := &model.Job{}
-		err = job.Decode(pair.Value)
+		err := job.Decode(pair.Value)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -733,9 +751,9 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physic
 		err = errors.Trace(err)
 		return
 	}
-	// endHandle or physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
+	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
 	// update them to table's in this case.
-	if endHandle == 0 || physicalTableID == 0 {
+	if physicalTableID == 0 {
 		if job.ReorgMeta != nil {
 			endHandle = job.ReorgMeta.EndHandle
 		} else {

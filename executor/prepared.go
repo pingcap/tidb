@@ -201,13 +201,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 type ExecuteExec struct {
 	baseExecutor
 
-	is        infoschema.InfoSchema
-	name      string
-	usingVars []expression.Expression
-	id        uint32
-	stmtExec  Executor
-	stmt      ast.StmtNode
-	plan      plannercore.Plan
+	is            infoschema.InfoSchema
+	name          string
+	usingVars     []expression.Expression
+	id            uint32
+	stmtExec      Executor
+	stmt          ast.StmtNode
+	plan          plannercore.Plan
+	lowerPriority bool
 }
 
 // Next implements the Executor Next interface.
@@ -217,7 +218,7 @@ func (e *ExecuteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
-func (e *ExecuteExec) Build() error {
+func (e *ExecuteExec) Build(b *executorBuilder) error {
 	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
 	if err != nil {
 		return err
@@ -228,7 +229,6 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return err
 	}
-	b := newExecutorBuilder(e.ctx, e.is)
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))
@@ -236,7 +236,7 @@ func (e *ExecuteExec) Build() error {
 	}
 	e.stmtExec = stmtExec
 	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
-	logExpensiveQuery(e.stmt, e.plan)
+	e.lowerPriority = needLowerPriority(e.plan)
 	return nil
 }
 

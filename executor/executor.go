@@ -637,6 +637,7 @@ type SelectLockExec struct {
 	baseExecutor
 
 	Lock ast.SelectLockType
+	keys []kv.Key
 }
 
 // Open implements the Executor Open interface.
@@ -656,6 +657,11 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *SelectLockExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("selectLock.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	req.GrowAndReset(e.maxChunkSize)
 	err := e.children[0].Next(ctx, req)
 	if err != nil {
@@ -665,25 +671,24 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
+	if req.NumRows() != 0 {
+		iter := chunk.NewIterator4Chunk(req.Chunk)
+		for id, cols := range e.Schema().TblID2Handle {
+			for _, col := range cols {
+				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
+				}
+			}
+		}
+		return nil
+	}
+	// Lock keys only once when finished fetching all results.
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	keys := make([]kv.Key, 0, req.NumRows())
-	iter := chunk.NewIterator4Chunk(req.Chunk)
-	for id, cols := range e.Schema().TblID2Handle {
-		for _, col := range cols {
-			keys = keys[:0]
-			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-				keys = append(keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
-			}
-			err = txn.LockKeys(keys...)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	forUpdateTS := e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	return txn.LockKeys(ctx, forUpdateTS, e.keys...)
 }
 
 // LimitExec represents limit executor
@@ -1371,6 +1376,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
+	case *ast.ExplainStmt:
+		sc.InExplainStmt = true
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
@@ -1379,6 +1386,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
+	case *ast.SplitRegionStmt:
+		sc.IgnoreTruncate = false
+		sc.IgnoreZeroInDate = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true

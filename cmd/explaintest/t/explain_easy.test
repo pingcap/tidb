@@ -137,3 +137,11 @@ insert into t values (1, 1);
 explain update t set j = -j where i = 1 and j = 1;
 rollback;
 drop table if exists t;
+
+# https://github.com/pingcap/tidb/issues/10344
+create table t(a int);
+begin;
+insert into t values (1);
+explain select * from t left outer join t t1 on t.a = t1.a where t.a not between 1 and 2;
+rollback;
+drop table if exists t;

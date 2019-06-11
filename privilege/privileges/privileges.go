@@ -160,12 +160,21 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 }
 
 // DBIsVisible implements the Manager interface.
-func (p *UserPrivileges) DBIsVisible(db string) bool {
+func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string) bool {
 	if SkipWithGrant {
 		return true
 	}
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.DBIsVisible(p.user, p.host, db)
+	if mysqlPriv.DBIsVisible(p.user, p.host, db) {
+		return true
+	}
+	allRoles := mysqlPriv.FindAllRole(activeRoles)
+	for _, role := range allRoles {
+		if mysqlPriv.DBIsVisible(role.Username, role.Hostname, db) {
+			return true
+		}
+	}
+	return false
 }
 
 // UserPrivilegesTable implements the Manager interface.
@@ -176,6 +185,9 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
 func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
+	if SkipWithGrant {
+		return nil, errNonexistingGrant.GenWithStackByArgs("root", "%")
+	}
 	mysqlPrivilege := p.Handle.Get()
 	u := user.Username
 	h := user.Hostname
@@ -193,6 +205,9 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 
 // ActiveRoles implements privilege.Manager ActiveRoles interface.
 func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
+	if SkipWithGrant {
+		return true, ""
+	}
 	mysqlPrivilege := p.Handle.Get()
 	u := p.user
 	h := p.host
@@ -209,6 +224,9 @@ func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.Ro
 
 // FindEdge implements privilege.Manager FindRelationship interface.
 func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool {
+	if SkipWithGrant {
+		return false
+	}
 	mysqlPrivilege := p.Handle.Get()
 	ok := mysqlPrivilege.FindRole(user.Username, user.Hostname, role)
 	if !ok {
@@ -220,7 +238,20 @@ func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentit
 
 // GetDefaultRoles returns all default roles for certain user.
 func (p *UserPrivileges) GetDefaultRoles(user, host string) []*auth.RoleIdentity {
+	if SkipWithGrant {
+		return make([]*auth.RoleIdentity, 0, 10)
+	}
 	mysqlPrivilege := p.Handle.Get()
 	ret := mysqlPrivilege.getDefaultRoles(user, host)
 	return ret
+}
+
+// GetAllRoles return all roles of user.
+func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
+	if SkipWithGrant {
+		return make([]*auth.RoleIdentity, 0, 10)
+	}
+
+	mysqlPrivilege := p.Handle.Get()
+	return mysqlPrivilege.getAllRoles(user, host)
 }
