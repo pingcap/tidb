@@ -1186,7 +1186,7 @@ func (e *ShowExec) fetchShowTableRegions() error {
 
 	var indexInfo *model.IndexInfo
 	if len(e.IndexName.L) != 0 {
-		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
+		indexInfo = tb.Meta().FindIndexByName(e.IndexName.L)
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
