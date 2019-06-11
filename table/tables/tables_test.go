@@ -95,7 +95,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := tb.AllocAutoID(nil)
+	autoid, err := tb.AllocAutoIncrementValue(nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
@@ -247,7 +247,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(handle, Greater, int64(0))
 
-	autoid, err := tb.AllocAutoID(nil)
+	autoid, err := tb.AllocAutoIncrementValue(nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 

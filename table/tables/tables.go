@@ -914,8 +914,8 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	return colVal, nil
 }
 
-// AllocAutoID implements table.Table AllocAutoID interface.
-func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
+func (t *tableCommon) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
 	return t.Allocator(ctx).Alloc(t.tableID)
 }
 

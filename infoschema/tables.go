@@ -1962,8 +1962,8 @@ func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData
 	return table.ErrUnsupportedOp
 }
 
-// AllocAutoID implements table.Table AllocAutoID interface.
-func (it *infoschemaTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
+func (it *infoschemaTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
@@ -2084,8 +2084,8 @@ func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, n
 	return table.ErrUnsupportedOp
 }
 
-// AllocAutoID implements table.Table AllocAutoID interface.
-func (vt *VirtualTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
+func (vt *VirtualTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
