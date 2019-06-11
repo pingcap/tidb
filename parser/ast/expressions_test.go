@@ -330,7 +330,7 @@ func (tc *testExpressionsSuite) TestMaxValueExprRestore(c *C) {
 		{"maxvalue", "MAXVALUE"},
 	}
 	extractNodeFunc := func(node Node) Node {
-		return node.(*AlterTableStmt).Specs[0].PartDefinitions[0].LessThan[0]
+		return node.(*AlterTableStmt).Specs[0].PartDefinitions[0].Clause.(*PartitionDefinitionClauseLessThan).Exprs[0]
 	}
 	RunNodeRestoreTest(c, testCases, "alter table posts add partition ( partition p1 values less than %s)", extractNodeFunc)
 }
