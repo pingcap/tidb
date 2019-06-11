@@ -76,11 +76,10 @@ TopN_7	1.00	root	test.t2.c2:asc, offset:0, count:1
     └─TableScan_13	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	count	task	operator info
-IndexLookUp_12	1.11	root	
-├─Selection_10	3.33	cop	gt(test.t1.c1, 1)
-│ └─IndexScan_8	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
-└─Selection_11	1.11	cop	lt(test.t1.c3, 1)
-  └─TableScan_9	3.33	cop	table:t1, keep order:false, stats:pseudo
+IndexLookUp_11	1.11	root	
+├─IndexScan_8	33.33	cop	table:t1, index:c2, range:(1 1,1 +inf], keep order:false, stats:pseudo
+└─Selection_10	1.11	cop	lt(test.t1.c3, 1)
+  └─TableScan_9	33.33	cop	table:t1, keep order:false, stats:pseudo
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	count	task	operator info
 TableReader_7	0.33	root	data:Selection_6
@@ -329,13 +328,13 @@ Projection_11	5.00	root	9_aux_0
   ├─TableReader_15	5.00	root	data:TableScan_14
   │ └─TableScan_14	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─IndexJoin_48	2.40	root	inner join, inner:TableReader_47, outer key:test.s.a, inner key:test.t1.a
-      ├─IndexReader_40	2.40	root	index:Selection_39
-      │ └─Selection_39	2.40	cop	eq(3, test.t.a)
-      │   └─IndexScan_38	3.00	cop	table:s, index:b, range:[3,3], keep order:false
-      └─TableReader_47	0.80	root	data:Selection_46
-        └─Selection_46	0.80	cop	eq(3, test.t.a)
-          └─TableScan_45	1.00	cop	table:t1, range: decided by [test.s.a], keep order:false
+    └─IndexJoin_50	2.40	root	inner join, inner:TableReader_49, outer key:test.s.a, inner key:test.t1.a
+      ├─IndexReader_41	2.40	root	index:Selection_40
+      │ └─Selection_40	2.40	cop	eq(3, test.t.a)
+      │   └─IndexScan_39	3.00	cop	table:s, index:b, range:[3,3], keep order:false
+      └─TableReader_49	0.80	root	data:Selection_48
+        └─Selection_48	0.80	cop	eq(3, test.t.a)
+          └─TableScan_47	1.00	cop	table:t1, range: decided by [test.s.a], keep order:false
 explain select t.c in (select count(*) from t s left join t t1 on s.a = t1.a where 3 = t.a and s.b = 3) from t;
 id	count	task	operator info
 Projection_10	5.00	root	9_aux_0
@@ -343,13 +342,13 @@ Projection_10	5.00	root	9_aux_0
   ├─TableReader_14	5.00	root	data:TableScan_13
   │ └─TableScan_13	5.00	cop	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_19	1.00	root	funcs:count(1)
-    └─IndexJoin_42	2.40	root	left outer join, inner:TableReader_41, outer key:test.s.a, inner key:test.t1.a
-      ├─IndexReader_34	2.40	root	index:Selection_33
-      │ └─Selection_33	2.40	cop	eq(3, test.t.a)
-      │   └─IndexScan_32	3.00	cop	table:s, index:b, range:[3,3], keep order:false
-      └─TableReader_41	0.80	root	data:Selection_40
-        └─Selection_40	0.80	cop	eq(3, test.t.a)
-          └─TableScan_39	1.00	cop	table:t1, range: decided by [test.s.a], keep order:false
+    └─IndexJoin_44	2.40	root	left outer join, inner:TableReader_43, outer key:test.s.a, inner key:test.t1.a
+      ├─IndexReader_35	2.40	root	index:Selection_34
+      │ └─Selection_34	2.40	cop	eq(3, test.t.a)
+      │   └─IndexScan_33	3.00	cop	table:s, index:b, range:[3,3], keep order:false
+      └─TableReader_43	0.80	root	data:Selection_42
+        └─Selection_42	0.80	cop	eq(3, test.t.a)
+          └─TableScan_41	1.00	cop	table:t1, range: decided by [test.s.a], keep order:false
 explain select t.c in (select count(*) from t s right join t t1 on s.a = t1.a where 3 = t.a and t1.b = 3) from t;
 id	count	task	operator info
 Projection_10	5.00	root	9_aux_0

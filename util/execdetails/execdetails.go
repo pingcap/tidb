@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // CommitDetailCtxKey presents CommitDetail info key in context.
@@ -126,6 +127,65 @@ func (d ExecDetails) String() string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+// ToZapFields wraps the ExecDetails as zap.Fields.
+func (d ExecDetails) ToZapFields() (fields []zap.Field) {
+	fields = make([]zap.Field, 0, 16)
+	if d.ProcessTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	}
+	if d.WaitTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	}
+	if d.BackoffTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(BackoffTimeStr), strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64)+"s"))
+	}
+	if d.RequestCount > 0 {
+		fields = append(fields, zap.String(strings.ToLower(RequestCountStr), strconv.FormatInt(int64(d.RequestCount), 10)))
+	}
+	if d.TotalKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.TotalKeys, 10)))
+	}
+	if d.ProcessedKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ProcessedKeys, 10)))
+	}
+	commitDetails := d.CommitDetail
+	if commitDetails != nil {
+		if commitDetails.PrewriteTime > 0 {
+			fields = append(fields, zap.String("prewrite_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.PrewriteTime.Seconds(), 'f', -1, 64)+"s")))
+		}
+		if commitDetails.CommitTime > 0 {
+			fields = append(fields, zap.String("commit_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.CommitTime.Seconds(), 'f', -1, 64)+"s")))
+		}
+		if commitDetails.GetCommitTsTime > 0 {
+			fields = append(fields, zap.String("get_commit_ts_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64)+"s")))
+		}
+		if commitDetails.TotalBackoffTime > 0 {
+			fields = append(fields, zap.String("total_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.TotalBackoffTime.Seconds(), 'f', -1, 64)+"s")))
+		}
+		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
+		if resolveLockTime > 0 {
+			fields = append(fields, zap.String("resolve_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64)+"s")))
+		}
+		if commitDetails.LocalLatchTime > 0 {
+			fields = append(fields, zap.String("local_latch_wait_time", fmt.Sprintf("%v", strconv.FormatFloat(commitDetails.LocalLatchTime.Seconds(), 'f', -1, 64)+"s")))
+		}
+		if commitDetails.WriteKeys > 0 {
+			fields = append(fields, zap.Int("write_keys", commitDetails.WriteKeys))
+		}
+		if commitDetails.WriteSize > 0 {
+			fields = append(fields, zap.Int("write_size", commitDetails.WriteSize))
+		}
+		prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum)
+		if prewriteRegionNum > 0 {
+			fields = append(fields, zap.Int32("prewrite_region", prewriteRegionNum))
+		}
+		if commitDetails.TxnRetry > 0 {
+			fields = append(fields, zap.Int("txn_retry", commitDetails.TxnRetry))
+		}
+	}
+	return fields
 }
 
 // CopRuntimeStats collects cop tasks' execution info.
@@ -257,8 +317,5 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 }
 
 func (e *RuntimeStats) String() string {
-	if e == nil {
-		return ""
-	}
 	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 }
