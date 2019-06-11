@@ -1688,6 +1688,23 @@ func (i inCastContext) String() string {
 // @see BuildCastFunction4Union
 const inUnionCastContext inCastContext = 0
 
+// hasSpecialCast checks if this expr has its own special cast function.
+// for example(#9713): when doing arithmetic using results of function DayName,
+// "Monday" should be regarded as 0, "Tuesday" should be regarded as 1 and so on.
+func hasSpecialCast(ctx sessionctx.Context, expr Expression, tp *types.FieldType) bool {
+	switch f := expr.(type) {
+	case *ScalarFunction:
+		switch f.FuncName.L {
+		case ast.DayName:
+			switch tp.EvalType() {
+			case types.ETInt, types.ETReal:
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
 func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
@@ -1700,6 +1717,10 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	if hasSpecialCast(ctx, expr, tp) {
+		return expr
+	}
+
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:

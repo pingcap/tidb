@@ -54,6 +54,15 @@ func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
+
+	if e.autoNewTxn() {
+		// Commit the old transaction, like DDL.
+		if err := e.ctx.NewTxn(); err != nil {
+			return err
+		}
+		defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()
+	}
+
 	switch x := e.Statement.(type) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
@@ -66,7 +75,7 @@ func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	case *ast.RollbackStmt:
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
-		err = e.executeCreateUser(x)
+		err = e.executeCreateUser(ctx, x)
 	case *ast.AlterUserStmt:
 		err = e.executeAlterUser(x)
 	case *ast.DropUserStmt:
@@ -141,7 +150,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
+func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
 	users := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
 		exists, err1 := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
@@ -164,6 +173,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	if len(users) == 0 {
 		return nil
 	}
+
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
 	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
@@ -369,4 +379,12 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 		return errors.Trace(err)
 	}
 	return errors.Trace(h.Update(GetInfoSchema(e.ctx)))
+}
+
+func (e *SimpleExec) autoNewTxn() bool {
+	switch e.Statement.(type) {
+	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt:
+		return true
+	}
+	return false
 }

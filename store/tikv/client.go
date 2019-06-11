@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"io"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -53,11 +54,11 @@ var GrpcKeepAliveTimeout = time.Duration(3) * time.Second
 
 // MaxSendMsgSize set max gRPC request message size sent to server. If any request message size is larger than
 // current value, an error will be reported from gRPC.
-var MaxSendMsgSize = 1<<31 - 1
+var MaxSendMsgSize = 10 * 1024 * 1024
 
-// MaxCallMsgSize set max gRPC receive message size received from server. If any message size is larger than
+// MaxRecvMsgSize set max gRPC receive message size received from server. If any message size is larger than
 // current value, an error will be reported from gRPC.
-var MaxCallMsgSize = 1<<31 - 1
+var MaxRecvMsgSize = math.MaxInt64
 
 // Timeout durations.
 const (
@@ -134,7 +135,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
 			grpc.WithStreamInterceptor(streamInterceptor),
-			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxCallMsgSize)),
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxRecvMsgSize)),
 			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
 			grpc.WithBackoffMaxDelay(time.Second*3),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
