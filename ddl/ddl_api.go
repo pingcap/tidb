@@ -1647,10 +1647,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
-			ok, _ := hasAutoIncrementColumn(tbInfo)
-			if ok && op.UintValue != 0 {
-				return errUnsupportedShardRowIDBits
-			}
 			tbInfo.ShardRowIDBits = op.UintValue
 			if tbInfo.ShardRowIDBits > shardRowIDBitsMax {
 				tbInfo.ShardRowIDBits = shardRowIDBitsMax
@@ -1904,10 +1900,6 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, tableIdent)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	ok, _ := hasAutoIncrementColumn(t.Meta())
-	if ok && uVal != 0 {
-		return errUnsupportedShardRowIDBits
 	}
 	if uVal == t.Meta().ShardRowIDBits {
 		// Nothing need to do.

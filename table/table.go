@@ -146,6 +146,9 @@ type Table interface {
 	// AllocAutoID allocates an auto_increment ID for a new row.
 	AllocAutoID(ctx sessionctx.Context) (int64, error)
 
+	// AllocHandle allocates a handle for a new row.
+	AllocHandle(ctx sessionctx.Context) (int64, error)
+
 	// Allocator returns Allocator.
 	Allocator(ctx sessionctx.Context) autoid.Allocator
 
