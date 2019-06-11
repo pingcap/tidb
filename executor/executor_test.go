@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -62,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -133,6 +135,21 @@ func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
+func (s *testSuite) TestPessimisticSelectForUpdate(c *C) {
+	defer func() { config.GetGlobalConfig().PessimisticTxn.Enable = false }()
+	config.GetGlobalConfig().PessimisticTxn.Enable = true
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("begin PESSIMISTIC")
+	tk.MustQuery("select a from t where id=1 for update").Check(testkit.Rows("1"))
+	tk.MustExec("update t set a=a+1 where id=1")
+	tk.MustExec("commit")
+	tk.MustQuery("select a from t where id=1").Check(testkit.Rows("2"))
+}
+
 func (s *testSuite) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -141,6 +158,185 @@ func (s *testSuite) TearDownTest(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
+}
+
+func (s *testSuite) TestRecoverTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover, t_recover2")
+	tk.MustExec("create table t_recover (a int);")
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(time.Duration(48 * 60 * 60 * time.Second)).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// clear GC variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+
+	tk.MustExec("insert into t_recover values (1),(2),(3)")
+	tk.MustExec("drop table t_recover")
+
+	// if GC safe point is not exists in mysql.tidb
+	_, err := tk.Exec("recover table t_recover")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
+	// set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	// if GC enable is not exists in mysql.tidb
+	_, err = tk.Exec("recover table t_recover")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+
+	err = gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	// recover job is before GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
+	_, err = tk.Exec("recover table t_recover")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "snapshot is older than GC safe point"), Equals, true)
+
+	// set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// if there is a new table with the same name, should return failed.
+	tk.MustExec("create table t_recover (a int);")
+	_, err = tk.Exec("recover table t_recover")
+	c.Assert(err.Error(), Equals, infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
+
+	// drop the new table with the same name, then recover table.
+	tk.MustExec("rename table t_recover to t_recover2")
+
+	// do recover table.
+	tk.MustExec("recover table t_recover")
+
+	// check recover table meta and data record.
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
+	// check recover table autoID.
+	tk.MustExec("insert into t_recover values (4),(5),(6)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	// check rebase auto id.
+	tk.MustQuery("select a,_tidb_rowid from t_recover;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003"))
+
+	// recover table by none exits job.
+	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", 10000000))
+	c.Assert(err, NotNil)
+
+	// Disable GC by manual first, then after recover table, the GC enable status should also be disabled.
+	err = gcutil.DisableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("delete from t_recover where a > 1")
+	tk.MustExec("drop table t_recover")
+
+	tk.MustExec("recover table t_recover")
+
+	// check recover table meta and data record.
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1"))
+	// check recover table autoID.
+	tk.MustExec("insert into t_recover values (7),(8),(9)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+
+	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(gcEnable, Equals, false)
+}
+
+func (s *testSuite) TestBind(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists testbind")
+
+	tk.MustExec("create table testbind(i int, s varchar(20))")
+	tk.MustExec("create index index_t on testbind(i,s)")
+	tk.MustExec("create global binding for select * from testbind using select * from testbind use index for join(index_t)")
+	c.Assert(len(tk.MustQuery("show global bindings").Rows()), Equals, 1)
+
+	tk.MustExec("create session binding for select * from testbind using select * from testbind use index for join(index_t)")
+	c.Assert(len(tk.MustQuery("show session bindings").Rows()), Equals, 1)
+	tk.MustExec("drop session binding for select * from testbind")
+}
+
+func (s *testSuite) TestChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("alter table t change a b int")
+	tk.MustExec("alter table t change b c bigint")
+	c.Assert(tk.ExecToErr("alter table t change c d varchar(100)"), NotNil)
+}
+
+func (s *testSuite) TestLoadStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	c.Assert(tk.ExecToErr("load stats"), NotNil)
+	c.Assert(tk.ExecToErr("load stats ./xxx.json"), NotNil)
+}
+
+func (s *testSuite) TestShow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("show engines")
+	tk.MustExec("create table t(a int primary key)")
+	c.Assert(len(tk.MustQuery("show index in t").Rows()), Equals, 1)
+	c.Assert(len(tk.MustQuery("show index from t").Rows()), Equals, 1)
+
+	tk.MustQuery("show charset").Check(testkit.Rows(
+		"utf8 UTF-8 Unicode utf8_bin 3",
+		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
+		"ascii US ASCII ascii_bin 1",
+		"latin1 Latin1 latin1_bin 1",
+		"binary binary binary 1"))
+	c.Assert(len(tk.MustQuery("show master status").Rows()), Equals, 1)
+	tk.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
+		"Alter Tables To alter the table",
+		"Alter routine Functions,Procedures To alter or drop stored functions/procedures",
+		"Create Databases,Tables,Indexes To create new databases and tables",
+		"Create routine Databases To use CREATE FUNCTION/PROCEDURE",
+		"Create temporary tables Databases To use CREATE TEMPORARY TABLE",
+		"Create view Tables To create new views",
+		"Create user Server Admin To create new users",
+		"Delete Tables To delete existing rows",
+		"Drop Databases,Tables To drop databases, tables, and views",
+		"Event Server Admin To create, alter, drop and execute events",
+		"Execute Functions,Procedures To execute stored routines",
+		"File File access on server To read and write files on the server",
+		"Grant option Databases,Tables,Functions,Procedures To give to other users those privileges you possess",
+		"Index Tables To create or drop indexes",
+		"Insert Tables To insert data into tables",
+		"Lock tables Databases To use LOCK TABLES (together with SELECT privilege)",
+		"Process Server Admin To view the plain text of currently executing queries",
+		"Proxy Server Admin To make proxy user possible",
+		"References Databases,Tables To have references on tables",
+		"Reload Server Admin To reload or refresh tables, logs and privileges",
+		"Replication client Server Admin To ask where the slave or master servers are",
+		"Replication slave Server Admin To read binary log events from the master",
+		"Select Tables To retrieve rows from table",
+		"Show databases Server Admin To see all databases with SHOW DATABASES",
+		"Show view Tables To see views with SHOW CREATE VIEW",
+		"Shutdown Server Admin To shut down the server",
+		"Super Server Admin To use KILL thread, SET GLOBAL, CHANGE MASTER, etc.",
+		"Trigger Tables To use triggers",
+		"Create tablespace Server Admin To create/alter/drop tablespaces",
+		"Update Tables To update existing rows",
+		"Usage Server Admin No privileges - allow connect only"))
+	c.Assert(len(tk.MustQuery("show table status").Rows()), Equals, 1)
 }
 
 func (s *testSuite) TestAdmin(c *C) {
@@ -3870,6 +4066,9 @@ func (s *testSuite) TestSplitRegion(c *C) {
 	_, err = tk.Exec(`split table t between (0) and (100) regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
+
+	// Test split region by syntax
+	tk.MustExec(`split table t by (0),(1000),(1000000)`)
 }
 
 func (s *testSuite) TestIssue10435(c *C) {
