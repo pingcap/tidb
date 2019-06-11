@@ -1815,8 +1815,13 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 
 func (b *PlanBuilder) buildSplitRegionStatus(node *ast.SplitRegionStatusStmt) (Plan, error) {
 	tblInfo := node.Table.TableInfo
+	tbl, ok := b.is.TableByID(tblInfo.ID)
+	if !ok {
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(node.Table.DBInfo.Name.O, tblInfo.Name.O)
+	}
+
 	p := &SplitRegionStatus{
-		TableInfo: tblInfo,
+		Table: tbl,
 	}
 	if len(node.IndexName.L) != 0 {
 		indexInfo := tblInfo.FindIndexByName(node.IndexName.L)

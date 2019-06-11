@@ -1289,7 +1289,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 
 func (b *executorBuilder) buildSplitRegionStatus(v *plannercore.SplitRegionStatus) Executor {
 	return &SplitTableRegionStatusExec{
-		tableInfo:    v.TableInfo,
+		table:        v.Table,
 		indexInfo:    v.IndexInfo,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}

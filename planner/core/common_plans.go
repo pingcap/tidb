@@ -495,7 +495,7 @@ type SplitRegion struct {
 type SplitRegionStatus struct {
 	baseSchemaProducer
 
-	TableInfo *model.TableInfo
+	Table     table.Table
 	IndexInfo *model.IndexInfo
 }
 

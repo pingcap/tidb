@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -319,7 +320,7 @@ func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 type SplitTableRegionStatusExec struct {
 	baseExecutor
 
-	tableInfo *model.TableInfo
+	table     table.Table
 	indexInfo *model.IndexInfo
 	cursor    int
 	regions   []regionMeta
@@ -349,11 +350,10 @@ func (e *SplitTableRegionStatusExec) Open(ctx context.Context) error {
 	regionCache := tikvStore.GetRegionCache()
 	var regions []regionMeta
 	var err error
-	if e.indexInfo != nil {
-		regions, err = e.getIndexRegions(regionCache, splitStore)
-
+	if info := e.table.Meta().GetPartitionInfo(); info != nil {
+		regions, err = e.getPartitionTableRegions(info, e.table.(table.PartitionedTable), regionCache, splitStore)
 	} else {
-		regions, err = e.getTableRegions(regionCache, splitStore)
+		regions, err = e.getCommonTableRegions(regionCache, splitStore)
 	}
 	if err != nil {
 		return err
@@ -361,6 +361,40 @@ func (e *SplitTableRegionStatusExec) Open(ctx context.Context) error {
 	e.regions = regions
 	e.cursor = 0
 	return nil
+}
+
+func (e *SplitTableRegionStatusExec) getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
+	var regions []regionMeta
+	var err error
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.GetPartition(pid)
+		partition.GetPhysicalID()
+		var partitionRegions []regionMeta
+		if e.indexInfo != nil {
+			partitionRegions, err = e.getIndexRegions(partition.GetPhysicalID(), regionCache, splitStore)
+
+		} else {
+			partitionRegions, err = e.getTableRegions(partition.GetPhysicalID(), regionCache, splitStore)
+		}
+		if err != nil {
+			return nil, err
+		}
+		regions = append(regions, partitionRegions...)
+	}
+	return regions, nil
+}
+
+func (e *SplitTableRegionStatusExec) getCommonTableRegions(regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
+	var regions []regionMeta
+	var err error
+	if e.indexInfo != nil {
+		regions, err = e.getIndexRegions(e.table.Meta().ID, regionCache, splitStore)
+
+	} else {
+		regions, err = e.getTableRegions(e.table.Meta().ID, regionCache, splitStore)
+	}
+	return regions, err
 }
 
 // Next implements the Executor Next interface.
@@ -398,10 +432,10 @@ func (e *SplitTableRegionStatusExec) Next(ctx context.Context, req *chunk.Record
 	return nil
 }
 
-func (e *SplitTableRegionStatusExec) getTableRegions(regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
+func (e *SplitTableRegionStatusExec) getTableRegions(physicalTableID int64, regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
 	uniqueRegionMap := make(map[uint64]struct{})
 	// for record
-	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.tableInfo.ID)
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalTableID)
 	recordRegionIDs, err := regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
 	if err != nil {
 		return nil, err
@@ -411,17 +445,17 @@ func (e *SplitTableRegionStatusExec) getTableRegions(regionCache *tikv.RegionCac
 		return nil, err
 	}
 
-	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
-	tablePrefix := tablecodec.GenTablePrefix(e.tableInfo.ID)
-	decodeRegionsKey(recordRegions, tablePrefix, recordPrefix, nil)
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
+	decodeRegionsKey(recordRegions, tablePrefix, recordPrefix, nil, physicalTableID, 0)
 	regions := recordRegions
 
 	// for indices
-	for _, index := range e.tableInfo.Indices {
+	for _, index := range e.table.Meta().Indices {
 		if index.State != model.StatePublic {
 			continue
 		}
-		startKey, endKey := tablecodec.GetTableIndexKeyRange(e.tableInfo.ID, index.ID)
+		startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalTableID, index.ID)
 		rIDs, err := regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
 		if err != nil {
 			return nil, err
@@ -430,8 +464,8 @@ func (e *SplitTableRegionStatusExec) getTableRegions(regionCache *tikv.RegionCac
 		if err != nil {
 			return nil, err
 		}
-		indexPrefix := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, index.ID)
-		decodeRegionsKey(indexRegions, tablePrefix, recordPrefix, indexPrefix)
+		indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, index.ID)
+		decodeRegionsKey(indexRegions, tablePrefix, recordPrefix, indexPrefix, physicalTableID, index.ID)
 		regions = append(regions, indexRegions...)
 	}
 	err = checkRegionsStatus(s, regions)
@@ -441,13 +475,13 @@ func (e *SplitTableRegionStatusExec) getTableRegions(regionCache *tikv.RegionCac
 	return regions, nil
 }
 
-func (e *SplitTableRegionStatusExec) getIndexRegions(regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
+func (e *SplitTableRegionStatusExec) getIndexRegions(physicalTableID int64, regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
 	uniqueRegionMap := make(map[uint64]struct{})
-	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
-	tablePrefix := tablecodec.GenTablePrefix(e.tableInfo.ID)
-	indexPrefix := tablecodec.EncodeTableIndexPrefix(e.tableInfo.ID, e.indexInfo.ID)
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
+	indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, e.indexInfo.ID)
 
-	startKey, endKey := tablecodec.GetTableIndexKeyRange(e.tableInfo.ID, e.indexInfo.ID)
+	startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalTableID, e.indexInfo.ID)
 	rIDs, err := regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
 	if err != nil {
 		return nil, err
@@ -456,7 +490,7 @@ func (e *SplitTableRegionStatusExec) getIndexRegions(regionCache *tikv.RegionCac
 	if err != nil {
 		return nil, err
 	}
-	decodeRegionsKey(indexRegions, tablePrefix, recordPrefix, indexPrefix)
+	decodeRegionsKey(indexRegions, tablePrefix, recordPrefix, indexPrefix, physicalTableID, e.indexInfo.ID)
 	err = checkRegionsStatus(s, indexRegions)
 	if err != nil {
 		return nil, err
@@ -475,24 +509,39 @@ func checkRegionsStatus(store splitableStore, regions []regionMeta) error {
 	return nil
 }
 
-func decodeRegionsKey(regions []regionMeta, tablePrefix, recordPrefix, indexPrefix []byte) {
+func decodeRegionsKey(regions []regionMeta, tablePrefix, recordPrefix, indexPrefix []byte, physicalTableID, indexID int64) {
+	d := &regionKeyDecoder{
+		physicalTableID: physicalTableID,
+		tablePrefix:     tablePrefix,
+		recordPrefix:    recordPrefix,
+		indexPrefix:     indexPrefix,
+		indexID:         indexID,
+	}
 	for i := range regions {
-		regions[i].start = decodeRegionKey(regions[i].region.StartKey, tablePrefix, recordPrefix, indexPrefix)
-		regions[i].end = decodeRegionKey(regions[i].region.EndKey, tablePrefix, recordPrefix, indexPrefix)
+		regions[i].start = d.decodeRegionKey(regions[i].region.StartKey)
+		regions[i].end = d.decodeRegionKey(regions[i].region.EndKey)
 	}
 }
 
-func decodeRegionKey(key, tablePrefix, recordPrefix, indexPrefix []byte) string {
-	if len(indexPrefix) > 0 && bytes.HasPrefix(key, indexPrefix) {
-		return fmt.Sprintf("t_i_%x", key[len(indexPrefix):])
-	} else if len(recordPrefix) > 0 && bytes.HasPrefix(key, recordPrefix) {
-		_, handle, err := codec.DecodeInt(key[len(recordPrefix):])
+type regionKeyDecoder struct {
+	physicalTableID int64
+	tablePrefix     []byte
+	recordPrefix    []byte
+	indexPrefix     []byte
+	indexID         int64
+}
+
+func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
+	if len(d.indexPrefix) > 0 && bytes.HasPrefix(key, d.indexPrefix) {
+		return fmt.Sprintf("t_%d_i_%d_%x", d.physicalTableID, d.indexID, key[len(d.indexPrefix):])
+	} else if len(d.recordPrefix) > 0 && bytes.HasPrefix(key, d.recordPrefix) {
+		_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
 		if err == nil {
-			return "t_r_" + strconv.FormatInt(handle, 10)
+			return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, strconv.FormatInt(handle, 10))
 		}
 	}
-	if len(tablePrefix) > 0 && bytes.HasPrefix(key, tablePrefix) {
-		return fmt.Sprintf("t_%x", key[len(tablePrefix):])
+	if len(d.tablePrefix) > 0 && bytes.HasPrefix(key, d.tablePrefix) {
+		return fmt.Sprintf("t_%d_%x", d.physicalTableID, key[len(d.tablePrefix):])
 	}
 	return fmt.Sprintf("%x", key)
 }
