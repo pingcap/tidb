@@ -545,9 +545,11 @@ type PartitionType int
 
 // Partition types.
 const (
-	PartitionTypeRange PartitionType = 1
-	PartitionTypeHash  PartitionType = 2
-	PartitionTypeList  PartitionType = 3
+	PartitionTypeRange      PartitionType = 1
+	PartitionTypeHash                     = 2
+	PartitionTypeList                     = 3
+	PartitionTypeKey                      = 4
+	PartitionTypeSystemTime               = 5
 )
 
 func (p PartitionType) String() string {
@@ -558,6 +560,10 @@ func (p PartitionType) String() string {
 		return "HASH"
 	case PartitionTypeList:
 		return "LIST"
+	case PartitionTypeKey:
+		return "KEY"
+	case PartitionTypeSystemTime:
+		return "SYSTEM_TIME"
 	default:
 		return ""
 	}

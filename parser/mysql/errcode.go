@@ -921,6 +921,11 @@ const (
 	ErrWindowExplainJson                                            = 3598
 	ErrWindowFunctionIgnoresFrame                                   = 3599
 
+	// MariaDB errors.
+	ErrOnlyOneDefaultPartionAllowed         = 4030
+	ErrWrongPartitionTypeExpectedSystemTime = 4113
+	ErrSystemVersioningWrongPartitions      = 4128
+
 	// TiDB self-defined errors.
 	ErrMemExceedThreshold         = 8001
 	ErrForUpdateCantRetry         = 8002
