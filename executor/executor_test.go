@@ -4071,8 +4071,8 @@ func (s *testSuite) TestSplitRegion(c *C) {
 	tk.MustExec(`split table t by (0),(1000),(1000000)`)
 
 	// Check split region status.
-	tk.MustExec(`split table t status`)
-	tk.MustExec(`split table t index idx1 status`)
+	tk.MustExec(`show table t regions`)
+	tk.MustExec(`show table t index idx1 regions`)
 }
 
 func (s *testSuite) TestIssue10435(c *C) {
