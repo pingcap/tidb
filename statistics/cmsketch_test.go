@@ -49,6 +49,7 @@ func prepareCMSWithTopN(d, w int32, vals []*types.Datum, n uint32, total uint64)
 	return cms, nil
 }
 
+// buildCMSketchAndMapWithOffset builds cm sketch using zipf and the generated values starts from `offset`.
 func buildCMSketchAndMapWithOffset(d, w int32, seed int64, total, imax uint64, s float64, offset int64) (*CMSketch, map[int64]uint32, error) {
 	cms := NewCMSketch(d, w)
 	mp := make(map[int64]uint32)

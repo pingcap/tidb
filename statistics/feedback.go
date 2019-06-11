@@ -770,7 +770,7 @@ func EncodeFeedback(q *QueryFeedback) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	err = enc.Encode(pb)
-	return buf.Bytes(), err
+	return buf.Bytes(), errors.Trace(err)
 }
 
 func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
