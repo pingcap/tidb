@@ -114,7 +114,7 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 }
 
 // NotifyCleanExpiredPaths implements SchemaSyncer.NotifyCleanExpiredPaths interface.
-func (s *MockSchemaSyncer) NotifyCleanExpiredPaths() {}
+func (s *MockSchemaSyncer) NotifyCleanExpiredPaths() bool { return true }
 
 // StartCleanWork implements SchemaSyncer.StartCleanWork interface.
 func (s *MockSchemaSyncer) StartCleanWork() {}

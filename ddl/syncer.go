@@ -89,7 +89,8 @@ type SchemaSyncer interface {
 	// It returns until all servers' versions are equal to the latest version or the ctx is done.
 	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
 	// NotifyCleanExpiredPaths informs to clean up expired paths.
-	NotifyCleanExpiredPaths()
+	// The returned value is used for testing.
+	NotifyCleanExpiredPaths() bool
 	// StartCleanWork starts to clean up tasks.
 	StartCleanWork()
 	// CloseCleanWork ends cleanup tasks.
@@ -407,9 +408,10 @@ const (
 	checkCleanJobInterval = 1 * time.Second
 	opDefaultTimeout      = 3 * time.Second
 	opRetryInterval       = 500 * time.Millisecond
-	// NeededCleanTTL is exported for testing.
-	NeededCleanTTL = -60
 )
+
+// NeededCleanTTL is exported for testing.
+var NeededCleanTTL = int64(-60)
 
 func (s *schemaVersionSyncer) StartCleanWork() {
 	for {
@@ -443,18 +445,20 @@ func (s *schemaVersionSyncer) StartCleanWork() {
 
 func (s *schemaVersionSyncer) CloseCleanWork() {
 	close(s.quiteCh)
-	logutil.Logger(context.Background()).Info("")
 }
 
-func (s *schemaVersionSyncer) NotifyCleanExpiredPaths() {
+func (s *schemaVersionSyncer) NotifyCleanExpiredPaths() bool {
+	var isNotified bool
 	var err error
 	startTime := time.Now()
 	select {
 	case s.notifyCleanExpiredPathsCh <- struct{}{}:
+		isNotified = true
 	default:
 		err = errors.New("channel is full, failed to notify clean expired paths")
 	}
 	metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerNotifyCleanExpirePaths, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	return isNotified
 }
 
 func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) bool {
