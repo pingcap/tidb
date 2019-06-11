@@ -2038,6 +2038,29 @@ func (s *testSuite4) TestLoadDataOverflowBigintUnsigned(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
+func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table range_t (a int, b int) partition by range (a) ( " +
+		"partition p0 values less than (4)," +
+		"partition p1 values less than (7)," +
+		"partition p2 values less than (11))")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','")
+	ctx := tk.Se.(sessionctx.Context)
+	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
+
+	_, _, err := ld.InsertData(nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
+	c.Assert(err, IsNil)
+	ld.SetMessage()
+	err = ctx.StmtCommit()
+	c.Assert(err, IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+}
+
 func (s *testSuite4) TestNullDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists test_null_default;")
