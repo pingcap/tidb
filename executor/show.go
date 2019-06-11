@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -60,7 +61,8 @@ type ShowExec struct {
 	DBName      model.CIStr
 	Table       *ast.TableName  // Used for showing columns.
 	Column      *ast.ColumnName // Used for `desc table column`.
-	Flag        int             // Some flag parsed from sql, such as FULL.
+	IndexName   model.CIStr
+	Flag        int // Some flag parsed from sql, such as FULL.
 	Full        bool
 	User        *auth.UserIdentity   // Used for show grants.
 	Roles       []*auth.RoleIdentity // Used for show grants.
@@ -178,6 +180,8 @@ func (e *ShowExec) fetchAll() error {
 	case ast.ShowAnalyzeStatus:
 		e.fetchShowAnalyzeStatus()
 		return nil
+	case ast.ShowRegions:
+		return e.fetchShowTableRegions()
 	}
 	return nil
 }
@@ -1162,4 +1166,60 @@ func (e *ShowExec) appendRow(row []interface{}) {
 			e.result.AppendNull(i)
 		}
 	}
+}
+
+func (e *ShowExec) fetchShowTableRegions() error {
+	store := e.ctx.GetStore()
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return nil
+	}
+	splitStore, ok := store.(splitableStore)
+	if !ok {
+		return nil
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var indexInfo *model.IndexInfo
+	if len(e.IndexName.L) != 0 {
+		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
+		if indexInfo == nil {
+			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
+		}
+	}
+
+	regionCache := tikvStore.GetRegionCache()
+	var regions []regionMeta
+	if info := tb.Meta().GetPartitionInfo(); info != nil {
+		regions, err = getPartitionTableRegions(info, tb.(table.PartitionedTable), indexInfo, regionCache, splitStore)
+	} else {
+		regions, err = getCommonTableRegions(tb, indexInfo, regionCache, splitStore)
+	}
+	if err != nil {
+		return err
+	}
+	for i := range regions {
+		e.result.AppendUint64(0, regions[i].region.Id)
+		e.result.AppendString(1, regions[i].start)
+		e.result.AppendString(2, regions[i].end)
+		e.result.AppendUint64(3, regions[i].leader.Id)
+		peers := ""
+		for i, peer := range regions[i].region.Peers {
+			if i > 0 {
+				peers += ", "
+			}
+			peers += strconv.FormatUint(peer.Id, 10)
+		}
+		e.result.AppendString(4, peers)
+		if regions[i].scattering {
+			e.result.AppendInt64(5, 1)
+		} else {
+			e.result.AppendInt64(5, 0)
+		}
+	}
+	return nil
 }
