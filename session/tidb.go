@@ -19,7 +19,6 @@ package session
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
@@ -290,38 +289,6 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
-}
-
-var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
-
-func trimSQL(sql string) string {
-	// Trim space.
-	sql = strings.TrimSpace(sql)
-	// Trim leading /*comment*/
-	// There may be multiple comments
-	for strings.HasPrefix(sql, "/*") {
-		i := strings.Index(sql, "*/")
-		if i != -1 && i < len(sql)+1 {
-			sql = sql[i+2:]
-			sql = strings.TrimSpace(sql)
-			continue
-		}
-		break
-	}
-	// Trim leading '('. For `(select 1);` is also a query.
-	return strings.TrimLeft(sql, "( ")
-}
-
-// IsQuery checks if a sql statement is a query statement.
-func IsQuery(sql string) bool {
-	sqlText := strings.ToLower(trimSQL(sql))
-	for _, key := range queryStmtTable {
-		if strings.HasPrefix(sqlText, key) {
-			return true
-		}
-	}
-
-	return false
 }
 
 var (

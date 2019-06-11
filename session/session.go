@@ -268,10 +268,6 @@ func (s *session) SetCommandValue(command byte) {
 	atomic.StoreUint32(&s.sessionVars.CommandValue, uint32(command))
 }
 
-func (s *session) GetTLSState() *tls.ConnectionState {
-	return s.sessionVars.TLSConnectionState
-}
-
 func (s *session) SetCollation(coID int) error {
 	cs, co, err := charset.GetCharsetInfoByID(coID)
 	if err != nil {

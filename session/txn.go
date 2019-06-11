@@ -374,8 +374,6 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 		dt.AddRow(op.handle, op.row)
 	case table.DirtyTableDeleteRow:
 		dt.DeleteRow(op.handle)
-	case table.DirtyTableTruncate:
-		dt.TruncateTable()
 	}
 }
 
