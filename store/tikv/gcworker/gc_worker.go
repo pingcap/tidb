@@ -537,7 +537,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 		return errors.Trace(err)
 	}
 
-	logutil.Logger(ctx).Info("[gc worker] start delete",
+	logutil.Logger(ctx).Info("[gc worker] start delete ranges",
 		zap.String("uuid", w.uuid),
 		zap.Int("ranges", len(ranges)))
 	startTime := time.Now()
@@ -551,6 +551,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 				zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey),
 				zap.Error(err))
+			continue
 		}
 
 		se := createSession(w.store)
@@ -600,6 +601,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error
 				zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey),
 				zap.Error(err))
+			continue
 		}
 
 		se := createSession(w.store)

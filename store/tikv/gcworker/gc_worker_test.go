@@ -15,7 +15,9 @@ package gcworker
 
 import (
 	"context"
+	"errors"
 	"math"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -23,12 +25,16 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 func TestT(t *testing.T) {
@@ -41,6 +47,7 @@ type testGCWorkerSuite struct {
 	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
 	dom      *domain.Domain
+	client   *testGCWorkerClient
 }
 
 var _ = Suite(&testGCWorkerSuite{})
@@ -48,9 +55,19 @@ var _ = Suite(&testGCWorkerSuite{})
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
 
+	hijackClient := func(client tikv.Client) tikv.Client {
+		s.client = &testGCWorkerClient{
+			Client: client,
+		}
+		client = s.client
+		return client
+	}
+
 	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	store, err := mockstore.NewMockTikvStore(mockstore.WithCluster(s.cluster))
+	mocktikv.BootstrapWithMultiStores(s.cluster, 3)
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithHijackClient(hijackClient))
 
 	s.store = store.(tikv.Storage)
 	c.Assert(err, IsNil)
@@ -288,4 +305,148 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, true)
+}
+
+func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
+	// Put some delete range tasks.
+	_, err := s.gcWorker.session.Execute(context.Background(), `INSERT INTO mysql.gc_delete_range VALUES
+		("1", "2", "31", "32", "10"),
+		("3", "4", "33", "34", "10"),
+		("5", "6", "35", "36", "10")`)
+	c.Assert(err, IsNil)
+
+	ranges := []util.DelRangeTask{
+		{
+			JobID:     1,
+			ElementID: 2,
+			StartKey:  []byte("1"),
+			EndKey:    []byte("2"),
+		},
+		{
+			JobID:     3,
+			ElementID: 4,
+			StartKey:  []byte("3"),
+			EndKey:    []byte("4"),
+		},
+		{
+			JobID:     5,
+			ElementID: 6,
+			StartKey:  []byte("5"),
+			EndKey:    []byte("6"),
+		},
+	}
+
+	// Check the delete range tasks.
+	se := createSession(s.gcWorker.store)
+	preparedRanges, err := util.LoadDeleteRanges(se, 20)
+	se.Close()
+	c.Assert(err, IsNil)
+	c.Assert(preparedRanges, DeepEquals, ranges)
+
+	stores, err := s.gcWorker.getUpStores(context.Background())
+	c.Assert(err, IsNil)
+	c.Assert(len(stores), Equals, 3)
+
+	// Sort by address for checking.
+	sort.Slice(stores, func(i, j int) bool { return stores[i].Address < stores[j].Address })
+
+	// Hijack unsafe destroy range requests and collect them here.
+	sentRequestsAddrs := make([]string, 0, 3*3)
+	sentRequests := make([]*tikvrpc.Request, 0, 3*3)
+
+	// Check whether collected sentRequestsAddrs and sentRequests matches given ranges and stores.
+	checkSentRequests := func(expectedRanges []util.DelRangeTask, expectedStores []*metapb.Store) {
+		for rangeIndex := range expectedRanges {
+			l := rangeIndex * len(expectedStores)
+			r := (rangeIndex + 1) * len(expectedStores)
+			addrs := sentRequestsAddrs[l:r]
+
+			sort.Slice(addrs, func(i, j int) bool {
+				return addrs[i] < addrs[j]
+			})
+			for storeIndex := range expectedStores {
+				i := rangeIndex*len(expectedRanges) + storeIndex
+				c.Assert(addrs[storeIndex], Equals, expectedStores[storeIndex].Address)
+				c.Assert(sentRequests[i].UnsafeDestroyRange.GetStartKey(), DeepEquals, expectedRanges[rangeIndex].StartKey)
+				c.Assert(sentRequests[i].UnsafeDestroyRange.GetEndKey(), DeepEquals, expectedRanges[rangeIndex].EndKey)
+			}
+		}
+	}
+
+	// Fail the first request and check if the other requests are sent.
+	isFirst := true
+	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		sentRequestsAddrs = append(sentRequestsAddrs, addr)
+		sentRequests = append(sentRequests, req)
+		if isFirst {
+			isFirst = false
+			return nil, errors.New("error")
+		}
+		return &tikvrpc.Response{
+			Type:               tikvrpc.CmdUnsafeDestroyRange,
+			UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeResponse{},
+		}, nil
+	}
+	defer func() { s.client.unsafeDestroyRangeHandler = nil }()
+
+	// Make the logic in a closure to reduce duplicated code that tests deleteRanges and
+	test := func(redo bool) {
+		deleteRangeFunc := s.gcWorker.deleteRanges
+		loadRangesFunc := util.LoadDeleteRanges
+		if redo {
+			deleteRangeFunc = s.gcWorker.redoDeleteRanges
+			loadRangesFunc = util.LoadDoneDeleteRanges
+		}
+
+		// Make the first request fail.
+		isFirst = true
+
+		err = deleteRangeFunc(context.Background(), 20)
+		c.Assert(err, IsNil)
+		c.Assert(isFirst, IsFalse)
+
+		checkSentRequests(ranges, stores)
+		sentRequests = sentRequests[:0]
+		sentRequestsAddrs = sentRequestsAddrs[:0]
+
+		// The first delete range task should be still here since it didn't success.
+		se = createSession(s.gcWorker.store)
+		remainingRanges, err := loadRangesFunc(se, 20)
+		se.Close()
+		c.Assert(err, IsNil)
+		c.Assert(remainingRanges, DeepEquals, ranges[:1])
+
+		// Delete the remaining range again.
+		err = deleteRangeFunc(context.Background(), 20)
+		c.Assert(err, IsNil)
+		checkSentRequests(ranges[:1], stores)
+		sentRequests = sentRequests[:0]
+		sentRequestsAddrs = sentRequestsAddrs[:0]
+
+		se = createSession(s.gcWorker.store)
+		remainingRanges, err = loadRangesFunc(se, 20)
+		se.Close()
+		c.Assert(err, IsNil)
+		c.Assert(len(remainingRanges), Equals, 0)
+	}
+
+	test(false)
+	// Change the order because the first range is the last successfully deleted.
+	ranges = append(ranges[1:], ranges[0])
+	test(true)
+}
+
+type testGCWorkerClient struct {
+	tikv.Client
+	unsafeDestroyRangeHandler handler
+}
+
+type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
+
+func (c *testGCWorkerClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdUnsafeDestroyRange && c.unsafeDestroyRangeHandler != nil {
+		return c.unsafeDestroyRangeHandler(addr, req)
+	}
+
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
