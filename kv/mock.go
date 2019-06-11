@@ -128,11 +128,7 @@ type mockStorage struct {
 }
 
 func (s *mockStorage) Begin() (Transaction, error) {
-	tx := &mockTxn{
-		opts:  make(map[Option]interface{}),
-		valid: true,
-	}
-	return tx, nil
+	return NewMockTxn(), nil
 }
 
 func (*mockTxn) IsPessimistic() bool {

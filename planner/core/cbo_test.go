@@ -1001,6 +1001,7 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int not null, index idx_b(b))")
+	tk.MustExec("set session tidb_opt_correlation_exp_factor = 0")
 	// Pseudo stats.
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;").Check(testkit.Rows(
 		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
@@ -1059,24 +1060,23 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		"    └─Selection_20 1.00 cop eq(test.t.b, 2)",
 		"      └─TableScan_19 4.17 cop table:t, range:[-inf,+inf], keep order:true",
 	))
-	tk.MustExec("set @@tidb_opt_correlation_exp_factor = 1")
+	tk.MustExec("set session tidb_opt_correlation_exp_factor = 1")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1").Check(testkit.Rows(
 		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
 		"└─IndexReader_16 1.00 root index:TopN_15",
 		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
 		"    └─IndexScan_14 6.00 cop table:t, index:b, range:[2,2], keep order:false",
 	))
-	tk.MustExec("set @@tidb_opt_correlation_exp_factor = 0")
+	tk.MustExec("set session tidb_opt_correlation_exp_factor = 0")
 	// TableScan has access conditions, but correlation is 1.
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1").Check(testkit.Rows(
 		"TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-		"└─IndexReader_19 1.00 root index:TopN_18",
-		"  └─TopN_18 1.00 cop test.t.a:asc, offset:0, count:1",
-		"    └─Selection_17 6.00 cop gt(test.t.a, 0)",
-		"      └─IndexScan_16 6.00 cop table:t, index:b, range:[2,2], keep order:false",
+		"└─IndexReader_16 1.00 root index:TopN_15",
+		"  └─TopN_15 1.00 cop test.t.a:asc, offset:0, count:1",
+		"    └─IndexScan_14 7.50 cop table:t, index:b, range:(2 0,2 +inf], keep order:false",
 	))
 	// Multi-column filter.
 	tk.MustExec("drop table t")
@@ -1090,12 +1090,5 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		"  └─TopN_21 1.00 cop test.t.a:asc, offset:0, count:1",
 		"    └─Selection_20 6.00 cop gt(test.t.c, 0)",
 		"      └─TableScan_19 6.00 cop table:t, keep order:false",
-	))
-	tk.MustQuery("EXPLAIN SELECT * FROM t WHERE b = 2 or c > 0 ORDER BY a limit 1").Check(testkit.Rows(
-		"Limit_11 1.00 root offset:0, count:1",
-		"└─TableReader_24 1.00 root data:Limit_23",
-		"  └─Limit_23 1.00 cop offset:0, count:1",
-		"    └─Selection_22 1.00 cop or(eq(test.t.b, 2), gt(test.t.c, 0))",
-		"      └─TableScan_21 1.25 cop table:t, range:[-inf,+inf], keep order:true",
 	))
 }

@@ -237,6 +237,10 @@ func (s *testSuite) TestMeta(c *C) {
 
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
+
+	// Test for DDLJobHistoryKey.
+	key = meta.DDLJobHistoryKey(t, 888)
+	c.Assert(key, DeepEquals, []byte{0x6d, 0x44, 0x44, 0x4c, 0x4a, 0x6f, 0x62, 0x48, 0x69, 0xff, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x78, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7})
 }
 
 func (s *testSuite) TestSnapshot(c *C) {
@@ -355,6 +359,13 @@ func (s *testSuite) TestDDL(c *C) {
 		c.Assert(job.ID, Greater, lastID)
 		lastID = job.ID
 	}
+
+	// Test for get last N history ddl jobs.
+	historyJobs, err := t.GetLastNHistoryDDLJobs(2)
+	c.Assert(err, IsNil)
+	c.Assert(len(historyJobs), Equals, 2)
+	c.Assert(historyJobs[0].ID == 123, IsTrue)
+	c.Assert(historyJobs[1].ID == 1234, IsTrue)
 
 	// Test GetAllDDLJobsInQueue.
 	err = t.EnQueueDDLJob(job)

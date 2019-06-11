@@ -811,16 +811,40 @@ func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback, isUnsigned bool) {
 	}
 }
 
-func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback) error {
+// ConvertDatumsType converts the datums type to `ft`.
+func ConvertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Location) error {
+	for i, val := range vals {
+		if val.Kind() == types.KindMinNotNull || val.Kind() == types.KindMaxValue {
+			continue
+		}
+		newVal, err := tablecodec.UnflattenDatums([]types.Datum{val}, []*types.FieldType{ft}, loc)
+		if err != nil {
+			return err
+		}
+		vals[i] = newVal[0]
+	}
+	return nil
+}
+
+func decodeColumnBounds(data []byte, ft *types.FieldType) ([]types.Datum, error) {
+	vals, err := codec.DecodeRange(data, 1)
+	if err != nil {
+		return nil, err
+	}
+	err = ConvertDatumsType(vals, ft, time.UTC)
+	return vals, err
+}
+
+func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback, ft *types.FieldType) error {
 	q.Tp = ColType
 	for i := 0; i < len(pb.ColumnRanges); i += 2 {
-		low, err := codec.DecodeRange(pb.ColumnRanges[i], 1)
+		low, err := decodeColumnBounds(pb.ColumnRanges[i], ft)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		high, err := codec.DecodeRange(pb.ColumnRanges[i+1], 1)
+		high, err := decodeColumnBounds(pb.ColumnRanges[i+1], ft)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		q.Feedback = append(q.Feedback, Feedback{&low[0], &high[0], pb.Counts[i/2], 0})
 	}
@@ -828,7 +852,7 @@ func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback) error {
 }
 
 // DecodeFeedback decodes a byte slice to feedback.
-func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, isUnsigned bool) error {
+func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldType) error {
 	buf := bytes.NewBuffer(val)
 	dec := gob.NewDecoder(buf)
 	pb := &queryFeedback{}
@@ -839,9 +863,9 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, isUnsigned bool) 
 	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 {
 		decodeFeedbackForIndex(q, pb, c)
 	} else if len(pb.IntRanges) > 0 {
-		decodeFeedbackForPK(q, pb, isUnsigned)
+		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))
 	} else {
-		err := decodeFeedbackForColumn(q, pb)
+		err := decodeFeedbackForColumn(q, pb, ft)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -952,7 +976,7 @@ func GetMaxValue(ft *types.FieldType) (max types.Datum) {
 	case mysql.TypeNewDecimal:
 		max.SetMysqlDecimal(types.NewMaxOrMinDec(false, ft.Flen, ft.Decimal))
 	case mysql.TypeDuration:
-		max.SetMysqlDuration(types.Duration{Duration: math.MaxInt64})
+		max.SetMysqlDuration(types.Duration{Duration: types.MaxTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
 			max.SetMysqlTime(types.Time{Time: types.MaxDatetime, Type: ft.Tp})
@@ -987,7 +1011,7 @@ func GetMinValue(ft *types.FieldType) (min types.Datum) {
 	case mysql.TypeNewDecimal:
 		min.SetMysqlDecimal(types.NewMaxOrMinDec(true, ft.Flen, ft.Decimal))
 	case mysql.TypeDuration:
-		min.SetMysqlDuration(types.Duration{Duration: math.MinInt64})
+		min.SetMysqlDuration(types.Duration{Duration: types.MinTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
 			min.SetMysqlTime(types.Time{Time: types.MinDatetime, Type: ft.Tp})
