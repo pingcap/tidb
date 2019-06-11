@@ -17,9 +17,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/util/sys/linux"
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -90,6 +92,7 @@ const (
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
+	nmAffinityCPU                = "affinity-cpus"
 )
 
 var (
@@ -112,6 +115,7 @@ var (
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 	pluginDir        = flag.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
 	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
+	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -148,6 +152,7 @@ func main() {
 	registerMetrics()
 	configWarning := loadConfig()
 	overrideConfig()
+	setCPUAffinity()
 	if err := cfg.Valid(); err != nil {
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)
@@ -182,6 +187,30 @@ func exit() {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+func setCPUAffinity() {
+	if affinityCPU == nil || len(*affinityCPU) == 0 {
+		return
+	}
+	var cpu []int
+	for _, af := range strings.Split(*affinityCPU, ",") {
+		af = strings.TrimSpace(af)
+		if len(af) > 0 {
+			c, err := strconv.Atoi(af)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "wrong affinity cpu config: %s", *affinityCPU)
+				exit()
+			}
+			cpu = append(cpu, c)
+		}
+	}
+	err := linux.SetAffinity(cpu)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "set cpu affinity failure: %v", err)
+		exit()
+	}
+	runtime.GOMAXPROCS(len(cpu))
 }
 
 func registerStores() {
