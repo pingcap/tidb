@@ -27,6 +27,7 @@ type ReloadExprPushdownBlacklistExec struct {
 	baseExecutor
 }
 
+// Next implements the Executor Next interface.
 func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	sql := "select HIGH_PRIORITY name from mysql.expr_pushdown_blacklist"
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
