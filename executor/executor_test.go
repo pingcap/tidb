@@ -4068,7 +4068,6 @@ func (s *testSuite) TestSplitRegion(c *C) {
 	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
 
 	// Test split region by syntax
-	tk.MustExec(`split table t index idx1 by (0),(1000),(1000000)`)
 	tk.MustExec(`split table t by (0),(1000),(1000000)`)
 }
 
