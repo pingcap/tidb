@@ -553,6 +553,15 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 		}
 		return fmt.Sprintf("t_%d_i__%x", d.physicalTableID, key)
 	}
+	// Has table prefix.
+	if bytes.HasPrefix(key, []byte("t")) {
+		key = key[1:]
+		// try to decode table ID.
+		if _, tableID, err := codec.DecodeInt(key); err == nil {
+			return fmt.Sprintf("t_%d_%x", tableID, key[8:])
+		}
+		return fmt.Sprintf("t_%x", key)
+	}
 	return fmt.Sprintf("%x", key)
 }
 
