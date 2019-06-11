@@ -917,6 +917,11 @@ var MySQLErrName = map[uint16]string{
 	ErrRoleNotGranted:                                        "%s is is not granted to %s",
 	ErrMaxExecTimeExceeded:                                   "Query execution was interrupted, max_execution_time exceeded.",
 
+	// MariaDB errors.
+	ErrOnlyOneDefaultPartionAllowed:         "Only one DEFAULT partition allowed",
+	ErrWrongPartitionTypeExpectedSystemTime: "Wrong partitioning type, expected type: `SYSTEM_TIME`",
+	ErrSystemVersioningWrongPartitions:      "Wrong Partitions: must have at least one HISTORY and exactly one last CURRENT",
+
 	// TiDB errors.
 	ErrMemExceedThreshold:         "%s holds %dB memory, exceeds threshold %dB.%s",
 	ErrForUpdateCantRetry:         "[%d] can not retry select for update statement",

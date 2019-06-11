@@ -148,6 +148,11 @@ func (ec ErrClass) New(code ErrCode, message string) *Error {
 	}
 }
 
+// NewStd calls New using the standard message for the error code
+func (ec ErrClass) NewStd(code ErrCode) *Error {
+	return ec.New(code, mysql.MySQLErrName[uint16(code)])
+}
+
 // Error implements error interface and adds integer Class and Code, so
 // errors with different message can be compared.
 type Error struct {
