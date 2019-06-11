@@ -1281,14 +1281,13 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 			tableInfo:    v.TableInfo,
 			valueLists:   v.ValueLists,
 		}
-	} else {
-		return &SplitTableRegionExec{
-			baseExecutor: base,
-			tableInfo:    v.TableInfo,
-			lower:        v.Lower[0],
-			upper:        v.Upper[0],
-			num:          v.Num,
-		}
+	}
+	return &SplitTableRegionExec{
+		baseExecutor: base,
+		tableInfo:    v.TableInfo,
+		lower:        v.Lower[0],
+		upper:        v.Upper[0],
+		num:          v.Num,
 	}
 }
 
