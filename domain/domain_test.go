@@ -85,6 +85,7 @@ func TestInfo(t *testing.T) {
 	dom := NewDomain(mockStore, ddlLease, 0, mockFactory)
 	defer func() {
 		dom.Close()
+		s.Close()
 	}()
 
 	cli := clus.RandClient()
