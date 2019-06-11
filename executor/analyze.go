@@ -995,9 +995,12 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	if stats.Lease > 0 {
 		rowCount = mathutil.MinInt64(stats.GetTableStats(e.tblInfo).Count, rowCount)
 	}
+	rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
 	// build CMSketch
 	var ndv, scaleRatio uint64
 	collector.CMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, 20, uint64(rowCount))
+	// Scale the total column size.
+	collector.TotalSize *= rowCount / int64(len(collector.Samples))
 	// build Histogram
 	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.maxNumBuckets), ID, collector, tp, rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
 	if err != nil {
