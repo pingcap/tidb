@@ -1625,6 +1625,13 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 const maxSplitRegionNum = 1000
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
+	if len(node.IndexName.L) != 0 {
+		return b.buildSplitIndexRegion(node)
+	}
+	return b.buildSplitTableRegion(node)
+}
+
+func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	tblInfo := node.Table.TableInfo
 	indexInfo := tblInfo.FindIndexByName(node.IndexName.L)
 	if indexInfo == nil {
@@ -1658,10 +1665,10 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 	// Split index regions by lower, upper value.
 	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) ([]types.Datum, error) {
 		if len(valuesItem) == 0 {
-			return nil, errors.Errorf("Split index region `%v` %s value count should more than 0", indexInfo.Name, name)
+			return nil, errors.Errorf("Split index `%v` region %s value count should more than 0", indexInfo.Name, name)
 		}
 		if len(valuesItem) > len(indexInfo.Columns) {
-			return nil, errors.Errorf("Split index region `%v` Column count doesn't match value count at %v", indexInfo.Name, name)
+			return nil, errors.Errorf("Split index `%v` region column count doesn't match value count at %v", indexInfo.Name, name)
 		}
 		return b.convertValue2ColumnType(valuesItem, mockTablePlan, indexInfo, tblInfo)
 	}
@@ -1677,7 +1684,7 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 	p.Upper = upperValues
 
 	if node.SplitOpt.Num > maxSplitRegionNum {
-		return nil, errors.Errorf("Split index region num is exceed the limit %v", maxSplitRegionNum)
+		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
 	} else if node.SplitOpt.Num < 1 {
 		return nil, errors.Errorf("Split index region num should more than 0")
 	}
@@ -1688,43 +1695,110 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 func (b *PlanBuilder) convertValue2ColumnType(valuesItem []ast.ExprNode, mockTablePlan LogicalPlan, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]types.Datum, error) {
 	values := make([]types.Datum, 0, len(valuesItem))
 	for j, valueItem := range valuesItem {
-		var expr expression.Expression
-		var err error
-		switch x := valueItem.(type) {
-		case *driver.ValueExpr:
-			expr = &expression.Constant{
-				Value:   x.Datum,
-				RetType: &x.Type,
-			}
-		default:
-			expr, _, err = b.rewrite(valueItem, mockTablePlan, nil, true)
-			if err != nil {
-				return nil, err
-			}
-		}
-		constant, ok := expr.(*expression.Constant)
-		if !ok {
-			return nil, errors.New("expect constant values")
-		}
-		value, err := constant.Eval(chunk.Row{})
+		colOffset := indexInfo.Columns[j].Offset
+		value, err := b.convertValue(valueItem, mockTablePlan, tblInfo.Columns[colOffset])
 		if err != nil {
 			return nil, err
 		}
-		colOffset := indexInfo.Columns[j].Offset
-		value1, err := value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[colOffset].FieldType)
-		if err != nil {
-			if !types.ErrTruncated.Equal(err) {
-				return nil, err
-			}
-			valStr, err1 := value.ToString()
-			if err1 != nil {
-				return nil, err
-			}
-			return nil, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for index column '%.192s'", valStr, tblInfo.Columns[colOffset].Name.O)
-		}
-		values = append(values, value1)
+		values = append(values, value)
 	}
 	return values, nil
+}
+
+func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan LogicalPlan, col *model.ColumnInfo) (d types.Datum, err error) {
+	var expr expression.Expression
+	switch x := valueItem.(type) {
+	case *driver.ValueExpr:
+		expr = &expression.Constant{
+			Value:   x.Datum,
+			RetType: &x.Type,
+		}
+	default:
+		expr, _, err = b.rewrite(valueItem, mockTablePlan, nil, true)
+		if err != nil {
+			return d, err
+		}
+	}
+	constant, ok := expr.(*expression.Constant)
+	if !ok {
+		return d, errors.New("Expect constant values")
+	}
+	value, err := constant.Eval(chunk.Row{})
+	if err != nil {
+		return d, err
+	}
+	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &col.FieldType)
+	if err != nil {
+		if !types.ErrTruncated.Equal(err) {
+			return d, err
+		}
+		valStr, err1 := value.ToString()
+		if err1 != nil {
+			return d, err
+		}
+		return d, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for column '%.192s'", valStr, col.Name.O)
+	}
+	return d, nil
+}
+
+func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, error) {
+	tblInfo := node.Table.TableInfo
+	var pkCol *model.ColumnInfo
+	if tblInfo.PKIsHandle {
+		if col := tblInfo.GetPkColInfo(); col != nil {
+			pkCol = col
+		}
+	}
+	if pkCol == nil {
+		pkCol = model.NewExtraHandleColInfo()
+	}
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
+	schema := expression.TableInfo2SchemaWithDBName(b.ctx, node.Table.Schema, tblInfo)
+	mockTablePlan.SetSchema(schema)
+
+	p := &SplitRegion{
+		TableInfo: tblInfo,
+	}
+	if len(node.SplitOpt.ValueLists) > 0 {
+		values := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
+		for i, valuesItem := range node.SplitOpt.ValueLists {
+			if len(valuesItem) > 1 {
+				return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
+			}
+			value, err := b.convertValue(valuesItem[0], mockTablePlan, pkCol)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, []types.Datum{value})
+		}
+		p.ValueLists = values
+		return p, nil
+	}
+
+	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) (types.Datum, error) {
+		if len(valuesItem) != 1 {
+			return types.Datum{}, errors.Errorf("Split table region %s value count should be 1", name)
+		}
+		return b.convertValue(valuesItem[0], mockTablePlan, pkCol)
+	}
+	lowerValues, err := checkLowerUpperValue(node.SplitOpt.Lower, "lower")
+	if err != nil {
+		return nil, err
+	}
+	upperValue, err := checkLowerUpperValue(node.SplitOpt.Upper, "upper")
+	if err != nil {
+		return nil, err
+	}
+	p.Lower = []types.Datum{lowerValues}
+	p.Upper = []types.Datum{upperValue}
+
+	if node.SplitOpt.Num > maxSplitRegionNum {
+		return nil, errors.Errorf("Split table region num exceeded the limit %v", maxSplitRegionNum)
+	} else if node.SplitOpt.Num < 1 {
+		return nil, errors.Errorf("Split table region num should more than 0")
+	}
+	p.Num = int(node.SplitOpt.Num)
+	return p, nil
 }
 
 func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {

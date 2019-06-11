@@ -127,6 +127,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 
 	// Iterate all regions and send each region's range as a task to the workers.
 	key := startKey
+Loop:
 	for {
 		select {
 		case <-statLogTicker.C:
@@ -168,7 +169,7 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		select {
 		case taskCh <- task:
 		case <-ctx.Done():
-			break
+			break Loop
 		}
 		metrics.TiKVRangeTaskPushDuration.WithLabelValues(s.name).Observe(time.Since(pushTaskStartTime).Seconds())
 
