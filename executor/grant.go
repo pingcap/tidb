@@ -64,7 +64,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		dbName = e.ctx.GetSessionVars().CurrentDB
 	}
 	// Grant for each user
-	for _, user := range e.Users {
+	for idx, user := range e.Users {
 		// Check if user exists.
 		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
@@ -105,6 +105,15 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		if e.WithGrant {
 			privs = append(privs, &ast.PrivElem{Priv: mysql.GrantPriv})
 		}
+
+		if idx == 0 {
+			// Commit the old transaction, like DDL.
+			if err := e.ctx.NewTxn(ctx); err != nil {
+				return err
+			}
+			defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()
+		}
+
 		// Grant each priv to the user.
 		for _, priv := range privs {
 			if len(priv.Cols) > 0 {

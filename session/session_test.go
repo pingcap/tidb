@@ -702,7 +702,10 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: `%`}, []byte("yyy"), []byte("zzz")), IsTrue)
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, []byte(""), []byte("")), IsTrue)
 	tk.MustExec("create table t (id int)")
-
+	tk.MustExec("create role r_1")
+	tk.MustExec("grant r_1 to root")
+	tk.MustExec("set role all")
+	tk.MustExec("show grants for root")
 	privileges.SkipWithGrant = save2
 }
 

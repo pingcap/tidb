@@ -400,6 +400,9 @@ func (s *testJSONSuite) TestParseBinaryFromString(c *C) {
 	obj, err := ParseBinaryFromString("")
 	c.Assert(obj.String(), Equals, "")
 	c.Assert(err, ErrorMatches, "*The document is empty*")
+	obj, err = ParseBinaryFromString(`"a""`)
+	c.Assert(obj.String(), Equals, "")
+	c.Assert(err, ErrorMatches, "*The document root must not be followed by other values.*")
 }
 
 func (s *testJSONSuite) TestCreateBinary(c *C) {

@@ -1409,19 +1409,12 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 
 func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
 	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
-		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
-
-	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
-	viewInfo.Cols = make([]model.CIStr, len(schemaCols))
-	for i, v := range schemaCols {
-		viewInfo.Cols[i] = v.AsName
-	}
-
-	var tableColumns = make([]*table.Column, len(schemaCols))
+		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption, Cols: s.SchemaCols}
+	var tableColumns = make([]*table.Column, len(s.SchemaCols))
 	if s.Cols == nil {
-		for i, v := range schemaCols {
+		for i, v := range s.SchemaCols {
 			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:    v.AsName,
+				Name:    v,
 				ID:      int64(i),
 				Offset:  i,
 				State:   model.StatePublic,
