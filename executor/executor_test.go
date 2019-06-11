@@ -4093,7 +4093,6 @@ func (h *oomCapturer) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.
 	return ce
 }
 
-
 type testRecoverTable struct {
 	store   kv.Storage
 	dom     *domain.Domain
