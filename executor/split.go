@@ -537,11 +537,21 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 	} else if len(d.recordPrefix) > 0 && bytes.HasPrefix(key, d.recordPrefix) {
 		_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
 		if err == nil {
-			return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, strconv.FormatInt(handle, 10))
+			return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, handle)
 		}
 	}
 	if len(d.tablePrefix) > 0 && bytes.HasPrefix(key, d.tablePrefix) {
-		return fmt.Sprintf("t_%d_%x", d.physicalTableID, key[len(d.tablePrefix):])
+		key = key[len(d.tablePrefix):]
+		// Has index prefix.
+		if !bytes.HasPrefix(key, []byte("_i")) {
+			return fmt.Sprintf("t_%d_%x", d.physicalTableID, key)
+		}
+		key = key[2:]
+		// try to decode index ID.
+		if _, indexID, err := codec.DecodeInt(key); err == nil {
+			return fmt.Sprintf("t_%d_i_%d_%x", d.physicalTableID, indexID, key[8:])
+		}
+		return fmt.Sprintf("t_%d_i__%x", d.physicalTableID, key)
 	}
 	return fmt.Sprintf("%x", key)
 }
