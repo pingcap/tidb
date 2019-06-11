@@ -1455,17 +1455,17 @@ func (s *testIntegrationSuite3) TestAlterAlgorithm(c *C) {
 	s.tk.MustExec("alter table t rename index idx_c to idx_c1, ALGORITHM=DEFAULT")
 
 	// partition.
-	s.assertAlterWarnExec(c, "alter table t truncate partition p1, ALGORITHM=COPY")
-	s.assertAlterErrorExec(c, "alter table t truncate partition p2, ALGORITHM=INPLACE")
-	s.tk.MustExec("alter table t truncate partition p3, ALGORITHM=INSTANT")
+	s.assertAlterWarnExec(c, "alter table t ALGORITHM=COPY, truncate partition p1")
+	s.assertAlterErrorExec(c, "alter table t ALGORITHM=INPLACE, truncate partition p2")
+	s.tk.MustExec("alter table t ALGORITHM=INSTANT, truncate partition p3")
 
 	s.assertAlterWarnExec(c, "alter table t add partition (partition p4 values less than (2002)), ALGORITHM=COPY")
 	s.assertAlterErrorExec(c, "alter table t add partition (partition p5 values less than (3002)), ALGORITHM=INPLACE")
 	s.tk.MustExec("alter table t add partition (partition p6 values less than (4002)), ALGORITHM=INSTANT")
 
-	s.assertAlterWarnExec(c, "alter table t drop partition p4, ALGORITHM=COPY")
-	s.assertAlterErrorExec(c, "alter table t drop partition p5, ALGORITHM=INPLACE")
-	s.tk.MustExec("alter table t drop partition p6, ALGORITHM=INSTANT")
+	s.assertAlterWarnExec(c, "alter table t ALGORITHM=COPY, drop partition p4")
+	s.assertAlterErrorExec(c, "alter table t ALGORITHM=INPLACE, drop partition p5")
+	s.tk.MustExec("alter table t ALGORITHM=INSTANT, drop partition p6")
 
 	// Table options
 	s.assertAlterWarnExec(c, "alter table t comment = 'test', ALGORITHM=COPY")
