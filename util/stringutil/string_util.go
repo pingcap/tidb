@@ -14,6 +14,7 @@
 package stringutil
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -249,4 +250,33 @@ func IsExactMatch(patTypes []byte) bool {
 // Copy deep copies a string.
 func Copy(src string) string {
 	return string(hack.Slice(src))
+}
+
+// stringerFunc defines string func implement fmt.Stringer.
+type stringerFunc func() string
+
+// String implements fmt.Stringer
+func (l stringerFunc) String() string {
+	return l()
+}
+
+// MemoizeStr returns memoized version of stringFunc.
+func MemoizeStr(l func() string) fmt.Stringer {
+	var result string
+	return stringerFunc(func() string {
+		if result != "" {
+			return result
+		}
+		result = l()
+		return result
+	})
+}
+
+// StringerStr defines a alias to normal string.
+// implement fmt.Stringer
+type StringerStr string
+
+// String implements fmt.Stringer
+func (i StringerStr) String() string {
+	return string(i)
 }

@@ -163,6 +163,9 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 		if !sessVars.InTxn() {
 			logutil.Logger(context.Background()).Info("rollbackTxn for ddl/autocommit error.")
 			se.RollbackTxn(ctx)
+		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
+			logutil.Logger(context.Background()).Info("rollbackTxn for deadlock error", zap.Uint64("txn", se.txn.StartTS()))
+			se.RollbackTxn(ctx)
 		}
 		return meetsErr
 	}
@@ -196,16 +199,21 @@ func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, s
 }
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (sqlexec.RecordSet, error) {
+func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", s.OriginText())
 		defer span1.Finish()
 	}
-
-	var err error
-	var rs sqlexec.RecordSet
 	se := sctx.(*session)
+	defer func() {
+		// If it is not a select statement, we record its slow log here,
+		// then it could include the transaction commit time.
+		if rs == nil {
+			s.(*executor.ExecStmt).LogSlowQuery(se.GetSessionVars().TxnCtx.StartTS, err != nil)
+		}
+	}()
+
 	err = se.checkTxnAborted(s)
 	if err != nil {
 		return nil, err

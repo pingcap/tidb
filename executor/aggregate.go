@@ -20,6 +20,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -607,10 +608,11 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		e.prepared = true
 	}
 
-	// gofail: var parallelHashAggError bool
-	// if parallelHashAggError {
-	// 	return errors.New("HashAggExec.parallelExec error")
-	// }
+	failpoint.Inject("parallelHashAggError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("HashAggExec.parallelExec error"))
+		}
+	})
 
 	for !chk.IsFull() {
 		e.finalInputCh <- chk
@@ -684,10 +686,11 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			return err
 		}
 
-		// gofail: var unparallelHashAggError bool
-		// if unparallelHashAggError {
-		// 	return errors.New("HashAggExec.unparallelExec error")
-		// }
+		failpoint.Inject("unparallelHashAggError", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.New("HashAggExec.unparallelExec error"))
+			}
+		})
 
 		// no more data.
 		if e.childResult.NumRows() == 0 {
@@ -786,6 +789,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *StreamAggExec) Close() error {
 	e.childResult = nil
+	e.groupChecker.reset()
 	return e.baseExecutor.Close()
 }
 
@@ -950,4 +954,13 @@ func (e *groupChecker) meetNewGroup(row chunk.Row) (bool, error) {
 		e.curGroupKey = append(e.curGroupKey, *((&v).Copy()))
 	}
 	return !firstGroup, nil
+}
+
+func (e *groupChecker) reset() {
+	if e.curGroupKey != nil {
+		e.curGroupKey = e.curGroupKey[:0]
+	}
+	if e.tmpGroupKey != nil {
+		e.tmpGroupKey = e.tmpGroupKey[:0]
+	}
 }

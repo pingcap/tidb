@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -34,12 +35,15 @@ type LoadDataExec struct {
 	baseExecutor
 
 	IsLocal      bool
+	OnDuplicate  ast.OnDuplicateKeyHandlingType
 	loadDataInfo *LoadDataInfo
 }
 
+var insertValuesLabel fmt.Stringer = stringutil.StringerStr("InsertValues")
+
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, insertValuesLabel), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
 		InsertValues: insertVal,
@@ -54,6 +58,10 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return errors.New("Load Data: don't support load data without local field")
+	}
+	// TODO: support load data with replace field.
+	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
+		return errors.New("Load Data: don't support load data with replace field")
 	}
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {

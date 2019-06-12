@@ -265,7 +265,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(count, Equals, 0.0)
 	count = col.equalRowCount(types.NewIntDatum(200000000))
 	c.Check(count, Equals, 0.0)
-	count = col.betweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
+	count = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(int(count), Equals, 4994)
 	count = col.lessRowCount(types.NewIntDatum(1))
 	c.Check(int(count), Equals, 9)
@@ -295,9 +295,9 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 1)
 	count = col.lessRowCount(encodeKey(types.NewIntDatum(20000)))
 	c.Check(int(count), Equals, 19999)
-	count = col.betweenRowCount(encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
+	count = col.BetweenRowCount(encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
 	c.Check(int(count), Equals, 4999)
-	count = col.betweenRowCount(encodeKey(types.MinNotNullDatum()), encodeKey(types.NewIntDatum(0)))
+	count = col.BetweenRowCount(encodeKey(types.MinNotNullDatum()), encodeKey(types.NewIntDatum(0)))
 	c.Check(int(count), Equals, 0)
 	count = col.lessRowCount(encodeKey(types.NewIntDatum(0)))
 	c.Check(int(count), Equals, 0)
@@ -312,7 +312,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 1)
 	count = col.lessRowCount(types.NewIntDatum(20000))
 	c.Check(int(count), Equals, 20000)
-	count = col.betweenRowCount(types.NewIntDatum(30000), types.NewIntDatum(35000))
+	count = col.BetweenRowCount(types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(int(count), Equals, 5000)
 	count = col.greaterRowCount(types.NewIntDatum(1001))
 	c.Check(int(count), Equals, 98998)
@@ -398,7 +398,7 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(h.NDV, Equals, t.ndv)
 		c.Assert(h.Len(), Equals, t.bucketNum)
-		c.Assert(int64(h.totalRowCount()), Equals, t.leftNum+t.rightNum)
+		c.Assert(int64(h.TotalRowCount()), Equals, t.leftNum+t.rightNum)
 		expectLower := types.NewIntDatum(t.leftLower)
 		cmp, err := h.GetLower(0).CompareDatum(sc, &expectLower)
 		c.Assert(err, IsNil)
@@ -455,7 +455,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
 	tbl := &Table{
 		HistColl: HistColl{
-			Count:   int64(col.totalRowCount()),
+			Count:   int64(col.TotalRowCount()),
 			Columns: make(map[int64]*Column),
 		},
 	}
@@ -524,7 +524,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
 	tbl := &Table{
 		HistColl: HistColl{
-			Count:   int64(col.totalRowCount()),
+			Count:   int64(col.TotalRowCount()),
 			Columns: make(map[int64]*Column),
 		},
 	}
@@ -616,7 +616,7 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 	tbl := &Table{
 		HistColl: HistColl{
-			Count:   int64(idx.totalRowCount()),
+			Count:   int64(idx.TotalRowCount()),
 			Indices: make(map[int64]*Index),
 		},
 	}

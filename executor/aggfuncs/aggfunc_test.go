@@ -141,29 +141,34 @@ func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows i
 		dataType: ft,
 		numRows:  numRows,
 		funcName: funcName,
+		dataGen:  getDataGenFunc(ft),
 	}
 	for _, result := range results {
 		pt.results = append(pt.results, types.NewDatum(result))
 	}
+	return pt
+}
+
+func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 	switch ft.Tp {
 	case mysql.TypeLonglong:
-		pt.dataGen = func(i int) types.Datum { return types.NewIntDatum(int64(i)) }
+		return func(i int) types.Datum { return types.NewIntDatum(int64(i)) }
 	case mysql.TypeFloat:
-		pt.dataGen = func(i int) types.Datum { return types.NewFloat32Datum(float32(i)) }
+		return func(i int) types.Datum { return types.NewFloat32Datum(float32(i)) }
 	case mysql.TypeNewDecimal:
-		pt.dataGen = func(i int) types.Datum { return types.NewDecimalDatum(types.NewDecFromInt(int64(i))) }
+		return func(i int) types.Datum { return types.NewDecimalDatum(types.NewDecFromInt(int64(i))) }
 	case mysql.TypeDouble:
-		pt.dataGen = func(i int) types.Datum { return types.NewFloat64Datum(float64(i)) }
+		return func(i int) types.Datum { return types.NewFloat64Datum(float64(i)) }
 	case mysql.TypeString:
-		pt.dataGen = func(i int) types.Datum { return types.NewStringDatum(fmt.Sprintf("%d", i)) }
+		return func(i int) types.Datum { return types.NewStringDatum(fmt.Sprintf("%d", i)) }
 	case mysql.TypeDate:
-		pt.dataGen = func(i int) types.Datum { return types.NewTimeDatum(types.TimeFromDays(int64(i + 365))) }
+		return func(i int) types.Datum { return types.NewTimeDatum(types.TimeFromDays(int64(i + 365))) }
 	case mysql.TypeDuration:
-		pt.dataGen = func(i int) types.Datum { return types.NewDurationDatum(types.Duration{Duration: time.Duration(i)}) }
+		return func(i int) types.Datum { return types.NewDurationDatum(types.Duration{Duration: time.Duration(i)}) }
 	case mysql.TypeJSON:
-		pt.dataGen = func(i int) types.Datum { return types.NewDatum(json.CreateBinary(int64(i))) }
+		return func(i int) types.Datum { return types.NewDatum(json.CreateBinary(int64(i))) }
 	}
-	return pt
+	return nil
 }
 
 func (s *testSuite) testAggFunc(c *C, p aggTest) {

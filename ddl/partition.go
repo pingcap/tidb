@@ -42,6 +42,17 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if s.Partition == nil {
 		return nil, nil
 	}
+
+	// force-discard the unsupported types, even when @@tidb_enable_table_partition = 'on'
+	switch s.Partition.Tp {
+	case model.PartitionTypeKey:
+		// can't create a warning for KEY partition, it will fail an integration test :/
+		return nil, nil
+	case model.PartitionTypeList, model.PartitionTypeSystemTime:
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
+		return nil, nil
+	}
+
 	var enable bool
 	switch ctx.GetSessionVars().EnableTablePartition {
 	case "on":
@@ -50,8 +61,19 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		enable = false
 	default:
 		// When tidb_enable_table_partition = 'auto',
-		// Partition by range expression is enabled by default.
-		if s.Partition.Tp == model.PartitionTypeRange && s.Partition.ColumnNames == nil {
+		if s.Partition.Tp == model.PartitionTypeRange {
+			// Partition by range expression is enabled by default.
+			if s.Partition.ColumnNames == nil {
+				enable = true
+			}
+			// Partition by range columns and just one column.
+			if len(s.Partition.ColumnNames) == 1 {
+				enable = true
+			}
+		}
+		// Partition by hash is enabled by default.
+		// Note that linear hash is not enabled.
+		if s.Partition.Tp == model.PartitionTypeHash {
 			enable = true
 		}
 	}
@@ -101,7 +123,13 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Create
 			return errors.Trace(err)
 		}
 		defs[i].ID = pid
-		defs[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
+		if len(s.Partition.Definitions) == 0 {
+			defs[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
+		} else {
+			def := s.Partition.Definitions[i]
+			defs[i].Name = def.Name
+			defs[i].Comment, _ = def.Comment()
+		}
 	}
 	pi.Definitions = defs
 	return nil
@@ -113,18 +141,16 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Creat
 		if err != nil {
 			return errors.Trace(err)
 		}
+		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			ID:      pid,
-			Comment: def.Comment,
+			Comment: comment,
 		}
 
-		if s.Partition.ColumnNames == nil && len(def.LessThan) != 1 {
-			return ErrTooManyValues.GenWithStackByArgs(s.Partition.Tp.String())
-		}
 		buf := new(bytes.Buffer)
 		// Range columns partitions support multi-column partitions.
-		for _, expr := range def.LessThan {
+		for _, expr := range def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs {
 			expr.Format(buf)
 			piDef.LessThan = append(piDef.LessThan, buf.String())
 			buf.Reset()
@@ -202,7 +228,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 	buf := new(bytes.Buffer)
 	s.Partition.Expr.Format(buf)
 	exprStr := buf.String()
-	if s.Partition.Tp == model.PartitionTypeRange {
+	if s.Partition.Tp == model.PartitionTypeRange || s.Partition.Tp == model.PartitionTypeHash {
 		// if partition by columnExpr, check the column type
 		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
 			for _, col := range cols {
@@ -215,13 +241,19 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 		}
 	}
 
-	e, err := expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
+	e, err := expression.ParseSimpleExprWithTableInfo(ctx, exprStr, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if e.GetType().EvalType() == types.ETInt {
 		return nil
 	}
+	if s.Partition.Tp == model.PartitionTypeHash {
+		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
+			return ErrNotAllowedTypeInPartition.GenWithStackByArgs(exprStr)
+		}
+	}
+
 	return ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION")
 }
 
@@ -428,16 +460,16 @@ func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	return nil
 }
 
-func checkNoHashPartitions(partitionNum uint64) error {
+func checkNoHashPartitions(ctx sessionctx.Context, partitionNum uint64) error {
 	if partitionNum == 0 {
-		return ErrNoParts.GenWithStackByArgs("partitions")
+		return ast.ErrNoParts.GenWithStackByArgs("partitions")
 	}
 	return nil
 }
 
 func checkNoRangePartitions(partitionNum int) error {
 	if partitionNum == 0 {
-		return errors.Trace(ErrPartitionsMustBeDefined)
+		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("RANGE")
 	}
 	return nil
 }
@@ -538,20 +570,8 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		var newDef model.PartitionDefinition
-		if tblInfo.Partition.Type == model.PartitionTypeHash {
-			newDef = model.PartitionDefinition{
-				ID: pid,
-			}
-		} else if tblInfo.Partition.Type == model.PartitionTypeRange {
-			newDef = model.PartitionDefinition{
-				ID:       pid,
-				Name:     def.Name,
-				LessThan: def.LessThan,
-				Comment:  def.Comment,
-			}
-		}
+		newDef := def
+		newDef.ID = pid
 		newDefs = append(newDefs, newDef)
 	}
 	tblInfo.Partition.Definitions = newDefs

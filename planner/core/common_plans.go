@@ -29,11 +29,14 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
 )
+
+var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -82,14 +85,6 @@ type RecoverIndex struct {
 
 	Table     *ast.TableName
 	IndexName string
-}
-
-// RestoreTable is used for recover deleted files by mistake.
-type RestoreTable struct {
-	baseSchemaProducer
-	JobID  int64
-	Table  *ast.TableName
-	JobNum int64
 }
 
 // CleanupIndex is used to delete dangling index data.
@@ -208,7 +203,11 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
-			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			if metrics.ResettablePlanCacheCounterFortTest {
+				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+			} else {
+				planCacheCounter.Inc()
+			}
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
@@ -221,7 +220,8 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 	if err != nil {
 		return nil, err
 	}
-	if prepared.UseCache {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if !isTableDual && prepared.UseCache {
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
@@ -326,13 +326,13 @@ type Show struct {
 	Column      *ast.ColumnName // Used for `desc table column`.
 	Flag        int             // Some flag parsed from sql, such as FULL.
 	Full        bool
-	User        *auth.UserIdentity // Used for show grants.
-	IfNotExists bool               // Used for `show create database if not exists`
+	User        *auth.UserIdentity   // Used for show grants.
+	Roles       []*auth.RoleIdentity // Used for show grants.
+	IfNotExists bool                 // Used for `show create database if not exists`
 
 	Conditions []expression.Expression
 
-	// Used by show variables
-	GlobalScope bool
+	GlobalScope bool // Used by show variables
 }
 
 // Set represents a plan for set stmt.
@@ -340,6 +340,29 @@ type Set struct {
 	baseSchemaProducer
 
 	VarAssigns []*expression.VarAssignment
+}
+
+// SQLBindOpType repreents the SQL bind type
+type SQLBindOpType int
+
+const (
+	// OpSQLBindCreate represents the operation to create a SQL bind.
+	OpSQLBindCreate SQLBindOpType = iota
+	// OpSQLBindDrop represents the operation to drop a SQL bind.
+	OpSQLBindDrop
+)
+
+// SQLBindPlan represents a plan for SQL bind.
+type SQLBindPlan struct {
+	baseSchemaProducer
+
+	SQLBindOp    SQLBindOpType
+	NormdOrigSQL string
+	BindSQL      string
+	IsGlobal     bool
+	BindStmt     ast.StmtNode
+	Charset      string
+	Collation    string
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.
@@ -399,18 +422,29 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 }
 
+// analyzeInfo is used to store the database name, table name and partition name of analyze task.
+type analyzeInfo struct {
+	DBName        string
+	TableName     string
+	PartitionName string
+	// PhysicalTableID is the id for a partition or a table.
+	PhysicalTableID int64
+	Incremental     bool
+}
+
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	PhysicalTableID int64
-	PKInfo          *model.ColumnInfo
-	ColsInfo        []*model.ColumnInfo
+	PKInfo   *model.ColumnInfo
+	ColsInfo []*model.ColumnInfo
+	TblInfo  *model.TableInfo
+	analyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
-	// PhysicalTableID is the id for a partition or a table.
-	PhysicalTableID int64
-	IndexInfo       *model.IndexInfo
+	IndexInfo *model.IndexInfo
+	TblInfo   *model.TableInfo
+	analyzeInfo
 }
 
 // Analyze represents an analyze plan
@@ -427,6 +461,7 @@ type LoadData struct {
 	baseSchemaProducer
 
 	IsLocal     bool
+	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Table       *ast.TableName
 	Columns     []*ast.ColumnName
@@ -442,6 +477,18 @@ type LoadStats struct {
 	baseSchemaProducer
 
 	Path string
+}
+
+// SplitRegion represents a split regions plan.
+type SplitRegion struct {
+	baseSchemaProducer
+
+	TableInfo  *model.TableInfo
+	IndexInfo  *model.IndexInfo
+	Lower      []types.Datum
+	Upper      []types.Datum
+	Num        int
+	ValueLists [][]types.Datum
 }
 
 // DDL represents a DDL statement plan.
@@ -492,6 +539,9 @@ func (e *Explain) prepareSchema() error {
 
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
+	if e.StmtPlan == nil {
+		return nil
+	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
@@ -534,15 +584,18 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
-	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
+	explainID := p.ExplainID().String()
+	row := []string{e.prettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
-		if runtimeStatsColl.ExistsCopStats(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.GetCopStats(p.ExplainID()).String())
-		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
+		if runtimeStatsColl.ExistsCopStats(explainID) {
+			row = append(row, runtimeStatsColl.GetCopStats(explainID).String())
+		} else if runtimeStatsColl.ExistsRootStats(explainID) {
+			row = append(row, runtimeStatsColl.GetRootStats(explainID).String())
+		} else {
+			row = append(row, "time:0ns, loops:0, rows:0")
 		}
 	}
 	e.Rows = append(e.Rows, row)

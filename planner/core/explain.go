@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/statistics"
 )
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -57,8 +58,8 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 			break
 		}
 	}
-	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
+	if len(p.rangeInfo) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeInfo)
 	} else if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
@@ -74,7 +75,7 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.UsePseudoStats {
+	if p.stats.StatsVersion == statistics.PseudoVersion {
 		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
@@ -121,7 +122,7 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.UsePseudoStats {
+	if p.stats.StatsVersion == statistics.PseudoVersion {
 		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
@@ -129,12 +130,12 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
-	return "data:" + p.tablePlan.ExplainID()
+	return "data:" + p.tablePlan.ExplainID().String()
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.indexPlan.ExplainID()
+	return "index:" + p.indexPlan.ExplainID().String()
 }
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -200,12 +201,6 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 			}
 		}
 	}
-	return buffer.String()
-}
-
-// ExplainInfo implements PhysicalPlan interface.
-func (p *PhysicalApply) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.PhysicalJoin.ExplainInfo())
 	return buffer.String()
 }
 
@@ -328,7 +323,8 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalWindow) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.WindowFuncDesc.String())
+	buffer := bytes.NewBufferString("")
+	formatWindowFuncDescs(buffer, p.WindowFuncDescs)
 	buffer.WriteString(" over(")
 	isFirst := true
 	if len(p.PartitionBy) > 0 {
@@ -374,4 +370,14 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	}
 	buffer.WriteString(")")
 	return buffer.String()
+}
+
+func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc) *bytes.Buffer {
+	for i, desc := range descs {
+		if i != 0 {
+			buffer.WriteString(", ")
+		}
+		buffer.WriteString(desc.String())
+	}
+	return buffer
 }

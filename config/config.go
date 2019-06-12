@@ -14,17 +14,23 @@
 package config
 
 import (
+	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
+	"os"
+	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
+	"go.uber.org/atomic"
 )
 
 // Config number limitations
@@ -76,6 +82,7 @@ type Config struct {
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
+	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic_txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
@@ -180,6 +187,7 @@ type Performance struct {
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -285,6 +293,18 @@ type Plugin struct {
 	Load string `toml:"load" json:"load"`
 }
 
+// PessimisticTxn is the config for pessimistic transaction.
+type PessimisticTxn struct {
+	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
+	Enable bool `toml:"enable" json:"enable"`
+	// Starts a pessimistic transaction by default when Enable is true.
+	Default bool `toml:"default" json:"default"`
+	// The max count of retry for a single statement in a pessimistic transaction.
+	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+	// The pessimistic lock ttl.
+	TTL string `toml:"ttl" json:"ttl"`
+}
+
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -333,6 +353,7 @@ var defaultConf = Config{
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
+		BindInfoLease:       "3s",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -368,9 +389,22 @@ var defaultConf = Config{
 		WriteTimeout: "15s",
 		Strategy:     "range",
 	},
+	PessimisticTxn: PessimisticTxn{
+		Enable:        false,
+		Default:       false,
+		MaxRetryCount: 256,
+		TTL:           "30s",
+	},
 }
 
-var globalConf = defaultConf
+var (
+	globalConf              = atomic.Value{}
+	reloadConfPath          = ""
+	confReloader            func(nc, c *Config)
+	confReloadLock          sync.Mutex
+	supportedReloadConfigs  = make(map[string]struct{}, 32)
+	supportedReloadConfList = make([]string, 0, 32)
+)
 
 // NewConfig creates a new config instance with default value.
 func NewConfig() *Config {
@@ -378,11 +412,89 @@ func NewConfig() *Config {
 	return &conf
 }
 
+// SetConfReloader sets reload config path and a reloader.
+// It should be called only once at start time.
+func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...string) {
+	reloadConfPath = cpath
+	confReloader = reloader
+	for _, item := range confItems {
+		supportedReloadConfigs[item] = struct{}{}
+		supportedReloadConfList = append(supportedReloadConfList, item)
+	}
+}
+
 // GetGlobalConfig returns the global configuration for this server.
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	return &globalConf
+	return globalConf.Load().(*Config)
+}
+
+// ReloadGlobalConfig reloads global configuration for this server.
+func ReloadGlobalConfig() error {
+	confReloadLock.Lock()
+	defer confReloadLock.Unlock()
+
+	nc := NewConfig()
+	if err := nc.Load(reloadConfPath); err != nil {
+		return err
+	}
+	if err := nc.Valid(); err != nil {
+		return err
+	}
+	c := GetGlobalConfig()
+
+	diffs := collectsDiff(*nc, *c, "")
+	if len(diffs) == 0 {
+		return nil
+	}
+	var formattedDiff bytes.Buffer
+	for k, vs := range diffs {
+		formattedDiff.WriteString(fmt.Sprintf(", %v:%v->%v", k, vs[1], vs[0]))
+	}
+	unsupported := make([]string, 0, 2)
+	for k := range diffs {
+		if _, ok := supportedReloadConfigs[k]; !ok {
+			unsupported = append(unsupported, k)
+		}
+	}
+	if len(unsupported) > 0 {
+		return fmt.Errorf("reloading config %v is not supported, only %v are supported now, "+
+			"your changes%s", unsupported, supportedReloadConfList, formattedDiff.String())
+	}
+
+	confReloader(nc, c)
+	globalConf.Store(nc)
+	logutil.Logger(context.Background()).Info("reload config changes" + formattedDiff.String())
+	return nil
+}
+
+// collectsDiff collects different config items.
+// map[string][]string -> map[field path][]{new value, old value}
+func collectsDiff(i1, i2 interface{}, fieldPath string) map[string][]interface{} {
+	diff := make(map[string][]interface{})
+	t := reflect.TypeOf(i1)
+	if t.Kind() != reflect.Struct {
+		if reflect.DeepEqual(i1, i2) {
+			return diff
+		}
+		diff[fieldPath] = []interface{}{i1, i2}
+		return diff
+	}
+
+	v1 := reflect.ValueOf(i1)
+	v2 := reflect.ValueOf(i2)
+	for i := 0; i < v1.NumField(); i++ {
+		p := t.Field(i).Name
+		if fieldPath != "" {
+			p = fieldPath + "." + p
+		}
+		m := collectsDiff(v1.Field(i).Interface(), v2.Field(i).Interface(), p)
+		for k, v := range m {
+			diff[k] = v
+		}
+	}
+	return diff
 }
 
 // Load loads config options from a toml file.
@@ -404,6 +516,62 @@ func (c *Config) Load(confFile string) error {
 	}
 
 	return err
+}
+
+// Valid checks if this config is valid.
+func (c *Config) Valid() error {
+	if c.Security.SkipGrantTable && !hasRootPrivilege() {
+		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+	}
+	if _, ok := ValidStorage[c.Store]; !ok {
+		nameList := make([]string, 0, len(ValidStorage))
+		for k, v := range ValidStorage {
+			if v {
+				nameList = append(nameList, k)
+			}
+		}
+		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, nameList)
+	}
+	if c.Store == "mocktikv" && !c.RunDDL {
+		return fmt.Errorf("can't disable DDL on mocktikv")
+	}
+	if c.Log.File.MaxSize > MaxLogFileSize {
+		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
+	}
+	c.OOMAction = strings.ToLower(c.OOMAction)
+
+	// lower_case_table_names is allowed to be 0, 1, 2
+	if c.LowerCaseTableNames < 0 || c.LowerCaseTableNames > 2 {
+		return fmt.Errorf("lower-case-table-names should be 0 or 1 or 2")
+	}
+
+	if c.TxnLocalLatches.Enabled && c.TxnLocalLatches.Capacity == 0 {
+		return fmt.Errorf("txn-local-latches.capacity can not be 0")
+	}
+
+	// For tikvclient.
+	if c.TiKVClient.GrpcConnectionCount == 0 {
+		return fmt.Errorf("grpc-connection-count should be greater than 0")
+	}
+	if c.TiKVClient.MaxTxnTimeUse == 0 {
+		return fmt.Errorf("max-txn-time-use should be greater than 0")
+	}
+	if c.PessimisticTxn.TTL != "" {
+		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
+		if err != nil {
+			return err
+		}
+		minDur := time.Second * 15
+		maxDur := time.Second * 60
+		if dur < minDur || dur > maxDur {
+			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]", dur, minDur, maxDur)
+		}
+	}
+	return nil
+}
+
+func hasRootPrivilege() bool {
+	return os.Geteuid() == 0
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
@@ -433,6 +601,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 func init() {
+	globalConf.Store(&defaultConf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}

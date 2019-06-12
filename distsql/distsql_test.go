@@ -15,6 +15,7 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -63,7 +65,12 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 	if planIDs == nil {
 		response, err = Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	} else {
-		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs)
+		var planIDFuncs []fmt.Stringer
+		for i := range planIDs {
+			idx := i
+			planIDFuncs = append(planIDFuncs, stringutil.StringerStr(planIDs[idx]))
+		}
+		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs)
 	}
 
 	c.Assert(err, IsNil)
@@ -115,7 +122,7 @@ func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
 		c.Fatal("invalid copPlanIDs")
 	}
 	for i := range planIDs {
-		if response.copPlanIDs[i] != planIDs[i] {
+		if response.copPlanIDs[i].String() != planIDs[i] {
 			c.Fatal("invalid copPlanIDs")
 		}
 	}
@@ -199,6 +206,14 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSuite) TestSelectStreamingWithNextRaw(c *C) {
+	response, _ := s.createSelectStreaming(1, 2, c)
+	response.Fetch(context.TODO())
+	data, err := response.NextRaw(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 16)
+}
+
 func (s *testSuite) TestSelectStreamingChunkSize(c *C) {
 	response, colTypes := s.createSelectStreaming(100, 1000000, c)
 	response.Fetch(context.TODO())
@@ -278,6 +293,30 @@ func (s *testSuite) TestAnalyze(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSuite) TestChecksum(c *C) {
+	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
+		SetChecksumRequest(&tipb.ChecksumRequest{}).
+		Build()
+	c.Assert(err, IsNil)
+
+	response, err := Checksum(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars)
+	c.Assert(err, IsNil)
+
+	result, ok := response.(*selectResult)
+	c.Assert(ok, IsTrue)
+	c.Assert(result.label, Equals, "checksum")
+	c.Assert(result.sqlType, Equals, "general")
+
+	response.Fetch(context.TODO())
+
+	bytes, err := response.NextRaw(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(len(bytes), Equals, 16)
+
+	err = response.Close()
+	c.Assert(err, IsNil)
+}
+
 // mockResponse implements kv.Response interface.
 // Used only for test.
 type mockResponse struct {
@@ -342,6 +381,9 @@ func (r *mockResultSubset) GetStartKey() kv.Key { return nil }
 func (r *mockResultSubset) GetExecDetails() *execdetails.ExecDetails {
 	return &execdetails.ExecDetails{}
 }
+
+// MemSize implements kv.ResultSubset interface.
+func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
 
 func populateBuffer() []byte {
 	numCols := 4

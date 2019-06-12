@@ -290,72 +290,12 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	return alloc.alloc4Signed(tableID)
 }
 
-var (
-	memID     int64
-	memIDLock sync.Mutex
-)
-
-type memoryAllocator struct {
-	mu   sync.Mutex
-	base int64
-	end  int64
-	dbID int64
-}
-
-// Base implements autoid.Allocator Base interface.
-func (alloc *memoryAllocator) Base() int64 {
-	return alloc.base
-}
-
-// End implements autoid.Allocator End interface.
-func (alloc *memoryAllocator) End() int64 {
-	return alloc.end
-}
-
-// NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
-func (alloc *memoryAllocator) NextGlobalAutoID(tableID int64) (int64, error) {
-	memIDLock.Lock()
-	defer memIDLock.Unlock()
-	return memID + 1, nil
-}
-
-// Rebase implements autoid.Allocator Rebase interface.
-func (alloc *memoryAllocator) Rebase(tableID, newBase int64, allocIDs bool) error {
-	// TODO: implement it.
-	return nil
-}
-
-// Alloc implements autoid.Allocator Alloc interface.
-func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
-	if tableID == 0 {
-		return 0, errInvalidTableID.GenWithStack("Invalid tableID")
-	}
-	alloc.mu.Lock()
-	defer alloc.mu.Unlock()
-	if alloc.base == alloc.end { // step
-		memIDLock.Lock()
-		memID = memID + step
-		alloc.end = memID
-		alloc.base = alloc.end - step
-		memIDLock.Unlock()
-	}
-	alloc.base++
-	return alloc.base, nil
-}
-
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 	return &allocator{
 		store:      store,
 		dbID:       dbID,
 		isUnsigned: isUnsigned,
-	}
-}
-
-// NewMemoryAllocator returns a new auto increment id generator in memory.
-func NewMemoryAllocator(dbID int64) Allocator {
-	return &memoryAllocator{
-		dbID: dbID,
 	}
 }
 

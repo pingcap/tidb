@@ -85,26 +85,30 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {
-	case *ast.TruncateTableStmt:
-		err = e.executeTruncateTable(x)
+	case *ast.AlterDatabaseStmt:
+		err = e.executeAlterDatabase(x)
+	case *ast.AlterTableStmt:
+		err = e.executeAlterTable(x)
+	case *ast.CreateIndexStmt:
+		err = e.executeCreateIndex(x)
 	case *ast.CreateDatabaseStmt:
 		err = e.executeCreateDatabase(x)
 	case *ast.CreateTableStmt:
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(x)
-	case *ast.CreateIndexStmt:
-		err = e.executeCreateIndex(x)
+	case *ast.DropIndexStmt:
+		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:
 		err = e.executeDropDatabase(x)
 	case *ast.DropTableStmt:
 		err = e.executeDropTableOrView(x)
-	case *ast.DropIndexStmt:
-		err = e.executeDropIndex(x)
-	case *ast.AlterTableStmt:
-		err = e.executeAlterTable(x)
+	case *ast.RecoverTableStmt:
+		err = e.executeRecoverTable(x)
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
+	case *ast.TruncateTableStmt:
+		err = e.executeTruncateTable(x)
 	}
 	if err != nil {
 		return e.toErr(err)
@@ -158,6 +162,11 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 			err = nil
 		}
 	}
+	return err
+}
+
+func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().AlterSchema(e.ctx, s)
 	return err
 }
 
@@ -296,46 +305,10 @@ func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 	return err
 }
 
-// RestoreTableExec represents a recover table executor.
-// It is built from "admin restore table by job" statement,
+// executeRecoverTable represents a recover table executor.
+// It is built from "recover table" statement,
 // is used to recover the table that deleted by mistake.
-type RestoreTableExec struct {
-	baseExecutor
-	jobID  int64
-	Table  *ast.TableName
-	JobNum int64
-}
-
-// Open implements the Executor Open interface.
-func (e *RestoreTableExec) Open(ctx context.Context) error {
-	return e.baseExecutor.Open(ctx)
-}
-
-// Next implements the Executor Open interface.
-func (e *RestoreTableExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
-	// Should commit the previous transaction and create a new transaction.
-	if err = e.ctx.NewTxn(ctx); err != nil {
-		return err
-	}
-	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
-
-	err = e.executeRestoreTable()
-	if err != nil {
-		return err
-	}
-
-	dom := domain.GetDomain(e.ctx)
-	// Update InfoSchema in TxnCtx, so it will pass schema check.
-	is := dom.InfoSchema()
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.InfoSchema = is
-	txnCtx.SchemaVersion = is.SchemaMetaVersion()
-	// DDL will force commit old transaction, after DDL, in transaction status should be false.
-	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return nil
-}
-
-func (e *RestoreTableExec) executeRestoreTable() error {
+func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
@@ -344,10 +317,10 @@ func (e *RestoreTableExec) executeRestoreTable() error {
 	dom := domain.GetDomain(e.ctx)
 	var job *model.Job
 	var tblInfo *model.TableInfo
-	if e.jobID != 0 {
-		job, tblInfo, err = getRestoreTableByJobID(e, t, dom)
+	if s.JobID != 0 {
+		job, tblInfo, err = e.getRecoverTableByJobID(s, t, dom)
 	} else {
-		job, tblInfo, err = getRestoreTableByTableName(e, t, dom)
+		job, tblInfo, err = e.getRecoverTableByTableName(s, t, dom)
 	}
 	if err != nil {
 		return err
@@ -361,18 +334,18 @@ func (e *RestoreTableExec) executeRestoreTable() error {
 	if err != nil {
 		return errors.Errorf("recover table_id: %d, get original autoID from snapshot meta err: %s", job.TableID, err.Error())
 	}
-	// Call DDL RestoreTable
-	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, tblInfo, job.SchemaID, autoID, job.ID, job.StartTS)
+	// Call DDL RecoverTable
+	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, tblInfo, job.SchemaID, autoID, job.ID, job.StartTS)
 	return err
 }
 
-func getRestoreTableByJobID(e *RestoreTableExec, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
-	job, err := t.GetHistoryDDLJob(e.jobID)
+func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
+	job, err := t.GetHistoryDDLJob(s.JobID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if job == nil {
-		return nil, nil, admin.ErrDDLJobNotFound.GenWithStackByArgs(e.jobID)
+		return nil, nil, admin.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
 	}
 	if job.Type != model.ActionDropTable {
 		return nil, nil, errors.Errorf("Job %v type is %v, not drop table", job.ID, job.Type)
@@ -400,7 +373,7 @@ func getRestoreTableByJobID(e *RestoreTableExec, t *meta.Meta, dom *domain.Domai
 	return job, table.Meta(), nil
 }
 
-func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
+func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
 	jobs, err := t.GetAllHistoryDDLJobs()
 	if err != nil {
 		return nil, nil, err
@@ -411,7 +384,7 @@ func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.D
 	if err != nil {
 		return nil, nil, err
 	}
-	schemaName := e.Table.Schema.L
+	schemaName := s.Table.Schema.L
 	if schemaName == "" {
 		schemaName = e.ctx.GetSessionVars().CurrentDB
 	}
@@ -442,7 +415,7 @@ func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.D
 				fmt.Sprintf("(Table ID %d)", job.TableID),
 			)
 		}
-		if table.Meta().Name.L == e.Table.Name.L {
+		if table.Meta().Name.L == s.Table.Name.L {
 			schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
 			if !ok {
 				return nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
@@ -456,7 +429,7 @@ func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.D
 		}
 	}
 	if tblInfo == nil {
-		return nil, nil, errors.Errorf("Can't found drop table: %v in ddl history jobs", e.Table.Name)
+		return nil, nil, errors.Errorf("Can't found drop table: %v in ddl history jobs", s.Table.Name)
 	}
 	return job, tblInfo, nil
 }

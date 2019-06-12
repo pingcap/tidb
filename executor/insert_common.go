@@ -301,6 +301,10 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
+	if !sessVars.StrictSQLMode {
+		// If StrictSQLMode is disabled and it is a insert-select statement, it also handle BadNullAsWarning.
+		sessVars.StmtCtx.BadNullAsWarning = true
+	}
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
 
@@ -314,7 +318,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 		}
 
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-			innerRow := types.CopyRow(innerChunkRow.GetDatumRow(fields))
+			innerRow := types.CloneRow(innerChunkRow.GetDatumRow(fields))
 			e.rowCount++
 			row, err := e.getRow(innerRow)
 			if err != nil {

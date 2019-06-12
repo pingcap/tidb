@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -282,7 +283,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		// none -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		indexInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		job.SchemaState = model.StateWriteOnly
@@ -311,7 +312,16 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 			return ver, errors.Trace(err)
 		}
 
-		err = w.runReorgJob(t, reorgInfo, d.lease, func() error {
+		err = w.runReorgJob(t, reorgInfo, d.lease, func() (addIndexErr error) {
+			defer func() {
+				r := recover()
+				if r != nil {
+					buf := util.GetStack()
+					logutil.Logger(ddlLogCtx).Error("[ddl] add table index panic", zap.Any("panic", r), zap.String("stack", string(buf)))
+					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
+				}
+			}()
 			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
@@ -758,10 +768,11 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
-	// gofail: var errorMockPanic bool
-	// if errorMockPanic {
-	// 		panic("panic test")
-	// }
+	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("panic test")
+		}
+	})
 
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
@@ -791,7 +802,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 
 			// Lock the row key to notify us that someone delete or update the row,
 			// then we should not backfill the index of it, otherwise the adding index is redundant.
-			err := txn.LockKeys(idxRecord.key)
+			err := txn.LockKeys(context.Background(), 0, idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -861,8 +872,6 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	return result
 }
 
-var gofailMockAddindexErrOnceGuard bool
-
 func (w *addIndexWorker) run(d *ddlCtx) {
 	logutil.Logger(ddlLogCtx).Info("[ddl] add index worker start", zap.Int("workerID", w.id))
 	defer func() {
@@ -881,13 +890,13 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		}
 
 		logutil.Logger(ddlLogCtx).Debug("[ddl] add index worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
-		// gofail: var mockAddIndexErr bool
-		//if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
-		//	gofailMockAddindexErrOnceGuard = true
-		//	result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
-		//	w.resultCh <- result
-		//	continue
-		//}
+		failpoint.Inject("mockAddIndexErr", func() {
+			if w.id == 0 {
+				result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
+				w.resultCh <- result
+				failpoint.Continue()
+			}
+		})
 
 		// Dynamic change batch size.
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
@@ -1159,20 +1168,21 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 			closeAddIndexWorkers(workers)
 		}
 
-		// gofail: var checkIndexWorkerNum bool
-		// if checkIndexWorkerNum {
-		//	num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
-		//	if num != 0 {
-		//		if num > len(kvRanges) {
-		//			if len(idxWorkers) != len(kvRanges) {
-		//				return errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers))
-		//			}
-		//		} else if num != len(idxWorkers) {
-		//			return errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers))
-		//		}
-		//		TestCheckWorkerNumCh <- struct{}{}
-		//	}
-		//}
+		failpoint.Inject("checkIndexWorkerNum", func(val failpoint.Value) {
+			if val.(bool) {
+				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
+				if num != 0 {
+					if num > len(kvRanges) {
+						if len(idxWorkers) != len(kvRanges) {
+							failpoint.Return(errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers)))
+						}
+					} else if num != len(idxWorkers) {
+						failpoint.Return(errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers)))
+					}
+					TestCheckWorkerNumCh <- struct{}{}
+				}
+			}
+		})
 
 		logutil.Logger(ddlLogCtx).Info("[ddl] start add index workers to reorg index", zap.Int("workerCnt", len(idxWorkers)), zap.Int("regionCnt", len(kvRanges)), zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
 		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges)
@@ -1199,7 +1209,7 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 		for !finish {
 			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
 			if p == nil {
-				return errors.Errorf("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+				return errCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
 			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
 			if err != nil {

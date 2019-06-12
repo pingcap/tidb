@@ -20,17 +20,14 @@ package tables
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -39,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
@@ -925,7 +921,8 @@ func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 		return 0, err
 	}
 	if t.meta.ShardRowIDBits > 0 {
-		if t.overflowShardBits(rowID) {
+		// Use max record ShardRowIDBits to check overflow.
+		if OverflowShardBits(rowID, t.meta.MaxShardRowIDBits) {
 			// If overflow, the rowID may be duplicated. For examples,
 			// t.meta.ShardRowIDBits = 4
 			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
@@ -945,9 +942,9 @@ func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	return rowID, nil
 }
 
-// overflowShardBits check whether the rowID overflow `1<<(64-t.meta.ShardRowIDBits-1) -1`.
-func (t *tableCommon) overflowShardBits(rowID int64) bool {
-	mask := (1<<t.meta.ShardRowIDBits - 1) << (64 - t.meta.ShardRowIDBits - 1)
+// OverflowShardBits checks whether the rowID overflow `1<<(64-shardRowIDBits-1) -1`.
+func OverflowShardBits(rowID int64, shardRowIDBits uint64) bool {
+	mask := (1<<shardRowIDBits - 1) << (64 - shardRowIDBits - 1)
 	return rowID&int64(mask) > 0
 }
 
@@ -1092,114 +1089,4 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, da
 func init() {
 	table.TableFromMeta = TableFromMeta
 	table.MockTableFromMeta = MockTableFromMeta
-}
-
-// ctxForPartitionExpr implement sessionctx.Context interfact.
-type ctxForPartitionExpr struct {
-	sessionVars *variable.SessionVars
-}
-
-// newCtxForPartitionExpr creates a new sessionctx.Context.
-func newCtxForPartitionExpr() sessionctx.Context {
-	sctx := &ctxForPartitionExpr{
-		sessionVars: variable.NewSessionVars(),
-	}
-	sctx.sessionVars.InitChunkSize = 2
-	sctx.sessionVars.MaxChunkSize = 32
-	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
-	return sctx
-}
-
-// NewTxn creates a new transaction for further execution.
-// If old transaction is valid, it is committed first.
-// It's used in BEGIN statement and DDL statements to commit old transaction.
-func (ctx *ctxForPartitionExpr) NewTxn(ctx1 context.Context) error {
-	panic("not support")
-}
-
-// Txn returns the current transaction which is created before executing a statement.
-func (ctx *ctxForPartitionExpr) Txn(bool) (kv.Transaction, error) {
-	panic("not support")
-}
-
-// GetClient gets a kv.Client.
-func (ctx *ctxForPartitionExpr) GetClient() kv.Client {
-	panic("not support")
-}
-
-// SetValue saves a value associated with this context for key.
-func (ctx *ctxForPartitionExpr) SetValue(key fmt.Stringer, value interface{}) {
-	panic("not support")
-}
-
-// Value returns the value associated with this context for key.
-func (ctx *ctxForPartitionExpr) Value(key fmt.Stringer) interface{} {
-	panic("not support")
-}
-
-// ClearValue clears the value associated with this context for key.
-func (ctx *ctxForPartitionExpr) ClearValue(key fmt.Stringer) {
-	panic("not support")
-}
-
-func (ctx *ctxForPartitionExpr) GetSessionVars() *variable.SessionVars {
-	return ctx.sessionVars
-}
-
-// GetSessionManager implements the sessionctx.Context interface.
-func (ctx *ctxForPartitionExpr) GetSessionManager() util.SessionManager {
-	panic("not support")
-}
-
-// RefreshTxnCtx commits old transaction without retry,
-// and creates a new transaction.
-// now just for load data and batch insert.
-func (ctx *ctxForPartitionExpr) RefreshTxnCtx(context.Context) error {
-	panic("not support")
-}
-
-// InitTxnWithStartTS initializes a transaction with startTS.
-// It should be called right before we builds an executor.
-func (ctx *ctxForPartitionExpr) InitTxnWithStartTS(startTS uint64) error {
-	panic("not support")
-}
-
-// GetStore returns the store of session.
-func (ctx *ctxForPartitionExpr) GetStore() kv.Storage {
-	panic("not support")
-}
-
-// PreparedPlanCache returns the cache of the physical plan
-func (ctx *ctxForPartitionExpr) PreparedPlanCache() *kvcache.SimpleLRUCache {
-	panic("not support")
-}
-
-// StoreQueryFeedback stores the query feedback.
-func (ctx *ctxForPartitionExpr) StoreQueryFeedback(feedback interface{}) {
-	panic("not support")
-}
-
-// StmtCommit flush all changes by the statement to the underlying transaction.
-func (ctx *ctxForPartitionExpr) StmtCommit() error {
-	panic("not support")
-}
-
-// StmtRollback provides statement level rollback.
-func (ctx *ctxForPartitionExpr) StmtRollback() {
-	panic("not support")
-}
-
-// StmtGetMutation gets the binlog mutation for current statement.
-func (ctx *ctxForPartitionExpr) StmtGetMutation(int64) *binlog.TableMutation {
-	panic("not support")
-}
-
-// StmtAddDirtyTableOP adds the dirty table operation for current statement.
-func (ctx *ctxForPartitionExpr) StmtAddDirtyTableOP(op int, physicalID int64, handle int64, row []types.Datum) {
-	panic("not support")
-}
-
-// DDLOwnerChecker returns owner.DDLOwnerChecker.
-func (ctx *ctxForPartitionExpr) DDLOwnerChecker() owner.DDLOwnerChecker {
-	panic("not support")
 }

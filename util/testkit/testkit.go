@@ -18,10 +18,13 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -175,6 +178,28 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	}
 }
 
+// MustIndexLookup checks whether the plan for the sql is Point_Get.
+func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	hasIndexLookup := false
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], "IndexLookUp") {
+			hasIndexLookup = true
+			break
+		}
+	}
+	tk.c.Assert(hasIndexLookup, check.IsTrue)
+	return tk.MustQuery(sql, args...)
+}
+
+// MustPointGet checks whether the plan for the sql is Point_Get.
+func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	tk.c.Assert(len(rs.rows), check.Equals, 1)
+	tk.c.Assert(strings.Contains(rs.rows[0][0], "Point_Get"), check.IsTrue)
+	return tk.MustQuery(sql, args...)
+}
+
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
@@ -208,7 +233,12 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
 // It is used to check results of execute statement in binary mode.
 func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
-	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
+	return tk.ResultSetToResultWithCtx(context.Background(), rs, comment)
+}
+
+// ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
+func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
+	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	err = rs.Close()
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
@@ -233,4 +263,13 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
 	return testutil.RowsWithSep(" ", args...)
+}
+
+// GetTableID gets table ID by name.
+func (tk *TestKit) GetTableID(tableName string) int64 {
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
+	tk.c.Assert(err, check.IsNil)
+	return tbl.Meta().ID
 }

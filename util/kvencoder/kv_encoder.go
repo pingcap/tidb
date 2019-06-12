@@ -178,7 +178,7 @@ func (e *kvEncoder) EncodePrepareStmt(tableID int64, stmtID uint32, param ...int
 func (e *kvEncoder) EncodeMetaAutoID(dbID, tableID, autoID int64) (KvPair, error) {
 	mockTxn := kv.NewMockTxn()
 	m := meta.NewMeta(mockTxn)
-	k, v := m.GenAutoTableIDIDKeyValue(dbID, tableID, autoID)
+	k, v := m.GenAutoTableIDKeyValue(dbID, tableID, autoID)
 	return KvPair{Key: k, Val: v}, nil
 }
 

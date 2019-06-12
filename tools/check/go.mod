@@ -14,6 +14,7 @@ require (
 	github.com/pelletier/go-toml v1.2.0 // indirect
 	github.com/securego/gosec v0.0.0-20181211171558-12400f9a1ca7
 	gopkg.in/alecthomas/gometalinter.v2 v2.0.12 // indirect
+	gopkg.in/alecthomas/gometalinter.v3 v3.0.0 // indirect
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6 // indirect
 	gopkg.in/alecthomas/kingpin.v3-unstable v3.0.0-20170321130658-9670b87a702e // indirect
 	gopkg.in/yaml.v2 v2.2.2 // indirect

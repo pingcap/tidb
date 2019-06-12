@@ -14,12 +14,15 @@
 package memory
 
 import (
+	"math/rand"
 	"os"
 	"sync"
 	"testing"
 
+	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -40,14 +43,14 @@ func (s *testSuite) SetUpTest(c *C)     { testleak.BeforeTest() }
 func (s *testSuite) TearDownTest(c *C)  { testleak.AfterTest(c)() }
 
 func (s *testSuite) TestSetLabel(c *C) {
-	tracker := NewTracker("old label", -1)
-	c.Assert(tracker.label, Equals, "old label")
+	tracker := NewTracker(stringutil.StringerStr("old label"), -1)
+	c.Assert(tracker.label.String(), Equals, "old label")
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
 	c.Assert(tracker.parent, IsNil)
 	c.Assert(len(tracker.mu.children), Equals, 0)
-	tracker.SetLabel("new label")
-	c.Assert(tracker.label, Equals, "new label")
+	tracker.SetLabel(stringutil.StringerStr("new label"))
+	c.Assert(tracker.label.String(), Equals, "new label")
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
 	c.Assert(tracker.parent, IsNil)
@@ -55,7 +58,7 @@ func (s *testSuite) TestSetLabel(c *C) {
 }
 
 func (s *testSuite) TestConsume(c *C) {
-	tracker := NewTracker("tracker", -1)
+	tracker := NewTracker(stringutil.StringerStr("tracker"), -1)
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 
 	tracker.Consume(100)
@@ -82,7 +85,7 @@ func (s *testSuite) TestConsume(c *C) {
 }
 
 func (s *testSuite) TestOOMAction(c *C) {
-	tracker := NewTracker("oom tracker", 100)
+	tracker := NewTracker(stringutil.StringerStr("oom tracker"), 100)
 	action := &mockAction{}
 	tracker.SetActionOnExceed(action)
 
@@ -100,9 +103,9 @@ func (a *mockAction) Action(t *Tracker) {
 }
 
 func (s *testSuite) TestAttachTo(c *C) {
-	oldParent := NewTracker("old parent", -1)
-	newParent := NewTracker("new parent", -1)
-	child := NewTracker("child", -1)
+	oldParent := NewTracker(stringutil.StringerStr("old parent"), -1)
+	newParent := NewTracker(stringutil.StringerStr("new parent"), -1)
+	child := NewTracker(stringutil.StringerStr("child"), -1)
 	child.Consume(100)
 	child.AttachTo(oldParent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
@@ -122,11 +125,11 @@ func (s *testSuite) TestAttachTo(c *C) {
 }
 
 func (s *testSuite) TestReplaceChild(c *C) {
-	oldChild := NewTracker("old child", -1)
+	oldChild := NewTracker(stringutil.StringerStr("old child"), -1)
 	oldChild.Consume(100)
-	newChild := NewTracker("new child", -1)
+	newChild := NewTracker(stringutil.StringerStr("new child"), -1)
 	newChild.Consume(500)
-	parent := NewTracker("parent", -1)
+	parent := NewTracker(stringutil.StringerStr("parent"), -1)
 
 	oldChild.AttachTo(parent)
 	c.Assert(parent.BytesConsumed(), Equals, int64(100))
@@ -153,12 +156,12 @@ func (s *testSuite) TestReplaceChild(c *C) {
 }
 
 func (s *testSuite) TestToString(c *C) {
-	parent := NewTracker("parent", -1)
+	parent := NewTracker(stringutil.StringerStr("parent"), -1)
 
-	child1 := NewTracker("child 1", 1000)
-	child2 := NewTracker("child 2", -1)
-	child3 := NewTracker("child 3", -1)
-	child4 := NewTracker("child 4", -1)
+	child1 := NewTracker(stringutil.StringerStr("child 1"), 1000)
+	child2 := NewTracker(stringutil.StringerStr("child 2"), -1)
+	child3 := NewTracker(stringutil.StringerStr("child 3"), -1)
+	child4 := NewTracker(stringutil.StringerStr("child 4"), -1)
 
 	child1.AttachTo(parent)
 	child2.AttachTo(parent)
@@ -190,10 +193,37 @@ func (s *testSuite) TestToString(c *C) {
 `)
 }
 
+func (s *testSuite) TestMaxConsumed(c *C) {
+	r := NewTracker(stringutil.StringerStr("root"), -1)
+	c1 := NewTracker(stringutil.StringerStr("child 1"), -1)
+	c2 := NewTracker(stringutil.StringerStr("child 2"), -1)
+	cc1 := NewTracker(stringutil.StringerStr("child of child 1"), -1)
+
+	c1.AttachTo(r)
+	c2.AttachTo(r)
+	cc1.AttachTo(c1)
+
+	ts := []*Tracker{r, c1, c2, cc1}
+	var consumed, maxConsumed int64
+	for i := 0; i < 10; i++ {
+		t := ts[rand.Intn(len(ts))]
+		b := rand.Int63n(1000) - 500
+		if consumed+b < 0 {
+			b = -consumed
+		}
+		consumed += b
+		t.Consume(b)
+		maxConsumed = mathutil.MaxInt64(maxConsumed, consumed)
+
+		c.Assert(r.BytesConsumed(), Equals, consumed)
+		c.Assert(r.MaxConsumed(), Equals, maxConsumed)
+	}
+}
+
 func BenchmarkConsume(b *testing.B) {
-	tracker := NewTracker("root", -1)
+	tracker := NewTracker(stringutil.StringerStr("root"), -1)
 	b.RunParallel(func(pb *testing.PB) {
-		childTracker := NewTracker("child", -1)
+		childTracker := NewTracker(stringutil.StringerStr("child"), -1)
 		childTracker.AttachTo(tracker)
 		for pb.Next() {
 			childTracker.Consume(256 << 20)

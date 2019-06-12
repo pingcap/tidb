@@ -682,6 +682,7 @@ func runTestConcurrentUpdate(c *C) {
 		dbt.mustExec("drop table if exists test2")
 		dbt.mustExec("create table test2 (a int, b int)")
 		dbt.mustExec("insert test2 values (1, 1)")
+		dbt.mustExec("set @@tidb_disable_txn_auto_retry = 0")
 
 		txn1, err := dbt.db.Begin()
 		c.Assert(err, IsNil)
@@ -804,7 +805,10 @@ func runTestShowProcessList(c *C) {
 func runTestAuth(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`CREATE ROLE 'authtest_r1'@'%';`)
 		dbt.mustExec(`GRANT ALL on test.* to 'authtest'`)
+		dbt.mustExec(`GRANT authtest_r1 to 'authtest'`)
+		dbt.mustExec(`SET DEFAULT ROLE authtest_r1 TO authtest`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	runTests(c, func(config *mysql.Config) {
@@ -821,6 +825,21 @@ func runTestAuth(c *C) {
 	c.Assert(err, IsNil)
 	_, err = db.Query("USE information_schema;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
+	db.Close()
+
+	// Test for loading active roles.
+	db, err = sql.Open("mysql", getDSN(func(config *mysql.Config) {
+		config.User = "authtest"
+		config.Passwd = "123"
+	}))
+	c.Assert(err, IsNil)
+	rows, err := db.Query("select current_role;")
+	c.Assert(err, IsNil)
+	c.Assert(rows.Next(), IsTrue)
+	var outA string
+	err = rows.Scan(&outA)
+	c.Assert(err, IsNil)
+	c.Assert(outA, Equals, "`authtest_r1`@`%`")
 	db.Close()
 
 	// Test login use IP that not exists in mysql.user.

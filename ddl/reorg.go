@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -312,8 +313,6 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (maxR
 	return maxRowID, false, nil
 }
 
-var gofailOnceGuard bool
-
 // getTableRange gets the start and end handle of a table (or partition).
 func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandle, endHandle int64, err error) {
 	startHandle = math.MinInt64
@@ -375,12 +374,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		}
 		logutil.Logger(ddlLogCtx).Info("[ddl] job get table range", zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid), zap.Int64("startHandle", start), zap.Int64("endHandle", end))
 
-		// gofail: var errorUpdateReorgHandle bool
-		// if errorUpdateReorgHandle && !gofailOnceGuard {
-		//  // only return error once.
-		//	gofailOnceGuard = true
-		// 	return &info, errors.New("occur an error when update reorg handle.")
-		// }
+		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
+			return &info, errors.New("occur an error when update reorg handle")
+		})
 		err = t.UpdateDDLReorgHandle(job, start, end, pid)
 		if err != nil {
 			return &info, errors.Trace(err)

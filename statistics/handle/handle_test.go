@@ -11,10 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics_test
+package handle_test
 
 import (
 	"fmt"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -25,11 +26,16 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk := testkit.NewTestKit(c, store)
@@ -220,7 +226,7 @@ func (s *testStatsSuite) TestAvgColLen(c *C) {
 func (s *testStatsSuite) TestDurationToTS(c *C) {
 	tests := []time.Duration{time.Millisecond, time.Second, time.Minute, time.Hour}
 	for _, t := range tests {
-		ts := statistics.DurationToTS(t)
+		ts := handle.DurationToTS(t)
 		c.Assert(oracle.ExtractPhysical(ts)*int64(time.Millisecond), Equals, int64(t))
 	}
 }
@@ -236,7 +242,7 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := statistics.NewHandle(testKit.Se, time.Millisecond)
+	h := handle.NewHandle(testKit.Se, time.Millisecond)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
 
@@ -324,7 +330,7 @@ func (s *testStatsSuite) TestLoadHist(c *C) {
 	for i := 0; i < rowCount; i++ {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.DumpStatsDeltaToKV(handle.DumpAll)
 	h.Update(do.InfoSchema())
 	newStatsTbl := h.GetTableStats(tableInfo)
 	// The stats table is updated.

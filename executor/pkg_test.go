@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -63,7 +64,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
 	outerSchema := expression.NewSchema(col0)
 	outerExec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, outerSchema, ""),
+		baseExecutor: newBaseExecutor(sctx, outerSchema, nil),
 		Rows: []chunk.MutRow{
 			chunk.MutRowFromDatums(types.MakeDatums(1)),
 			chunk.MutRowFromDatums(types.MakeDatums(2)),
@@ -74,7 +75,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		}}
 	innerSchema := expression.NewSchema(col1)
 	innerExec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, innerSchema, ""),
+		baseExecutor: newBaseExecutor(sctx, innerSchema, nil),
 		Rows: []chunk.MutRow{
 			chunk.MutRowFromDatums(types.MakeDatums(1)),
 			chunk.MutRowFromDatums(types.MakeDatums(2)),
@@ -90,7 +91,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.retTypes(), innerExec.retTypes())
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(sctx, joinSchema, ""),
+		baseExecutor: newBaseExecutor(sctx, joinSchema, nil),
 		outerExec:    outerExec,
 		innerExec:    innerExec,
 		outerFilter:  []expression.Expression{outerFilter},
@@ -121,7 +122,7 @@ func prepareOneColChildExec(sctx sessionctx.Context, rowCount int) Executor {
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	schema := expression.NewSchema(col0)
 	exec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, schema, ""),
+		baseExecutor: newBaseExecutor(sctx, schema, nil),
 		Rows:         make([]chunk.MutRow, rowCount)}
 	for i := 0; i < len(exec.Rows); i++ {
 		exec.Rows[i] = chunk.MutRowFromDatums(types.MakeDatums(i % 10))
@@ -137,7 +138,7 @@ func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *RadixHashJo
 	col1 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	joinSchema := expression.NewSchema(col0, col1)
 	hashJoinExec := &HashJoinExec{
-		baseExecutor:   newBaseExecutor(sctx, joinSchema, "HashJoin", childExec0, childExec1),
+		baseExecutor:   newBaseExecutor(sctx, joinSchema, stringutil.StringerStr("HashJoin"), childExec0, childExec1),
 		concurrency:    4,
 		joinType:       0, // InnerJoin
 		innerIdx:       0,
@@ -163,7 +164,7 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 	defer func() {
 		sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize = originL2CacheSize, originEnableRadixJoin, originMaxChunkSize
 	}()
-	sv.StmtCtx.MemTracker = memory.NewTracker("RootMemTracker", variable.DefTiDBMemQuotaHashJoin)
+	sv.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("RootMemTracker"), variable.DefTiDBMemQuotaHashJoin)
 
 	ctx := context.Background()
 	err := hashJoinExec.Open(ctx)
@@ -249,7 +250,7 @@ func BenchmarkPartitionInnerRows(b *testing.B) {
 	defer func() {
 		sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize = originL2CacheSize, originEnableRadixJoin, originMaxChunkSize
 	}()
-	sv.StmtCtx.MemTracker = memory.NewTracker("RootMemTracker", variable.DefTiDBMemQuotaHashJoin)
+	sv.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("RootMemTracker"), variable.DefTiDBMemQuotaHashJoin)
 
 	ctx := context.Background()
 	hashJoinExec.Open(ctx)
@@ -273,7 +274,7 @@ func (s *pkgTestSuite) TestParallelBuildHashTable4RadixJoin(c *C) {
 	sv.L2CacheSize = 100
 	sv.EnableRadixJoin = true
 	sv.MaxChunkSize = 100
-	sv.StmtCtx.MemTracker = memory.NewTracker("RootMemTracker", variable.DefTiDBMemQuotaHashJoin)
+	sv.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("RootMemTracker"), variable.DefTiDBMemQuotaHashJoin)
 
 	ctx := context.Background()
 	err := hashJoinExec.Open(ctx)

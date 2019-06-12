@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -186,6 +187,9 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("create table if not exists t1 (a int ,b int)")
 	_, err = tk.Exec("create or replace view t1 as select * from t1")
 	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error())
+	// create view using prepare
+	tk.MustExec(`prepare stmt from "create view v10 (x) as select 1";`)
+	tk.MustExec("execute stmt")
 }
 
 func (s *testSuite3) TestCreateDropDatabase(c *C) {
@@ -391,26 +395,82 @@ func (s *testSuite3) TestRenameTable(c *C) {
 	tk.MustExec("drop database rename2")
 }
 
-func (s *testSuite3) TestUnsupportedCharset(c *C) {
+func (s *testSuite3) TestColumnCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	dbName := "unsupported_charset"
+	dbName := "col_charset_collate"
 	tk.MustExec("create database " + dbName)
 	tk.MustExec("use " + dbName)
 	tests := []struct {
-		charset string
-		valid   bool
+		colType     string
+		charset     string
+		collates    string
+		exptCharset string
+		exptCollate string
+		errMsg      string
 	}{
-		{"charset UTF8 collate UTF8_bin", true},
-		{"charset utf8mb4", true},
-		{"charset utf16", false},
-		{"charset latin1", true},
-		{"charset binary", true},
-		{"charset ascii", true},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset utf8",
+			collates:    "collate utf8_bin",
+			exptCharset: "utf8",
+			exptCollate: "utf8_bin",
+			errMsg:      "",
+		},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset utf8mb4",
+			collates:    "",
+			exptCharset: "utf8mb4",
+			exptCollate: "utf8mb4_bin",
+			errMsg:      "",
+		},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset utf16",
+			collates:    "",
+			exptCharset: "",
+			exptCollate: "",
+			errMsg:      "Unknown charset utf16",
+		},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset latin1",
+			collates:    "",
+			exptCharset: "latin1",
+			exptCollate: "latin1_bin",
+			errMsg:      "",
+		},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset binary",
+			collates:    "",
+			exptCharset: "binary",
+			exptCollate: "binary",
+			errMsg:      "",
+		},
+		{
+			colType:     "varchar(10)",
+			charset:     "charset ascii",
+			collates:    "",
+			exptCharset: "ascii",
+			exptCollate: "ascii_bin",
+			errMsg:      "",
+		},
 	}
+	sctx := tk.Se.(sessionctx.Context)
+	dm := domain.GetDomain(sctx)
 	for i, tt := range tests {
-		sql := fmt.Sprintf("create table t%d (a varchar(10) %s)", i, tt.charset)
-		if tt.valid {
+		tblName := fmt.Sprintf("t%d", i)
+		sql := fmt.Sprintf("create table %s (a %s %s %s)", tblName, tt.colType, tt.charset, tt.collates)
+		if tt.errMsg == "" {
 			tk.MustExec(sql)
+			is := dm.InfoSchema()
+			c.Assert(is, NotNil)
+
+			tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+			c.Assert(err, IsNil)
+			c.Assert(tb.Meta().Columns[0].Charset, Equals, tt.exptCharset, Commentf(sql))
+			c.Assert(tb.Meta().Columns[0].Collate, Equals, tt.exptCollate, Commentf(sql))
 		} else {
 			_, err := tk.Exec(sql)
 			c.Assert(err, NotNil, Commentf(sql))

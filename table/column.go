@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -205,9 +206,12 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 
 // ColDesc describes column information like MySQL desc and show columns do.
 type ColDesc struct {
-	Field        string
-	Type         string
-	Collation    string
+	Field string
+	Type  string
+	// Charset is nil if the column doesn't have a charset, or a string indicating the charset name.
+	Charset interface{}
+	// Collation is nil if the column doesn't have a collation, or a string indicating the collation name.
+	Collation    interface{}
 	Null         string
 	Key          string
 	DefaultValue interface{}
@@ -258,7 +262,9 @@ func NewColDesc(col *Column) *ColDesc {
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		extra = "auto_increment"
 	} else if mysql.HasOnUpdateNowFlag(col.Flag) {
-		extra = "on update CURRENT_TIMESTAMP"
+		//in order to match the rules of mysql 8.0.16 version
+		//see https://github.com/pingcap/tidb/issues/10337
+		extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP"
 	} else if col.IsGenerated() {
 		if col.GeneratedStored {
 			extra = "STORED GENERATED"
@@ -267,9 +273,10 @@ func NewColDesc(col *Column) *ColDesc {
 		}
 	}
 
-	return &ColDesc{
+	desc := &ColDesc{
 		Field:        name.O,
 		Type:         col.GetTypeDesc(),
+		Charset:      col.Charset,
 		Collation:    col.Collate,
 		Null:         nullFlag,
 		Key:          keyFlag,
@@ -278,6 +285,11 @@ func NewColDesc(col *Column) *ColDesc {
 		Privileges:   defaultPrivileges,
 		Comment:      col.Comment,
 	}
+	if !field_types.HasCharset(&col.ColumnInfo.FieldType) {
+		desc.Charset = nil
+		desc.Collation = nil
+	}
+	return desc
 }
 
 // ColDescFieldNames returns the fields name in result set for desc and show columns.
@@ -384,7 +396,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 		return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
 			col.Name, err)
 	}
-	// If the column's default value is not ZeroDatetimeStr nor CurrentTimestamp, should convert the default value to the current session time zone.
+	// If the column's default value is not ZeroDatetimeStr or CurrentTimestamp, convert the default value to the current session time zone.
 	if needChangeTimeZone {
 		t := value.GetMysqlTime()
 		err = t.ConvertTimeZone(sc.TimeZone, ctx.GetSessionVars().Location())
@@ -416,9 +428,14 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	if col.IsGenerated() {
 		return types.Datum{}, nil
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	vars := ctx.GetSessionVars()
+	sc := vars.StmtCtx
 	if sc.BadNullAsWarning {
 		sc.AppendWarning(ErrColumnCantNull.GenWithStackByArgs(col.Name))
+		return GetZeroValue(col), nil
+	}
+	if !vars.StrictSQLMode {
+		sc.AppendWarning(ErrNoDefaultValue.GenWithStackByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
 	return types.Datum{}, ErrNoDefaultValue.GenWithStackByArgs(col.Name)

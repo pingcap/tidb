@@ -223,7 +223,7 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 }
 
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
-	newRowData := types.CopyRow(oldRow)
+	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList {
 		handleIdx, handleFound := e.columns2Handle.findHandle(int32(assign.Col.Index))

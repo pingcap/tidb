@@ -103,9 +103,10 @@ func (w *worker) String() string {
 }
 
 func (w *worker) close() {
+	startTime := time.Now()
 	close(w.quitCh)
 	w.wg.Wait()
-	logutil.Logger(w.logCtx).Info("[ddl] close DDL worker")
+	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
 // start is used for async online schema changing, it will try to become the owner firstly,
@@ -285,8 +286,8 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		}
 	}
 	switch job.Type {
-	case model.ActionRestoreTable:
-		err = finishRestoreTable(w, t, job)
+	case model.ActionRecoverTable:
+		err = finishRecoverTable(w, t, job)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -303,15 +304,15 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	return errors.Trace(err)
 }
 
-func finishRestoreTable(w *worker, t *meta.Meta, job *model.Job) error {
+func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
 	tbInfo := &model.TableInfo{}
-	var autoID, dropJobID, restoreTableCheckFlag int64
+	var autoID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &restoreTableCheckFlag)
+	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if restoreTableCheckFlag == restoreTableCheckFlagEnableGC {
+	if recoverTableCheckFlag == recoverTableCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -487,7 +488,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	switch job.Type {
 	case model.ActionCreateSchema:
-		ver, err = onCreateSchema(t, job)
+		ver, err = onCreateSchema(d, t, job)
+	case model.ActionModifySchemaCharsetAndCollate:
+		ver, err = onModifySchemaCharsetAndCollate(t, job)
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(t, job)
 	case model.ActionCreateTable:
@@ -523,17 +526,17 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionRebaseAutoID:
 		ver, err = onRebaseAutoID(d.store, t, job)
 	case model.ActionRenameTable:
-		ver, err = onRenameTable(t, job)
+		ver, err = onRenameTable(d, t, job)
 	case model.ActionShardRowID:
-		ver, err = onShardRowID(t, job)
+		ver, err = w.onShardRowID(d, t, job)
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(t, job)
 	case model.ActionAddTablePartition:
 		ver, err = onAddTablePartition(t, job)
 	case model.ActionModifyTableCharsetAndCollate:
 		ver, err = onModifyTableCharsetAndCollate(t, job)
-	case model.ActionRestoreTable:
-		ver, err = w.onRestoreTable(d, t, job)
+	case model.ActionRecoverTable:
+		ver, err = w.onRecoverTable(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -635,7 +638,10 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 			return
 		}
 	}
-	logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version changed", zap.Int64("ver", latestSchemaVersion), zap.Duration("takeTime", time.Since(timeStart)), zap.String("job", job.String()))
+	logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version changed",
+		zap.Int64("ver", latestSchemaVersion),
+		zap.Duration("take time", time.Since(timeStart)),
+		zap.String("job", job.String()))
 }
 
 // waitSchemaSynced handles the following situation:

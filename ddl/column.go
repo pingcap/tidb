@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -163,10 +164,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, nil
 	}
 
-	// gofail: var errorBeforeDecodeArgs bool
-	// if errorBeforeDecodeArgs {
-	// 	return ver, errors.New("occur an error before decode args")
-	// }
+	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("occur an error before decode args"))
+		}
+	})
 
 	tblInfo, columnInfo, col, pos, offset, err := checkAddColumn(t, job)
 	if err != nil {
@@ -195,7 +197,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		// none -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		columnInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != columnInfo.State)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		job.SchemaState = model.StateWriteOnly
@@ -255,7 +257,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 				return ver, errors.Trace(err)
 			}
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
@@ -374,12 +376,13 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		}
 	}
 
-	// gofail: var uninitializedOffsetAndState bool
-	// if uninitializedOffsetAndState {
-	// if newCol.State != model.StatePublic {
-	//      return ver, errors.New("the column state is wrong")
-	// }
-	// }
+	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
+		if val.(bool) {
+			if newCol.State != model.StatePublic {
+				failpoint.Return(ver, errors.New("the column state is wrong"))
+			}
+		}
+	})
 
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) && !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
 		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
@@ -449,7 +452,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		}
 	}
 
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
 	if err != nil {
 		// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
 		job.State = model.JobStateRollingback
@@ -558,7 +561,7 @@ func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 
 	// Prevent this field from inserting null values.
 	tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
 	return ver, errors.Trace(err)
 }
 

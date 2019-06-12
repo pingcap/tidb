@@ -444,6 +444,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinJSONLengthSig{base}
 	case tipb.ScalarFuncSig_JsonDepthSig:
 		f = &builtinJSONDepthSig{base}
+	case tipb.ScalarFuncSig_JsonSearchSig:
+		f = &builtinJSONSearchSig{base}
 
 	case tipb.ScalarFuncSig_InInt:
 		f = &builtinInIntSig{base}
@@ -555,7 +557,7 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 	if err != nil {
 		return nil, err
 	}
-	if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+	if ft.Tp == mysql.TypeTimestamp && tz != time.UTC {
 		err = t.ConvertTimeZone(time.UTC, tz)
 		if err != nil {
 			return nil, err

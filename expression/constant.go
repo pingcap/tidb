@@ -311,6 +311,11 @@ func (c *Constant) IsCorrelated() bool {
 	return false
 }
 
+// ConstItem implements Expression interface.
+func (c *Constant) ConstItem() bool {
+	return true
+}
+
 // Decorrelate implements Expression interface.
 func (c *Constant) Decorrelate(_ *Schema) Expression {
 	return c

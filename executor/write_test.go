@@ -17,11 +17,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
-	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	gofail "github.com/pingcap/gofail/runtime"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -40,7 +38,7 @@ type testBypassSuite struct{}
 func (s *testBypassSuite) SetUpSuite(c *C) {
 }
 
-func (s *testSuite2) TestInsert(c *C) {
+func (s *testSuite4) TestInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -253,7 +251,7 @@ func (s *testSuite2) TestInsert(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	tk.MustExec("insert into t select cast(-1 as unsigned);")
 	tk.MustExec("insert into t value (-1.111);")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
 	tk.MustExec("insert into t value ('-1.111');")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
 	r = tk.MustQuery("select * from t;")
@@ -314,7 +312,7 @@ func (s *testSuite) TestMultiBatch(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-func (s *testSuite2) TestInsertAutoInc(c *C) {
+func (s *testSuite4) TestInsertAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
@@ -447,7 +445,7 @@ func (s *testSuite2) TestInsertAutoInc(c *C) {
 	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3, rowStr5, rowStr6, rowStr7, rowStr8))
 }
 
-func (s *testSuite2) TestInsertIgnore(c *C) {
+func (s *testSuite4) TestInsertIgnore(c *C) {
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
@@ -561,7 +559,7 @@ commit;`
 	tk.MustQuery(testSQL).Check(testkit.Rows("0"))
 }
 
-func (s *testSuite2) TestInsertOnDup(c *C) {
+func (s *testSuite4) TestInsertOnDup(c *C) {
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
@@ -719,9 +717,14 @@ commit;`
 	tk.CheckLastMessage("")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'f2' cannot be null"))
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
+
+	tk.MustExec(`SET sql_mode='';`)
+	_, err = tk.Exec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
+	c.Assert(err, NotNil)
+	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 }
 
-func (s *testSuite2) TestInsertIgnoreOnDup(c *C) {
+func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists t;
@@ -744,7 +747,7 @@ func (s *testSuite2) TestInsertIgnoreOnDup(c *C) {
 	r.Check(testkit.Rows("1 1", "2 2"))
 }
 
-func (s *testSuite2) TestReplace(c *C) {
+func (s *testSuite4) TestReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -895,7 +898,48 @@ func (s *testSuite2) TestReplace(c *C) {
 	tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")
 }
 
-func (s *testSuite2) TestPartitionedTableReplace(c *C) {
+func (s *testSuite2) TestGeneratedColumnForInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// test cases for default behavior
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(id int, id_gen int as(id + 42), b int, unique key id_gen(id_gen));`)
+	tk.MustExec(`insert into t1 (id, b) values(1,1),(2,2),(3,3),(4,4),(5,5);`)
+	tk.MustExec(`replace into t1 (id, b) values(1,1);`)
+	tk.MustExec(`replace into t1 (id, b) values(1,1),(2,2);`)
+	tk.MustExec(`replace into t1 (id, b) values(6,16),(7,17),(8,18);`)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows(
+		"1 43 1", "2 44 2", "3 45 3", "4 46 4", "5 47 5", "6 48 16", "7 49 17", "8 50 18"))
+	tk.MustExec(`insert into t1 (id, b) values (6,18) on duplicate key update id = -id;`)
+	tk.MustExec(`insert into t1 (id, b) values (7,28) on duplicate key update b = -values(b);`)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows(
+		"1 43 1", "2 44 2", "3 45 3", "4 46 4", "5 47 5", "-6 36 16", "7 49 -28", "8 50 18"))
+
+	// test cases for virtual and stored columns in the same table
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i), unique key idx_j(j))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_j(j))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t
+	(i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i))`)
+	tk.MustExec(`insert into t (k) values (1), (2)`)
+	tk.MustExec(`replace into t (k) values (1), (2)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+}
+
+func (s *testSuite4) TestPartitionedTableReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -1034,7 +1078,7 @@ func (s *testSuite2) TestPartitionedTableReplace(c *C) {
 	r.Check(testkit.Rows("111 2"))
 }
 
-func (s *testSuite2) TestHashPartitionedTableReplace(c *C) {
+func (s *testSuite4) TestHashPartitionedTableReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
@@ -1351,7 +1395,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("drop view v")
 }
 
-func (s *testSuite2) TestPartitionedTableUpdate(c *C) {
+func (s *testSuite4) TestPartitionedTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1459,7 +1503,7 @@ func (s *testSuite2) TestPartitionedTableUpdate(c *C) {
 }
 
 // TestUpdateCastOnlyModifiedValues for issue #4514.
-func (s *testSuite2) TestUpdateCastOnlyModifiedValues(c *C) {
+func (s *testSuite4) TestUpdateCastOnlyModifiedValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table update_modified (col_1 int, col_2 enum('a', 'b'))")
@@ -1494,7 +1538,7 @@ func (s *testSuite2) TestUpdateCastOnlyModifiedValues(c *C) {
 	r.Check(testkit.Rows(`{"a": "测试"}`))
 }
 
-func (s *testSuite2) fillMultiTableForUpdate(tk *testkit.TestKit) {
+func (s *testSuite4) fillMultiTableForUpdate(tk *testkit.TestKit) {
 	// Create and fill table items
 	tk.MustExec("CREATE TABLE items (id int, price TEXT);")
 	tk.MustExec(`insert into items values (11, "items_price_11"), (12, "items_price_12"), (13, "items_price_13");`)
@@ -1505,7 +1549,7 @@ func (s *testSuite2) fillMultiTableForUpdate(tk *testkit.TestKit) {
 	tk.CheckExecResult(3, 0)
 }
 
-func (s *testSuite2) TestMultipleTableUpdate(c *C) {
+func (s *testSuite4) TestMultipleTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillMultiTableForUpdate(tk)
@@ -1613,7 +1657,7 @@ func (s *testSuite) TestDelete(c *C) {
 	tk.MustExec("drop view v")
 }
 
-func (s *testSuite2) TestPartitionedTableDelete(c *C) {
+func (s *testSuite4) TestPartitionedTableDelete(c *C) {
 	createTable := `CREATE TABLE test.t (id int not null default 1, name varchar(255), index(id))
 			  PARTITION BY RANGE ( id ) (
 			  PARTITION p0 VALUES LESS THAN (6),
@@ -1666,7 +1710,7 @@ func (s *testSuite2) TestPartitionedTableDelete(c *C) {
 	tk.MustExec(`drop table t1;`)
 }
 
-func (s *testSuite2) fillDataMultiTable(tk *testkit.TestKit) {
+func (s *testSuite4) fillDataMultiTable(tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")
 	// Create and fill table t1
@@ -1683,7 +1727,7 @@ func (s *testSuite2) fillDataMultiTable(tk *testkit.TestKit) {
 	tk.CheckExecResult(3, 0)
 }
 
-func (s *testSuite2) TestMultiTableDelete(c *C) {
+func (s *testSuite4) TestMultiTableDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.fillDataMultiTable(tk)
 
@@ -1695,7 +1739,7 @@ func (s *testSuite2) TestMultiTableDelete(c *C) {
 	c.Assert(r.Rows(), HasLen, 3)
 }
 
-func (s *testSuite2) TestQualifiedDelete(c *C) {
+func (s *testSuite4) TestQualifiedDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -1731,7 +1775,7 @@ func (s *testSuite2) TestQualifiedDelete(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite2) TestLoadData(c *C) {
+func (s *testSuite4) TestLoadData(c *C) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1742,7 +1786,9 @@ func (s *testSuite2) TestLoadData(c *C) {
 	tk.MustExec(createSQL)
 	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, NotNil)
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	_, err = tk.Exec("load data local infile '/tmp/nonexistence.csv' replace into table load_data_test")
+	c.Assert(err, NotNil)
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
 	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
 	c.Assert(ok, IsTrue)
@@ -1897,7 +1943,7 @@ func (s *testSuite2) TestLoadData(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-func (s *testSuite2) TestLoadDataEscape(c *C) {
+func (s *testSuite4) TestLoadDataEscape(c *C) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
@@ -1926,7 +1972,7 @@ func (s *testSuite2) TestLoadDataEscape(c *C) {
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
-func (s *testSuite2) TestLoadDataSpecifiedColumns(c *C) {
+func (s *testSuite4) TestLoadDataSpecifiedColumns(c *C) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
@@ -1953,7 +1999,7 @@ func (s *testSuite2) TestLoadDataSpecifiedColumns(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-func (s *testSuite2) TestLoadDataIgnoreLines(c *C) {
+func (s *testSuite4) TestLoadDataIgnoreLines(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
@@ -1972,8 +2018,8 @@ func (s *testSuite2) TestLoadDataIgnoreLines(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-// related to issue 6360
-func (s *testSuite2) TestLoadDataOverflowBigintUnsigned(c *C) {
+// TestLoadDataOverflowBigintUnsigned related to issue 6360
+func (s *testSuite4) TestLoadDataOverflowBigintUnsigned(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
@@ -1992,124 +2038,30 @@ func (s *testSuite2) TestLoadDataOverflowBigintUnsigned(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-func (s *testSuite2) TestBatchInsertDelete(c *C) {
-	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
-	defer func() {
-		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
-	}()
-	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnEntryCountLimit, 100)
-
+func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists batch_insert")
-	tk.MustExec("create table batch_insert (c int)")
-	tk.MustExec("drop table if exists batch_insert_on_duplicate")
-	tk.MustExec("create table batch_insert_on_duplicate (id int primary key, c int)")
-	// Insert 10 rows.
-	tk.MustExec("insert into batch_insert values (1),(1),(1),(1),(1),(1),(1),(1),(1),(1)")
-	r := tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("10"))
-	// Insert 10 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("20"))
-	// Insert 20 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("40"))
-	// Insert 40 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("80"))
-	// Insert 80 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
-	// for on duplicate key
-	for i := 0; i < 160; i++ {
-		tk.MustExec(fmt.Sprintf("insert into batch_insert_on_duplicate values(%d, %d);", i, i))
-	}
-	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
-	r.Check(testkit.Rows("160"))
+	tk.MustExec("create table range_t (a int, b int) partition by range (a) ( " +
+		"partition p0 values less than (4)," +
+		"partition p1 values less than (7)," +
+		"partition p2 values less than (11))")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','")
+	ctx := tk.Se.(sessionctx.Context)
+	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 
-	// This will meet txn too large error.
-	_, err := tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
-
-	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
-		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue, Commentf("%v", err))
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
-
-	// Change to batch inset mode and batch size to 50.
-	tk.MustExec("set @@session.tidb_batch_insert=1;")
-	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-
-	// Enlarge the batch size to 150 which is larger than the txn limitation (100).
-	// So the insert will meet error.
-	tk.MustExec("set @@session.tidb_dml_batch_size=150;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-	// Set it back to 50.
-	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
-
-	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
-		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
+	_, _, err := ld.InsertData(nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	c.Assert(err, IsNil)
-	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
-	r.Check(testkit.Rows("160"))
-
-	// Disable BachInsert mode in transition.
-	tk.MustExec("begin;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	tk.MustExec("rollback;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-
-	tk.MustExec("drop table if exists com_batch_insert")
-	tk.MustExec("create table com_batch_insert (c int)")
-	sql := "insert into com_batch_insert values "
-	values := make([]string, 0, 200)
-	for i := 0; i < 200; i++ {
-		values = append(values, "(1)")
-	}
-	sql = sql + strings.Join(values, ",")
-	tk.MustExec(sql)
-	tk.MustQuery("select count(*) from com_batch_insert;").Check(testkit.Rows("200"))
-
-	// Test case for batch delete.
-	// This will meet txn too large error.
-	_, err = tk.Exec("delete from batch_insert;")
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-	// Enable batch delete and set batch size to 50.
-	tk.MustExec("set @@session.tidb_batch_delete=on;")
-	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
-	tk.MustExec("delete from batch_insert;")
-	// Make sure that all rows are gone.
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("0"))
+	ld.SetMessage()
+	err = ctx.StmtCommit()
+	c.Assert(err, IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 }
 
-func (s *testSuite2) TestNullDefault(c *C) {
+func (s *testSuite4) TestNullDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists test_null_default;")
 	tk.MustExec("set timestamp = 1234")
@@ -2121,7 +2073,7 @@ func (s *testSuite2) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
 }
 
-func (s *testSuite2) TestNotNullDefault(c *C) {
+func (s *testSuite4) TestNotNullDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists t1,t2;")
 	defer tk.MustExec("drop table t1,t2")
@@ -2172,10 +2124,22 @@ func (s *testBypassSuite) TestLatch(c *C) {
 	tk1.MustExec("truncate table t")
 	fn()
 	tk1.MustExec("commit")
+
+	// Test the error type of latch and it could be retry if TiDB enable the retry.
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set id = id + 1")
+	tk2.MustExec("update t set id = id + 1")
+	_, err = tk1.Exec("commit")
+	c.Assert(kv.ErrWriteConflictInTiDB.Equal(err), IsTrue)
+
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk1.MustExec("update t set id = id + 1")
+	tk2.MustExec("update t set id = id + 1")
+	tk1.MustExec("commit")
 }
 
 // TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
-func (s *testSuite2) TestIssue4067(c *C) {
+func (s *testSuite4) TestIssue4067(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -2189,7 +2153,7 @@ func (s *testSuite2) TestIssue4067(c *C) {
 	tk.MustQuery("select * from t1").Check(nil)
 }
 
-func (s *testSuite2) TestInsertCalculatedValue(c *C) {
+func (s *testSuite4) TestInsertCalculatedValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -2305,7 +2269,7 @@ func (s *testSuite2) TestInsertCalculatedValue(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("4 0 2"))
 }
 
-func (s *testSuite2) TestDataTooLongErrMsg(c *C) {
+func (s *testSuite4) TestDataTooLongErrMsg(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(2));")
@@ -2318,7 +2282,7 @@ func (s *testSuite2) TestDataTooLongErrMsg(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
 }
 
-func (s *testSuite2) TestUpdateSelect(c *C) {
+func (s *testSuite4) TestUpdateSelect(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table msg (id varchar(8), b int, status int, primary key (id, b))")
@@ -2330,7 +2294,7 @@ func (s *testSuite2) TestUpdateSelect(c *C) {
 	tk.MustExec("admin check table msg")
 }
 
-func (s *testSuite2) TestUpdateDelete(c *C) {
+func (s *testSuite4) TestUpdateDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE ttt (id bigint(20) NOT NULL, host varchar(30) NOT NULL, PRIMARY KEY (id), UNIQUE KEY i_host (host));")
@@ -2350,7 +2314,7 @@ func (s *testSuite2) TestUpdateDelete(c *C) {
 	tk.MustExec("drop table ttt")
 }
 
-func (s *testSuite2) TestUpdateAffectRowCnt(c *C) {
+func (s *testSuite4) TestUpdateAffectRowCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table a(id int auto_increment, a int default null, primary key(id))")
@@ -2369,7 +2333,7 @@ func (s *testSuite2) TestUpdateAffectRowCnt(c *C) {
 	tk.CheckLastMessage("Rows matched: 2  Changed: 2  Warnings: 0")
 }
 
-func (s *testSuite2) TestReplaceLog(c *C) {
+func (s *testSuite4) TestReplaceLog(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table testLog (a int not null primary key, b int unique key);`)
@@ -2404,7 +2368,7 @@ func (s *testSuite2) TestReplaceLog(c *C) {
 // TestRebaseIfNeeded is for issue 7422.
 // There is no need to do the rebase when updating a record if the auto-increment ID not changed.
 // This could make the auto ID increasing speed slower.
-func (s *testSuite2) TestRebaseIfNeeded(c *C) {
+func (s *testSuite4) TestRebaseIfNeeded(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int not null primary key auto_increment, b int unique key);`)
@@ -2436,7 +2400,7 @@ func (s *testSuite2) TestRebaseIfNeeded(c *C) {
 	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
 }
 
-func (s *testSuite2) TestDeferConstraintCheckForInsert(c *C) {
+func (s *testSuite4) TestDeferConstraintCheckForInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t;create table t (i int key);`)
@@ -2450,7 +2414,7 @@ func (s *testSuite2) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
 }
 
-func (s *testSuite2) TestDefEnumInsert(c *C) {
+func (s *testSuite4) TestDefEnumInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
@@ -2458,18 +2422,19 @@ func (s *testSuite2) TestDefEnumInsert(c *C) {
 	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
 }
 
-func (s *testSuite2) TestAutoIDInRetry(c *C) {
+func (s *testSuite4) TestAutoIDInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int not null auto_increment primary key)")
 
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values ()")
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	gofail.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	gofail.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))

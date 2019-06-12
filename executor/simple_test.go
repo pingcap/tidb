@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/planner/core"
 
 	. "github.com/pingcap/check"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite3) TestCharsetDatabase(c *C) {
@@ -141,6 +143,81 @@ func (s *testSuite3) TestRole(c *C) {
 	tk.MustExec(dropRoleSQL)
 	dropRoleSQL = `DROP ROLE IF EXISTS 'r_3'@'localhost' ;`
 	tk.MustExec(dropRoleSQL)
+
+	// Test for revoke role
+	createRoleSQL = `CREATE ROLE 'test'@'localhost', r_1, r_2;`
+	tk.MustExec(createRoleSQL)
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('localhost','test','%','root')")
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','root')")
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','root')")
+	_, err = tk.Exec("revoke test@localhost, r_1 from root;")
+	c.Check(err, IsNil)
+	_, err = tk.Exec("revoke `r_2`@`%` from root, u_2;")
+	c.Check(err, NotNil)
+	_, err = tk.Exec("revoke `r_2`@`%` from root;")
+	c.Check(err, IsNil)
+	result = tk.MustQuery(`SELECT * FROM mysql.default_roles WHERE DEFAULT_ROLE_USER="test" and DEFAULT_ROLE_HOST="localhost"`)
+	result.Check(nil)
+	dropRoleSQL = `DROP ROLE 'test'@'localhost', r_1, r_2;`
+	tk.MustExec(dropRoleSQL)
+
+	ctx := tk.Se.(sessionctx.Context)
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
+	c.Assert(tk.ExecToErr("SET ROLE role1, role2"), NotNil)
+	tk.MustExec("SET ROLE ALL")
+	tk.MustExec("SET ROLE ALL EXCEPT role1, role2")
+	tk.MustExec("SET ROLE DEFAULT")
+	tk.MustExec("SET ROLE NONE")
+}
+
+func (s *testSuite3) TestDefaultRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	createRoleSQL := `CREATE ROLE r_1, r_2, r_3, u_1;`
+	tk.MustExec(createRoleSQL)
+
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','u_1')")
+	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','u_1')")
+
+	tk.MustExec("flush privileges;")
+
+	setRoleSQL := `SET DEFAULT ROLE r_3 TO u_1;`
+	_, err := tk.Exec(setRoleSQL)
+	c.Check(err, NotNil)
+
+	setRoleSQL = `SET DEFAULT ROLE r_1 TO u_1000;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, NotNil)
+
+	setRoleSQL = `SET DEFAULT ROLE r_1, r_3 TO u_1;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, NotNil)
+
+	setRoleSQL = `SET DEFAULT ROLE r_1 TO u_1;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, IsNil)
+	result := tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
+	result.Check(testkit.Rows("r_1"))
+	setRoleSQL = `SET DEFAULT ROLE r_2 TO u_1;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, IsNil)
+	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
+	result.Check(testkit.Rows("r_2"))
+
+	setRoleSQL = `SET DEFAULT ROLE ALL TO u_1;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, IsNil)
+	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
+	result.Check(testkit.Rows("r_1", "r_2"))
+
+	setRoleSQL = `SET DEFAULT ROLE NONE TO u_1;`
+	_, err = tk.Exec(setRoleSQL)
+	c.Check(err, IsNil)
+	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
+	result.Check(nil)
+
+	dropRoleSQL := `DROP USER r_1, r_2, r_3, u_1;`
+	tk.MustExec(dropRoleSQL)
 }
 
 func (s *testSuite3) TestUser(c *C) {
@@ -209,6 +286,8 @@ func (s *testSuite3) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User test2@localhost does not exist."))
+
 	// Test negative cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)
@@ -367,4 +446,34 @@ func (s *testSuite3) TestUseDB(c *C) {
 
 	_, err = tk.Exec("USE ``")
 	c.Assert(terror.ErrorEqual(core.ErrNoDB, err), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSuite3) TestStmtAutoNewTxn(c *C) {
+	// Some statements are like DDL, they commit the previous txn automically.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Fix issue https://github.com/pingcap/tidb/issues/10705
+	tk.MustExec("begin")
+	tk.MustExec("create user 'xxx'@'%';")
+	tk.MustExec("grant all privileges on *.* to 'xxx'@'%';")
+
+	tk.MustExec("create table auto_new (id int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into auto_new values (1)")
+	tk.MustExec("revoke all privileges on *.* from 'xxx'@'%'")
+	tk.MustExec("rollback") // insert statement has already committed
+	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1"))
+
+	// Test the behavior when autocommit is false.
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("insert into auto_new values (2)")
+	tk.MustExec("create user 'yyy'@'%'")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop user 'yyy'@'%'")
+	tk.MustExec("insert into auto_new values (3)")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1", "2"))
 }

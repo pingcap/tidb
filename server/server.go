@@ -43,6 +43,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
 	// For pprof
 	_ "net/http/pprof"
 
@@ -482,9 +483,9 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
+func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
-	rs := make(map[uint64]util.ProcessInfo, len(s.clients))
+	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
@@ -494,6 +495,17 @@ func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
 	}
 	s.rwlock.RUnlock()
 	return rs
+}
+
+// GetProcessInfo implements the SessionManager interface.
+func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	s.rwlock.RLock()
+	conn, ok := s.clients[uint32(id)]
+	s.rwlock.RUnlock()
+	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
+		return &util.ProcessInfo{}, false
+	}
+	return conn.ctx.ShowProcess(), ok
 }
 
 // Kill implements the SessionManager interface.

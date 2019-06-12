@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	stats "github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -34,12 +35,12 @@ func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	jsTable := &stats.JSONTable{}
+	jsTable := &handle.JSONTable{}
 	err = json.Unmarshal(data, jsTable)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return stats.TableStatsFromJSON(tblInfo, tblInfo.ID, jsTable)
+	return handle.TableStatsFromJSON(tblInfo, tblInfo.ID, jsTable)
 }
 
 type histogram struct {

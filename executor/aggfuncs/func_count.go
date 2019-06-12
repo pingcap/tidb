@@ -10,6 +10,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -329,7 +331,7 @@ func (e *countOriginalWithDistinct) evalAndEncode(
 		if err != nil || isNull {
 			break
 		}
-		encodedBytes = appendString(encodedBytes, buf, val)
+		encodedBytes = codec.EncodeBytes(encodedBytes, hack.Slice(val))
 	default:
 		return nil, false, errors.Errorf("unsupported column type for encode %d", tp)
 	}

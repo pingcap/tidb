@@ -19,11 +19,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dgryski/go-farm"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -31,6 +32,21 @@ import (
 
 var (
 	_ kv.Transaction = (*tikvTxn)(nil)
+)
+
+var (
+	tikvTxnCmdCountWithGet             = metrics.TiKVTxnCmdCounter.WithLabelValues("get")
+	tikvTxnCmdHistogramWithGet         = metrics.TiKVTxnCmdHistogram.WithLabelValues("get")
+	tikvTxnCmdCountWithSeek            = metrics.TiKVTxnCmdCounter.WithLabelValues("seek")
+	tikvTxnCmdHistogramWithSeek        = metrics.TiKVTxnCmdHistogram.WithLabelValues("seek")
+	tikvTxnCmdCountWithSeekReverse     = metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse")
+	tikvTxnCmdHistogramWithSeekReverse = metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse")
+	tikvTxnCmdCountWithDelete          = metrics.TiKVTxnCmdCounter.WithLabelValues("delete")
+	tikvTxnCmdCountWithSet             = metrics.TiKVTxnCmdCounter.WithLabelValues("set")
+	tikvTxnCmdCountWithCommit          = metrics.TiKVTxnCmdCounter.WithLabelValues("commit")
+	tikvTxnCmdHistogramWithCommit      = metrics.TiKVTxnCmdHistogram.WithLabelValues("commit")
+	tikvTxnCmdCountWithRollback        = metrics.TiKVTxnCmdCounter.WithLabelValues("rollback")
+	tikvTxnCmdHistogramWithLockKeys    = metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys")
 )
 
 // tikvTxn implements kv.Transaction.
@@ -47,6 +63,7 @@ type tikvTxn struct {
 	dirty     bool
 	setCnt    int64
 	vars      *kv.Variables
+	committer *twoPhaseCommitter
 
 	// For data consistency check.
 	assertions []assertionPair
@@ -107,9 +124,9 @@ func (txn *tikvTxn) Reset() {
 
 // Get implements transaction interface.
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("get").Inc()
+	tikvTxnCmdCountWithGet.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds()) }()
 
 	ret, err := txn.us.Get(k)
 	if kv.IsErrNotFound(err) {
@@ -171,26 +188,26 @@ func (txn *tikvTxn) String() string {
 }
 
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("seek").Inc()
+	tikvTxnCmdCountWithSeek.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("seek").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithSeek.Observe(time.Since(start).Seconds()) }()
 
 	return txn.us.Iter(k, upperBound)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse").Inc()
+	tikvTxnCmdCountWithSeekReverse.Inc()
 	start := time.Now()
 	defer func() {
-		metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse").Observe(time.Since(start).Seconds())
+		tikvTxnCmdHistogramWithSeekReverse.Observe(time.Since(start).Seconds())
 	}()
 
 	return txn.us.IterReverse(k)
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("delete").Inc()
+	tikvTxnCmdCountWithDelete.Inc()
 
 	txn.dirty = true
 	return txn.us.Delete(k)
@@ -214,22 +231,27 @@ func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
 }
 
+func (txn *tikvTxn) IsPessimistic() bool {
+	return txn.us.GetOption(kv.Pessimistic) != nil
+}
+
 func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
 	defer txn.close()
 
-	// gofail: var mockCommitError bool
-	// if mockCommitError && kv.IsMockCommitErrorEnable() {
-	//  kv.MockCommitErrorDisable()
-	//	return errors.New("mock commit error")
-	// }
+	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+		if val.(bool) && kv.IsMockCommitErrorEnable() {
+			kv.MockCommitErrorDisable()
+			failpoint.Return(errors.New("mock commit error"))
+		}
+	})
 
-	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
-	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
+	tikvTxnCmdCountWithSet.Add(float64(txn.setCnt))
+	tikvTxnCmdCountWithCommit.Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
 
 	// connID is used for log.
 	var connID uint64
@@ -237,10 +259,23 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if val != nil {
 		connID = val.(uint64)
 	}
-	committer, err := newTwoPhaseCommitter(txn, connID)
-	if err != nil || committer == nil {
+
+	var err error
+	// If the txn use pessimistic lock, committer is initialized.
+	committer := txn.committer
+	if committer == nil {
+		committer, err = newTwoPhaseCommitter(txn, connID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err := committer.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
+	if len(committer.keys) == 0 {
+		return nil
+	}
+
 	defer func() {
 		ctxValue := ctx.Value(execdetails.CommitDetailCtxKey)
 		if ctxValue != nil {
@@ -253,7 +288,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		}
 	}()
 	// latches disabled
-	if txn.store.txnLatches == nil {
+	// pessimistic transaction should also bypass latch.
+	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.executeAndWriteFinishBinlog(ctx)
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
@@ -269,8 +305,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		err = errors.Errorf("%s txnStartTS %d is stale", util.WriteConflictMarker, txn.startTS)
-		return errors.Annotate(err, txnRetryableMark)
+		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
 	err = committer.executeAndWriteFinishBinlog(ctx)
 	if err == nil {
@@ -288,15 +323,70 @@ func (txn *tikvTxn) Rollback() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
+	// Clean up pessimistic lock.
+	if txn.IsPessimistic() && txn.committer != nil {
+		err := txn.rollbackPessimisticLocks()
+		if err != nil {
+			logutil.Logger(context.Background()).Error(err.Error())
+		}
+	}
 	txn.close()
 	logutil.Logger(context.Background()).Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
-	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
+	tikvTxnCmdCountWithRollback.Inc()
 
 	return nil
 }
 
-func (txn *tikvTxn) LockKeys(keys ...kv.Key) error {
-	metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys").Inc()
+func (txn *tikvTxn) rollbackPessimisticLocks() error {
+	if len(txn.lockKeys) == 0 {
+		return nil
+	}
+	return txn.committer.pessimisticRollbackKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), txn.lockKeys)
+}
+
+func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keys ...kv.Key) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	tikvTxnCmdHistogramWithLockKeys.Inc()
+	if txn.IsPessimistic() && forUpdateTS > 0 {
+		if txn.committer == nil {
+			// connID is used for log.
+			var connID uint64
+			var err error
+			val := ctx.Value(sessionctx.ConnID)
+			if val != nil {
+				connID = val.(uint64)
+			}
+			txn.committer, err = newTwoPhaseCommitter(txn, connID)
+			if err != nil {
+				return err
+			}
+			txn.committer.primaryKey = keys[0]
+		}
+
+		bo := NewBackoffer(ctx, pessimisticLockMaxBackoff).WithVars(txn.vars)
+		keys1 := make([][]byte, len(keys))
+		for i, key := range keys {
+			keys1[i] = key
+		}
+		txn.committer.forUpdateTS = forUpdateTS
+		// If the number of keys1 greater than 1, it can be on different region,
+		// concurrently execute on multiple regions may lead to deadlock.
+		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys1) == 1
+		err := txn.committer.pessimisticLockKeys(bo, keys1)
+		if err != nil {
+			wg := txn.asyncPessimisticRollback(ctx, keys1)
+			if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
+				dl.IsRetryable = true
+				// Wait for the pessimistic rollback to finish before we retry the statement.
+				wg.Wait()
+				// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
+				time.Sleep(time.Millisecond * 5)
+			}
+			return err
+		}
+	}
 	txn.mu.Lock()
 	for _, key := range keys {
 		txn.lockKeys = append(txn.lockKeys, key)
@@ -304,6 +394,36 @@ func (txn *tikvTxn) LockKeys(keys ...kv.Key) error {
 	txn.dirty = true
 	txn.mu.Unlock()
 	return nil
+}
+
+func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *sync.WaitGroup {
+	// Clone a new committer for execute in background.
+	committer := &twoPhaseCommitter{
+		store:       txn.committer.store,
+		connID:      txn.committer.connID,
+		startTS:     txn.committer.startTS,
+		forUpdateTS: txn.committer.forUpdateTS,
+		primaryKey:  txn.committer.primaryKey,
+	}
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go func() {
+		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff), keys)
+		if err != nil {
+			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
+		}
+		wg.Done()
+	}()
+	return wg
+}
+
+func hashInKeys(deadlockKeyHash uint64, keys []kv.Key) bool {
+	for _, key := range keys {
+		if farm.Fingerprint64(key) == deadlockKeyHash {
+			return true
+		}
+	}
+	return false
 }
 
 func (txn *tikvTxn) IsReadOnly() bool {

@@ -26,6 +26,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -191,8 +192,6 @@ var (
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type.
 	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeErrFieldTypeNotAllowedAsPartitionField, mysql.MySQLErrName[mysql.ErrFieldTypeNotAllowedAsPartitionField])
-	// ErrPartitionsMustBeDefined returns each partition must be defined.
-	ErrPartitionsMustBeDefined = terror.ClassDDL.New(codePartitionsMustBeDefined, "For RANGE partitions each partition must be defined")
 	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
 	ErrPartitionMgmtOnNonpartitioned = terror.ClassDDL.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
 	// ErrDropPartitionNonExistent returns error in list of partition.
@@ -203,14 +202,10 @@ var (
 	ErrRangeNotIncreasing = terror.ClassDDL.New(codeRangeNotIncreasing, "VALUES LESS THAN value must be strictly increasing for each partition")
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
 	ErrPartitionMaxvalue = terror.ClassDDL.New(codePartitionMaxvalue, "MAXVALUE can only be used in last partition definition")
-	// ErrTooManyValues returns cannot have more than one value for this type of partitioning.
-	ErrTooManyValues = terror.ClassDDL.New(codeErrTooManyValues, mysql.MySQLErrName[mysql.ErrTooManyValues])
 	//ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
 	ErrDropLastPartition = terror.ClassDDL.New(codeDropLastPartition, mysql.MySQLErrName[mysql.ErrDropLastPartition])
 	//ErrTooManyPartitions returns too many partitions were defined.
 	ErrTooManyPartitions = terror.ClassDDL.New(codeTooManyPartitions, mysql.MySQLErrName[mysql.ErrTooManyPartitions])
-	//ErrNoParts returns no partition were defined.
-	ErrNoParts = terror.ClassDDL.New(codeNoParts, mysql.MySQLErrName[mysql.ErrNoParts])
 	//ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
 	ErrPartitionFunctionIsNotAllowed = terror.ClassDDL.New(codePartitionFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFunctionIsNotAllowed])
 	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.
@@ -228,21 +223,22 @@ var (
 	ErrAlterOperationNotSupported = terror.ClassDDL.New(codeNotSupportedAlterOperation, mysql.MySQLErrName[mysql.ErrAlterOperationNotSupportedReason])
 	// ErrWrongObject returns for wrong object.
 	ErrWrongObject = terror.ClassDDL.New(codeErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
+	// ErrTableCantHandleFt returns FULLTEXT keys are not supported by table type
+	ErrTableCantHandleFt = terror.ClassDDL.New(codeErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
 	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
 	ErrFieldNotFoundPart = terror.ClassDDL.New(codeFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
-	// ErrPartitionColumnList returns "Inconsistency in usage of column lists for partitioning".
-	ErrPartitionColumnList = terror.ClassDDL.New(codePartitionColumnList, mysql.MySQLErrName[mysql.ErrPartitionColumnList])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
 	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
+	AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
-	RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
+	RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
@@ -277,9 +273,8 @@ type DDL interface {
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m          sync.RWMutex
-	infoHandle *infoschema.Handle
-	quitCh     chan struct{}
+	m      sync.RWMutex
+	quitCh chan struct{}
 
 	*ddlCtx
 	workers     map[workerType]*worker
@@ -297,6 +292,7 @@ type ddlCtx struct {
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoHandle   *infoschema.Handle
 
 	// hook may be modified.
 	mu struct {
@@ -377,12 +373,12 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
+		infoHandle:   infoHandle,
 	}
 	ddlCtx.mu.hook = hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		infoHandle: infoHandle,
-		ddlCtx:     ddlCtx,
+		ddlCtx: ddlCtx,
 	}
 
 	d.start(ctx, ctxPool)
@@ -468,14 +464,16 @@ func (d *ddl) close() {
 	for _, worker := range d.workers {
 		worker.close()
 	}
-	if d.sessPool != nil {
-		d.sessPool.close()
-	}
+	// d.delRangeMgr using sessions from d.sessPool.
+	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
 	if d.delRangeMgr != nil {
 		d.delRangeMgr.clear()
 	}
+	if d.sessPool != nil {
+		d.sessPool.close()
+	}
 
-	logutil.Logger(ddlLogCtx).Info("[ddl] closing DDL", zap.String("ID", d.uuid), zap.Duration("takeTime", time.Since(startTime)))
+	logutil.Logger(ddlLogCtx).Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
 }
 
 // GetLease implements DDL.GetLease interface.
@@ -502,10 +500,11 @@ func (d *ddl) genGlobalID() (int64, error) {
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
 
-		// gofail: var mockGenGlobalIDFail bool
-		// if mockGenGlobalIDFail {
-		//	 return errors.New("gofail genGlobalID error")
-		// }
+		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.New("gofail genGlobalID error"))
+			}
+		})
 
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
@@ -564,7 +563,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(job.Type)
-	logutil.Logger(ddlLogCtx).Info("[ddl] start to do DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
+	logutil.Logger(ddlLogCtx).Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
 	var historyJob *model.Job
 	jobID := job.ID
@@ -716,6 +715,7 @@ const (
 	codePrimaryCantHaveNull                    = terror.ErrCode(mysql.ErrPrimaryCantHaveNull)
 	codeWrongExprInPartitionFunc               = terror.ErrCode(mysql.ErrWrongExprInPartitionFunc)
 	codeWarnDataTruncated                      = terror.ErrCode(mysql.WarnDataTruncated)
+	codeErrTableCantHandleFt                   = terror.ErrCode(mysql.ErrTableCantHandleFt)
 	codeCoalesceOnlyOnHashPartition            = terror.ErrCode(mysql.ErrCoalesceOnlyOnHashPartition)
 	codeUnknownPartition                       = terror.ErrCode(mysql.ErrUnknownPartition)
 	codeErrGeneratedColumnFunctionIsNotAllowed = terror.ErrCode(mysql.ErrGeneratedColumnFunctionIsNotAllowed)
@@ -723,6 +723,14 @@ const (
 	codeNotSupportedAlterOperation             = terror.ErrCode(mysql.ErrAlterOperationNotSupportedReason)
 	codeFieldNotFoundPart                      = terror.ErrCode(mysql.ErrFieldNotFoundPart)
 	codePartitionColumnList                    = terror.ErrCode(mysql.ErrPartitionColumnList)
+	codePartitionRequiresValues                = terror.ErrCode(mysql.ErrPartitionRequiresValues)
+	codePartitionWrongNoPart                   = terror.ErrCode(mysql.ErrPartitionWrongNoPart)
+	codePartitionWrongNoSubpart                = terror.ErrCode(mysql.ErrPartitionWrongNoSubpart)
+	codePartitionWrongValues                   = terror.ErrCode(mysql.ErrPartitionWrongValues)
+	codeRowSinglePartitionField                = terror.ErrCode(mysql.ErrRowSinglePartitionField)
+	codeSubpartition                           = terror.ErrCode(mysql.ErrSubpartition)
+	codeSystemVersioningWrongPartitions        = terror.ErrCode(mysql.ErrSystemVersioningWrongPartitions)
+	codeWrongPartitionTypeExpectedSystemTime   = terror.ErrCode(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 )
 
 func init() {
@@ -776,6 +784,7 @@ func init() {
 		codePrimaryCantHaveNull:                    mysql.ErrPrimaryCantHaveNull,
 		codeWrongExprInPartitionFunc:               mysql.ErrWrongExprInPartitionFunc,
 		codeWarnDataTruncated:                      mysql.WarnDataTruncated,
+		codeErrTableCantHandleFt:                   mysql.ErrTableCantHandleFt,
 		codeCoalesceOnlyOnHashPartition:            mysql.ErrCoalesceOnlyOnHashPartition,
 		codeUnknownPartition:                       mysql.ErrUnknownPartition,
 		codeNotSupportedAlterOperation:             mysql.ErrAlterOperationNotSupportedReason,
@@ -784,6 +793,14 @@ func init() {
 		codePartitionColumnList:                    mysql.ErrPartitionColumnList,
 		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
 		codeErrGeneratedColumnRefAutoInc:           mysql.ErrGeneratedColumnRefAutoInc,
+		codePartitionRequiresValues:                mysql.ErrPartitionRequiresValues,
+		codePartitionWrongNoPart:                   mysql.ErrPartitionWrongNoPart,
+		codePartitionWrongNoSubpart:                mysql.ErrPartitionWrongNoSubpart,
+		codePartitionWrongValues:                   mysql.ErrPartitionWrongValues,
+		codeRowSinglePartitionField:                mysql.ErrRowSinglePartitionField,
+		codeSubpartition:                           mysql.ErrSubpartition,
+		codeSystemVersioningWrongPartitions:        mysql.ErrSystemVersioningWrongPartitions,
+		codeWrongPartitionTypeExpectedSystemTime:   mysql.ErrWrongPartitionTypeExpectedSystemTime,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

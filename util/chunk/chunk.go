@@ -139,7 +139,7 @@ func newVarLenColumn(cap int, old *column) *column {
 		estimatedElemLen = (len(old.data) + len(old.data)/8) / old.length
 	}
 	return &column{
-		offsets:    make([]int32, 1, cap+1),
+		offsets:    make([]int64, 1, cap+1),
 		data:       make([]byte, 0, cap*estimatedElemLen),
 		nullBitmap: make([]byte, 0, cap>>3),
 	}
@@ -318,7 +318,7 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 		} else {
 			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
 			chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
-			chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+			chkCol.offsets = append(chkCol.offsets, int64(len(chkCol.data)))
 		}
 		chkCol.length++
 	}
@@ -342,7 +342,7 @@ func (c *Chunk) PreAlloc(row Row) (rowIdx uint32) {
 		elemLen := len(srcCol.elemBuf)
 		if !srcCol.isFixed() {
 			elemLen = int(srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx])
-			dstCol.offsets = append(dstCol.offsets, int32(len(dstCol.data)+elemLen))
+			dstCol.offsets = append(dstCol.offsets, int64(len(dstCol.data)+elemLen))
 		}
 		dstCol.length++
 		needCap := len(dstCol.data) + elemLen

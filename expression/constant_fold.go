@@ -117,7 +117,10 @@ func foldConstant(expr Expression) (Expression, bool) {
 					constArgs[i] = One
 				}
 			}
-			dummyScalarFunc := NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), constArgs...)
+			dummyScalarFunc, err := NewFunctionBase(x.GetCtx(), x.FuncName.L, x.GetType(), constArgs...)
+			if err != nil {
+				return expr, isDeferredConst
+			}
 			value, err := dummyScalarFunc.Eval(chunk.Row{})
 			if err != nil {
 				return expr, isDeferredConst

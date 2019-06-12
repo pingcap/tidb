@@ -58,8 +58,10 @@ func (s *Server) startHTTPServer() {
 
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
+	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/settings", settingsHandler{}).Name("Settings")
+	router.Handle("/reload-config", configReloadHandler{}).Name("ConfigReload")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
 
 	tikvHandlerTool := s.newTikvHandlerTool()
@@ -68,7 +70,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
 	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", valueHandler{})
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool}).Name("DDL_History")
-	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.store.(kv.Storage)}).Name("DDL_Owner_Resign")
+	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.Store.(kv.Storage)}).Name("DDL_Owner_Resign")
 
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")

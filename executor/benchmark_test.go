@@ -127,7 +127,7 @@ func (mds *mockDataSource) Next(ctx context.Context, req *chunk.RecordBatch) err
 }
 
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
-	baseExec := newBaseExecutor(opt.ctx, opt.schema, "")
+	baseExec := newBaseExecutor(opt.ctx, opt.schema, nil)
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
 	types := m.retTypes()
 	colData := make([][]interface{}, len(types))

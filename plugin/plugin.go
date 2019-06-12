@@ -49,8 +49,9 @@ type plugins struct {
 // clone deep copies plugins info.
 func (p *plugins) clone() *plugins {
 	np := &plugins{
-		plugins:  make(map[Kind][]Plugin, len(p.plugins)),
-		versions: make(map[string]uint16, len(p.versions)),
+		plugins:      make(map[Kind][]Plugin, len(p.plugins)),
+		versions:     make(map[string]uint16, len(p.versions)),
+		dyingPlugins: make([]Plugin, len(p.dyingPlugins)),
 	}
 	for key, value := range p.plugins {
 		np.plugins[key] = append([]Plugin(nil), value...)
@@ -99,34 +100,7 @@ type Plugin struct {
 	Path    string
 }
 
-type validateMode int
-
-const (
-	initMode validateMode = iota
-	reloadMode
-)
-
-func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins, mode validateMode) error {
-	if mode == reloadMode {
-		var oldPlugin *Plugin
-		for i, item := range tiPlugins.plugins[p.Kind] {
-			if item.Name == p.Name {
-				oldPlugin = &tiPlugins.plugins[p.Kind][i]
-				break
-			}
-		}
-		if oldPlugin == nil {
-			return errUnsupportedReloadPlugin.GenWithStackByArgs(p.Name)
-		}
-		if len(p.SysVars) != len(oldPlugin.SysVars) {
-			return errUnsupportedReloadPluginVar.GenWithStackByArgs("")
-		}
-		for varName, varVal := range p.SysVars {
-			if oldPlugin.SysVars[varName] == nil || *oldPlugin.SysVars[varName] != *varVal {
-				return errUnsupportedReloadPluginVar.GenWithStackByArgs(varVal)
-			}
-		}
-	}
+func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
 	if p.RequireVersion != nil {
 		for component, reqVer := range p.RequireVersion {
 			if ver, ok := tiPlugins.versions[component]; !ok || ver < reqVer {
@@ -197,7 +171,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 	// Cross validate & Load plugins.
 	for kind := range tiPlugins.plugins {
 		for i := range tiPlugins.plugins[kind] {
-			if err = tiPlugins.plugins[kind][i].validate(ctx, tiPlugins, initMode); err != nil {
+			if err = tiPlugins.plugins[kind][i].validate(ctx, tiPlugins); err != nil {
 				if cfg.SkipWhenFail {
 					logutil.Logger(ctx).Warn("validate plugin fail and disable plugin",
 						zap.String("plugin", tiPlugins.plugins[kind][i].Name), zap.Error(err))
@@ -284,7 +258,40 @@ func (w *flushWatcher) watchLoop() {
 	}
 }
 
+type loadFn func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error)
+
+var testHook *struct {
+	loadOne loadFn
+}
+
 func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
+	pName, pVersion, err := pluginID.Decode()
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	var manifest func() *Manifest
+	if testHook == nil {
+		manifest, err = loadManifestByGoPlugin(&plugin, dir, pluginID)
+	} else {
+		manifest, err = testHook.loadOne(&plugin, dir, pluginID)
+	}
+	if err != nil {
+		return
+	}
+	plugin.Manifest = manifest()
+	if plugin.Name != pName {
+		err = errInvalidPluginName.GenWithStackByArgs(string(pluginID), plugin.Name)
+		return
+	}
+	if strconv.Itoa(int(plugin.Version)) != pVersion {
+		err = errInvalidPluginVersion.GenWithStackByArgs(string(pluginID))
+		return
+	}
+	return
+}
+
+func loadManifestByGoPlugin(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 	plugin.Path = filepath.Join(dir, string(pluginID)+LibrarySuffix)
 	plugin.library, err = gplugin.Open(plugin.Path)
 	if err != nil {
@@ -296,23 +303,10 @@ func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 		err = errors.Trace(err)
 		return
 	}
-	manifest, ok := manifestSym.(func() *Manifest)
+	var ok bool
+	manifest, ok = manifestSym.(func() *Manifest)
 	if !ok {
 		err = errInvalidPluginManifest.GenWithStackByArgs(string(pluginID))
-		return
-	}
-	pName, pVersion, err := pluginID.Decode()
-	if err != nil {
-		err = errors.Trace(err)
-		return
-	}
-	plugin.Manifest = manifest()
-	if plugin.Name != pName {
-		err = errInvalidPluginName.GenWithStackByArgs(string(pluginID), plugin.Name)
-		return
-	}
-	if strconv.Itoa(int(plugin.Version)) != pVersion {
-		err = errInvalidPluginVersion.GenWithStackByArgs(string(pluginID))
 		return
 	}
 	return
@@ -331,6 +325,9 @@ func Shutdown(ctx context.Context) {
 				p.State = Dying
 				if p.flushWatcher != nil {
 					p.flushWatcher.cancel()
+				}
+				if p.OnShutdown == nil {
+					continue
 				}
 				if err := p.OnShutdown(ctx, p.Manifest); err != nil {
 					logutil.Logger(ctx).Error("call OnShutdown for failure",

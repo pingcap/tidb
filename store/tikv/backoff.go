@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -43,17 +44,48 @@ const (
 	DecorrJitter
 )
 
+var (
+	tikvBackoffCounterRPC          = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
+	tikvBackoffCounterLock         = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
+	tikvBackoffCounterLockFast     = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
+	tikvBackoffCounterPD           = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
+	tikvBackoffCounterRegionMiss   = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
+	tikvBackoffCounterUpdateLeader = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
+	tikvBackoffCounterServerBusy   = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
+	tikvBackoffCounterEmpty        = metrics.TiKVBackoffCounter.WithLabelValues("")
+)
+
+func (t backoffType) Counter() prometheus.Counter {
+	switch t {
+	case boTiKVRPC:
+		return tikvBackoffCounterRPC
+	case BoTxnLock:
+		return tikvBackoffCounterLock
+	case boTxnLockFast:
+		return tikvBackoffCounterLockFast
+	case BoPDRPC:
+		return tikvBackoffCounterPD
+	case BoRegionMiss:
+		return tikvBackoffCounterRegionMiss
+	case BoUpdateLeader:
+		return tikvBackoffCounterUpdateLeader
+	case boServerBusy:
+		return tikvBackoffCounterServerBusy
+	}
+	return tikvBackoffCounterEmpty
+}
+
 // NewBackoffFn creates a backoff func which implements exponential backoff with
 // optional jitters.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html
-func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
+func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs int) int {
 	if base < 2 {
 		// Top prevent panic in 'rand.Intn'.
 		base = 2
 	}
 	attempts := 0
 	lastSleep := base
-	return func(ctx context.Context) int {
+	return func(ctx context.Context, maxSleepMs int) int {
 		var sleep int
 		switch jitter {
 		case NoJitter:
@@ -70,14 +102,20 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
 		logutil.Logger(context.Background()).Debug("backoff",
 			zap.Int("base", base),
 			zap.Int("sleep", sleep))
-		select {
-		case <-time.After(time.Duration(sleep) * time.Millisecond):
-		case <-ctx.Done():
-		}
 
-		attempts++
-		lastSleep = sleep
-		return lastSleep
+		realSleep := sleep
+		// when set maxSleepMs >= 0 in `tikv.BackoffWithMaxSleep` will force sleep maxSleepMs milliseconds.
+		if maxSleepMs >= 0 && realSleep > maxSleepMs {
+			realSleep = maxSleepMs
+		}
+		select {
+		case <-time.After(time.Duration(realSleep) * time.Millisecond):
+			attempts++
+			lastSleep = sleep
+			return lastSleep
+		case <-ctx.Done():
+			return 0
+		}
 	}
 }
 
@@ -98,7 +136,7 @@ const (
 	boServerBusy
 )
 
-func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
+func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
 	if vars.Hook != nil {
 		vars.Hook(t.String(), vars)
 	}
@@ -149,7 +187,7 @@ func (t backoffType) TError() error {
 	case BoTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
 	case BoPDRPC:
-		return ErrPDServerTimeout.GenWithStackByArgs(txnRetryableMark)
+		return ErrPDServerTimeout
 	case BoRegionMiss, BoUpdateLeader:
 		return ErrRegionUnavailable
 	case boServerBusy:
@@ -173,6 +211,11 @@ const (
 	deleteRangeOneRegionMaxBackoff = 100000
 	rawkvMaxBackoff                = 20000
 	splitRegionBackoff             = 20000
+	scatterRegionBackoff           = 20000
+	waitScatterRegionFinishBackoff = 120000
+	locateRegionMaxBackoff         = 20000
+	pessimisticLockMaxBackoff      = 10000
+	pessimisticRollbackMaxBackoff  = 10000
 )
 
 // CommitMaxBackoff is max sleep time of the 'commit' command
@@ -182,7 +225,7 @@ var CommitMaxBackoff = 41000
 type Backoffer struct {
 	ctx context.Context
 
-	fn         map[backoffType]func(context.Context) int
+	fn         map[backoffType]func(context.Context, int) int
 	maxSleep   int
 	totalSleep int
 	errors     []error
@@ -207,12 +250,23 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 	if vars != nil {
 		b.vars = vars
 	}
+	// maxSleep is the max sleep time in millisecond.
+	// When it is multiplied by BackOffWeight, it should not be greater than MaxInt32.
+	if math.MaxInt32/b.vars.BackOffWeight >= b.maxSleep {
+		b.maxSleep *= b.vars.BackOffWeight
+	}
 	return b
 }
 
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	return b.BackoffWithMaxSleep(typ, -1, err)
+}
+
+// BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
+// and never sleep more than maxSleepMs for each sleep.
+func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err error) error {
 	if strings.Contains(err.Error(), mismatchClusterID) {
 		logutil.Logger(context.Background()).Fatal("critical error", zap.Error(err))
 	}
@@ -222,10 +276,10 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	default:
 	}
 
-	metrics.TiKVBackoffCounter.WithLabelValues(typ.String()).Inc()
+	typ.Counter().Inc()
 	// Lazy initialize.
 	if b.fn == nil {
-		b.fn = make(map[backoffType]func(context.Context) int)
+		b.fn = make(map[backoffType]func(context.Context, int) int)
 	}
 	f, ok := b.fn[typ]
 	if !ok {
@@ -233,7 +287,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		b.fn[typ] = f
 	}
 
-	b.totalSleep += f(b.ctx)
+	b.totalSleep += f(b.ctx, maxSleepMs)
 	b.types = append(b.types, typ)
 
 	var startTs interface{}

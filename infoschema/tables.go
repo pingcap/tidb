@@ -14,11 +14,13 @@
 package infoschema
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -27,8 +29,14 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	binaryJson "github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -67,6 +75,11 @@ const (
 	tableProcesslist                        = "PROCESSLIST"
 	tableTiDBIndexes                        = "TIDB_INDEXES"
 	tableSlowLog                            = "SLOW_QUERY"
+	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
+	tableTiKVStoreStatus                    = "TIKV_STORE_STATUS"
+	tableAnalyzeStatus                      = "ANALYZE_STATUS"
+	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
+	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 )
 
 type columnInfo struct {
@@ -544,9 +557,218 @@ var tableTiDBIndexesCols = []columnInfo{
 	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
+var tableTiDBHotRegionsCols = []columnInfo{
+	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"MAX_HOT_DEGREE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"FLOW_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var tableTiKVStoreStatusCols = []columnInfo{
+	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"STORE_STATE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"STORE_STATE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABEL", mysql.TypeJSON, 51, 0, nil, nil},
+	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CAPACITY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"AVAILABLE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LEADER_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_WEIGHT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_SCORE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_WEIGHT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_SCORE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"START_TS", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"LAST_HEARTBEAT_TS", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"UPTIME", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableAnalyzeStatusCols = []columnInfo{
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PARTITION_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"JOB_INFO", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PROCESSED_ROWS", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{"START_TIME", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"STATE", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableTiKVRegionStatusCols = []columnInfo{
+	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"START_KEY", mysql.TypeBlob, types.UnspecifiedLength, 0, nil, nil},
+	{"END_KEY", mysql.TypeBlob, types.UnspecifiedLength, 0, nil, nil},
+	{"EPOCH_CONF_VER", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"EPOCH_VERSION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"WRITTEN_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"READ_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"APPROXIMATE_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"APPROXIMATE_KEYS", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var tableTiKVRegionPeersCols = []columnInfo{
+	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"PEER_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"IS_LEARNER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
+	{"IS_LEADER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
+	{"STATUS", mysql.TypeVarchar, 10, 0, 0, nil},
+	{"DOWN_SECONDS", mysql.TypeLonglong, 21, 0, 0, nil},
+}
+
+func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	regionsStat, err := tikvHelper.GetRegionsInfo()
+	if err != nil {
+		return nil, err
+	}
+	for _, regionStat := range regionsStat.Regions {
+		row := make([]types.Datum, len(tableTiKVRegionStatusCols))
+		row[0].SetInt64(regionStat.ID)
+		row[1].SetString(regionStat.StartKey)
+		row[2].SetString(regionStat.EndKey)
+		row[3].SetInt64(regionStat.Epoch.ConfVer)
+		row[4].SetInt64(regionStat.Epoch.Version)
+		row[5].SetInt64(regionStat.WrittenBytes)
+		row[6].SetInt64(regionStat.ReadBytes)
+		row[7].SetInt64(regionStat.ApproximateSize)
+		row[8].SetInt64(regionStat.ApproximateKeys)
+		records = append(records, row)
+	}
+	return records, nil
+}
+
+const (
+	normalPeer  = "NORMAL"
+	pendingPeer = "PENDING"
+	downPeer    = "DOWN"
+)
+
+func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	regionsStat, err := tikvHelper.GetRegionsInfo()
+	if err != nil {
+		return nil, err
+	}
+	for _, regionStat := range regionsStat.Regions {
+		pendingPeerIDSet := set.NewInt64Set()
+		for _, peer := range regionStat.PendingPeers {
+			pendingPeerIDSet.Insert(peer.ID)
+		}
+		downPeerMap := make(map[int64]int64)
+		for _, peerStat := range regionStat.DownPeers {
+			downPeerMap[peerStat.ID] = peerStat.DownSec
+		}
+		for _, peer := range regionStat.Peers {
+			row := make([]types.Datum, len(tableTiKVRegionPeersCols))
+			row[0].SetInt64(regionStat.ID)
+			row[1].SetInt64(peer.ID)
+			row[2].SetInt64(peer.StoreID)
+			if peer.ID == regionStat.Leader.ID {
+				row[3].SetInt64(1)
+			} else {
+				row[3].SetInt64(0)
+			}
+			if peer.IsLearner {
+				row[4].SetInt64(1)
+			} else {
+				row[4].SetInt64(0)
+			}
+			if pendingPeerIDSet.Exist(peer.ID) {
+				row[5].SetString(pendingPeer)
+			} else if downSec, ok := downPeerMap[peer.ID]; ok {
+				row[5].SetString(downPeer)
+				row[6].SetInt64(downSec)
+			} else {
+				row[5].SetString(normalPeer)
+			}
+			records = append(records, row)
+		}
+	}
+	return records, nil
+}
+
+func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	storesStat, err := tikvHelper.GetStoresStat()
+	if err != nil {
+		return nil, err
+	}
+	for _, storeStat := range storesStat.Stores {
+		row := make([]types.Datum, len(tableTiKVStoreStatusCols))
+		row[0].SetInt64(storeStat.Store.ID)
+		row[1].SetString(storeStat.Store.Address)
+		row[2].SetInt64(storeStat.Store.State)
+		row[3].SetString(storeStat.Store.StateName)
+		data, err := json.Marshal(storeStat.Store.Labels)
+		if err != nil {
+			return nil, err
+		}
+		bj := binaryJson.BinaryJSON{}
+		if err = bj.UnmarshalJSON(data); err != nil {
+			return nil, err
+		}
+		row[4].SetMysqlJSON(bj)
+		row[5].SetString(storeStat.Store.Version)
+		row[6].SetString(storeStat.Status.Capacity)
+		row[7].SetString(storeStat.Status.Available)
+		row[8].SetInt64(storeStat.Status.LeaderCount)
+		row[9].SetInt64(storeStat.Status.LeaderWeight)
+		row[10].SetInt64(storeStat.Status.LeaderScore)
+		row[11].SetInt64(storeStat.Status.LeaderSize)
+		row[12].SetInt64(storeStat.Status.RegionCount)
+		row[13].SetInt64(storeStat.Status.RegionWeight)
+		row[14].SetInt64(storeStat.Status.RegionScore)
+		row[15].SetInt64(storeStat.Status.RegionSize)
+		startTs := types.Time{
+			Time: types.FromGoTime(storeStat.Status.StartTs),
+			Type: mysql.TypeDatetime,
+			Fsp:  types.DefaultFsp,
+		}
+		row[16].SetMysqlTime(startTs)
+		lastHeartbeatTs := types.Time{
+			Time: types.FromGoTime(storeStat.Status.LastHeartbeatTs),
+			Type: mysql.TypeDatetime,
+			Fsp:  types.DefaultFsp,
+		}
+		row[17].SetMysqlTime(lastHeartbeatTs)
+		row[18].SetString(storeStat.Status.Uptime)
+		records = append(records, row)
+	}
+	return records, nil
+}
+
 func dataForCharacterSets() (records [][]types.Datum) {
 
-	charsets := charset.GetAllCharsets()
+	charsets := charset.GetSupportedCharsets()
 
 	for _, charset := range charsets {
 
@@ -562,7 +784,7 @@ func dataForCharacterSets() (records [][]types.Datum) {
 
 func dataForCollations() (records [][]types.Datum) {
 
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 
 	for _, collation := range collations {
 
@@ -583,7 +805,7 @@ func dataForCollations() (records [][]types.Datum) {
 
 func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
 
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 
 	for _, collation := range collations {
 
@@ -625,7 +847,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	loginUser := ctx.GetSessionVars().User
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
 			hasProcessPriv = true
 		}
 	}
@@ -888,7 +1110,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 			if charset == "" {
 				charset = mysql.DefaultCharset
 			}
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			record := types.MakeDatums(
@@ -932,7 +1154,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 
 			createOptions := ""
 
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -1012,7 +1234,7 @@ func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, tb := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -1074,7 +1296,7 @@ func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.D
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
@@ -1155,8 +1377,8 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			numericPrecision,                     // NUMERIC_PRECISION
 			numericScale,                         // NUMERIC_SCALE
 			datetimePrecision,                    // DATETIME_PRECISION
-			col.Charset,                          // CHARACTER_SET_NAME
-			col.Collate,                          // COLLATION_NAME
+			columnDesc.Charset,                   // CHARACTER_SET_NAME
+			columnDesc.Collation,                 // COLLATION_NAME
 			columnType,                           // COLUMN_TYPE
 			columnDesc.Key,                       // COLUMN_KEY
 			columnDesc.Extra,                     // EXTRA
@@ -1164,12 +1386,6 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Comment,                   // COLUMN_COMMENT
 			col.GeneratedExprString,              // GENERATION_EXPRESSION
 		)
-		// In mysql, 'character_set_name' and 'collation_name' are setted to null when column type is non-varchar or non-blob in information_schema.
-		if col.Tp != mysql.TypeVarchar && col.Tp != mysql.TypeBlob {
-			record[13].SetNull()
-			record[14].SetNull()
-		}
-
 		rows = append(rows, record)
 	}
 	return rows
@@ -1424,6 +1640,76 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
+func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
+	}
+	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, dataForHotRegionByMetrics(metrics, "read")...)
+	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, dataForHotRegionByMetrics(metrics, "write")...)
+	return records, nil
+}
+
+func dataForHotRegionByMetrics(metrics map[helper.TblIndex]helper.RegionMetric, tp string) [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(metrics))
+	for tblIndex, regionMetric := range metrics {
+		row := make([]types.Datum, len(tableTiDBHotRegionsCols))
+		if tblIndex.IndexName != "" {
+			row[1].SetInt64(tblIndex.IndexID)
+			row[4].SetString(tblIndex.IndexName)
+		} else {
+			row[1].SetNull()
+			row[4].SetNull()
+		}
+		row[0].SetInt64(tblIndex.TableID)
+		row[2].SetString(tblIndex.DbName)
+		row[3].SetString(tblIndex.TableName)
+		row[5].SetString(tp)
+		row[6].SetInt64(int64(regionMetric.MaxHotDegree))
+		row[7].SetInt64(int64(regionMetric.Count))
+		row[8].SetUint64(regionMetric.FlowBytes)
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// DataForAnalyzeStatus gets all the analyze jobs.
+func DataForAnalyzeStatus() (rows [][]types.Datum) {
+	for _, job := range statistics.GetAllAnalyzeJobs() {
+		job.Lock()
+		var startTime interface{}
+		if job.StartTime.IsZero() {
+			startTime = nil
+		} else {
+			startTime = types.Time{Time: types.FromGoTime(job.StartTime), Type: mysql.TypeDatetime}
+		}
+		rows = append(rows, types.MakeDatums(
+			job.DBName,        // TABLE_SCHEMA
+			job.TableName,     // TABLE_NAME
+			job.PartitionName, // PARTITION_NAME
+			job.JobInfo,       // JOB_INFO
+			job.RowCount,      // ROW_COUNT
+			startTime,         // START_TIME
+			job.State,         // STATE
+		))
+		job.Unlock()
+	}
+	return
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -1458,6 +1744,11 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableProcesslist:                        tableProcesslistCols,
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
 	tableSlowLog:                            slowQueryCols,
+	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
+	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
+	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
+	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
+	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1551,6 +1842,16 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForProcesslist(ctx)
 	case tableSlowLog:
 		fullRows, err = dataForSlowLog(ctx)
+	case tableTiDBHotRegions:
+		fullRows, err = dataForTiDBHotRegions(ctx)
+	case tableTiKVStoreStatus:
+		fullRows, err = dataForTiKVStoreStatus(ctx)
+	case tableAnalyzeStatus:
+		fullRows = DataForAnalyzeStatus()
+	case tableTiKVRegionStatus:
+		fullRows, err = dataForTiKVRegionStatus(ctx)
+	case tableTiKVRegionPeers:
+		fullRows, err = dataForTikVRegionPeers(ctx)
 	}
 	if err != nil {
 		return nil, err
