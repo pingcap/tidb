@@ -1413,21 +1413,6 @@ func loadSystemTZ(se *session) (string, error) {
 	return req.GetRow(0).GetString(0), nil
 }
 
-func loadExprPushdownBlacklist(se *session) (err error) {
-	sql := "select HIGH_PRIORITY name from mysql.expr_pushdown_blacklist"
-	rows, _, err := se.ExecRestrictedSQL(se, sql)
-	if err != nil {
-		return err
-	}
-	newBlacklist := make(map[string]struct{})
-	for _, row := range rows {
-		name := row.GetString(0)
-		newBlacklist[strings.ToLower(name)] = struct{}{}
-	}
-	expression.DefaultExprPushdownBlacklist.Store(newBlacklist)
-	return nil
-}
-
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	cfg := config.GetGlobalConfig()
@@ -1479,7 +1464,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	err = loadExprPushdownBlacklist(se)
+	err = executor.LoadExprPushdownBlacklist(se)
 	if err != nil {
 		return nil, err
 	}

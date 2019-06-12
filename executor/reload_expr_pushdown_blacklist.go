@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -28,9 +29,13 @@ type ReloadExprPushdownBlacklistExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.RecordBatch) error {
+	return LoadExprPushdownBlacklist(e.ctx)
+}
+
+func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 	sql := "select HIGH_PRIORITY name from mysql.expr_pushdown_blacklist"
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return err
 	}
