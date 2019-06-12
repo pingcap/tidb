@@ -115,7 +115,7 @@ func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
 			if logFreq%10 == 0 {
 				logutil.Logger(context.Background()).Info("wait scatter region",
 					zap.Uint64("regionID", regionID),
-					zap.String("desc", string(resp.Desc)),
+					zap.String("reverse", string(resp.Desc)),
 					zap.String("status", pdpb.OperatorStatus_name[int32(resp.Status)]))
 			}
 			logFreq++

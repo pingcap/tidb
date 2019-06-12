@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
+	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -745,7 +746,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	tblInfo.Collate = toCollate
 	// update column charset.
 	for _, col := range tblInfo.Columns {
-		if typesNeedCharset(col.Tp) {
+		if field_types.HasCharset(&col.FieldType) {
 			col.Charset = toCharset
 			col.Collate = toCollate
 		} else {

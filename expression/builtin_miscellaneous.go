@@ -21,12 +21,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/twinj/uuid"
 )
 
 var (
@@ -980,7 +980,13 @@ func (b *builtinUUIDSig) Clone() builtinFunc {
 // evalString evals a builtinUUIDSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
 func (b *builtinUUIDSig) evalString(_ chunk.Row) (d string, isNull bool, err error) {
-	return uuid.NewV1().String(), false, nil
+	var id uuid.UUID
+	id, err = uuid.NewUUID()
+	if err != nil {
+		return
+	}
+	d = id.String()
+	return
 }
 
 type uuidShortFunctionClass struct {

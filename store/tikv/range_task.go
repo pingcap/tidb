@@ -29,7 +29,8 @@ import (
 
 const (
 	rangeTaskDefaultStatLogInterval = time.Minute * 10
-	rangeTaskMetricsUpdateInterval  = time.Second * 10
+
+	lblCompletedRegions = "completed-regions"
 )
 
 // RangeTaskRunner splits a range into many ranges to process concurrently, and convenient to send requests to all
@@ -78,6 +79,7 @@ func (s *RangeTaskRunner) SetStatLogInterval(interval time.Duration) {
 // Empty startKey or endKey means unbounded.
 func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKey []byte) error {
 	s.completedRegions = 0
+	metrics.TiKVRangeTaskStats.WithLabelValues(s.name, lblCompletedRegions).Set(0)
 
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
 		logutil.Logger(ctx).Info("empty range task executed. ignored",
@@ -95,8 +97,6 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 
 	// Periodically log the progress
 	statLogTicker := time.NewTicker(s.statLogInterval)
-	// Periodically update metrics
-	metricsTicker := time.NewTicker(rangeTaskMetricsUpdateInterval)
 
 	ctx, cancel := context.WithCancel(ctx)
 	taskCh := make(chan *kv.KeyRange, s.concurrency)
@@ -121,16 +121,15 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 			wg.Wait()
 		}
 		statLogTicker.Stop()
-		metricsTicker.Stop()
 		cancel()
+		metrics.TiKVRangeTaskStats.WithLabelValues(s.name, lblCompletedRegions).Set(0)
 	}()
 
 	// Iterate all regions and send each region's range as a task to the workers.
 	key := startKey
+Loop:
 	for {
 		select {
-		case <-ctx.Done():
-			return errors.Trace(ctx.Err())
 		case <-statLogTicker.C:
 			logutil.Logger(ctx).Info("range task in progress",
 				zap.String("name", s.name),
@@ -139,8 +138,6 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 				zap.Int("concurrency", s.concurrency),
 				zap.Duration("cost time", time.Since(startTime)),
 				zap.Int32("completed regions", s.CompletedRegions()))
-		case <-metricsTicker.C:
-			metrics.TiKVRangeTaskStats.WithLabelValues(s.name, "completed").Set(float64(s.CompletedRegions()))
 		default:
 		}
 
@@ -168,7 +165,12 @@ func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey []byte, endKe
 		}
 
 		pushTaskStartTime := time.Now()
-		taskCh <- task
+
+		select {
+		case taskCh <- task:
+		case <-ctx.Done():
+			break Loop
+		}
 		metrics.TiKVRangeTaskPushDuration.WithLabelValues(s.name).Observe(time.Since(pushTaskStartTime).Seconds())
 
 		if isLast {
@@ -247,8 +249,6 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 		}
 
 		completedRegions, err := w.handler(ctx, *r)
-		atomic.AddInt32(w.completedRegions, int32(completedRegions))
-
 		if err != nil {
 			logutil.Logger(ctx).Info("canceling range task because of error",
 				zap.String("name", w.name),
@@ -259,5 +259,7 @@ func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 			cancel()
 			break
 		}
+		atomic.AddInt32(w.completedRegions, int32(completedRegions))
+		metrics.TiKVRangeTaskStats.WithLabelValues(w.name, lblCompletedRegions).Add(float64(completedRegions))
 	}
 }
