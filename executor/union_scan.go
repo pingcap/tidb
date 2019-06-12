@@ -266,7 +266,7 @@ func (us *UnionScanExec) getMissIndexRowsByHandle(handle int64) error {
 		return nil
 	}
 	ds, err := us.getMemRow(handle)
-	if err != nil {
+	if ds == nil || err != nil {
 		return err
 	}
 	us.snapshotRows = append(us.snapshotRows, ds)

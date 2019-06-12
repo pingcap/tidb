@@ -170,4 +170,15 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("3 2", "2 3"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
+
+	// Test for getMissIndexRowsByHandle return nil.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int, index idx(a))")
+	tk.MustExec("insert into t values (1,1),(2,2),(3,3)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set b=0 where a=2")
+	tk.MustQuery("select * from t ignore index (idx) where a>0 and b>0;").Check(testkit.Rows("1 1", "3 3"))
+	tk.MustQuery("select * from t use index (idx) where a>0 and b>0;").Check(testkit.Rows("1 1", "3 3"))
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
 }
