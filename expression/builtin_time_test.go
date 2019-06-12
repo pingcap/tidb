@@ -1789,6 +1789,14 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 			expected: "00:00:00.000100",
 		},
 		{
+			fc:       fcSub,
+			dur:      "00:00:01",
+			fsp:      0,
+			unit:     "MICROSECOND",
+			format:   "100",
+			expected: "00:00:00.999900",
+		},
+		{
 			fc:       fcAdd,
 			dur:      "00:00:00",
 			fsp:      0,
@@ -1800,8 +1808,16 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 			fc:       fcAdd,
 			dur:      "00:00:00",
 			fsp:      0,
-			unit:     "DAY",
+			unit:     "SECOND",
 			format:   1,
+			expected: "00:00:01",
+		},
+		{
+			fc:       fcAdd,
+			dur:      "00:00:00",
+			fsp:      0,
+			unit:     "DAY",
+			format:   types.NewDecFromInt(1),
 			expected: "24:00:00",
 		},
 		{
@@ -1827,6 +1843,14 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 			unit:     "DAY",
 			format:   1,
 			expected: "02:00:00",
+		},
+		{
+			fc:       fcSub,
+			dur:      "26:00:00",
+			fsp:      0,
+			unit:     "SECOND",
+			format:   types.NewDecFromInt(1),
+			expected: "25:59:59",
 		},
 		{
 			fc:       fcSub,
