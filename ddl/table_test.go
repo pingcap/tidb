@@ -68,7 +68,7 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	return tblInfo
 }
 
-// testTableInfo creates a test table with num int columns and with no index.
+// testTableInfoWithPartition creates a test table with num int columns and with no index.
 func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.TableInfo {
 	tblInfo := testTableInfo(c, d, name, num)
 	pid, err := d.genGlobalID()

@@ -604,7 +604,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	}
 }
 
-// for issue #6661
+// TestIndexRangeForUnsignedInt is written for issue #6661
 func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 	defer testleak.AfterTest(c)()
 	dom, store, err := newDomainStoreWithBootstrap(c)

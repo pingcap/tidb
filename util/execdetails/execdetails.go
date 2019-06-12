@@ -244,11 +244,11 @@ type RuntimeStatsColl struct {
 
 // RuntimeStats collects one executor's execution info.
 type RuntimeStats struct {
-	// executor's Next() called times.
+	// loop indicates executor's Next() called times.
 	loop int32
-	// executor consume time.
+	// consume indicates executor's consume time.
 	consume int64
-	// executor return row count.
+	// rows indicates executor's return row count.
 	rows int64
 }
 

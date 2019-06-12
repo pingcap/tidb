@@ -51,7 +51,7 @@ const (
 	IndexRangeType
 )
 
-// Point is the end point of range interval.
+// point is the end point of range interval.
 type point struct {
 	value types.Datum
 	excl  bool // exclude

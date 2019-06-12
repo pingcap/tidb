@@ -72,8 +72,7 @@ type Client interface {
 }
 
 type connArray struct {
-	// The target host.
-	target string
+	target string // The target host.
 
 	index uint32
 	v     []*grpc.ClientConn
@@ -85,14 +84,14 @@ type connArray struct {
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
 
-	// Notify rpcClient to check the idle flag
+	// idleNotify is used to notify rpcClient to check the idle flag
 	idleNotify *uint32
 	idle       bool
 	idleDetect *time.Timer
 }
 
 type batchCommandsClient struct {
-	// The target host.
+	// target is the target host.
 	target string
 
 	conn                   *grpc.ClientConn
@@ -542,7 +541,7 @@ type rpcClient struct {
 	conns    map[string]*connArray
 	security config.Security
 
-	// Implement background cleanup.
+	// idleNotify is used to implement background cleanup.
 	// Periodically check whether there is any connection that is idle and then close and remove these idle connections.
 	idleNotify uint32
 }

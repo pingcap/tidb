@@ -23,7 +23,7 @@ import (
 
 // All the AggFunc implementations are listed here for navigation.
 var (
-	// All the AggFunc implementations for "COUNT" are listed here.
+	// _ All the AggFunc implementations for "COUNT" are listed here.
 	_ AggFunc = (*countPartial)(nil)
 	_ AggFunc = (*countOriginal4Int)(nil)
 	_ AggFunc = (*countOriginal4Real)(nil)
@@ -34,7 +34,7 @@ var (
 	_ AggFunc = (*countOriginal4String)(nil)
 	_ AggFunc = (*countOriginalWithDistinct)(nil)
 
-	// All the AggFunc implementations for "FIRSTROW" are listed here.
+	// _ All the AggFunc implementations for "FIRSTROW" are listed here.
 	_ AggFunc = (*firstRow4Decimal)(nil)
 	_ AggFunc = (*firstRow4Int)(nil)
 	_ AggFunc = (*firstRow4Time)(nil)
@@ -44,7 +44,7 @@ var (
 	_ AggFunc = (*firstRow4Float64)(nil)
 	_ AggFunc = (*firstRow4JSON)(nil)
 
-	// All the AggFunc implementations for "MAX"/"MIN" are listed here.
+	// _ All the AggFunc implementations for "MAX"/"MIN" are listed here.
 	_ AggFunc = (*maxMin4Int)(nil)
 	_ AggFunc = (*maxMin4Uint)(nil)
 	_ AggFunc = (*maxMin4Float32)(nil)
@@ -54,7 +54,7 @@ var (
 	_ AggFunc = (*maxMin4Duration)(nil)
 	_ AggFunc = (*maxMin4JSON)(nil)
 
-	// All the AggFunc implementations for "AVG" are listed here.
+	// _ All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
 	_ AggFunc = (*avgOriginal4DistinctDecimal)(nil)
 	_ AggFunc = (*avgPartial4Decimal)(nil)
@@ -63,23 +63,23 @@ var (
 	_ AggFunc = (*avgPartial4Float64)(nil)
 	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil)
 
-	// All the AggFunc implementations for "SUM" are listed here.
+	// _ All the AggFunc implementations for "SUM" are listed here.
 	_ AggFunc = (*sum4DistinctFloat64)(nil)
 	_ AggFunc = (*sum4DistinctDecimal)(nil)
 	_ AggFunc = (*sum4Decimal)(nil)
 	_ AggFunc = (*sum4Float64)(nil)
 
-	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
+	// _ All the AggFunc implementations for "GROUP_CONCAT" are listed here.
 	_ AggFunc = (*groupConcatDistinct)(nil)
 	_ AggFunc = (*groupConcat)(nil)
 
-	// All the AggFunc implementations for "BIT_OR" are listed here.
+	// _ All the AggFunc implementations for "BIT_OR" are listed here.
 	_ AggFunc = (*bitOrUint64)(nil)
 
-	// All the AggFunc implementations for "BIT_XOR" are listed here.
+	// _ All the AggFunc implementations for "BIT_XOR" are listed here.
 	_ AggFunc = (*bitXorUint64)(nil)
 
-	// All the AggFunc implementations for "BIT_AND" are listed here.
+	// _ All the AggFunc implementations for "BIT_AND" are listed here.
 	_ AggFunc = (*bitAndUint64)(nil)
 )
 

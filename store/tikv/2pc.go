@@ -102,7 +102,7 @@ type twoPhaseCommitter struct {
 	// should be less than GC life time.
 	maxTxnTimeUse uint64
 	detail        *execdetails.CommitDetails
-	// For pessimistic transaction
+	// isPessimistic is used for pessimistic transaction
 	isPessimistic bool
 	primaryKey    []byte
 	forUpdateTS   uint64

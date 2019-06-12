@@ -586,7 +586,7 @@ func (bm *binaryModifier) rebuildTo(buf []byte) ([]byte, TypeCode) {
 // floatEpsilon is the acceptable error quantity when comparing two float numbers.
 const floatEpsilon = 1.e-8
 
-// compareFloat64 returns an integer comparing the float64 x to y,
+// compareFloat64PrecisionLoss returns an integer comparing the float64 x to y,
 // allowing precision loss.
 func compareFloat64PrecisionLoss(x, y float64) int {
 	if x-y < floatEpsilon && y-x < floatEpsilon {
@@ -840,10 +840,10 @@ func (bj BinaryJSON) GetElemDepth() int {
 	}
 }
 
-// extractCallbackFn: the type of CALLBACK function for extractToCallback
+// extractCallbackFn is the type of CALLBACK function for extractToCallback
 type extractCallbackFn func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error)
 
-// extractToCallback: callback alternative of extractTo
+// extractToCallback is a callback alternative of extractTo
 //     would be more effective when walk through the whole JSON is unnecessary
 // NOTICE: path [0] & [*] for JSON object other than array is INVALID, which is different from extractTo.
 func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extractCallbackFn, fullpath PathExpression) (stop bool, err error) {

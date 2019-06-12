@@ -484,6 +484,7 @@ type addIndexWorker struct {
 	priority  int
 
 	// The following attributes are used to reduce memory allocation.
+
 	defaultVals        []types.Datum
 	idxRecords         []*indexRecord
 	rowMap             map[int64]types.Datum

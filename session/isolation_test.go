@@ -166,8 +166,9 @@ func (s *testIsolationSuite) TestP4LostUpdate(c *C) {
 	c.Assert(err, NotNil)
 }
 
-// cursor is not supported
-func (s *testIsolationSuite) TestP4CLostUpdate(c *C) {}
+func (s *testIsolationSuite) TestP4CLostUpdate(c *C) {
+	// cursor is not supported
+}
 
 func (s *testIsolationSuite) TestA3Phantom(c *C) {
 	session1 := testkit.NewTestKitWithInit(c, s.store)

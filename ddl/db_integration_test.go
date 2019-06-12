@@ -195,7 +195,7 @@ func (s *testIntegrationSuite3) TestCreateTableIfNotExists(c *C) {
 	c.Assert(terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), IsTrue)
 }
 
-// for issue #9910
+// TestCreateTableWithKeyWord is a unit test for issue #9910
 func (s *testIntegrationSuite2) TestCreateTableWithKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

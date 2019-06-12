@@ -750,7 +750,7 @@ func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
 	res.Check(testkit.Rows("100"))
 }
 
-// Test issue #9205, fix the precision problem for time type default values
+// TestIssue9205 is a unit test for issue #9205, fix the precision problem for time type default values
 // See https://github.com/pingcap/tidb/issues/9205 for details
 func (s *testSuite3) TestIssue9205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

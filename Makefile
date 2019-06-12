@@ -53,7 +53,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test 
+dev: checklist check test
 
 build:
 	$(GOBUILD)
@@ -61,10 +61,10 @@ build:
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy check-static vet
+check: fmt errcheck lint tidy check-static vet goword
 
 # These need to be fixed before they can be ran regularly
-check-fail: goword check-slow
+check-fail: check-slow
 
 fmt:
 	@echo "gofmt (simplify)"

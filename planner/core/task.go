@@ -47,6 +47,7 @@ type copTask struct {
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.
 	keepOrder bool
+	// doubleReadNeedProj is a boolean flag.
 	// In double read case, it may output one more column for handle(row id).
 	// We need to prune it, so we add a project do this.
 	doubleReadNeedProj bool

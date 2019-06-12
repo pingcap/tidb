@@ -17,7 +17,7 @@ package kv
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
-	// Returns related condition pair
+	// LookupConditionPair returns related condition pair
 	LookupConditionPair(k Key) *conditionPair
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error

@@ -158,6 +158,7 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 }
 
 type aggTestCase struct {
+	// execType is a string to indicate the execution type.
 	// The test table's schema is fixed (aggCol Double, groupBy LongLong).
 	execType    string // "hash" or "stream"
 	aggFunc     string // sum, avg, count ....

@@ -146,8 +146,9 @@ type HashAggExec struct {
 	groupKeyBuffer   []byte
 	groupValDatums   []types.Datum
 
-	// After we support parallel execution for aggregation functions with distinct,
+	// TODO: After we support parallel execution for aggregation functions with distinct,
 	// we can remove this attribute.
+
 	isUnparallelExec bool
 
 	finishCh         chan struct{}
@@ -597,12 +598,12 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	go e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 }
 
-// HashAggExec employs one input reader, M partial workers and N final workers to execute parallelly.
-// The parallel execution flow is:
-// 1. input reader reads data from child executor and send them to partial workers.
-// 2. partial worker receives the input data, updates the partial results, and shuffle the partial results to the final workers.
-// 3. final worker receives partial results from all the partial workers, evaluates the final results and sends the final results to the main thread.
 func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error {
+	// HashAggExec employs one input reader, M partial workers and N final workers to execute parallelly.
+	// The parallel execution flow is:
+	// 1. input reader reads data from child executor and send them to partial workers.
+	// 2. partial worker receives the input data, updates the partial results, and shuffle the partial results to the final workers.
+	// 3. final worker receives partial results from all the partial workers, evaluates the final results and sends the final results to the main thread.
 	if !e.prepared {
 		e.prepare4ParallelExec(ctx)
 		e.prepared = true

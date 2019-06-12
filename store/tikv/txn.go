@@ -65,7 +65,7 @@ type tikvTxn struct {
 	vars      *kv.Variables
 	committer *twoPhaseCommitter
 
-	// For data consistency check.
+	// assertions are used for data consistency check.
 	assertions []assertionPair
 }
 

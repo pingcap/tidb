@@ -50,9 +50,9 @@ const (
 
 	// ModeHalfEven rounds normally.
 	ModeHalfEven RoundMode = 5
-	// Truncate just truncates the decimal.
+	// ModeTruncate just truncates the decimal.
 	ModeTruncate RoundMode = 10
-	// Ceiling is not supported now.
+	// modeCeiling is not supported now.
 	modeCeiling RoundMode = 0
 )
 

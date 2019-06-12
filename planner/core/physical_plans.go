@@ -116,7 +116,7 @@ type PhysicalIndexScan struct {
 
 	rangeInfo string
 
-	// The index scan may be on a partition.
+	// isPartition is true means the index scan may be on a partition.
 	isPartition     bool
 	physicalTableID int64
 }
@@ -155,7 +155,7 @@ type PhysicalTableScan struct {
 	// It is used for query feedback.
 	Hist *statistics.Histogram
 
-	// The table scan may be a partition, rather than a real table.
+	// isPartition is true indicates the table scan may be a partition, rather than a real table.
 	isPartition     bool
 	physicalTableID int64
 

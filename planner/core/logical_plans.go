@@ -222,7 +222,7 @@ type LogicalProjection struct {
 	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
 	calculateNoDelay bool
 
-	// avoidColumnRef is a temporary variable which is ONLY used to avoid
+	// avoidColumnEvaluator is a temporary variable which is ONLY used to avoid
 	// building columnEvaluator for the expressions of Projection which is
 	// built by buildProjection4Union.
 	// This can be removed after column pool being supported.
@@ -268,7 +268,8 @@ func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCo
 type LogicalSelection struct {
 	baseLogicalPlan
 
-	// Originally the WHERE or ON condition is parsed into a single expression,
+	// Conditions is a list of AND conditions.
+	// originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
@@ -342,7 +343,7 @@ type DataSource struct {
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*accessPath
 
-	// The data source may be a partition, rather than a real table.
+	// isPartition is true means the data source may be a partition, rather than a real table.
 	isPartition     bool
 	physicalTableID int64
 	partitionNames  []model.CIStr
@@ -594,7 +595,7 @@ func (path *accessPath) splitCorColAccessCondFromFilters(eqOrInCount int) (acces
 	return access, remained
 }
 
-// getEqOrInColOffset checks if the expression is a eq function that one side is constant or correlated column
+// isColEqCorColOrConstant checks if the expression is a eq function that one side is constant or correlated column
 // and another is column.
 func isColEqCorColOrConstant(filter expression.Expression, col *expression.Column) bool {
 	f, ok := filter.(*expression.ScalarFunction)

@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-// mockSessionManager is a mocked session manager which is used for test.
+// mockSessionManager1 is a mocked session manager which is used for test.
 type mockSessionManager1 struct {
 	PS []*util.ProcessInfo
 }

@@ -370,9 +370,10 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 	return rows
 }
 
-// Sometimes this test doesn't clean up fail, let the function name begin with 'Z'
-// so it runs last and would not disrupt other tests.
 func (s *testBinlogSuite) TestZIgnoreError(c *C) {
+	// Sometimes this test doesn't clean up fail, let the function name begin with 'Z'
+	// so it runs last and would not disrupt other tests.
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().BinlogClient = s.client

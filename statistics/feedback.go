@@ -393,6 +393,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	return vals[:total]
 }
 
+// bucket is a type alias for Feedback.
 // There are only two types of datum in bucket: one is `Blob`, which is for index; the other one
 // is `Int`, which is for primary key.
 type bucket = Feedback

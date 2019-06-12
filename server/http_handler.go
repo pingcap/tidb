@@ -1448,7 +1448,7 @@ type dbTableInfo struct {
 	SchemaVersion int64            `json:"schema_version"`
 }
 
-//ServeHTTP handles request of database information and table information by tableID.
+// ServeHTTP handles request of database information and table information by tableID.
 func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	tableID := params[pTableID]

@@ -296,8 +296,8 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 	return idx, nil
 }
 
-// TODO: supports linear hashing
 func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	// TODO: supports linear hashing
 	ret, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 	if err != nil {
 		return 0, err

@@ -263,7 +263,7 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	}
 }
 
-// unit test for issue https://github.com/pingcap/tidb/issues/8518
+// TestPrepareTableAsNameOnGroupByWithCache is a unit test for issue https://github.com/pingcap/tidb/issues/8518
 func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -318,7 +318,7 @@ func readGaugeInt(g prometheus.Gauge) int {
 	return int(mm.GetGauge().GetValue())
 }
 
-// unit test for issue https://github.com/pingcap/tidb/issues/9478
+// TestPrepareWithWindowFunction is a unit test for issue https://github.com/pingcap/tidb/issues/9478
 func (s *testPrepareSuite) TestPrepareWithWindowFunction(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

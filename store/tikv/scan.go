@@ -36,7 +36,7 @@ type Scanner struct {
 	endKey       []byte
 	eof          bool
 
-	// Use for reverse scan.
+	// reverse is used for reverse scan.
 	reverse    bool
 	nextEndKey []byte
 }

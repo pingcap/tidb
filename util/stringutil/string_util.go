@@ -190,8 +190,8 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 
 const caseDiff = 'a' - 'A'
 
-// NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
 func matchByteCI(a, b byte) bool {
+	// NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
 	return a == b
 	// We may reuse below code block when like function go back to case insensitive.
 	/*

@@ -474,7 +474,7 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	return d
 }
 
-//CopTasksDetails collects some useful information of cop-tasks during execution.
+// CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
 

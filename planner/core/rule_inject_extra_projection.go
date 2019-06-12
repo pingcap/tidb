@@ -56,7 +56,7 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 	return plan
 }
 
-// wrapCastForAggFunc wraps the args of an aggregate function with a cast function.
+// wrapCastForAggFuncs wraps the args of an aggregate function with a cast function.
 // If the mode is FinalMode or Partial2Mode, we do not need to wrap cast upon the args,
 // since the types of the args are already the expected.
 func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) {

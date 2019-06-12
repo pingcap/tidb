@@ -159,7 +159,7 @@ func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
 	return nil
 }
 
-// queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
+// updateTopNWithDelta adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
 // If such elements does not in topn elements, nothing will happen and false will be returned.
 func (c *CMSketch) updateTopNWithDelta(h1, h2 uint64, d []byte, delta uint64) bool {
 	if c.topN == nil {

@@ -31,10 +31,10 @@ func (s *testSuite1) TestPreparedNameResolver(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'order clause'")
 }
 
-// a 'create table' DDL statement should be accepted if it has no parameters.
 func (s *testSuite1) TestPreparedDDL(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	// a 'create table' DDL statement should be accepted if it has no parameters.
 	tk.MustExec("prepare stmt from 'create table t (id int, KEY id (id))'")
 }

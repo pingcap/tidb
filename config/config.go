@@ -67,7 +67,7 @@ type Config struct {
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
-	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
+	// LowerCaseTableNames sets sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
@@ -91,11 +91,11 @@ type Config struct {
 
 // Log is the log section of config.
 type Log struct {
-	// Log level.
+	// Level is the log level.
 	Level string `toml:"level" json:"level"`
-	// Log format. one of json, text, or console.
+	// Format is the log format. one of json, text, or console.
 	Format string `toml:"format" json:"format"`
-	// Disable automatic timestamps in output.
+	// DisableTimestamp disables automatic timestamps in output.
 	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
@@ -117,7 +117,7 @@ type Security struct {
 	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
 }
 
-// The ErrConfigValidationFailed error is used so that external callers can do a type assertion
+// ErrConfigValidationFailed error is used so that external callers can do a type assertion
 // to defer handling of this specific error when someone does not want strict type checking.
 // This is needed only because logging hasn't been set up at the time we parse the config file.
 // This should all be ripped out once strict config checking is made the default behavior.
@@ -239,11 +239,11 @@ type OpenTracingReporter struct {
 
 // ProxyProtocol is the PROXY protocol section of the config.
 type ProxyProtocol struct {
-	// PROXY protocol acceptable client networks.
+	// Networks means the PROXY protocol acceptable client networks.
 	// Empty string means disable PROXY protocol,
 	// * means all networks.
 	Networks string `toml:"networks" json:"networks"`
-	// PROXY protocol header read timeout, Unit is second.
+	// HeaderTimeout means the PROXY protocol header read timeout, Unit is second.
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
 }
 
@@ -252,10 +252,10 @@ type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
 	GrpcConnectionCount uint `toml:"grpc-connection-count" json:"grpc-connection-count"`
-	// After a duration of this time in seconds if the client doesn't see any activity it pings
-	// the server to see if the transport is still alive.
+	// GrpcKeepAliveTime means a duration that if the client doesn't see any activity it pings
+	// the server will check whether the transport is still alive.
 	GrpcKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
-	// After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
+	// GrpcKeepAliveTimeout is a duration of Timeout in seconds. After having pinged for keepalive check, the client waits for GrpcKeepAliveTime
 	// and if no activity is seen even after that the connection is closed.
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
@@ -266,7 +266,7 @@ type TiKVClient struct {
 
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
-	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
+	// OverloadThreshold is a uint value. If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
 	OverloadThreshold uint `toml:"overload-threshold" json:"overload-threshold"`
 	// MaxBatchWaitTime in nanosecond is the max wait time for batch.
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
@@ -278,12 +278,12 @@ type TiKVClient struct {
 type Binlog struct {
 	Enable       bool   `toml:"enable" json:"enable"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
-	// If IgnoreError is true, when writing binlog meets error, TiDB would
+	// IgnoreError is boolean flag, if it's true, when writing binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
-	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
+	// BinlogSocket specifies using socket file to write binlog, for compatible with kafka version tidb-binlog.
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
-	// The strategy for sending binlog to pump, value can be "range" or "hash" now.
+	// Strategy is the strategy for sending binlog to pump, value can be "range" or "hash" now.
 	Strategy string `toml:"strategy" json:"strategy"`
 }
 
@@ -297,11 +297,12 @@ type Plugin struct {
 type PessimisticTxn struct {
 	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
 	Enable bool `toml:"enable" json:"enable"`
+	// Default is a boolean flag.
 	// Starts a pessimistic transaction by default when Enable is true.
 	Default bool `toml:"default" json:"default"`
-	// The max count of retry for a single statement in a pessimistic transaction.
+	// MaxRetryCount is the max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
-	// The pessimistic lock ttl.
+	// TTL is the pessimistic lock ttl.
 	TTL string `toml:"ttl" json:"ttl"`
 }
 

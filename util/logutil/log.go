@@ -82,13 +82,13 @@ func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, di
 	}
 }
 
-// isSKippedPackageName tests wether path name is on log library calling stack.
+// isSkippedPackageName tests wether path name is on log library calling stack.
 func isSkippedPackageName(name string) bool {
 	return strings.Contains(name, "github.com/sirupsen/logrus") ||
 		strings.Contains(name, "github.com/coreos/pkg/capnslog")
 }
 
-// modifyHook injects file name and line pos into log entry.
+// contextHook injects file name and line pos into log entry.
 type contextHook struct{}
 
 // Fire implements logrus.Hook interface

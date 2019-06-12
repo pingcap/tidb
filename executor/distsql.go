@@ -231,6 +231,7 @@ type IndexReaderExecutor struct {
 
 	// For a partitioned table, the IndexReaderExecutor works on a partition, so
 	// the type of this table field is actually `table.PhysicalTable`.
+
 	table           table.Table
 	index           *model.IndexInfo
 	physicalTableID int64

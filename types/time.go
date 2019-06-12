@@ -670,9 +670,9 @@ func ParseDateFormat(format string) []string {
 	return seps
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-// The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 func splitDateTime(format string) (seps []string, fracStr string) {
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
+	// The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 	index := GetFracIndex(format)
 	if index > 0 {
 		fracStr = format[index+1:]
@@ -683,8 +683,8 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 	return
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bool) (Time, error) {
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 	// Try to split str with delimiter.
 	// TODO: only punctuation can be the delimiter for date parts or time parts.
 	// But only space and T can be the delimiter between the date and time part.
@@ -900,7 +900,7 @@ type Duration struct {
 	Fsp int
 }
 
-//Add adds d to d, returns a duration value.
+// Add adds d to d, returns a duration value.
 func (d Duration) Add(v Duration) (Duration, error) {
 	if &v == nil {
 		return d, nil

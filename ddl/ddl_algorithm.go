@@ -26,7 +26,7 @@ import (
 // See https://dev.mysql.com/doc/refman/8.0/en/alter-table.html#alter-table-performance.
 type AlterAlgorithm struct {
 	supported []ast.AlterAlgorithm
-	// If the alter algorithm is not given, the defAlgorithm will be used.
+	// defAlgorithm will be used if the alter algorithm is not given
 	defAlgorithm ast.AlterAlgorithm
 }
 

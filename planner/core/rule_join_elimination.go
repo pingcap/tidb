@@ -64,7 +64,7 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 	return p, nil
 }
 
-// extract join keys as a schema for inner child of a outer join
+// extractInnerJoinKeys extracts join keys as a schema for inner child of a outer join
 func (o *outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChildIdx int) *expression.Schema {
 	joinKeys := make([]*expression.Column, 0, len(join.EqualConditions))
 	for _, eqCond := range join.EqualConditions {
@@ -87,7 +87,7 @@ func (o *outerJoinEliminator) isAggColsAllFromOuterTable(outerPlan LogicalPlan, 
 	return true, nil
 }
 
-// check whether schema cols of join's parent plan are all from outer join table
+// isParentColsAllFromOuterTable checks whether schema cols of join's parent plan are all from outer join table
 func (o *outerJoinEliminator) isParentColsAllFromOuterTable(outerPlan LogicalPlan, parentSchema *expression.Schema) (bool, error) {
 	if parentSchema == nil {
 		return false, nil
@@ -102,7 +102,7 @@ func (o *outerJoinEliminator) isParentColsAllFromOuterTable(outerPlan LogicalPla
 	return true, nil
 }
 
-// check whether one of unique keys sets is contained by inner join keys
+// isInnerJoinKeysContainUniqueKey checks whether one of unique keys sets is contained by inner join keys
 func (o *outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalPlan, joinKeys *expression.Schema) (bool, error) {
 	for _, keyInfo := range innerPlan.Schema().Keys {
 		joinKeysContainKeyInfo := true
@@ -124,7 +124,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalP
 	return false, nil
 }
 
-// check whether one of index sets is contained by inner join index
+// isInnerJoinKeysContainIndex checks whether one of index sets is contained by inner join index
 func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan, joinKeys *expression.Schema) (bool, error) {
 	ds, ok := innerPlan.(*DataSource)
 	if !ok {
@@ -157,7 +157,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 	return false, nil
 }
 
-// Check whether a LogicalPlan is a LogicalAggregation and its all aggregate functions is duplicate agnostic.
+// isDuplicateAgnosticAgg checks whether a LogicalPlan is a LogicalAggregation and its all aggregate functions is duplicate agnostic.
 // Also, check all the args are expression.Column.
 func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (_ bool, cols []*expression.Column) {
 	agg, ok := p.(*LogicalAggregation)

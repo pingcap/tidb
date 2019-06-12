@@ -36,6 +36,7 @@ type streamResult struct {
 	ctx        sessionctx.Context
 
 	// NOTE: curr == nil means stream finish, while len(curr.RowsData) == 0 doesn't.
+
 	curr         *tipb.Chunk
 	partialCount int64
 	feedback     *statistics.QueryFeedback

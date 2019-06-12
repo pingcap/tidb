@@ -56,10 +56,11 @@ type Histogram struct {
 	// Bucket counts are always in increasing order.
 	//
 	// A bucket repeat is the number of repeats of the bucket value, it can be used to find popular values.
+
 	Bounds  *chunk.Chunk
 	Buckets []Bucket
 
-	// Used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
+	// scalars are used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	scalars []scalar
 	// TotColSize is the total column size for the histogram.

@@ -466,8 +466,9 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	checkResult(result, testkit.Rows(expected...))
 }
 
-// https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
 func (s *testStateChangeSuite) TestWriteOnlyWriteNULL(c *C) {
+	// https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
+
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 8 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
@@ -497,7 +498,7 @@ func (s *testStateChangeSuite) TestWriteOnly(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls, nil)
 }
 
-// TestDeletaOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+// TestDeleteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",

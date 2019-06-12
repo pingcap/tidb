@@ -190,6 +190,7 @@ type tableResultHandler struct {
 	// If we want descending order, `optionalResult` will handles the request whose range is exceed signed, and
 	// the `result` will handle the request whose range is in signed.
 	// Otherwise, we just set `optionalFinished` true and the `result` handles the whole ranges.
+
 	optionalResult distsql.SelectResult
 	result         distsql.SelectResult
 

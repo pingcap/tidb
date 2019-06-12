@@ -46,7 +46,7 @@ type Manifest struct {
 	// it will be called after domain init.
 	// return error will stop load plugin process and TiDB startup.
 	OnInit func(ctx context.Context, manifest *Manifest) error
-	// OnShutDown defines the plugin cleanup logic.
+	// OnShutdown defines the plugin cleanup logic.
 	// return error will write log and continue shutdown.
 	OnShutdown func(ctx context.Context, manifest *Manifest) error
 	// OnFlush defines flush logic after executed `flush tidb plugins`.

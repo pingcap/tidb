@@ -4192,7 +4192,7 @@ func (s *testIntegrationSuite) TestIssue9710(c *C) {
 	}
 }
 
-// for issue #9770
+// TestDecimalConvertToTime is a unit test for issue #9770
 func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)

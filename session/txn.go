@@ -45,6 +45,7 @@ type TxnState struct {
 	// Invalid: kv.Transaction == nil && txnFuture == nil
 	// Pending: kv.Transaction == nil && txnFuture != nil
 	// Valid:	kv.Transaction != nil && txnFuture == nil
+
 	kv.Transaction
 	txnFuture *txnFuture
 
@@ -52,8 +53,8 @@ type TxnState struct {
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
 
-	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
+	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	doNotCommit error
 }
 

@@ -591,7 +591,7 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 	s.mustExec(c, "alter table t rename index idx_c2 to idx_c3")
 }
 
-// TestCancelDropTable tests cancel ddl job which type is drop table.
+// TestCancelDropTableAndSchema tests cancel ddl job which type is drop table.
 func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	testCases := []struct {

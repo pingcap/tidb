@@ -344,7 +344,7 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
-	// Export for testing.
+	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.

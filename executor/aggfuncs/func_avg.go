@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
-// All the following avg function implementations return the decimal result,
-// which store the partial results in "partialResult4AvgDecimal".
-//
-// "baseAvgDecimal" is wrapped by:
+// baseAvgDecimal is wrapped by:
 // - "avgOriginal4Decimal"
 // - "avgPartial4Decimal"
+//
+// All the following avg function implementations return the decimal result,
+// which store the partial results in "partialResult4AvgDecimal".
 type baseAvgDecimal struct {
 	baseAggFunc
 }
@@ -229,12 +229,12 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	return nil
 }
 
-// All the following avg function implementations return the float64 result,
-// which store the partial results in "partialResult4AvgFloat64".
-//
-// "baseAvgFloat64" is wrapped by:
+// baseAvgFloat64 is wrapped by:
 // - "avgOriginal4Float64"
 // - "avgPartial4Float64"
+//
+// All the following avg function implementations return the float64 result,
+// which store the partial results in "partialResult4AvgFloat64".
 type baseAvgFloat64 struct {
 	baseAggFunc
 }

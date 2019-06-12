@@ -440,8 +440,9 @@ func isCoveringIndex(columns []*expression.Column, indexColumns []*model.IndexCo
 	return true
 }
 
-// If there is a table reader which needs to keep order, we should append a pk to table scan.
 func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
+	// If there is a table reader which needs to keep order, we should append a pk to table scan.
+
 	if len(ds.schema.TblID2Handle) > 0 {
 		return
 	}
@@ -539,8 +540,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-// TODO: refactor this part, we should not call Clone in fact.
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
+	// TODO: refactor this part, we should not call Clone in fact.
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))
 	for _, col := range idx.Columns {
 		colFound := is.dataSourceSchema.FindColumnByName(col.Name.L)

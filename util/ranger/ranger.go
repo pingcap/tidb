@@ -468,9 +468,9 @@ func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) bool {
 	return false
 }
 
-// We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
-// Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldType of column a.
 func newFieldType(tp *types.FieldType) *types.FieldType {
+	// We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
+	// Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldType of column a.
 	switch tp.Tp {
 	// To avoid overflow error.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
