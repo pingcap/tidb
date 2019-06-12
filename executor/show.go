@@ -1184,24 +1184,85 @@ func (e *ShowExec) fetchShowTableRegions() error {
 		return errors.Trace(err)
 	}
 
-	var indexInfo *model.IndexInfo
+	// Get table regions from from region cache.
+	regionCache := tikvStore.GetRegionCache()
+	var regions []regionMeta
 	if len(e.IndexName.L) != 0 {
-		indexInfo = tb.Meta().FindIndexByName(e.IndexName.L)
+		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
+		regions, err = getTableIndexRegions(tb, indexInfo, regionCache, splitStore)
+	} else {
+		regions, err = getTableRegions(tb, regionCache, splitStore)
 	}
 
-	regionCache := tikvStore.GetRegionCache()
-	var regions []regionMeta
-	if info := tb.Meta().GetPartitionInfo(); info != nil {
-		regions, err = getPartitionTableRegions(info, tb.(table.PartitionedTable), indexInfo, regionCache, splitStore)
-	} else {
-		regions, err = getCommonTableRegions(tb, indexInfo, regionCache, splitStore)
-	}
 	if err != nil {
 		return err
 	}
+	e.fillRegionsToChunk(regions)
+	return nil
+}
+
+func getTableRegions(tb table.Table, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
+	if info := tb.Meta().GetPartitionInfo(); info != nil {
+		return getPartitionTableRegions(info, tb.(table.PartitionedTable), regionCache, splitStore)
+	}
+	return getPhysicalTableRegions(tb.Meta().ID, tb.Meta(), regionCache, splitStore)
+}
+
+func getTableIndexRegions(tb table.Table, indexInfo *model.IndexInfo, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
+	if info := tb.Meta().GetPartitionInfo(); info != nil {
+		return getPartitionIndexRegions(info, tb.(table.PartitionedTable), indexInfo, regionCache, splitStore)
+	}
+	return getPhysicalIndexRegions(tb.Meta().ID, indexInfo, regionCache, splitStore)
+}
+
+func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
+	var regions []regionMeta
+	uniqueRegionID := make(map[uint64]struct{})
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.GetPartition(pid)
+		partition.GetPhysicalID()
+		partitionRegions, err := getPhysicalTableRegions(partition.GetPhysicalID(), tbl.Meta(), regionCache, splitStore)
+		if err != nil {
+			return nil, err
+		}
+		for i := range partitionRegions {
+			if _, ok := uniqueRegionID[partitionRegions[i].region.Id]; ok {
+				continue
+			}
+			uniqueRegionID[partitionRegions[i].region.Id] = struct{}{}
+			regions = append(regions, partitionRegions[i])
+		}
+	}
+	return regions, nil
+}
+
+func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
+	var regions []regionMeta
+	uniqueRegionID := make(map[uint64]struct{})
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.GetPartition(pid)
+		partition.GetPhysicalID()
+		partitionRegions, err := getPhysicalIndexRegions(partition.GetPhysicalID(), indexInfo, regionCache, splitStore)
+		if err != nil {
+			return nil, err
+		}
+		for i := range partitionRegions {
+			if _, ok := uniqueRegionID[partitionRegions[i].region.Id]; ok {
+				continue
+			}
+			uniqueRegionID[partitionRegions[i].region.Id] = struct{}{}
+			regions = append(regions, partitionRegions[i])
+		}
+	}
+	return regions, nil
+}
+
+func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 	for i := range regions {
 		e.result.AppendUint64(0, regions[i].region.Id)
 		e.result.AppendString(1, regions[i].start)
@@ -1221,5 +1282,4 @@ func (e *ShowExec) fetchShowTableRegions() error {
 			e.result.AppendInt64(5, 0)
 		}
 	}
-	return nil
 }

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -324,41 +323,7 @@ type regionMeta struct {
 	scattering bool
 }
 
-func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
-	var regions []regionMeta
-	var err error
-	for _, def := range info.Definitions {
-		pid := def.ID
-		partition := tbl.GetPartition(pid)
-		partition.GetPhysicalID()
-		var partitionRegions []regionMeta
-		if indexInfo != nil {
-			partitionRegions, err = getIndexRegions(partition.GetPhysicalID(), indexInfo, regionCache, splitStore)
-
-		} else {
-			partitionRegions, err = getTableRegions(partition.GetPhysicalID(), tbl.Meta(), regionCache, splitStore)
-		}
-		if err != nil {
-			return nil, err
-		}
-		regions = append(regions, partitionRegions...)
-	}
-	return regions, nil
-}
-
-func getCommonTableRegions(tbl table.Table, indexInfo *model.IndexInfo, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
-	var regions []regionMeta
-	var err error
-	if indexInfo != nil {
-		regions, err = getIndexRegions(tbl.Meta().ID, indexInfo, regionCache, splitStore)
-
-	} else {
-		regions, err = getTableRegions(tbl.Meta().ID, tbl.Meta(), regionCache, splitStore)
-	}
-	return regions, err
-}
-
-func getTableRegions(physicalTableID int64, tableInfo *model.TableInfo, regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
+func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
 	uniqueRegionMap := make(map[uint64]struct{})
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalTableID)
@@ -401,7 +366,7 @@ func getTableRegions(physicalTableID int64, tableInfo *model.TableInfo, regionCa
 	return regions, nil
 }
 
-func getIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
+func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
 	uniqueRegionMap := make(map[uint64]struct{})
 	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
 	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
