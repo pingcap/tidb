@@ -839,7 +839,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	do.wg.Add(1)
 	go do.loadStatsWorker()
-	if !config.GetGlobalConfig().Performance.UpdateStats {
+	if !config.GetGlobalConfig().Performance.EnableUpdateStats {
 		return nil
 	}
 	owner := do.newStatsOwner()

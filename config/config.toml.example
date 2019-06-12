@@ -143,8 +143,8 @@ cross-join = true
 # Stats lease duration, which influences the time of analyze and stats load.
 stats-lease = "3s"
 
-# Whether run stats updates on this tidb-server.
-update-stats = true
+# Whether run stats updates on this tidb-server. It will only updates stats when stats-lease is non-zero.
+enable-update-stats = true
 
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
