@@ -588,6 +588,7 @@ var tokenMap = map[string]int{
 	"ZEROFILL":                 zerofill,
 	"BINDING":                  binding,
 	"BINDINGS":                 bindings,
+	"EXPR_PUSHDOWN_BLACKLIST":  exprPushdownBlacklist,
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details
