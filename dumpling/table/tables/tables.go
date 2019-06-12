@@ -443,7 +443,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	if !hasRecordID {
-		recordID, err = t.AllocAutoID(ctx)
+		recordID, err = t.AllocHandle(ctx)
 		if err != nil {
 			return 0, err
 		}
@@ -914,8 +914,13 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	return colVal, nil
 }
 
-// AllocAutoID implements table.Table AllocAutoID interface.
-func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
+func (t *tableCommon) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
+	return t.Allocator(ctx).Alloc(t.tableID)
+}
+
+// AllocHandle implements table.Table AllocHandle interface.
+func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	rowID, err := t.Allocator(ctx).Alloc(t.tableID)
 	if err != nil {
 		return 0, err

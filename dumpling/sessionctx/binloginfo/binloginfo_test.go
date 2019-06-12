@@ -129,8 +129,8 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.Se.GetSessionVars().BinlogClient = s.client
 	pump := s.pump
 	tk.MustExec("drop table if exists local_binlog")
-	ddlQuery := "create table local_binlog (id int primary key, name varchar(10)) shard_row_id_bits=1"
-	binlogDDLQuery := "create table local_binlog (id int primary key, name varchar(10)) /*!90000 shard_row_id_bits=1 */"
+	ddlQuery := "create table local_binlog (id int unique key, name varchar(10)) shard_row_id_bits=1"
+	binlogDDLQuery := "create table local_binlog (id int unique key, name varchar(10)) /*!90000 shard_row_id_bits=1 */"
 	tk.MustExec(ddlQuery)
 	var matched bool // got matched pre DDL and commit DDL
 	for i := 0; i < 10; i++ {
@@ -155,7 +155,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		{types.NewIntDatum(1), types.NewStringDatum("abc")},
 		{types.NewIntDatum(2), types.NewStringDatum("cde")},
 	}
-	gotRows := mutationRowsToRows(c, prewriteVal.Mutations[0].InsertedRows, 0, 2)
+	gotRows := mutationRowsToRows(c, prewriteVal.Mutations[0].InsertedRows, 2, 4)
 	c.Assert(gotRows, DeepEquals, expected)
 
 	tk.MustExec("update local_binlog set name = 'xyz' where id = 2")
@@ -169,7 +169,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 1, 3)
 	c.Assert(gotRows, DeepEquals, oldRow)
 
-	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 5, 7)
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 7, 9)
 	c.Assert(gotRows, DeepEquals, newRow)
 
 	tk.MustExec("delete from local_binlog where id = 1")
