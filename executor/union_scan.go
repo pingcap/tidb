@@ -363,6 +363,7 @@ func (us *UnionScanExec) getMemRow(h int64) ([]types.Datum, error) {
 	return data, nil
 }
 
+// TODO: remove `buildAndSortAddedRows` functions and `DirtyTable`.
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
