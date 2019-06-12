@@ -33,6 +33,7 @@ func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Rec
 	return LoadExprPushdownBlacklist(e.ctx)
 }
 
+// LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
 func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 	sql := "select HIGH_PRIORITY name from mysql.expr_pushdown_blacklist"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
