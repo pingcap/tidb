@@ -514,6 +514,7 @@ import (
 	variance		"VARIANCE"
 	varPop			"VAR_POP"
 	varSamp			"VAR_SAMP"
+	exprPushdownBlacklist		"EXPR_PUSHDOWN_BLACKLIST"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin		"ADMIN"
@@ -3522,6 +3523,7 @@ NotKeywordToken:
 | "INPLACE" | "INSTANT" | "INTERNAL" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM"
 | "STD" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" | "VARIANCE" | "VAR_POP" | "VAR_SAMP"
 | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOKUDB_DEFAULT" | "TOKUDB_FAST" | "TOKUDB_LZMA" | "TOKUDB_QUICKLZ" | "TOKUDB_SNAPPY" | "TOKUDB_SMALL" | "TOKUDB_UNCOMPRESSED" | "TOKUDB_ZLIB" | "TOP" | "TRIM" | "NEXT_ROW_ID"
+| "EXPR_PUSHDOWN_BLACKLIST"
 
 /************************************************************************************
  *
@@ -6495,6 +6497,12 @@ AdminStmt:
 			ShowSlow: $4.(*ast.ShowSlow),
 		}
 	}
+|	"ADMIN" "RELOAD" "EXPR_PUSHDOWN_BLACKLIST"
+ 	{
+ 		$$ = &ast.AdminStmt{
+ 			Tp: ast.AdminReloadExprPushdownBlacklist,
+ 		}
+ 	}
 
 AdminShowSlow:
 	"RECENT" NUM
