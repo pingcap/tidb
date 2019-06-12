@@ -1765,6 +1765,7 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		c.Assert(v.GetMysqlTime().String(), Equals, test.expected)
 	}
 	testDurations := []struct {
+		fc       functionClass
 		dur      string
 		fsp      int
 		unit     string
@@ -1772,11 +1773,68 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		expected string
 	}{
 		{
+			fc:       fcAdd,
 			dur:      "00:00:00",
 			fsp:      0,
 			unit:     "MICROSECOND",
 			format:   "100",
 			expected: "00:00:00.000100",
+		},
+		{
+			fc:       fcAdd,
+			dur:      "00:00:00",
+			fsp:      0,
+			unit:     "MICROSECOND",
+			format:   100.0,
+			expected: "00:00:00.000100",
+		},
+		{
+			fc:       fcAdd,
+			dur:      "00:00:00",
+			fsp:      0,
+			unit:     "DAY",
+			format:   "1",
+			expected: "24:00:00",
+		},
+		{
+			fc:       fcAdd,
+			dur:      "00:00:00",
+			fsp:      0,
+			unit:     "DAY",
+			format:   1,
+			expected: "24:00:00",
+		},
+		{
+			fc:       fcAdd,
+			dur:      "00:00:00",
+			fsp:      0,
+			unit:     "DAY",
+			format:   1.0,
+			expected: "24:00:00",
+		},
+		{
+			fc:       fcSub,
+			dur:      "26:00:00",
+			fsp:      0,
+			unit:     "DAY",
+			format:   "1",
+			expected: "02:00:00",
+		},
+		{
+			fc:       fcSub,
+			dur:      "26:00:00",
+			fsp:      0,
+			unit:     "DAY",
+			format:   1,
+			expected: "02:00:00",
+		},
+		{
+			fc:       fcSub,
+			dur:      "27:00:00",
+			fsp:      0,
+			unit:     "DAY",
+			format:   1.0,
+			expected: "03:00:00",
 		},
 	}
 	for _, tt := range testDurations {
@@ -1784,7 +1842,7 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ok, IsTrue)
 		args = types.MakeDatums(dur, tt.format, tt.unit)
-		f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
+		f, err = tt.fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
