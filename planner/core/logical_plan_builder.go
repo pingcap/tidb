@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -2311,16 +2311,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 		result = us
 	}
 
-	// If this table contains any virtual generated columns, we need a
-	// "Projection" to calculate these columns.
-	proj, err := b.projectVirtualColumns(ctx, ds, columns)
-	if err != nil {
+	if err := b.prepareVirtualColumns(ctx, ds, columns); err != nil {
 		return nil, err
-	}
-
-	if proj != nil {
-		proj.SetChildren(result)
-		result = proj
 	}
 	return result, nil
 }
@@ -2382,25 +2374,23 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	return projUponView, nil
 }
 
-// projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
-// we add a projection on the original DataSource, and calculate those columns in the projection
-// so that plans above it can reference generated columns by their name.
-func (b *PlanBuilder) projectVirtualColumns(ctx context.Context, ds *DataSource, columns []*table.Column) (*LogicalProjection, error) {
-	hasVirtualGeneratedColumn := false
+// prepareVirtualColumns is only for DataSource.
+// It prepares virtualColExprs and virtualColSchema for table which has virtual generated columns.
+// virtualColExprs and virtualColSchema are used to rewrite virtual columns in pushDownSelAndResolveVirtualCols.
+func (b *PlanBuilder) prepareVirtualColumns(ctx context.Context, ds *DataSource, columns []*table.Column) error {
+	ds.hasVirtualCol = false
 	for _, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
-			hasVirtualGeneratedColumn = true
+			ds.hasVirtualCol = true
 			break
 		}
 	}
-	if !hasVirtualGeneratedColumn {
-		return nil, nil
+	if !ds.hasVirtualCol {
+		return nil
 	}
-	proj := LogicalProjection{
-		Exprs:            make([]expression.Expression, 0, len(columns)),
-		calculateGenCols: true,
-	}.Init(b.ctx)
 
+	ds.virtualColSchema = ds.Schema().Clone()
+	ds.virtualColExprs = make([]expression.Expression, 0, len(columns))
 	for i, colExpr := range ds.Schema().Columns {
 		var exprIsGen = false
 		var expr expression.Expression
@@ -2409,7 +2399,7 @@ func (b *PlanBuilder) projectVirtualColumns(ctx context.Context, ds *DataSource,
 				var err error
 				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
 				if err != nil {
-					return nil, err
+					return err
 				}
 				// Because the expression might return different type from
 				// the generated column, we should wrap a CAST on the result.
@@ -2420,7 +2410,7 @@ func (b *PlanBuilder) projectVirtualColumns(ctx context.Context, ds *DataSource,
 		if !exprIsGen {
 			expr = colExpr
 		}
-		proj.Exprs = append(proj.Exprs, expr)
+		ds.virtualColExprs = append(ds.virtualColExprs, expr)
 	}
 
 	// Re-iterate expressions to handle those virtual generated columns that refers to the other generated columns, for
@@ -2430,12 +2420,10 @@ func (b *PlanBuilder) projectVirtualColumns(ctx context.Context, ds *DataSource,
 	//  column a, column b as (a * 2), column c as ((a * 2) + 1)
 	// A generated column definition can refer to only generated columns occurring earlier in the table definition, so
 	// it's safe to iterate in index-ascending order.
-	for i, expr := range proj.Exprs {
-		proj.Exprs[i] = expression.ColumnSubstitute(expr, ds.Schema(), proj.Exprs)
+	for i, expr := range ds.virtualColExprs {
+		ds.virtualColExprs[i] = expression.ColumnSubstitute(expr, ds.Schema(), ds.virtualColExprs)
 	}
-
-	proj.SetSchema(ds.Schema().Clone())
-	return proj, nil
+	return nil
 }
 
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for

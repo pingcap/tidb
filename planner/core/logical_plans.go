@@ -353,6 +353,11 @@ type DataSource struct {
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
 	handleCol *expression.Column
+
+	// fields for virtual generated columns
+	hasVirtualCol    bool
+	virtualColSchema *expression.Schema
+	virtualColExprs  []expression.Expression
 }
 
 // accessPath indicates the way we access a table: by using single index, or by using multiple indexes,

@@ -501,6 +501,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}.Init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
+
+		// TODO:
+		//  1. 检查是否有需要处理的虚拟列
+		//  2. 如果有, 加一个root Projection
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Only use expectedCnt when it's smaller than the count we calculated.
@@ -840,6 +844,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		ts.KeepOrder = true
 		copTask.keepOrder = true
 	}
+
+	// TODO:
+	//  1. 检查是否需要处理虚拟列
+	//  2. 替换table filter内的虚拟列
+	//  3. 区分table filter中能够下推和不能下推的conditions
+	//  4. 如果有不能下推的conditions, 加一个root Selection
+	//  5. 再加一个root Projection
+
 	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
