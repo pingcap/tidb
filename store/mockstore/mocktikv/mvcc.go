@@ -48,6 +48,7 @@ type mvccLock struct {
 	op          kvrpcpb.Op
 	ttl         uint64
 	forUpdateTS uint64
+	txnSize     uint64
 }
 
 type mvccEntry struct {
