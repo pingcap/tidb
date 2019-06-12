@@ -597,7 +597,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	if len(indexConds) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds)
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("calculate selectivity failed, use selection factor", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = rowCount * selectivity
