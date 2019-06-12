@@ -650,13 +650,25 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err1 := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.UnsafeDestroyRangeTimeout)
+
+			resp, err1 := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.UnsafeDestroyRangeTimeout)
+			if err1 == nil {
+				if resp == nil || resp.UnsafeDestroyRange == nil {
+					err1 = errors.New("[gc worker] unsafe destroy range returns nil response")
+				} else {
+					errStr := resp.UnsafeDestroyRange.Error
+					if len(errStr) > 0 {
+						err1 = errors.New("[gc worker] unsafe destroy range failed: " + errStr)
+					}
+				}
+			}
+
 			if err1 != nil {
 				metrics.GCUnsafeDestroyRangeFailuresCounter.Inc()
-				logutil.Logger(ctx).Error("[gc worker] destroy range on store failed with error",
+				logutil.Logger(ctx).Error("[gc worker] unsafe destroy range failed",
 					zap.String("uuid", w.uuid),
 					zap.Uint64("storeID", storeID),
-					zap.Error(err))
+					zap.Error(err1))
 			}
 			errChan <- err1
 		}()
