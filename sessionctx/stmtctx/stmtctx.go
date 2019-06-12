@@ -54,6 +54,7 @@ type StatementContext struct {
 	InUpdateStmt           bool
 	InDeleteStmt           bool
 	InSelectStmt           bool
+	InUnionStmt            bool
 	InLoadDataStmt         bool
 	InExplainStmt          bool
 	IgnoreTruncate         bool

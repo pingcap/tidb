@@ -4071,6 +4071,23 @@ func (s *testSuite) TestSplitRegion(c *C) {
 	tk.MustExec(`split table t by (0),(1000),(1000000)`)
 }
 
+func (s *testSuite) TestResetContextOfStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (2)")
+	stmtNode, err := s.ParseOneStmt("select * from t1 union all select * from t2", "", "")
+	c.Assert(err, IsNil)
+	err = executor.ResetContextOfStmt(tk.Se, stmtNode)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.InUnionStmt, IsTrue)
+	result := tk.MustQuery("select * from t1 union all select * from t2 order by a desc")
+	result.Check(testkit.Rows("2", "1"))
+}
+
 func (s *testSuite) TestIssue10435(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

@@ -151,6 +151,9 @@ func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	if sc.PadCharToFullLength {
 		flags |= model.FlagPadCharToFullLength
 	}
+	if sc.InUnionStmt {
+		flags |= model.FlagInUnionStmt
+	}
 	return flags
 }
 
