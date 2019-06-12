@@ -501,10 +501,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}.Init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
-
-		// TODO:
-		//  1. 检查是否有需要处理的虚拟列
-		//  2. 如果有, 加一个root Projection
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Only use expectedCnt when it's smaller than the count we calculated.
@@ -521,7 +517,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	}
 
 	cop.cst = rowCount * scanFactor
-	task = cop
 	if candidate.isMatchProp {
 		if prop.Items[0].Desc {
 			is.Desc = true
@@ -538,6 +533,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
 	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
 	is.addPushedDownSelection(cop, ds, path, finalStats)
+
+	task = ds.resolveVirtualColumns(cop, finalStats)
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -810,7 +807,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tablePlan:         ts,
 		indexPlanFinished: true,
 	}
-	task = copTask
 	// Adjust number of rows we actually need to scan if prop.ExpectedCnt is smaller than the count we calculated.
 	if prop.ExpectedCnt < ds.stats.RowCount {
 		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, candidate.isMatchProp && prop.Items[0].Desc)
@@ -845,14 +841,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		copTask.keepOrder = true
 	}
 
-	// TODO:
-	//  1. 检查是否需要处理虚拟列
-	//  2. 替换table filter内的虚拟列
-	//  3. 区分table filter中能够下推和不能下推的conditions
-	//  4. 如果有不能下推的conditions, 加一个root Selection
-	//  5. 再加一个root Projection
-
-	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	task = ds.resolveVirtualColumns(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -861,7 +850,61 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
+// TODO: more comments
+//	1. check if there are some virtual generated columns to handle;
+//	2. remove virtual columns in this table plan;
+//	3. substitute table filters in this table plan;
+//	4. distinguish table filters that can't be pushed down from these can be;
+//	5. if there are some table filters that can't be pushed down, add a Selection upon this DataSource;
+//	6. add a Projection upon this DataSource/Selection;
+func (ds *DataSource) resolveVirtualColumns(copTask *copTask, stats *property.StatsInfo) (t task) {
+	// step 1
+	t = copTask
+	ts := copTask.tablePlan.(*PhysicalTableScan)
+	if !ds.hasVirtualCol {
+		ds.addPushedDownSelection(copTask, ts, stats)
+		return
+	}
+
+	// step 2
+	virSchema := ts.Schema().Clone()
+	for i := 0; i < len(ts.Columns); i++ {
+		if ts.Columns[i].IsGenerated() && !ts.Columns[i].GeneratedStored {
+			ts.Columns = append(ts.Columns[i:], ts.Columns[i+1:]...)
+			ts.schema.Columns = append(ts.schema.Columns[i:], ts.schema.Columns[i+1:]...)
+		}
+	}
+
+	// step 3
+	for i, expr := range ts.filterCondition {
+		ts.filterCondition[i] = expression.ColumnSubstitute(expr, ds.virtualColSchema, ds.virtualColExprs)
+	}
+
+	// step 4: since Cast functions cannot be pushed down, so all filter cannot be pushed down now.
+	cantBePushed := ts.filterCondition
+	ts.filterCondition = ts.filterCondition[:0]
+
+	// step 4.5: add a Cop Selection
+	ds.addPushedDownSelection(copTask, ts, stats)
+
+	// step 5
+	if len(cantBePushed) > 0 {
+		sel := PhysicalSelection{Conditions: cantBePushed}.Init(ds.ctx, stats)
+		t = sel.attach2Task(copTask)
+	}
+
+	// step 6
+	projExprs := make([]expression.Expression, 0, len(virSchema.Columns))
+	for _, c := range virSchema.Columns {
+		projExprs = append(projExprs, expression.ColumnSubstitute(c, ds.virtualColSchema, ds.virtualColExprs))
+	}
+	proj := PhysicalProjection{Exprs: projExprs}.Init(ds.ctx, stats)
+	proj.SetSchema(virSchema)
+	t = proj.attach2Task(t)
+	return
+}
+
+func (ds *DataSource) addPushedDownSelection(copTask *copTask, ts *PhysicalTableScan, stats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * cpuFactor
