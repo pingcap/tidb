@@ -152,7 +152,6 @@ func main() {
 	registerMetrics()
 	configWarning := loadConfig()
 	overrideConfig()
-	setCPUAffinity()
 	if err := cfg.Valid(); err != nil {
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)
@@ -162,6 +161,7 @@ func main() {
 		os.Exit(0)
 	}
 	setGlobalVars()
+	setCPUAffinity()
 	setupLog()
 	// If configStrict had been specified, and there had been an error, the server would already
 	// have exited by now. If configWarning is not an empty string, write it to the log now that
@@ -360,9 +360,6 @@ func reloadConfig(nc, c *config.Config) {
 	// like config.GetGlobalConfig().OOMAction.
 	// These config items will become available naturally after the global config pointer
 	// is updated in function ReloadGlobalConfig.
-	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
-		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
-	}
 	if nc.Performance.MaxMemory != c.Performance.MaxMemory {
 		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.MaxMemory)
 	}
