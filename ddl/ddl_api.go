@@ -1219,6 +1219,9 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if tbInfo.ShardRowIDBits > 0 && tbInfo.PKIsHandle {
+		return nil, errUnsupportedShardRowIDBits
+	}
 
 	if err = resolveDefaultTableCharsetAndCollation(tbInfo, dbCharset); err != nil {
 		return nil, errors.Trace(err)
@@ -1904,6 +1907,9 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if uVal == t.Meta().ShardRowIDBits {
 		// Nothing need to do.
 		return nil
+	}
+	if uVal > 0 && t.Meta().PKIsHandle {
+		return errUnsupportedShardRowIDBits
 	}
 	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
 	if err != nil {

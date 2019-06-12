@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -523,14 +525,15 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert t values (%d)", i))
 	}
-	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	dom := domain.GetDomain(tk.Se)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
-	assertCountAndShard := func(schemaName, tblName string, expectCount int) {
+	assertCountAndShard := func(t table.Table, expectCount int) {
 		var hasShardedID bool
 		var count int
 		c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
-		err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
+		err = t.IterRecords(tk.Se, t.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
 			c.Assert(h, GreaterEqual, int64(0))
 			first8bits := h >> 56
 			if first8bits > 0 {
@@ -544,28 +547,61 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 		c.Assert(hasShardedID, IsTrue)
 	}
 
-	assertCountAndShard("test", "t", 100)
+	assertCountAndShard(tbl, 100)
 
 	// After PR 10759, shard_row_id_bits is supported with tables with auto_increment column.
-	tk.MustExec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 4")
+	tk.MustExec("create table auto (id int not null auto_increment unique) shard_row_id_bits = 4")
 	tk.MustExec("alter table auto shard_row_id_bits = 5")
 	tk.MustExec("drop table auto")
-	tk.MustExec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 0")
+	tk.MustExec("create table auto (id int not null auto_increment unique) shard_row_id_bits = 0")
 	tk.MustExec("alter table auto shard_row_id_bits = 5")
 	tk.MustExec("drop table auto")
-	tk.MustExec("create table auto (id int not null auto_increment primary key)")
+	tk.MustExec("create table auto (id int not null auto_increment unique)")
 	tk.MustExec("alter table auto shard_row_id_bits = 5")
 	tk.MustExec("drop table auto")
-	tk.MustExec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 4")
+	tk.MustExec("create table auto (id int not null auto_increment unique) shard_row_id_bits = 4")
+	tk.MustExec("alter table auto shard_row_id_bits = 0")
+	tk.MustExec("drop table auto")
+
+	// After PR 10759, shard_row_id_bits is not supported with pk_is_handle tables.
+	err = tk.ExecToErr("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 4")
+	c.Assert(err.Error(), Equals, "[ddl:207]unsupported shard_row_id_bits for table with primary key as row id.")
+	tk.MustExec("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 0")
+	err = tk.ExecToErr("alter table auto shard_row_id_bits = 5")
+	c.Assert(err.Error(), Equals, "[ddl:207]unsupported shard_row_id_bits for table with primary key as row id.")
+	tk.MustExec("alter table auto shard_row_id_bits = 0")
+
+	// Hack an existing table with shard_row_id_bits and primary key as handle
+	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test"))
+	c.Assert(ok, IsTrue)
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
+	tblInfo := tbl.Meta()
+	tblInfo.ShardRowIDBits = 5
+	tblInfo.MaxShardRowIDBits = 5
+
+	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		_, err = m.GenSchemaVersion()
+		c.Assert(err, IsNil)
+		c.Assert(m.UpdateTable(db.ID, tblInfo), IsNil)
+		return nil
+	})
+	err = dom.Reload()
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert auto(b) values (1), (3), (5)")
+	tk.MustQuery("select id from auto order by id").Check(testkit.Rows("1", "2", "3"))
+
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
 	tk.MustExec("drop table auto")
 
 	// Test shard_row_id_bits with auto_increment column
-	tk.MustExec("create table auto (a int, b int auto_increment key) shard_row_id_bits = 15")
+	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert auto(a) values (%d)", i))
 	}
-	assertCountAndShard("test", "auto", 100)
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
+	assertCountAndShard(tbl, 100)
 	prevB, err := strconv.Atoi(tk.MustQuery("select b from auto where a=0").Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	for i := 1; i < 100; i++ {
@@ -580,7 +616,7 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 	tk.MustExec("create table t1 (a int) shard_row_id_bits = 15")
 	defer tk.MustExec("drop table if exists t1")
 
-	tbl, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
 	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)
