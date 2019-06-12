@@ -44,6 +44,8 @@ const (
 	DirtyTableAddRow = iota
 	// DirtyTableDeleteRow is the constant for dirty table operation type.
 	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constant for dirty table operation type.
+	DirtyTableTruncate
 )
 
 var (
