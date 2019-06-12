@@ -870,8 +870,8 @@ func (ds *DataSource) resolveVirtualColumns(copTask *copTask, stats *property.St
 	virSchema := ts.Schema().Clone()
 	for i := 0; i < len(ts.Columns); i++ {
 		if ts.Columns[i].IsGenerated() && !ts.Columns[i].GeneratedStored {
-			ts.Columns = append(ts.Columns[i:], ts.Columns[i+1:]...)
-			ts.schema.Columns = append(ts.schema.Columns[i:], ts.schema.Columns[i+1:]...)
+			ts.Columns = append(ts.Columns[:i], ts.Columns[i+1:]...)
+			ts.schema.Columns = append(ts.schema.Columns[:i], ts.schema.Columns[i+1:]...)
 		}
 	}
 
