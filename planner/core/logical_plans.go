@@ -337,6 +337,7 @@ type DataSource struct {
 	allConds []expression.Expression
 
 	statisticTable *statistics.Table
+	tableStats     *property.StatsInfo
 
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*accessPath
@@ -501,7 +502,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.tableFilters = res.RemainedConds
 		path.eqCondCount = res.EqCondCount
 		eqOrInCount = res.EqOrInCount
-		path.countAfterAccess, err = ds.stats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
+		path.countAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
 			return false, err
 		}
@@ -534,9 +535,9 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, _, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("calculate selectivity faild, use selection factor", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)

@@ -477,8 +477,8 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 			// The schema maybe changed, must reload schema then the schema validator can restart.
 			exitLoop := do.mustReload()
+			// domain is cosed.
 			if exitLoop {
-				// domain is closed.
 				logutil.Logger(context.Background()).Error("domain is closed, exit loadSchemaInLoop")
 				return
 			}
@@ -502,10 +502,8 @@ func (do *Domain) mustRestartSyncer() error {
 			return nil
 		}
 		// If the domain has stopped, we return an error immediately.
-		select {
-		case <-do.exit:
+		if do.isClose() {
 			return err
-		default:
 		}
 		time.Sleep(time.Second)
 		logutil.Logger(context.Background()).Info("restart the schema syncer failed", zap.Error(err))
@@ -522,17 +520,23 @@ func (do *Domain) mustReload() (exitLoop bool) {
 			return false
 		}
 
-		logutil.Logger(context.Background()).Info("reload the schema failed", zap.Error(err))
 		// If the domain is closed, we returns immediately.
-		select {
-		case <-do.exit:
-			logutil.Logger(context.Background()).Info("domain is closed")
+		logutil.Logger(context.Background()).Info("reload the schema failed", zap.Error(err))
+		if do.isClose() {
 			return true
-		default:
 		}
-
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+func (do *Domain) isClose() bool {
+	select {
+	case <-do.exit:
+		logutil.Logger(context.Background()).Info("domain is closed")
+		return true
+	default:
+	}
+	return false
 }
 
 // Close closes the Domain and release its resource.
@@ -628,7 +632,16 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
 	ctx := context.Background()
 	callback := &ddlCallback{do: do}
+	d := do.ddl
 	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
+	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
+		if val.(bool) {
+			if err := do.ddl.Stop(); err != nil {
+				logutil.Logger(context.Background()).Error("stop DDL failed", zap.Error(err))
+			}
+			do.ddl = d
+		}
+	})
 
 	err := do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
