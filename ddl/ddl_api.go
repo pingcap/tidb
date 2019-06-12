@@ -1219,9 +1219,6 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if tbInfo.ShardRowIDBits > 0 && tbInfo.PKIsHandle {
-		return nil, errUnsupportedShardRowIDBits
-	}
 
 	if err = resolveDefaultTableCharsetAndCollation(tbInfo, dbCharset); err != nil {
 		return nil, errors.Trace(err)
@@ -1650,6 +1647,9 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
+			if op.UintValue > 0 && tbInfo.PKIsHandle {
+				return errUnsupportedShardRowIDBits
+			}
 			tbInfo.ShardRowIDBits = op.UintValue
 			if tbInfo.ShardRowIDBits > shardRowIDBitsMax {
 				tbInfo.ShardRowIDBits = shardRowIDBitsMax
