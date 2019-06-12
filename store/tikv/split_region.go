@@ -131,23 +131,23 @@ func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
 	}
 }
 
-// CheckScatterRegionFinished uses to check whether scatter region finished.
-func (s *tikvStore) CheckScatterRegionFinished(regionID uint64) (bool, error) {
+// CheckRegionInScattering uses to check whether scatter region finished.
+func (s *tikvStore) CheckRegionInScattering(regionID uint64) (bool, error) {
 	bo := NewBackoffer(context.Background(), locateRegionMaxBackoff)
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
 		if err == nil && resp != nil {
 			if !bytes.Equal(resp.Desc, []byte("scatter-region")) || resp.Status != pdpb.OperatorStatus_RUNNING {
-				return true, nil
+				return false, nil
 			}
 		}
 		if err != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
 		} else {
-			return false, nil
+			return true, nil
 		}
 		if err != nil {
-			return false, errors.Trace(err)
+			return true, errors.Trace(err)
 		}
 	}
 }

@@ -51,7 +51,7 @@ type SplitIndexRegionExec struct {
 type splitableStore interface {
 	SplitRegionAndScatter(splitKey kv.Key) (uint64, error)
 	WaitScatterRegionFinish(regionID uint64) error
-	CheckScatterRegionFinished(regionID uint64) (bool, error)
+	CheckRegionInScattering(regionID uint64) (bool, error)
 }
 
 // Next implements the Executor Next interface.
@@ -391,11 +391,11 @@ func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, 
 
 func checkRegionsStatus(store splitableStore, regions []regionMeta) error {
 	for i := range regions {
-		scatterFinish, err := store.CheckScatterRegionFinished(regions[i].region.Id)
+		scattering, err := store.CheckRegionInScattering(regions[i].region.Id)
 		if err != nil {
 			return err
 		}
-		regions[i].scattering = !scatterFinish
+		regions[i].scattering = scattering
 	}
 	return nil
 }
