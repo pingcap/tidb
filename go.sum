@@ -1,9 +1,8 @@
 cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
 github.com/BurntSushi/toml v0.3.1 h1:WXkYYl6Yr3qBf1K79EBnL4mak0OimBfB0XUf9Vl28OQ=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
+github.com/MyonKeminta/kvproto v0.0.0-20190603051954-c3c9e6b039a4 h1:tS9Jz3/2AW6gcL1OYkkXJ31gOrkD2c1DN6rmzNZcH/U=
 github.com/MyonKeminta/kvproto v0.0.0-20190603051954-c3c9e6b039a4/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
-github.com/MyonKeminta/kvproto v0.0.0-20190612034753-be6c959ef256 h1:G1yLSTzCJDuBX1W0hotDJu/XRmjaOKJmuoyEhtyL/7g=
-github.com/MyonKeminta/kvproto v0.0.0-20190612034753-be6c959ef256/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
 github.com/StackExchange/wmi v0.0.0-20180725035823-b12b22c5341f h1:5ZfJxyXo8KyX8DgGXC5B7ILL8y51fci/qYz2B4j8iLY=
 github.com/StackExchange/wmi v0.0.0-20180725035823-b12b22c5341f/go.mod h1:3eOhrUMpNV+6aFIbp5/iudMxNCF27Vw2OZgy4xEx0Fg=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=

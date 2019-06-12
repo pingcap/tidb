@@ -82,10 +82,9 @@ func (s *testDeleteRangeSuite) checkData(c *C, expectedData map[string]string) {
 }
 
 func (s *testDeleteRangeSuite) deleteRange(c *C, startKey []byte, endKey []byte) int {
-	ctx := context.Background()
-	task := NewDeleteRangeTask(ctx, s.store, startKey, endKey)
+	task := NewDeleteRangeTask(s.store, startKey, endKey, 1)
 
-	err := task.Execute()
+	err := task.Execute(context.Background())
 	c.Assert(err, IsNil)
 
 	return task.CompletedRegions()
