@@ -528,7 +528,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	}
 	// prop.IsEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
-	is.addPushedDownSelection(cop, ds, prop.ExpectedCnt, path)
+	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
+	is.addPushedDownSelection(cop, ds, path, finalStats)
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -569,16 +570,16 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64, path *accessPath) {
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
-		count := path.countAfterAccess
-		if count >= 1.0 {
-			selectivity := path.countAfterIndex / path.countAfterAccess
-			count = is.stats.RowCount * selectivity
+		var selectivity float64
+		if path.countAfterAccess > 0 {
+			selectivity = path.countAfterIndex / path.countAfterAccess
 		}
+		count := is.stats.RowCount * selectivity
 		stats := &property.StatsInfo{RowCount: count}
 		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats)
 		indexSel.SetChildren(is)
@@ -587,7 +588,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	if tableConds != nil {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * cpuFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, p.stats.ScaleByExpectCnt(expectedCnt))
+		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats)
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
