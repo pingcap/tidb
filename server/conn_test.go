@@ -245,6 +245,7 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	_, err = se.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
+	c.Assert(err, IsNil)
 	for i := 0; i < 10; i++ {
 		str := fmt.Sprintf("insert into testTable2 values(%d, %d)", i, i%80)
 		_, err = se.Execute(context.Background(), str)

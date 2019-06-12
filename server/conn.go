@@ -1341,9 +1341,11 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		return err
 	} else if cc.ExecTimedOut() {
 		return errMaxExecTimeExceeded
-	} else {
-		// Only write EOF when this request has not timed out
-		cc.writeEOF(serverStatus)
+	}
+	// Only write EOF when this request has not timed out
+	err = cc.writeEOF(serverStatus)
+	if err != nil {
+		return nil
 	}
 	return cc.flush()
 }
