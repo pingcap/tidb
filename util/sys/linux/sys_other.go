@@ -25,4 +25,5 @@ func OSVersion() (osVersion string, err error) {
 
 // SetAffinity sets cpu affinity.
 func SetAffinity(cpus []int) error {
+	return nil
 }
