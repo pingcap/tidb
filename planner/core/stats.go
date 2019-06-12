@@ -106,7 +106,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 	ds.tableStats = tableStats
 	selectivity, nodes, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("an error happened, use the default selectivity", zap.Error(err))
+		logutil.Logger(context.Background()).Debug("an error happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
 	ds.stats = tableStats.Scale(selectivity)
