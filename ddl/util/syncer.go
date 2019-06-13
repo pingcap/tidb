@@ -64,8 +64,6 @@ var (
 	SyncerSessionTTL = 90
 	// ddlLogCtx uses for log.
 	ddlLogCtx = context.Background()
-	// WaitTimeWhenErrorOccured is waiting interval when processing DDL jobs encounter errors.
-	WaitTimeWhenErrorOccured = 1 * time.Second
 )
 
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
