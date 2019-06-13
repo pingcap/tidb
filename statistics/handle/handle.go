@@ -336,11 +336,8 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64, history
 	} else {
 		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil, nil
+	if err != nil || len(rows) == 0 {
+		return nil, err
 	}
 	return statistics.LoadCMSketchWithTopN(h.restrictedExec, tblID, isIndex, histID, rows[0].GetBytes(0))
 }
@@ -501,22 +498,18 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	} else {
 		rows, _, err = h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	}
-	if err != nil {
-		return nil, err
-	}
 	// Check deleted table.
-	if len(rows) == 0 {
+	if err != nil || len(rows) == 0 {
 		return nil, nil
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			if err := h.indexStatsFromStorage(row, table, tableInfo, historyStatsExec); err != nil {
-				return nil, errors.Trace(err)
-			}
+			err = h.indexStatsFromStorage(row, table, tableInfo, historyStatsExec)
 		} else {
-			if err := h.columnStatsFromStorage(row, table, tableInfo, loadAll, historyStatsExec); err != nil {
-				return nil, errors.Trace(err)
-			}
+			err = h.columnStatsFromStorage(row, table, tableInfo, loadAll, historyStatsExec)
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	return table, nil
@@ -541,49 +534,29 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 
 	version := txn.StartTS()
-	var sql string
+	sqls := make([]string, 0, 4)
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
-		sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
+		sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count))
 	} else {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d", version, tableID)
-	}
-	_, err = exec.Execute(ctx, sql)
-	if err != nil {
-		return
+		sqls = append(sqls, fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d", version, tableID))
 	}
 	data, err := statistics.EncodeCMSketchWithoutTopN(cms)
 	if err != nil {
 		return
 	}
 	// Delete outdated data
-	deleteOutdatedTopNSQL := fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
-	_, err = exec.Execute(ctx, deleteOutdatedTopNSQL)
-	if err != nil {
-		return
-	}
+	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
 	for _, meta := range cms.TopN() {
-		insertSQL := fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count)
-		_, err = exec.Execute(ctx, insertSQL)
-		if err != nil {
-			return
-		}
+		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count))
 	}
 	flag := 0
 	if isAnalyzed == 1 {
 		flag = statistics.AnalyzeFlag
 	}
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d, %f)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statistics.CurStatsVersion, flag, hg.Correlation)
-	_, err = exec.Execute(ctx, replaceSQL)
-	if err != nil {
-		return
-	}
-	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
-	_, err = exec.Execute(ctx, deleteSQL)
-	if err != nil {
-		return
-	}
+	sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d, %f)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statistics.CurStatsVersion, flag, hg.Correlation))
+	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	var lastAnalyzePos []byte
 	for i := range hg.Buckets {
@@ -604,20 +577,12 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		if err != nil {
 			return
 		}
-		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes())
-		_, err = exec.Execute(ctx, insertSQL)
-		if err != nil {
-			return
-		}
+		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes()))
 	}
 	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
-		sql = fmt.Sprintf("update mysql.stats_histograms set last_analyze_pos = X'%X' where table_id = %d and is_index = %d and hist_id = %d", lastAnalyzePos, tableID, isIndex, hg.ID)
-		_, err = exec.Execute(ctx, sql)
-		if err != nil {
-			return
-		}
+		sqls = append(sqls, fmt.Sprintf("update mysql.stats_histograms set last_analyze_pos = X'%X' where table_id = %d and is_index = %d and hist_id = %d", lastAnalyzePos, tableID, isIndex, hg.ID))
 	}
-	return
+	return execSQLs(context.Background(), exec, sqls)
 }
 
 // SaveMetaToStorage will save stats_meta to storage.
