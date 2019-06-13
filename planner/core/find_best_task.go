@@ -860,6 +860,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 func (ds *DataSource) resolveVirtualColumns(copTask *copTask, stats *property.StatsInfo) (t task) {
 	// step 1
 	t = copTask
+	if copTask.tablePlan == nil {
+		return
+	}
 	ts := copTask.tablePlan.(*PhysicalTableScan)
 	if !ds.hasVirtualCol {
 		ds.addPushedDownSelection(copTask, ts, stats)
@@ -867,13 +870,18 @@ func (ds *DataSource) resolveVirtualColumns(copTask *copTask, stats *property.St
 	}
 
 	// step 2
-	virSchema := ts.Schema().Clone()
-	for i := 0; i < len(ts.Columns); i++ {
-		if ts.Columns[i].IsGenerated() && !ts.Columns[i].GeneratedStored {
-			ts.Columns = append(ts.Columns[:i], ts.Columns[i+1:]...)
-			ts.schema.Columns = append(ts.schema.Columns[:i], ts.schema.Columns[i+1:]...)
+	newSchema := ts.Schema().Clone()
+	newColumns := make([]*model.ColumnInfo, 0, len(ts.Columns))
+	for i := 0; i < len(newSchema.Columns); i++ {
+		if i < len(newColumns) {
+			if newColumns[i].IsGenerated() && !newColumns[i].GeneratedStored {
+				newColumns = append(newColumns[:i], newColumns[i+1:]...)
+				newSchema.Columns = append(newSchema.Columns[:i], newSchema.Columns[i+1:]...)
+			}
 		}
 	}
+	ts.schema = newSchema
+	ts.Columns = newColumns
 
 	// step 3
 	for i, expr := range ts.filterCondition {
@@ -894,12 +902,12 @@ func (ds *DataSource) resolveVirtualColumns(copTask *copTask, stats *property.St
 	}
 
 	// step 6
-	projExprs := make([]expression.Expression, 0, len(virSchema.Columns))
-	for _, c := range virSchema.Columns {
+	projExprs := make([]expression.Expression, 0, len(ds.Schema().Columns))
+	for _, c := range ds.Schema().Columns {
 		projExprs = append(projExprs, expression.ColumnSubstitute(c, ds.virtualColSchema, ds.virtualColExprs))
 	}
 	proj := PhysicalProjection{Exprs: projExprs}.Init(ds.ctx, stats)
-	proj.SetSchema(virSchema)
+	proj.SetSchema(ds.Schema())
 	t = proj.attach2Task(t)
 	return
 }
