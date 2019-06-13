@@ -237,7 +237,7 @@ type IndexReaderExecutor struct {
 	keepOrder       bool
 	desc            bool
 	ranges          []*ranger.Range
-	// kvRanges are only use for union scan.
+	// kvRanges are only used for union scan.
 	kvRanges []kv.KeyRange
 	dagPB    *tipb.DAGRequest
 
