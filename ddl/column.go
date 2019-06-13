@@ -519,8 +519,8 @@ func allocateColumnID(tblInfo *model.TableInfo) int64 {
 	return tblInfo.MaxColumnID
 }
 
-func checkAddColumnTooManyColumns(oldCols int) error {
-	if uint32(oldCols) > atomic.LoadUint32(&TableColumnCountLimit) {
+func checkAddColumnTooManyColumns(colNum int) error {
+	if uint32(colNum) > atomic.LoadUint32(&TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil
