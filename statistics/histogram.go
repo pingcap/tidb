@@ -503,12 +503,20 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 
 // validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
 // the possible types of range are index key range and handle key range.
-func validRange(ran *ranger.Range) bool {
+func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) bool {
 	var low, high []byte
-	if ran.LowVal[0].Kind() == types.KindBytes {
+	if encoded {
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
-		low, high = codec.EncodeInt(nil, ran.LowVal[0].GetInt64()), codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+		var err error
+		low, err = codec.EncodeKey(sc, nil, ran.LowVal[0])
+		if err != nil {
+			return false
+		}
+		high, err = codec.EncodeKey(sc, nil, ran.HighVal[0])
+		if err != nil {
+			return false
+		}
 	}
 	if ran.LowExclude {
 		low = kv.Key(low).PrefixNext()
@@ -519,10 +527,48 @@ func validRange(ran *ranger.Range) bool {
 	return bytes.Compare(low, high) < 0
 }
 
+func checkKind(vals []types.Datum, kind byte) bool {
+	if kind == types.KindString {
+		kind = types.KindBytes
+	}
+	for _, val := range vals {
+		valKind := val.Kind()
+		if valKind == types.KindNull || valKind == types.KindMinNotNull || valKind == types.KindMaxValue {
+			continue
+		}
+		if valKind == types.KindString {
+			valKind = types.KindBytes
+		}
+		if valKind != kind {
+			return false
+		}
+		// Only check the first non-null value.
+		break
+	}
+	return true
+}
+
+func (hg *Histogram) typeMatch(ranges []*ranger.Range) bool {
+	kind := hg.GetLower(0).Kind()
+	for _, ran := range ranges {
+		if !checkKind(ran.LowVal, kind) || !checkKind(ran.HighVal, kind) {
+			return false
+		}
+	}
+	return true
+}
+
 // SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
 // as inf, so all the split ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
 // (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
-func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
+func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, oldRanges []*ranger.Range, encoded bool) ([]*ranger.Range, bool) {
+	if !hg.typeMatch(oldRanges) {
+		return oldRanges, false
+	}
+	ranges := make([]*ranger.Range, 0, len(oldRanges))
+	for _, ran := range oldRanges {
+		ranges = append(ranges, ran.Clone())
+	}
 	split := make([]*ranger.Range, 0, len(ranges))
 	for len(ranges) > 0 {
 		// Find the last bound that greater or equal to the LowVal.
@@ -566,12 +612,12 @@ func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
 				HighExclude: false})
 			ranges[0].LowVal[0] = upper
 			ranges[0].LowExclude = true
-			if !validRange(ranges[0]) {
+			if !validRange(sc, ranges[0], encoded) {
 				ranges = ranges[1:]
 			}
 		}
 	}
-	return split
+	return split, true
 }
 
 func (hg *Histogram) bucketCount(idx int) int64 {

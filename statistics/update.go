@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"fmt"
-	"go.uber.org/zap/zapcore"
 	"math"
 	"strconv"
 	"strings"
@@ -25,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -34,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/net/context"
 )
 
@@ -555,7 +554,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	q := &QueryFeedback{}
 	for _, row := range rows {
-		err1 := decodeFeedback(row.GetBytes(3), q, cms, mysql.HasUnsignedFlag(hist.tp.Flag))
+		err1 := decodeFeedback(row.GetBytes(3), q, cms, hist.tp)
 		if err1 != nil {
 			logutil.Logger(context.Background()).Debug("decode feedback failed", zap.Error(err))
 		}

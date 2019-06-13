@@ -804,23 +804,46 @@ func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback, isUnsigned bool) {
 	}
 }
 
-func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback) error {
+func convertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Location) error {
+	for i, val := range vals {
+		if val.Kind() == types.KindMinNotNull || val.Kind() == types.KindMaxValue {
+			continue
+		}
+		newVal, err := tablecodec.UnflattenDatums([]types.Datum{val}, []*types.FieldType{ft}, loc)
+		if err != nil {
+			return err
+		}
+		vals[i] = newVal[0]
+	}
+	return nil
+}
+
+func decodeColumnBounds(data []byte, ft *types.FieldType) ([]types.Datum, error) {
+	vals, err := codec.DecodeRange(data, 1)
+	if err != nil {
+		return nil, err
+	}
+	err = convertDatumsType(vals, ft, time.UTC)
+	return vals, err
+}
+
+func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback, ft *types.FieldType) error {
 	q.tp = colType
 	for i := 0; i < len(pb.ColumnRanges); i += 2 {
-		low, err := codec.DecodeRange(pb.ColumnRanges[i], 1)
+		low, err := decodeColumnBounds(pb.ColumnRanges[i], ft)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		high, err := codec.DecodeRange(pb.ColumnRanges[i+1], 1)
+		high, err := decodeColumnBounds(pb.ColumnRanges[i+1], ft)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		q.feedback = append(q.feedback, feedback{&low[0], &high[0], pb.Counts[i/2], 0})
 	}
 	return nil
 }
 
-func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, isUnsigned bool) error {
+func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldType) error {
 	buf := bytes.NewBuffer(val)
 	dec := gob.NewDecoder(buf)
 	pb := &queryFeedback{}
@@ -831,9 +854,9 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, isUnsigned bool) 
 	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 {
 		decodeFeedbackForIndex(q, pb, c)
 	} else if len(pb.IntRanges) > 0 {
-		decodeFeedbackForPK(q, pb, isUnsigned)
+		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))
 	} else {
-		err := decodeFeedbackForColumn(q, pb)
+		err := decodeFeedbackForColumn(q, pb, ft)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1014,10 +1037,13 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 				zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
 				zap.String("range", rangeString))
 		} else if colHist := t.columnByName(colName); colHist != nil && colHist.Histogram.Len() > 0 {
-			rangeString := colRangeToStr(colHist, &rang, -1, factor)
-			logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
-				zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
-				zap.String("range", rangeString))
+			err = convertRangeType(&rang, colHist.tp, time.UTC)
+			if err == nil {
+				rangeString := colRangeToStr(colHist, &rang, -1, factor)
+				logutil.Logger(context.Background()).Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
+					zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
+					zap.String("range", rangeString))
+			}
 		} else {
 			count, err := getPseudoRowCountByColumnRanges(sc, float64(t.Count), []*ranger.Range{&rang}, 0)
 			if err == nil {
@@ -1076,8 +1102,16 @@ func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (fl
 	return eqCount * adjustFactor, rangeCount * adjustFactor
 }
 
-// dumpFeedbackForIndex dumps the feedback for index.
-// For queries that contains both equality and range query, we will split them and update accordingly.
+func convertRangeType(ran *ranger.Range, ft *types.FieldType, loc *time.Location) error {
+	err := convertDatumsType(ran.LowVal, ft, loc)
+	if err != nil {
+		return err
+	}
+	return convertDatumsType(ran.HighVal, ft, loc)
+}
+
+// DumpFeedbackForIndex dumps the feedback for index.
+// For queries that contains both equality and range query, we will split them and Update accordingly.
 func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 	idx, ok := t.Indices[q.hist.ID]
 	if !ok {
@@ -1105,7 +1139,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 			continue
 		}
 		equalityCount := float64(idx.CMSketch.QueryBytes(bytes)) * idx.getIncreaseFactor(t.Count)
-		rang := ranger.Range{
+		rang := &ranger.Range{
 			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},
 		}
@@ -1114,11 +1148,14 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 		rangeFB := &QueryFeedback{tableID: q.tableID}
 		// prefer index stats over column stats
 		if idx := t.indexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
-			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{&rang})
+			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{rang})
 			rangeFB.tp, rangeFB.hist = indexType, &idx.Histogram
 		} else if col := t.columnByName(colName); col != nil && col.Histogram.Len() != 0 {
-			rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{&rang})
-			rangeFB.tp, rangeFB.hist = colType, &col.Histogram
+			err = convertRangeType(rang, col.tp, time.UTC)
+			if err == nil {
+				rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{rang})
+				rangeFB.tp, rangeFB.hist = colType, &col.Histogram
+			}
 		} else {
 			continue
 		}
@@ -1130,7 +1167,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.Count), float64(q.feedback[i].count))
 		value := types.NewBytesDatum(bytes)
 		q.feedback[i] = feedback{lower: &value, upper: &value, count: int64(equalityCount)}
-		err = rangeFB.dumpRangeFeedback(h, &rang, rangeCount)
+		err = rangeFB.dumpRangeFeedback(h, rang, rangeCount)
 		if err != nil {
 			logutil.Logger(context.Background()).Debug("dump range feedback fail", zap.Error(err))
 			continue
@@ -1141,8 +1178,8 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 
 func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCount float64) error {
 	lowIsNull := ran.LowVal[0].IsNull()
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	if q.tp == indexType {
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		lower, err := codec.EncodeKey(sc, nil, ran.LowVal[0])
 		if err != nil {
 			return errors.Trace(err)
@@ -1164,7 +1201,11 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 			ran.HighVal[0] = getMaxValue(q.hist.tp)
 		}
 	}
-	ranges := q.hist.SplitRange([]*ranger.Range{ran})
+	ranges, ok := q.Hist().SplitRange(sc, []*ranger.Range{ran}, q.tp == indexType)
+	if !ok {
+		logutil.Logger(context.Background()).Debug("type of histogram and ranges mismatch")
+		return nil
+	}
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
 	for i, r := range ranges {
@@ -1251,7 +1292,7 @@ func getMaxValue(ft *types.FieldType) (max types.Datum) {
 	case mysql.TypeNewDecimal:
 		max.SetMysqlDecimal(types.NewMaxOrMinDec(false, ft.Flen, ft.Decimal))
 	case mysql.TypeDuration:
-		max.SetMysqlDuration(types.Duration{Duration: math.MaxInt64})
+		max.SetMysqlDuration(types.Duration{Duration: types.MaxTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
 			max.SetMysqlTime(types.Time{Time: types.MaxDatetime, Type: ft.Tp})
@@ -1285,7 +1326,7 @@ func getMinValue(ft *types.FieldType) (min types.Datum) {
 	case mysql.TypeNewDecimal:
 		min.SetMysqlDecimal(types.NewMaxOrMinDec(true, ft.Flen, ft.Decimal))
 	case mysql.TypeDuration:
-		min.SetMysqlDuration(types.Duration{Duration: math.MinInt64})
+		min.SetMysqlDuration(types.Duration{Duration: types.MinTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
 			min.SetMysqlTime(types.Time{Time: types.MinDatetime, Type: ft.Tp})

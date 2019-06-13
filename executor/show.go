@@ -671,8 +671,33 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf(" COMPRESSION='%s'", tb.Meta().Compression))
 	}
 
+	if hasAutoIncID {
+		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// It's campatible with MySQL.
+		if autoIncID > 1 {
+			buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", autoIncID))
+		}
+	}
+
+	if tb.Meta().ShardRowIDBits > 0 {
+		buf.WriteString(fmt.Sprintf("/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits))
+	}
+
+	if len(tb.Meta().Comment) > 0 {
+		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
+	}
+
 	// add partition info here.
-	partitionInfo := tb.Meta().Partition
+	appendPartitionInfo(tb.Meta().Partition, &buf)
+
+	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
+	return nil
+}
+
+func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
 	if partitionInfo != nil {
 		// this if statement takes care of range columns case
 		if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
@@ -703,28 +728,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 		buf.WriteString(")")
 	}
-
-	if hasAutoIncID {
-		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// It's campatible with MySQL.
-		if autoIncID > 1 {
-			buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", autoIncID))
-		}
-	}
-
-	if tb.Meta().ShardRowIDBits > 0 {
-		buf.WriteString(fmt.Sprintf("/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits))
-	}
-
-	if len(tb.Meta().Comment) > 0 {
-		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
-	}
-
-	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
-	return nil
 }
 
 // fetchShowCreateDatabase composes show create database result.
