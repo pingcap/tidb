@@ -103,7 +103,8 @@ type UnionScanExec struct {
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 
-	addedRows           [][]types.Datum
+	addedRows [][]types.Datum
+	// memIdxHandles is uses to store the handle ids that has been read by memIndexReader.
 	memIdxHandles       map[int64]struct{}
 	cursor4AddRows      int
 	sortErr             error

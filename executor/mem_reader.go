@@ -43,7 +43,8 @@ type memIndexReader struct {
 	retFieldTypes []*types.FieldType
 	outputOffset  []int
 	// cache for decode handle.
-	handleBytes   []byte
+	handleBytes []byte
+	// memIdxHandles is uses to store the handle ids that has been read by memIndexReader.
 	memIdxHandles map[int64]struct{}
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
