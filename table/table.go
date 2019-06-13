@@ -140,8 +140,11 @@ type Table interface {
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error
 
-	// AllocAutoID allocates an auto_increment ID for a new row.
-	AllocAutoID(ctx sessionctx.Context) (int64, error)
+	// AllocAutoIncrementValue allocates an auto_increment value for a new row.
+	AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error)
+
+	// AllocHandle allocates a handle for a new row.
+	AllocHandle(ctx sessionctx.Context) (int64, error)
 
 	// Allocator returns Allocator.
 	Allocator(ctx sessionctx.Context) autoid.Allocator

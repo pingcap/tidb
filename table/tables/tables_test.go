@@ -80,9 +80,13 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := tb.AllocAutoID(nil)
+	autoid, err := tb.AllocAutoIncrementValue(nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
+
+	handle, err := tb.AllocHandle(nil)
+	c.Assert(err, IsNil)
+	c.Assert(handle, Greater, int64(0))
 
 	ctx := ts.se
 	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpsClient()
@@ -226,10 +230,14 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := tb.AllocAutoID(nil)
-	sctx := ts.se
+	handle, err := tb.AllocHandle(nil)
+	c.Assert(err, IsNil)
+	c.Assert(handle, Greater, int64(0))
+
+	autoid, err := tb.AllocAutoIncrementValue(nil)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
+	sctx := ts.se
 	c.Assert(sctx.NewTxn(), IsNil)
 	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil))
 	c.Assert(err, IsNil)

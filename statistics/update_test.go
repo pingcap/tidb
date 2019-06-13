@@ -604,7 +604,7 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 				HighExclude: t.exclude[i+1],
 			})
 		}
-		ranges = h.SplitRange(ranges)
+		ranges, _ = h.SplitRange(nil, ranges, false)
 		var ranStrs []string
 		for _, ran := range ranges {
 			ranStrs = append(ranStrs, ran.String())
@@ -1129,16 +1129,18 @@ func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
 	statistics.FeedbackProbability = 1
 
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), index idx_ab(a,b), index idx_ac(a,c), index idx_b(b))")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), d float, e double, f decimal(17,2), " +
+		"g time, h date, index idx_b(b), index idx_ab(a,b), index idx_ac(a,c), index idx_ad(a, d), index idx_ae(a, e), index idx_af(a, f)," +
+		" index idx_ag(a, g), index idx_ah(a, h))")
 	for i := 0; i < 20; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (1, %d, %d)", i, i))
+		testKit.MustExec(fmt.Sprintf(`insert into t values (1, %d, %d, %d, %d, %d, %d, "%s")`, i, i, i, i, i, i, fmt.Sprintf("1000-01-%02d", i+1)))
 	}
 	h := s.do.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	testKit.MustExec("analyze table t with 3 buckets")
 	for i := 0; i < 20; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (1, %d, %d)", i, i))
+		testKit.MustExec(fmt.Sprintf(`insert into t values (1, %d, %d, %d, %d, %d, %d, "%s")`, i, i, i, i, i, i, fmt.Sprintf("1000-01-%02d", i+1)))
 	}
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	is := s.do.InfoSchema()
@@ -1156,12 +1158,12 @@ func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
 	}{
 		{
 			sql: "select * from t use index(idx_ab) where a = 1 and b < 21",
-			hist: "index:3 ndv:20\n" +
+			hist: "index:1 ndv:20\n" +
 				"num: 16 lower_bound: -inf upper_bound: 7 repeats: 0\n" +
 				"num: 16 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
 				"num: 8 lower_bound: 16 upper_bound: 21 repeats: 0",
-			rangeID: tblInfo.Indices[2].ID,
-			idxID:   tblInfo.Indices[0].ID,
+			rangeID: tblInfo.Indices[0].ID,
+			idxID:   tblInfo.Indices[1].ID,
 			idxCols: 1,
 			eqCount: 39,
 		},
@@ -1172,9 +1174,64 @@ func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
 				"num: 13 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
 				"num: 12 lower_bound: 14 upper_bound: 21 repeats: 0",
 			rangeID: tblInfo.Columns[2].ID,
-			idxID:   tblInfo.Indices[1].ID,
+			idxID:   tblInfo.Indices[2].ID,
 			idxCols: 0,
 			eqCount: 35,
+		},
+		{
+			sql: "select * from t use index(idx_ad) where a = 1 and d < 21",
+			hist: "column:4 ndv:20 totColSize:160\n" +
+				"num: 13 lower_bound: -10000000000000 upper_bound: 6 repeats: 0\n" +
+				"num: 12 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
+				"num: 10 lower_bound: 14 upper_bound: 21 repeats: 0",
+			rangeID: tblInfo.Columns[3].ID,
+			idxID:   tblInfo.Indices[3].ID,
+			idxCols: 0,
+			eqCount: 32,
+		},
+		{
+			sql: "select * from t use index(idx_ae) where a = 1 and e < 21",
+			hist: "column:5 ndv:20 totColSize:160\n" +
+				"num: 13 lower_bound: -100000000000000000000000 upper_bound: 6 repeats: 0\n" +
+				"num: 12 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
+				"num: 10 lower_bound: 14 upper_bound: 21 repeats: 0",
+			rangeID: tblInfo.Columns[4].ID,
+			idxID:   tblInfo.Indices[4].ID,
+			idxCols: 0,
+			eqCount: 32,
+		},
+		{
+			sql: "select * from t use index(idx_af) where a = 1 and f < 21",
+			hist: "column:6 ndv:20 totColSize:200\n" +
+				"num: 13 lower_bound: -999999999999999.99 upper_bound: 6.00 repeats: 0\n" +
+				"num: 12 lower_bound: 7.00 upper_bound: 13.00 repeats: 0\n" +
+				"num: 10 lower_bound: 14.00 upper_bound: 21.00 repeats: 0",
+			rangeID: tblInfo.Columns[5].ID,
+			idxID:   tblInfo.Indices[5].ID,
+			idxCols: 0,
+			eqCount: 32,
+		},
+		{
+			sql: "select * from t use index(idx_ag) where a = 1 and g < 21",
+			hist: "column:7 ndv:20 totColSize:98\n" +
+				"num: 13 lower_bound: -838:59:59 upper_bound: 00:00:06 repeats: 0\n" +
+				"num: 11 lower_bound: 00:00:07 upper_bound: 00:00:13 repeats: 0\n" +
+				"num: 10 lower_bound: 00:00:14 upper_bound: 00:00:21 repeats: 0",
+			rangeID: tblInfo.Columns[6].ID,
+			idxID:   tblInfo.Indices[6].ID,
+			idxCols: 0,
+			eqCount: 32,
+		},
+		{
+			sql: `select * from t use index(idx_ah) where a = 1 and h < "1000-01-21"`,
+			hist: "column:8 ndv:20 totColSize:180\n" +
+				"num: 13 lower_bound: 1000-01-01 upper_bound: 1000-01-07 repeats: 0\n" +
+				"num: 11 lower_bound: 1000-01-08 upper_bound: 1000-01-14 repeats: 0\n" +
+				"num: 10 lower_bound: 1000-01-15 upper_bound: 1000-01-21 repeats: 0",
+			rangeID: tblInfo.Columns[7].ID,
+			idxID:   tblInfo.Indices[7].ID,
+			idxCols: 0,
+			eqCount: 32,
 		},
 	}
 	for i, t := range tests {
@@ -1182,7 +1239,7 @@ func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
 		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
 		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
-		h.Update(is)
+		c.Assert(h.Update(is), IsNil)
 		tbl := h.GetTableStats(tblInfo)
 		if t.idxCols == 0 {
 			c.Assert(tbl.Columns[t.rangeID].ToString(0), Equals, tests[i].hist)
@@ -1344,7 +1401,7 @@ func (s *testStatsUpdateSuite) TestUnsignedFeedbackRanges(c *C) {
 	statistics.FeedbackProbability = 1
 
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")
+	testKit.MustExec("create table t (a bigint unsigned, primary key(a))")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
@@ -1371,7 +1428,7 @@ func (s *testStatsUpdateSuite) TestUnsignedFeedbackRanges(c *C) {
 			hist: "column:1 ndv:30 totColSize:0\n" +
 				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
 				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 255 repeats: 0",
+				"num: 14 lower_bound: 16 upper_bound: 18446744073709551615 repeats: 0",
 		},
 	}
 	is := s.do.InfoSchema()

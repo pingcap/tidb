@@ -774,6 +774,12 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *StreamAggExec) Close() error {
 	e.childResult = nil
+	if e.curGroupKey != nil {
+		e.curGroupKey = e.curGroupKey[:0]
+	}
+	if e.tmpGroupKey != nil {
+		e.tmpGroupKey = e.tmpGroupKey[:0]
+	}
 	return errors.Trace(e.baseExecutor.Close())
 }
 

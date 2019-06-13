@@ -121,8 +121,13 @@ func (vt *perfSchemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData
 	return table.ErrUnsupportedOp
 }
 
-// AllocAutoID implements table.Table Type interface.
-func (vt *perfSchemaTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
+func (vt *perfSchemaTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+// AllocHandle implements table.Table AllocHandle interface.
+func (vt *perfSchemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 

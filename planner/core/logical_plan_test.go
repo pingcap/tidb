@@ -1130,14 +1130,14 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		{
 			sql: "select count(*) from t",
 			ans: map[int][]string{
-				1: {"test.t._tidb_rowid"},
+				1: {"test.t.a"},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b where a.a < 1",
 			ans: map[int][]string{
 				1: {"test.a.a"},
-				2: {"test.t._tidb_rowid"},
+				2: {"test.b.a"},
 			},
 		},
 		{
@@ -1178,7 +1178,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		{
 			sql: "select exists (select count(*) from t where b = k.a) from t k",
 			ans: map[int][]string{
-				1: {"test.t._tidb_rowid"},
+				1: {"test.k.a"},
 			},
 		},
 		{
@@ -1236,8 +1236,8 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				3:  {"test.t21.a"},
 				5:  {"t2.a"},
 				8:  {"test.t01.a"},
-				10: {"test.t._tidb_rowid"},
-				12: {"test.t._tidb_rowid"},
+				10: {"test.t3.a"},
+				12: {"test.t4.a"},
 			},
 		},
 	}

@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -96,6 +96,15 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 
 	e.resultHandler = &tableResultHandler{}
+	// Split ranges here since the unsigned part and signed part will swap their position when encoding the range to kv ranges.
+	if e.feedback != nil && e.feedback.Hist() != nil {
+		// EncodeInt don't need *statement.Context.
+		var ok bool
+		e.ranges, ok = e.feedback.Hist().SplitRange(nil, e.ranges, false)
+		if !ok {
+			e.feedback.Invalidate()
+		}
+	}
 	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
