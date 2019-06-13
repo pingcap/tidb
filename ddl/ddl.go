@@ -109,7 +109,6 @@ var (
 	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
 	errFileNotFound             = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename            = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
-	errBadField                 = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	errInvalidUseOfNull         = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
@@ -161,6 +160,8 @@ var (
 
 	// ErrColumnBadNull returns for a bad null value.
 	ErrColumnBadNull = terror.ClassDDL.New(codeBadNull, "column cann't be null")
+	// ErrBadField forbids to refer to unknown column.
+	ErrBadField = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	// ErrCantRemoveAllFields returns for deleting all columns.
 	ErrCantRemoveAllFields = terror.ClassDDL.New(codeCantRemoveAllFields, "can't delete all columns with ALTER TABLE")
 	// ErrCantDropFieldOrKey returns for dropping a non-existent field or key.

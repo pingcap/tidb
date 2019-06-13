@@ -715,10 +715,13 @@ func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
 	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
 
-	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
+	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1);")
 
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	_, err = tk.Exec("alter table t1 add column e bigint as (z + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrBadField.GenWithStackByArgs("z", "generated column function").Error())
 
 	tk.MustExec("drop table t1;")
 }
