@@ -532,9 +532,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	// prop.IsEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
 	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
-	is.addPushedDownSelection(cop, ds, path, finalStats)
 
-	task = ds.resolveVirtualColumns(cop, finalStats)
+	task = ds.pushDownSelAndResolveVirtualCols(cop, path, finalStats)
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -575,8 +574,9 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
+func (ds *DataSource) addPushedDownIndexScan(copTask *copTask, path *accessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
+	is := copTask.indexPlan.(*PhysicalIndexScan)
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
@@ -592,10 +592,8 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 	if tableConds != nil {
 		copTask.finishIndexPlan()
-		copTask.cst += copTask.count() * cpuFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats)
-		tableSel.SetChildren(copTask.tablePlan)
-		copTask.tablePlan = tableSel
+		ts := copTask.tablePlan.(*PhysicalTableScan)
+		ts.filterCondition = append(ts.filterCondition, tableConds...)
 	}
 }
 
@@ -841,7 +839,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		copTask.keepOrder = true
 	}
 
-	task = ds.resolveVirtualColumns(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	task = ds.pushDownSelAndResolveVirtualCols(copTask, path, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -857,15 +855,18 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 //	4. distinguish table filters that can't be pushed down from these can be;
 //	5. if there are some table filters that can't be pushed down, add a Selection upon this DataSource;
 //	6. add a Projection upon this DataSource/Selection;
-func (ds *DataSource) resolveVirtualColumns(copTask *copTask, stats *property.StatsInfo) (t task) {
+func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *accessPath, stats *property.StatsInfo) (t task) {
 	// step 1
 	t = copTask
-	if copTask.tablePlan == nil {
+	if copTask.indexPlan != nil {
+		ds.addPushedDownIndexScan(copTask, path, stats)
+	}
+	if copTask.tablePlan == nil { // don't need to handle virtual columns in IndexScan
 		return
 	}
 	ts := copTask.tablePlan.(*PhysicalTableScan)
 	if !ds.hasVirtualCol {
-		ds.addPushedDownSelection(copTask, ts, stats)
+		ds.addPushedDownTableScan(copTask, ts, stats)
 		return
 	}
 
@@ -882,7 +883,7 @@ func (ds *DataSource) resolveVirtualColumns(copTask *copTask, stats *property.St
 	ts.filterCondition = ts.filterCondition[:0]
 
 	// step 4.5: add a Cop Selection
-	ds.addPushedDownSelection(copTask, ts, stats)
+	ds.addPushedDownTableScan(copTask, ts, stats)
 
 	// step 5
 	if len(cantBePushed) > 0 {
@@ -952,7 +953,7 @@ func (ds *DataSource) substituteVirtualColumns(ts *PhysicalTableScan) {
 	ts.SetSchema(schema)
 }
 
-func (ds *DataSource) addPushedDownSelection(copTask *copTask, ts *PhysicalTableScan, stats *property.StatsInfo) {
+func (ds *DataSource) addPushedDownTableScan(copTask *copTask, ts *PhysicalTableScan, stats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * cpuFactor
