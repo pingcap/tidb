@@ -160,8 +160,8 @@ func TestSyncerSimple(t *testing.T) {
 	// for StartCleanWork
 	go d.SchemaSyncer().StartCleanWork()
 	ttl := 10
-	// Make sure NeededCleanTTL > 2/3 ttl, then we definitely clean the ttl.
-	NeededCleanTTL = int64(9)
+	// Make sure NeededCleanTTL > ttl, then we definitely clean the ttl.
+	NeededCleanTTL = int64(11)
 	ttlKey := "session_ttl_key"
 	ttlVal := "session_ttl_val"
 	session, err := owner.NewSession(ctx, "", cli, owner.NewSessionDefaultRetryCnt, ttl)
@@ -198,7 +198,7 @@ func TestSyncerSimple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client get version failed %v", err)
 	}
-	checkRespKV(t, 1, ttlKey, ttlVal, resp.Kvs...)
+	checkRespKV(t, 0, ttlKey, "", resp.Kvs...)
 
 	// for RemoveSelfVersionPath
 	resp, err = cli.Get(goctx.Background(), key)
@@ -230,6 +230,10 @@ func checkRespKV(t *testing.T, kvCount int, key, val string,
 	if len(kvs) != kvCount {
 		t.Fatalf("resp key %s kvs %v length is != 1", key, kvs)
 	}
+	if kvCount == 0 {
+		return
+	}
+
 	kv := kvs[0]
 	if string(kv.Key) != key {
 		t.Fatalf("key resp %s, exported %s", kv.Key, key)
