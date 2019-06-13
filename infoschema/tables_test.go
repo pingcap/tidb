@@ -108,8 +108,8 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &mockSessionManager{make(map[uint64]util.ProcessInfo, 1)}
-	sm.processInfoMap[1] = util.ProcessInfo{
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
@@ -241,12 +241,12 @@ func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 }
 
 type mockSessionManager struct {
-	processInfoMap map[uint64]util.ProcessInfo
+	processInfoMap map[uint64]*util.ProcessInfo
 }
 
-func (sm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo { return sm.processInfoMap }
+func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo { return sm.processInfoMap }
 
-func (sm *mockSessionManager) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
+func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	rs, ok := sm.processInfoMap[id]
 	return rs, ok
 }
@@ -267,8 +267,8 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
 	tk.MustQuery("select * from information_schema.USER_PRIVILEGES where PRIVILEGE_TYPE='Select';").Check(testkit.Rows("'root'@'%' def Select YES"))
 
-	sm := &mockSessionManager{make(map[uint64]util.ProcessInfo, 2)}
-	sm.processInfoMap[1] = util.ProcessInfo{
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "user-1",
 		Host:    "localhost",
@@ -276,7 +276,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Command: byte(1),
 		State:   1,
 		Info:    "do something"}
-	sm.processInfoMap[2] = util.ProcessInfo{
+	sm.processInfoMap[2] = &util.ProcessInfo{
 		ID:      2,
 		User:    "user-2",
 		Host:    "localhost",
@@ -329,7 +329,7 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	c.Assert(err, IsNil)
 	defer os.Remove(slowLogFileName)
-	_, err = f.Write([]byte(`# Time: 2019-02-12-19:33:56.571953 +0800
+	_, err = f.Write([]byte(`# Time: 2019-02-12T19:33:56.571953+08:00
 # Txn_start_ts: 406315658548871171
 # User: root@127.0.0.1
 # Conn_ID: 6
@@ -352,10 +352,10 @@ select * from t_slim;`))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root@127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|select * from t_slim;"))
 }
 
 func (s *testTableSuite) TestForAnalyzeStatus(c *C) {

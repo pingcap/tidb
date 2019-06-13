@@ -318,7 +318,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 		}
 
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-			innerRow := types.CopyRow(innerChunkRow.GetDatumRow(fields))
+			innerRow := types.CloneRow(innerChunkRow.GetDatumRow(fields))
 			e.rowCount++
 			row, err := e.getRow(innerRow)
 			if err != nil {
@@ -501,7 +501,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		recordID, err = e.Table.AllocAutoID(e.ctx)
+		recordID, err = e.Table.AllocAutoIncrementValue(e.ctx)
 		if e.filterErr(err) != nil {
 			return types.Datum{}, err
 		}

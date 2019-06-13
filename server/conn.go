@@ -113,6 +113,8 @@ var (
 	queryDurationHistogramDelete   = metrics.QueryDurationHistogram.WithLabelValues("Delete")
 	queryDurationHistogramUpdate   = metrics.QueryDurationHistogram.WithLabelValues("Update")
 	queryDurationHistogramSelect   = metrics.QueryDurationHistogram.WithLabelValues("Select")
+	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
+	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
 	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
 )
 
@@ -828,6 +830,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		queryDurationHistogramUpdate.Observe(time.Since(startTime).Seconds())
 	case "Select":
 		queryDurationHistogramSelect.Observe(time.Since(startTime).Seconds())
+	case "Execute":
+		queryDurationHistogramExecute.Observe(time.Since(startTime).Seconds())
+	case "Set":
+		queryDurationHistogramSet.Observe(time.Since(startTime).Seconds())
 	case metrics.LblGeneral:
 		queryDurationHistogramGeneral.Observe(time.Since(startTime).Seconds())
 	default:
@@ -840,7 +846,6 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
-	ctx = opentracing.ContextWithSpan(ctx, span)
 
 	ctx1, cancelFunc := context.WithCancel(ctx)
 	cc.mu.Lock()

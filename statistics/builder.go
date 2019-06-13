@@ -93,15 +93,20 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 	return nil
 }
 
-// BuildColumn builds histogram from samples for column.
-func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
-	count := collector.Count
-	ndv := collector.FMSketch.NDV()
+// BuildColumnHist build a histogram for a column.
+// numBuckets: number of buckets for the histogram.
+// id: the id of the table.
+// collector: the collector of samples.
+// tp: the FieldType for the column.
+// count: represents the row count for the column.
+// ndv: represents the number of distinct values for the column.
+// nullCount: represents the number of null values for the column.
+func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
 	if ndv > count {
 		ndv = count
 	}
 	if count == 0 || len(collector.Samples) == 0 {
-		return NewHistogram(id, ndv, collector.NullCount, 0, tp, 0, collector.TotalSize), nil
+		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
@@ -109,7 +114,7 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	if err != nil {
 		return nil, err
 	}
-	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets), collector.TotalSize)
+	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
@@ -173,4 +178,9 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
 	hg.Correlation = (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
 	return hg, nil
+}
+
+// BuildColumn builds histogram from samples for column.
+func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
+	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }

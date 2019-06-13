@@ -169,3 +169,45 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	c.Assert(os.Remove(certFile), IsNil)
 	c.Assert(os.Remove(keyFile), IsNil)
 }
+
+func (s *testConfigSuite) TestConfigDiff(c *C) {
+	c1 := NewConfig()
+	c2 := &Config{}
+	*c2 = *c1
+	c1.OOMAction = "c1"
+	c2.OOMAction = "c2"
+	c1.MemQuotaQuery = 2333
+	c2.MemQuotaQuery = 3222
+	c1.Performance.CrossJoin = true
+	c2.Performance.CrossJoin = false
+	c1.Performance.FeedbackProbability = 2333
+	c2.Performance.FeedbackProbability = 23.33
+
+	diffs := collectsDiff(*c1, *c2, "")
+	c.Assert(len(diffs), Equals, 4)
+	c.Assert(diffs["OOMAction"][0], Equals, "c1")
+	c.Assert(diffs["OOMAction"][1], Equals, "c2")
+	c.Assert(diffs["MemQuotaQuery"][0], Equals, int64(2333))
+	c.Assert(diffs["MemQuotaQuery"][1], Equals, int64(3222))
+	c.Assert(diffs["Performance.CrossJoin"][0], Equals, true)
+	c.Assert(diffs["Performance.CrossJoin"][1], Equals, false)
+	c.Assert(diffs["Performance.FeedbackProbability"][0], Equals, float64(2333))
+	c.Assert(diffs["Performance.FeedbackProbability"][1], Equals, float64(23.33))
+}
+
+func (s *testConfigSuite) TestValid(c *C) {
+	c1 := NewConfig()
+	tests := []struct {
+		ttl   string
+		valid bool
+	}{
+		{"14s", false},
+		{"15s", true},
+		{"60s", true},
+		{"61s", false},
+	}
+	for _, tt := range tests {
+		c1.PessimisticTxn.TTL = tt.ttl
+		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
+}

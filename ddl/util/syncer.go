@@ -27,6 +27,7 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
@@ -60,9 +61,11 @@ var (
 	CheckVersFirstWaitTime = 50 * time.Millisecond
 	// SyncerSessionTTL is the etcd session's TTL in seconds.
 	// and it's an exported variable for testing.
-	SyncerSessionTTL = 10 * 60
+	SyncerSessionTTL = 90
 	// ddlLogCtx uses for log.
 	ddlLogCtx = context.Background()
+	// WaitTimeWhenErrorOccured is waiting interval when processing DDL jobs encounter errors.
+	WaitTimeWhenErrorOccured = 1 * time.Second
 )
 
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
@@ -194,6 +197,13 @@ func (s *schemaVersionSyncer) storeSession(session *concurrency.Session) {
 
 // Done implements SchemaSyncer.Done interface.
 func (s *schemaVersionSyncer) Done() <-chan struct{} {
+	failpoint.Inject("ErrorMockSessionDone", func(val failpoint.Value) {
+		if val.(bool) {
+			err := s.loadSession().Close()
+			logutil.Logger(context.Background()).Info("close session failed", zap.Error(err))
+		}
+	})
+
 	return s.loadSession().Done()
 }
 

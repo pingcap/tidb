@@ -16,6 +16,7 @@ package statistics
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/atomic"
 )
 
 const (
@@ -97,11 +99,21 @@ func (t *Table) Copy() *Table {
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
 	strs = append(strs, fmt.Sprintf("Table:%d Count:%d", t.PhysicalID, t.Count))
+	cols := make([]*Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
+		cols = append(cols, col)
+	}
+	sort.Slice(cols, func(i, j int) bool { return cols[i].ID < cols[j].ID })
+	for _, col := range cols {
 		strs = append(strs, col.String())
 	}
-	for _, col := range t.Indices {
-		strs = append(strs, col.String())
+	idxs := make([]*Index, 0, len(t.Indices))
+	for _, idx := range t.Indices {
+		idxs = append(idxs, idx)
+	}
+	sort.Slice(idxs, func(i, j int) bool { return idxs[i].ID < idxs[j].ID })
+	for _, idx := range idxs {
+		strs = append(strs, idx.String())
 	}
 	return strings.Join(strs, "\n")
 }
@@ -160,11 +172,11 @@ func (n *neededColumnMap) Delete(col tableColumnID) {
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
 // and use pseudo estimation.
-var RatioOfPseudoEstimate = 0.7
+var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
 
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
-	if t.Count > 0 && float64(t.ModifyCount)/float64(t.Count) > RatioOfPseudoEstimate {
+	if t.Count > 0 && float64(t.ModifyCount)/float64(t.Count) > RatioOfPseudoEstimate.Load() {
 		return true
 	}
 	return false

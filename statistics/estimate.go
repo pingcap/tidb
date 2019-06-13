@@ -15,11 +15,11 @@ package statistics
 
 import (
 	"math"
+
+	"github.com/cznic/mathutil"
 )
 
 // calculateEstimateNDV calculates the estimate ndv of a sampled data from a multisize with size total.
-// count[i] stores the count of the i-th element.
-// onlyOnceItems is the number of elements that occurred only once.
 func calculateEstimateNDV(h *topNHelper, rowCount uint64) (ndv uint64, scaleRatio uint64) {
 	sampleSize, sampleNDV, onlyOnceItems := h.sampleSize, uint64(len(h.sorted)), h.onlyOnceItems
 	scaleRatio = rowCount / sampleSize
@@ -44,12 +44,7 @@ func calculateEstimateNDV(h *topNHelper, rowCount uint64) (ndv uint64, scaleRati
 	d := float64(sampleNDV)
 
 	ndv = uint64(math.Sqrt(N/n)*f1 + d - f1 + 0.5)
-
-	if ndv < sampleNDV {
-		ndv = sampleNDV
-	}
-	if ndv > rowCount {
-		ndv = rowCount
-	}
+	ndv = mathutil.MaxUint64(ndv, sampleNDV)
+	ndv = mathutil.MinUint64(ndv, rowCount)
 	return ndv, scaleRatio
 }

@@ -44,6 +44,19 @@ func Filter(result []Expression, input []Expression, filter func(Expression) boo
 	return result
 }
 
+// FilterOutInPlace do the filtering out in place.
+// The remained are the ones who doesn't match the filter, storing in the original slice.
+// The filteredOut are the ones match the filter, storing in a new slice.
+func FilterOutInPlace(input []Expression, filter func(Expression) bool) (remained, filteredOut []Expression) {
+	for i := len(input) - 1; i >= 0; i-- {
+		if filter(input[i]) {
+			filteredOut = append(filteredOut, input[i])
+			input = append(input[:i], input[i+1:]...)
+		}
+	}
+	return input, filteredOut
+}
+
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) (cols []*Column) {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
@@ -276,6 +289,14 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
+func doPushDownNot(ctx sessionctx.Context, exprs []Expression, not bool) []Expression {
+	newExprs := make([]Expression, 0, len(exprs))
+	for _, expr := range exprs {
+		newExprs = append(newExprs, PushDownNot(ctx, expr, not))
+	}
+	return newExprs
+}
+
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
@@ -286,34 +307,22 @@ func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
 			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
-			}
-			return f
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		case ast.LogicAnd:
 			if not {
-				args := f.GetArgs()
-				for i, a := range args {
-					args[i] = PushDownNot(f.GetCtx(), a, true)
-				}
-				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
+				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
+				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), newArgs...)
 			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
-			}
-			return f
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		case ast.LogicOr:
 			if not {
-				args := f.GetArgs()
-				for i, a := range args {
-					args[i] = PushDownNot(f.GetCtx(), a, true)
-				}
-				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
+				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
+				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), newArgs...)
 			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
-			}
-			return f
+			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
 		}
 	}
 	if not {
@@ -531,20 +540,6 @@ func (s *exprStack) push(expr Expression) {
 // len returns the length of th stack.
 func (s *exprStack) len() int {
 	return len(s.stack)
-}
-
-// ColumnSliceIsIntersect checks whether two column slice is intersected.
-func ColumnSliceIsIntersect(s1, s2 []*Column) bool {
-	intSet := map[int64]struct{}{}
-	for _, col := range s1 {
-		intSet[col.UniqueID] = struct{}{}
-	}
-	for _, col := range s2 {
-		if _, ok := intSet[col.UniqueID]; ok {
-			return true
-		}
-	}
-	return false
 }
 
 // DatumToConstant generates a Constant expression from a Datum.

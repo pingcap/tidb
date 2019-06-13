@@ -24,7 +24,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
@@ -40,7 +39,7 @@ const (
 type brokenStore struct{}
 
 func (s *brokenStore) Open(schema string) (kv.Storage, error) {
-	return nil, errors.New("try again later")
+	return nil, kv.ErrTxnRetryable
 }
 
 func TestT(t *testing.T) {
@@ -662,5 +661,5 @@ func (s *testKVSuite) TestRetryOpenStore(c *C) {
 	}
 	c.Assert(err, NotNil)
 	elapse := time.Since(begin)
-	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
+	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second), Commentf("elapse: %s", elapse))
 }

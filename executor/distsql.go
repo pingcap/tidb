@@ -519,6 +519,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		worker := &tableWorker{
+			idxLookup:      e,
 			workCh:         workCh,
 			finished:       e.finished,
 			buildTblReader: e.buildTableReader,
@@ -732,6 +733,7 @@ func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {
 
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableWorker struct {
+	idxLookup      *IndexLookUpExecutor
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
 	buildTblReader func(ctx context.Context, handles []int64) (Executor, error)
@@ -809,6 +811,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			task.rows = append(task.rows, row)
 		}
 	}
+
 	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
@@ -824,14 +827,23 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	if w.isCheckOp && handleCnt != len(task.rows) {
-		obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
-		for _, row := range task.rows {
-			handle := row.GetInt64(w.handleIdx)
-			obtainedHandlesMap[handle] = struct{}{}
+	if handleCnt != len(task.rows) {
+		if w.isCheckOp {
+			obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
+			for _, row := range task.rows {
+				handle := row.GetInt64(w.handleIdx)
+				obtainedHandlesMap[handle] = struct{}{}
+			}
+			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d, missing handles %v in a batch",
+				w.idxLookup.index.Name.O, handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
 		}
-		return errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
-			handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
+
+		if len(w.idxLookup.tblPlans) == 1 {
+			// table scan in double read can never has conditions according to convertToIndexScan.
+			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
+			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
+				w.idxLookup.index.Name.O, handleCnt, len(task.rows))
+		}
 	}
 
 	return nil

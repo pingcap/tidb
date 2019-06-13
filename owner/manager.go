@@ -245,6 +245,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 				return
 			}
 		case <-ctx.Done():
+			logutil.Logger(logCtx).Info("break campaign loop, context is done")
 			m.revokeSession(logPrefix, etcdSession.Lease())
 			return
 		default:
@@ -288,7 +289,7 @@ func (m *ownerManager) revokeSession(logPrefix string, leaseID clientv3.LeaseID)
 		time.Duration(ManagerSessionTTL)*time.Second)
 	_, err := m.etcdCli.Revoke(cancelCtx, leaseID)
 	cancel()
-	logutil.Logger(m.logCtx).Info("break campaign loop, revoke err", zap.Error(err))
+	logutil.Logger(m.logCtx).Info("revoke session", zap.Error(err))
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.

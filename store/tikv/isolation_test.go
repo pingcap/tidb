@@ -72,7 +72,7 @@ func (s *testIsolationSuite) SetWithRetry(c *C, k, v []byte) writeRecord {
 				commitTS: txn.(*tikvTxn).commitTS,
 			}
 		}
-		c.Assert(kv.IsRetryableError(err) || terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
+		c.Assert(kv.IsTxnRetryableError(err) || terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
 	}
 }
 
@@ -99,7 +99,7 @@ func (s *testIsolationSuite) GetWithRetry(c *C, k []byte) readRecord {
 				value:   val,
 			}
 		}
-		c.Assert(kv.IsRetryableError(err), IsTrue)
+		c.Assert(kv.IsTxnRetryableError(err), IsTrue)
 	}
 }
 

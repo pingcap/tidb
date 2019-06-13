@@ -106,7 +106,7 @@ const (
 		Table_name	CHAR(64),
 		Grantor		CHAR(77),
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
-		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index','Alter'),
+		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
@@ -171,6 +171,7 @@ const (
 		stats_ver bigint(64) NOT NULL DEFAULT 0,
 		flag bigint(64) NOT NULL DEFAULT 0,
 		correlation double NOT NULL DEFAULT 0,
+		last_analyze_pos blob DEFAULT NULL,
 		unique index tbl(table_id, is_index, hist_id)
 	);`
 
@@ -248,10 +249,26 @@ const (
 		DEFAULT_ROLE_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
 		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER)
 	)`
+
+	// CreateStatsTopNTable stores topn data of a cmsketch with top n.
+	CreateStatsTopNTable = `CREATE TABLE if not exists mysql.stats_top_n (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
+		value longblob,
+		count bigint(64) UNSIGNED NOT NULL,
+		index tbl(table_id, is_index, hist_id)
+	);`
+
+	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
+	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
+		name char(100) NOT NULL
+	);`
 )
 
 // bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
+	startTime := time.Now()
 	dom := domain.GetDomain(s)
 	for {
 		b, err := checkBootstrapped(s)
@@ -262,6 +279,8 @@ func bootstrap(s Session) {
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
 			upgrade(s)
+			logutil.Logger(context.Background()).Info("upgrade successful in bootstrap",
+				zap.Duration("take time", time.Since(startTime)))
 			return
 		}
 		// To reduce conflict when multiple TiDB-server start at the same time.
@@ -269,6 +288,8 @@ func bootstrap(s Session) {
 		if dom.DDL().OwnerManager().IsOwner() {
 			doDDLWorks(s)
 			doDMLWorks(s)
+			logutil.Logger(context.Background()).Info("bootstrap successful",
+				zap.Duration("take time", time.Since(startTime)))
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -317,6 +338,10 @@ const (
 	version27 = 27
 	version28 = 28
 	version29 = 29
+	version30 = 30
+	version31 = 31
+	version32 = 32
+	version33 = 33
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -492,22 +517,40 @@ func upgrade(s Session) {
 		upgradeToVer29(s)
 	}
 
+	if ver < version30 {
+		upgradeToVer30(s)
+	}
+
+	if ver < version31 {
+		upgradeToVer31(s)
+	}
+
+	if ver < version32 {
+		upgradeToVer29(s)
+	}
+
+	if ver < version33 {
+		upgradeToVer33(s)
+	}
+
 	updateBootstrapVer(s)
 	_, err = s.Execute(context.Background(), "COMMIT")
 
 	if err != nil {
-		time.Sleep(1 * time.Second)
+		sleepTime := 1 * time.Second
+		logutil.Logger(context.Background()).Info("update bootstrap ver failed",
+			zap.Error(err), zap.Duration("sleeping time", sleepTime))
+		time.Sleep(sleepTime)
 		// Check if TiDB is already upgraded.
 		v, err1 := getBootstrapVersion(s)
 		if err1 != nil {
-			logutil.Logger(context.Background()).Fatal("upgrade error",
-				zap.Error(err1))
+			logutil.Logger(context.Background()).Fatal("upgrade failed", zap.Error(err1))
 		}
 		if v >= currentBootstrapVersion {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
 			return
 		}
-		logutil.Logger(context.Background()).Fatal("[Upgrade] upgrade error",
+		logutil.Logger(context.Background()).Fatal("[Upgrade] upgrade failed",
 			zap.Int64("from", ver),
 			zap.Int("to", currentBootstrapVersion),
 			zap.Error(err))
@@ -780,6 +823,22 @@ func upgradeToVer29(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info add index sql_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
 }
 
+func upgradeToVer30(s Session) {
+	mustExecute(s, CreateStatsTopNTable)
+}
+
+func upgradeToVer31(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `last_analyze_pos` blob default null", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer32(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index', 'Alter', 'Create View', 'Show View', 'Trigger', 'References')")
+}
+
+func upgradeToVer33(s Session) {
+	doReentrantDDL(s, CreateExprPushdownBlacklist)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -836,6 +895,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateDefaultRolesTable)
 	// Create bind_info table.
 	mustExecute(s, CreateBindInfoTable)
+	// Create stats_topn_store table.
+	mustExecute(s, CreateStatsTopNTable)
+	// Create expr_pushdown_blacklist table.
+	mustExecute(s, CreateExprPushdownBlacklist)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -872,16 +935,18 @@ func doDMLWorks(s Session) {
 	writeSystemTZ(s)
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
-		time.Sleep(1 * time.Second)
+		sleepTime := 1 * time.Second
+		logutil.Logger(context.Background()).Info("doDMLWorks failed", zap.Error(err), zap.Duration("sleeping time", sleepTime))
+		time.Sleep(sleepTime)
 		// Check if TiDB is already bootstrapped.
 		b, err1 := checkBootstrapped(s)
 		if err1 != nil {
-			logutil.Logger(context.Background()).Fatal("doDMLWorks error", zap.Error(err1))
+			logutil.Logger(context.Background()).Fatal("doDMLWorks failed", zap.Error(err1))
 		}
 		if b {
 			return
 		}
-		logutil.Logger(context.Background()).Fatal("doDMLWorks error", zap.Error(err))
+		logutil.Logger(context.Background()).Fatal("doDMLWorks failed", zap.Error(err))
 	}
 }
 

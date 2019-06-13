@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -33,7 +34,9 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -73,7 +76,10 @@ const (
 	tableTiDBIndexes                        = "TIDB_INDEXES"
 	tableSlowLog                            = "SLOW_QUERY"
 	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
+	tableTiKVStoreStatus                    = "TIKV_STORE_STATUS"
 	tableAnalyzeStatus                      = "ANALYZE_STATUS"
+	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
+	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 )
 
 type columnInfo struct {
@@ -563,6 +569,28 @@ var tableTiDBHotRegionsCols = []columnInfo{
 	{"FLOW_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
+var tableTiKVStoreStatusCols = []columnInfo{
+	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"STORE_STATE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"STORE_STATE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABEL", mysql.TypeJSON, 51, 0, nil, nil},
+	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CAPACITY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"AVAILABLE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LEADER_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_WEIGHT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_SCORE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"LEADER_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_COUNT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_WEIGHT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_SCORE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"REGION_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"START_TS", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"LAST_HEARTBEAT_TS", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"UPTIME", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
 var tableAnalyzeStatusCols = []columnInfo{
 	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -571,6 +599,171 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{"PROCESSED_ROWS", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{"START_TIME", mysql.TypeDatetime, 0, 0, nil, nil},
 	{"STATE", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableTiKVRegionStatusCols = []columnInfo{
+	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"START_KEY", mysql.TypeBlob, types.UnspecifiedLength, 0, nil, nil},
+	{"END_KEY", mysql.TypeBlob, types.UnspecifiedLength, 0, nil, nil},
+	{"EPOCH_CONF_VER", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"EPOCH_VERSION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"WRITTEN_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"READ_BYTES", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"APPROXIMATE_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"APPROXIMATE_KEYS", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var tableTiKVRegionPeersCols = []columnInfo{
+	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"PEER_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"IS_LEARNER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
+	{"IS_LEADER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
+	{"STATUS", mysql.TypeVarchar, 10, 0, 0, nil},
+	{"DOWN_SECONDS", mysql.TypeLonglong, 21, 0, 0, nil},
+}
+
+func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	regionsStat, err := tikvHelper.GetRegionsInfo()
+	if err != nil {
+		return nil, err
+	}
+	for _, regionStat := range regionsStat.Regions {
+		row := make([]types.Datum, len(tableTiKVRegionStatusCols))
+		row[0].SetInt64(regionStat.ID)
+		row[1].SetString(regionStat.StartKey)
+		row[2].SetString(regionStat.EndKey)
+		row[3].SetInt64(regionStat.Epoch.ConfVer)
+		row[4].SetInt64(regionStat.Epoch.Version)
+		row[5].SetInt64(regionStat.WrittenBytes)
+		row[6].SetInt64(regionStat.ReadBytes)
+		row[7].SetInt64(regionStat.ApproximateSize)
+		row[8].SetInt64(regionStat.ApproximateKeys)
+		records = append(records, row)
+	}
+	return records, nil
+}
+
+const (
+	normalPeer  = "NORMAL"
+	pendingPeer = "PENDING"
+	downPeer    = "DOWN"
+)
+
+func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	regionsStat, err := tikvHelper.GetRegionsInfo()
+	if err != nil {
+		return nil, err
+	}
+	for _, regionStat := range regionsStat.Regions {
+		pendingPeerIDSet := set.NewInt64Set()
+		for _, peer := range regionStat.PendingPeers {
+			pendingPeerIDSet.Insert(peer.ID)
+		}
+		downPeerMap := make(map[int64]int64)
+		for _, peerStat := range regionStat.DownPeers {
+			downPeerMap[peerStat.ID] = peerStat.DownSec
+		}
+		for _, peer := range regionStat.Peers {
+			row := make([]types.Datum, len(tableTiKVRegionPeersCols))
+			row[0].SetInt64(regionStat.ID)
+			row[1].SetInt64(peer.ID)
+			row[2].SetInt64(peer.StoreID)
+			if peer.ID == regionStat.Leader.ID {
+				row[3].SetInt64(1)
+			} else {
+				row[3].SetInt64(0)
+			}
+			if peer.IsLearner {
+				row[4].SetInt64(1)
+			} else {
+				row[4].SetInt64(0)
+			}
+			if pendingPeerIDSet.Exist(peer.ID) {
+				row[5].SetString(pendingPeer)
+			} else if downSec, ok := downPeerMap[peer.ID]; ok {
+				row[5].SetString(downPeer)
+				row[6].SetInt64(downSec)
+			} else {
+				row[5].SetString(normalPeer)
+			}
+			records = append(records, row)
+		}
+	}
+	return records, nil
+}
+
+func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	storesStat, err := tikvHelper.GetStoresStat()
+	if err != nil {
+		return nil, err
+	}
+	for _, storeStat := range storesStat.Stores {
+		row := make([]types.Datum, len(tableTiKVStoreStatusCols))
+		row[0].SetInt64(storeStat.Store.ID)
+		row[1].SetString(storeStat.Store.Address)
+		row[2].SetInt64(storeStat.Store.State)
+		row[3].SetString(storeStat.Store.StateName)
+		data, err := json.Marshal(storeStat.Store.Labels)
+		if err != nil {
+			return nil, err
+		}
+		bj := binaryJson.BinaryJSON{}
+		if err = bj.UnmarshalJSON(data); err != nil {
+			return nil, err
+		}
+		row[4].SetMysqlJSON(bj)
+		row[5].SetString(storeStat.Store.Version)
+		row[6].SetString(storeStat.Status.Capacity)
+		row[7].SetString(storeStat.Status.Available)
+		row[8].SetInt64(storeStat.Status.LeaderCount)
+		row[9].SetInt64(storeStat.Status.LeaderWeight)
+		row[10].SetInt64(storeStat.Status.LeaderScore)
+		row[11].SetInt64(storeStat.Status.LeaderSize)
+		row[12].SetInt64(storeStat.Status.RegionCount)
+		row[13].SetInt64(storeStat.Status.RegionWeight)
+		row[14].SetInt64(storeStat.Status.RegionScore)
+		row[15].SetInt64(storeStat.Status.RegionSize)
+		startTs := types.Time{
+			Time: types.FromGoTime(storeStat.Status.StartTs),
+			Type: mysql.TypeDatetime,
+			Fsp:  types.DefaultFsp,
+		}
+		row[16].SetMysqlTime(startTs)
+		lastHeartbeatTs := types.Time{
+			Time: types.FromGoTime(storeStat.Status.LastHeartbeatTs),
+			Type: mysql.TypeDatetime,
+			Fsp:  types.DefaultFsp,
+		}
+		row[17].SetMysqlTime(lastHeartbeatTs)
+		row[18].SetString(storeStat.Status.Uptime)
+		records = append(records, row)
+	}
+	return records, nil
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -1552,7 +1745,10 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
 	tableSlowLog:                            slowQueryCols,
 	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
+	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
 	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
+	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
+	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1648,8 +1844,14 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForSlowLog(ctx)
 	case tableTiDBHotRegions:
 		fullRows, err = dataForTiDBHotRegions(ctx)
+	case tableTiKVStoreStatus:
+		fullRows, err = dataForTiKVStoreStatus(ctx)
 	case tableAnalyzeStatus:
 		fullRows = DataForAnalyzeStatus()
+	case tableTiKVRegionStatus:
+		fullRows, err = dataForTiKVRegionStatus(ctx)
+	case tableTiKVRegionPeers:
+		fullRows, err = dataForTikVRegionPeers(ctx)
 	}
 	if err != nil {
 		return nil, err
@@ -1668,6 +1870,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	return rows, nil
 }
 
+// IterRecords implements table.Table IterRecords interface.
 func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	if len(startKey) != 0 {
@@ -1689,6 +1892,7 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 	return nil
 }
 
+// RowWithCols implements table.Table RowWithCols interface.
 func (it *infoschemaTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
@@ -1698,79 +1902,102 @@ func (it *infoschemaTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, 
 	return nil, table.ErrUnsupportedOp
 }
 
+// Cols implements table.Table Cols interface.
 func (it *infoschemaTable) Cols() []*table.Column {
 	return it.cols
 }
 
+// WritableCols implements table.Table WritableCols interface.
 func (it *infoschemaTable) WritableCols() []*table.Column {
 	return it.cols
 }
 
+// Indices implements table.Table Indices interface.
 func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+// WritableIndices implements table.Table WritableIndices interface.
 func (it *infoschemaTable) WritableIndices() []table.Index {
 	return nil
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
 func (it *infoschemaTable) DeletableIndices() []table.Index {
 	return nil
 }
 
+// RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
 }
 
+// IndexPrefix implements table.Table IndexPrefix interface.
 func (it *infoschemaTable) IndexPrefix() kv.Key {
 	return nil
 }
 
+// FirstKey implements table.Table FirstKey interface.
 func (it *infoschemaTable) FirstKey() kv.Key {
 	return nil
 }
 
+// RecordKey implements table.Table RecordKey interface.
 func (it *infoschemaTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
+// AddRecord implements table.Table AddRecord interface.
 func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
+// RemoveRecord implements table.Table RemoveRecord interface.
 func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
+// UpdateRecord implements table.Table UpdateRecord interface.
 func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
+func (it *infoschemaTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
+// AllocHandle implements table.Table AllocHandle interface.
+func (it *infoschemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+// Allocator implements table.Table Allocator interface.
 func (it *infoschemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
 }
 
+// RebaseAutoID implements table.Table RebaseAutoID interface.
 func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 
+// Meta implements table.Table Meta interface.
 func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
+// GetPhysicalID implements table.Table GetPhysicalID interface.
 func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
 }
 
-// Seek is the first method called for table scan, we lazy initialize it here.
+// Seek implements table.Table Seek interface.
 func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
 }
 
+// Type implements table.Table Type interface.
 func (it *infoschemaTable) Type() table.Type {
 	return table.VirtualTable
 }
@@ -1778,7 +2005,7 @@ func (it *infoschemaTable) Type() table.Type {
 // VirtualTable is a dummy table.Table implementation.
 type VirtualTable struct{}
 
-// IterRecords implements table.Table Type interface.
+// IterRecords implements table.Table IterRecords interface.
 func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	if len(startKey) != 0 {
@@ -1787,92 +2014,97 @@ func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, col
 	return nil
 }
 
-// RowWithCols implements table.Table Type interface.
+// RowWithCols implements table.Table RowWithCols interface.
 func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
-// Row implements table.Table Type interface.
+// Row implements table.Table Row interface.
 func (vt *VirtualTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
-// Cols implements table.Table Type interface.
+// Cols implements table.Table Cols interface.
 func (vt *VirtualTable) Cols() []*table.Column {
 	return nil
 }
 
-// WritableCols implements table.Table Type interface.
+// WritableCols implements table.Table WritableCols interface.
 func (vt *VirtualTable) WritableCols() []*table.Column {
 	return nil
 }
 
-// Indices implements table.Table Type interface.
+// Indices implements table.Table Indices interface.
 func (vt *VirtualTable) Indices() []table.Index {
 	return nil
 }
 
-// WritableIndices implements table.Table Type interface.
+// WritableIndices implements table.Table WritableIndices interface.
 func (vt *VirtualTable) WritableIndices() []table.Index {
 	return nil
 }
 
-// DeletableIndices implements table.Table Type interface.
+// DeletableIndices implements table.Table DeletableIndices interface.
 func (vt *VirtualTable) DeletableIndices() []table.Index {
 	return nil
 }
 
-// RecordPrefix implements table.Table Type interface.
+// RecordPrefix implements table.Table RecordPrefix interface.
 func (vt *VirtualTable) RecordPrefix() kv.Key {
 	return nil
 }
 
-// IndexPrefix implements table.Table Type interface.
+// IndexPrefix implements table.Table IndexPrefix interface.
 func (vt *VirtualTable) IndexPrefix() kv.Key {
 	return nil
 }
 
-// FirstKey implements table.Table Type interface.
+// FirstKey implements table.Table FirstKey interface.
 func (vt *VirtualTable) FirstKey() kv.Key {
 	return nil
 }
 
-// RecordKey implements table.Table Type interface.
+// RecordKey implements table.Table RecordKey interface.
 func (vt *VirtualTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
-// AddRecord implements table.Table Type interface.
+// AddRecord implements table.Table AddRecord interface.
 func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
-// RemoveRecord implements table.Table Type interface.
+// RemoveRecord implements table.Table RemoveRecord interface.
 func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
-// UpdateRecord implements table.Table Type interface.
+// UpdateRecord implements table.Table UpdateRecord interface.
 func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
-// AllocAutoID implements table.Table Type interface.
-func (vt *VirtualTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
+func (vt *VirtualTable) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
-// Allocator implements table.Table Type interface.
+// AllocHandle implements table.Table AllocHandle interface.
+func (vt *VirtualTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+// Allocator implements table.Table Allocator interface.
 func (vt *VirtualTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
 }
 
-// RebaseAutoID implements table.Table Type interface.
+// RebaseAutoID implements table.Table RebaseAutoID interface.
 func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 
-// Meta implements table.Table Type interface.
+// Meta implements table.Table Meta interface.
 func (vt *VirtualTable) Meta() *model.TableInfo {
 	return nil
 }
@@ -1882,7 +2114,7 @@ func (vt *VirtualTable) GetPhysicalID() int64 {
 	return 0
 }
 
-// Seek implements table.Table Type interface.
+// Seek implements table.Table Seek interface.
 func (vt *VirtualTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
 }

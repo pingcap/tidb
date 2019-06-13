@@ -64,7 +64,7 @@ func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selec
 
 				start, end := srcCol.offsets[i], srcCol.offsets[i+1]
 				dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
-				dstCol.offsets = append(dstCol.offsets, int32(len(dstCol.data)))
+				dstCol.offsets = append(dstCol.offsets, int64(len(dstCol.data)))
 			}
 		}
 	}
@@ -99,7 +99,7 @@ func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, 
 			offsets := dstCol.offsets
 			elemLen := srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx]
 			for j := 0; j < numRows; j++ {
-				offsets = append(offsets, int32(offsets[len(offsets)-1]+elemLen))
+				offsets = append(offsets, int64(offsets[len(offsets)-1]+elemLen))
 			}
 			dstCol.offsets = offsets
 		}

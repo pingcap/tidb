@@ -20,7 +20,6 @@ import (
 	"os"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -29,8 +28,9 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -148,7 +148,10 @@ func main() {
 	registerMetrics()
 	configWarning := loadConfig()
 	overrideConfig()
-	validateConfig()
+	if err := cfg.Valid(); err != nil {
+		fmt.Fprintln(os.Stderr, "invalid config", err)
+		os.Exit(1)
+	}
 	if *configCheck {
 		fmt.Println("config check successful")
 		os.Exit(0)
@@ -289,10 +292,6 @@ func parseDuration(lease string) time.Duration {
 	return dur
 }
 
-func hasRootPrivilege() bool {
-	return os.Geteuid() == 0
-}
-
 func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	if !defaultVal {
 		// Fix #4125, golang do not print default false value in usage, so we append it.
@@ -305,6 +304,9 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 func loadConfig() string {
 	cfg = config.GetGlobalConfig()
 	if *configPath != "" {
+		// Not all config items are supported now.
+		config.SetConfReloader(*configPath, reloadConfig, hotReloadConfigItems...)
+
 		err := cfg.Load(*configPath)
 		// This block is to accommodate an interim situation where strict config checking
 		// is not the default behavior of TiDB. The warning message must be deferred until
@@ -316,6 +318,37 @@ func loadConfig() string {
 		terror.MustNil(err)
 	}
 	return ""
+}
+
+// hotReloadConfigItems lists all config items which support hot-reload.
+var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
+	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
+	"OOMAction", "MemQuotaQuery"}
+
+func reloadConfig(nc, c *config.Config) {
+	// Just a part of config items need to be reload explicitly.
+	// Some of them like OOMAction are always used by getting from global config directly
+	// like config.GetGlobalConfig().OOMAction.
+	// These config items will become available naturally after the global config pointer
+	// is updated in function ReloadGlobalConfig.
+	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
+		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
+	}
+	if nc.Performance.MaxMemory != c.Performance.MaxMemory {
+		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.MaxMemory)
+	}
+	if nc.Performance.CrossJoin != c.Performance.CrossJoin {
+		plannercore.AllowCartesianProduct.Store(nc.Performance.CrossJoin)
+	}
+	if nc.Performance.FeedbackProbability != c.Performance.FeedbackProbability {
+		statistics.FeedbackProbability.Store(nc.Performance.FeedbackProbability)
+	}
+	if nc.Performance.QueryFeedbackLimit != c.Performance.QueryFeedbackLimit {
+		handle.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
+	}
+	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
+		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
+	}
 }
 
 func overrideConfig() {
@@ -410,68 +443,22 @@ func overrideConfig() {
 	}
 }
 
-func validateConfig() {
-	if cfg.Security.SkipGrantTable && !hasRootPrivilege() {
-		log.Error("TiDB run with skip-grant-table need root privilege.")
-		os.Exit(-1)
-	}
-	if _, ok := config.ValidStorage[cfg.Store]; !ok {
-		nameList := make([]string, 0, len(config.ValidStorage))
-		for k, v := range config.ValidStorage {
-			if v {
-				nameList = append(nameList, k)
-			}
-		}
-		log.Error("validate config", zap.Strings("valid storages", nameList))
-		os.Exit(-1)
-	}
-	if cfg.Store == "mocktikv" && !cfg.RunDDL {
-		log.Error("can't disable DDL on mocktikv")
-		os.Exit(-1)
-	}
-	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
-		log.Error("validate config", zap.Int("log max-size should not be larger than", config.MaxLogFileSize))
-		os.Exit(-1)
-	}
-	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
-
-	// lower_case_table_names is allowed to be 0, 1, 2
-	if cfg.LowerCaseTableNames < 0 || cfg.LowerCaseTableNames > 2 {
-		log.Error("lower-case-table-names should be 0 or 1 or 2.")
-		os.Exit(-1)
-	}
-
-	if cfg.TxnLocalLatches.Enabled && cfg.TxnLocalLatches.Capacity == 0 {
-		log.Error("txn-local-latches.capacity can not be 0")
-		os.Exit(-1)
-	}
-
-	// For tikvclient.
-	if cfg.TiKVClient.GrpcConnectionCount == 0 {
-		log.Error("grpc-connection-count should be greater than 0")
-		os.Exit(-1)
-	}
-	if cfg.TiKVClient.MaxTxnTimeUse == 0 {
-		log.Error("max-txn-time-use should be greater than 0")
-		os.Exit(-1)
-	}
-}
-
 func setGlobalVars() {
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
+	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
-	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
-	handle.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
-	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
+	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
+	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
+	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	}
-	plannercore.AllowCartesianProduct = cfg.Performance.CrossJoin
+	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
@@ -495,15 +482,16 @@ func setGlobalVars() {
 		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
 			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		}
-		plannercore.PreparedPlanCacheMaxMemory = cfg.Performance.MaxMemory
+		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.MaxMemory)
 		total, err := memory.MemTotal()
 		terror.MustNil(err)
-		if plannercore.PreparedPlanCacheMaxMemory > total || plannercore.PreparedPlanCacheMaxMemory <= 0 {
-			plannercore.PreparedPlanCacheMaxMemory = total
+		if plannercore.PreparedPlanCacheMaxMemory.Load() > total || plannercore.PreparedPlanCacheMaxMemory.Load() <= 0 {
+			plannercore.PreparedPlanCacheMaxMemory.Store(total)
 		}
 	}
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
+	tikv.PessimisticLockTTL = uint64(parseDuration(cfg.PessimisticTxn.TTL).Seconds() * 1000)
 }
 
 func setupLog() {
@@ -528,6 +516,7 @@ func createServer() {
 	svr, err = server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
 	terror.MustNil(err, closeDomainAndStorage)
+	go dom.ExpensiveQueryHandle().Run(svr)
 }
 
 func serverShutdown(isgraceful bool) {
@@ -581,6 +570,7 @@ func runServer() {
 }
 
 func closeDomainAndStorage() {
+	atomic.StoreUint32(&tikv.ShuttingDown, 1)
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))

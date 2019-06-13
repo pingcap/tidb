@@ -51,7 +51,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		if err != nil {
 			err1 := txn.Rollback()
 			terror.Log(err1)
-			if retryable && IsRetryableError(err) {
+			if retryable && IsTxnRetryableError(err) {
 				logutil.Logger(context.Background()).Warn("RunInNewTxn",
 					zap.Uint64("retry txn", txn.StartTS()),
 					zap.Uint64("original txn", originalTxnTS),
@@ -65,7 +65,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		if err == nil {
 			break
 		}
-		if retryable && IsRetryableError(err) {
+		if retryable && IsTxnRetryableError(err) {
 			logutil.Logger(context.Background()).Warn("RunInNewTxn",
 				zap.Uint64("retry txn", txn.StartTS()),
 				zap.Uint64("original txn", originalTxnTS),

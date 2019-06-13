@@ -60,3 +60,25 @@ type ErrAlreadyCommitted uint64
 func (e ErrAlreadyCommitted) Error() string {
 	return "txn already committed"
 }
+
+// ErrConflict is returned when the commitTS of key in the DB is greater than startTS.
+type ErrConflict struct {
+	StartTS    uint64
+	ConflictTS uint64
+	Key        []byte
+}
+
+func (e *ErrConflict) Error() string {
+	return "write conflict"
+}
+
+// ErrDeadlock is returned when deadlock error is detected.
+type ErrDeadlock struct {
+	LockTS         uint64
+	LockKey        []byte
+	DealockKeyHash uint64
+}
+
+func (e *ErrDeadlock) Error() string {
+	return "deadlock"
+}

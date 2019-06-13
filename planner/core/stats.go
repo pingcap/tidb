@@ -90,31 +90,29 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	return ndv
 }
 
-func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.StatsInfo, *statistics.HistColl) {
-	profile := &property.StatsInfo{
+func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
+	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),
 		Cardinality:  make([]float64, len(ds.Columns)),
 		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
 		StatsVersion: ds.statisticTable.Version,
 	}
 	if ds.statisticTable.Pseudo {
-		profile.StatsVersion = statistics.PseudoVersion
+		tableStats.StatsVersion = statistics.PseudoVersion
 	}
-
 	for i, col := range ds.Columns {
-		profile.Cardinality[i] = ds.getColumnNDV(col.ID)
+		tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}
-	ds.stats = profile
-	selectivity, nodes, err := profile.HistColl.Selectivity(ds.ctx, conds)
+	ds.tableStats = tableStats
+	selectivity, nodes, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("an error happened, use the default selectivity", zap.Error(err))
+		logutil.Logger(context.Background()).Debug("an error happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
-	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && ds.stats.HistColl != nil {
-		finalHist := ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
-		return profile, finalHist
+	ds.stats = tableStats.Scale(selectivity)
+	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
+		ds.stats.HistColl = ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
 	}
-	return profile.Scale(selectivity), nil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
@@ -123,8 +121,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
-	var finalHist *statistics.HistColl
-	ds.stats, finalHist = ds.getStatsByFilter(ds.pushedDownConds)
+	ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
@@ -149,9 +146,6 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 			break
 		}
-	}
-	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
-		ds.stats.HistColl = finalHist
 	}
 	return ds.stats, nil
 }
@@ -352,10 +346,13 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo) (*property
 		RowCount:    childProfile.RowCount,
 		Cardinality: make([]float64, p.schema.Len()),
 	}
-	for i := 0; i < p.schema.Len()-1; i++ {
+	childLen := p.schema.Len() - len(p.WindowFuncDescs)
+	for i := 0; i < childLen; i++ {
 		colIdx := p.children[0].Schema().ColumnIndex(p.schema.Columns[i])
 		p.stats.Cardinality[i] = childProfile.Cardinality[colIdx]
 	}
-	p.stats.Cardinality[p.schema.Len()-1] = childProfile.RowCount
+	for i := childLen; i < p.schema.Len(); i++ {
+		p.stats.Cardinality[i] = childProfile.RowCount
+	}
 	return p.stats, nil
 }

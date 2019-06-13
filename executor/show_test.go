@@ -97,16 +97,6 @@ func (s *testSuite2) TestShowDatabasesInfoSchemaFirst(c *C) {
 	tk.MustExec(`drop database BBBB`)
 }
 
-// mockSessionManager is a mocked session manager that wraps one session
-// it returns only this session's current process info as processlist for test.
-type mockSessionManager struct {
-	session.Session
-}
-
-// Kill implements the SessionManager.Kill interface.
-func (msm *mockSessionManager) Kill(cid uint64, query bool) {
-}
-
 func (s *testSuite2) TestShowWarnings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -155,6 +145,21 @@ func (s *testSuite2) TestIssue3641(c *C) {
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 	_, err = tk.Exec("show table status;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
+}
+
+func (s *testSuite2) TestIssue10549(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE DATABASE newdb;")
+	tk.MustExec("CREATE ROLE 'app_developer';")
+	tk.MustExec("GRANT ALL ON newdb.* TO 'app_developer';")
+	tk.MustExec("CREATE USER 'dev';")
+	tk.MustExec("GRANT 'app_developer' TO 'dev';")
+	tk.MustExec("SET DEFAULT ROLE app_developer TO 'dev';")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil), IsTrue)
+	tk.MustQuery("SHOW DATABASES;").Check(testkit.Rows("INFORMATION_SCHEMA", "newdb"))
+	tk.MustQuery("SHOW GRANTS;").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT ALL PRIVILEGES ON newdb.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 }
 
 // TestShow2 is moved from session_test
@@ -455,6 +460,61 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
 	))
 	tk.MustExec("drop table t")
+
+	tk.MustExec("CREATE TABLE `log` (" +
+		"`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT," +
+		"`ROUND_ID` bigint(20) UNSIGNED NOT NULL," +
+		"`USER_ID` int(10) UNSIGNED NOT NULL," +
+		"`USER_IP` int(10) UNSIGNED DEFAULT NULL," +
+		"`END_TIME` datetime NOT NULL," +
+		"`USER_TYPE` int(11) DEFAULT NULL," +
+		"`APP_ID` int(11) DEFAULT NULL," +
+		"PRIMARY KEY (`LOG_ID`,`END_TIME`)," +
+		"KEY `IDX_EndTime` (`END_TIME`)," +
+		"KEY `IDX_RoundId` (`ROUND_ID`)," +
+		"KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488 " +
+		"PARTITION BY RANGE ( month(`end_time`) ) (" +
+		"PARTITION p1 VALUES LESS THAN (2)," +
+		"PARTITION p2 VALUES LESS THAN (3)," +
+		"PARTITION p3 VALUES LESS THAN (4)," +
+		"PARTITION p4 VALUES LESS THAN (5)," +
+		"PARTITION p5 VALUES LESS THAN (6)," +
+		"PARTITION p6 VALUES LESS THAN (7)," +
+		"PARTITION p7 VALUES LESS THAN (8)," +
+		"PARTITION p8 VALUES LESS THAN (9)," +
+		"PARTITION p9 VALUES LESS THAN (10)," +
+		"PARTITION p10 VALUES LESS THAN (11)," +
+		"PARTITION p11 VALUES LESS THAN (12)," +
+		"PARTITION p12 VALUES LESS THAN (MAXVALUE))")
+	tk.MustQuery("show create table log").Check(testutil.RowsWithSep("|",
+		"log CREATE TABLE `log` (\n"+
+			"  `LOG_ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"+
+			"  `ROUND_ID` bigint(20) unsigned NOT NULL,\n"+
+			"  `USER_ID` int(10) unsigned NOT NULL,\n"+
+			"  `USER_IP` int(10) unsigned DEFAULT NULL,\n"+
+			"  `END_TIME` datetime NOT NULL,\n"+
+			"  `USER_TYPE` int(11) DEFAULT NULL,\n"+
+			"  `APP_ID` int(11) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`LOG_ID`,`END_TIME`),\n"+
+			"  KEY `IDX_EndTime` (`END_TIME`),\n"+
+			"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
+			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
+			"PARTITION BY RANGE ( month(`end_time`) ) (\n"+
+			"  PARTITION p1 VALUES LESS THAN (2),\n"+
+			"  PARTITION p2 VALUES LESS THAN (3),\n"+
+			"  PARTITION p3 VALUES LESS THAN (4),\n"+
+			"  PARTITION p4 VALUES LESS THAN (5),\n"+
+			"  PARTITION p5 VALUES LESS THAN (6),\n"+
+			"  PARTITION p6 VALUES LESS THAN (7),\n"+
+			"  PARTITION p7 VALUES LESS THAN (8),\n"+
+			"  PARTITION p8 VALUES LESS THAN (9),\n"+
+			"  PARTITION p9 VALUES LESS THAN (10),\n"+
+			"  PARTITION p10 VALUES LESS THAN (11),\n"+
+			"  PARTITION p11 VALUES LESS THAN (12),\n"+
+			"  PARTITION p12 VALUES LESS THAN (MAXVALUE)\n"+
+			")"))
 }
 
 func (s *testSuite2) TestShowEscape(c *C) {

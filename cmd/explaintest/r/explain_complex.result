@@ -115,30 +115,30 @@ Projection_7	53.00	root	test.dt.ds, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.
           └─TableScan_14	2650.00	cop	table:dt, keep order:false, stats:pseudo
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext, gad.t as gtime from st gad join (select id, aid, pt, dic, ip, t from dd where pt = 'android' and bm = 0 and t > 1478143908) sdk on  gad.aid = sdk.aid and gad.ip = sdk.ip and sdk.t > gad.t where gad.t > 1478143908 and gad.pt = 'android' group by gad.aid, sdk.dic limit 2500;
 id	count	task	operator info
-Projection_13	1.00	root	gad.id, test.dd.id, gad.aid, gad.cm, test.dd.dic, test.dd.ip, test.dd.t, gad.p1, gad.p2, gad.p3, gad.p4, gad.p5, gad.p6_md5, gad.p7_md5, gad.ext, gad.t
+Projection_13	1.00	root	test.gad.id, test.dd.id, test.gad.aid, test.gad.cm, test.dd.dic, test.dd.ip, test.dd.t, test.gad.p1, test.gad.p2, test.gad.p3, test.gad.p4, test.gad.p5, test.gad.p6_md5, test.gad.p7_md5, test.gad.ext, test.gad.t
 └─Limit_16	1.00	root	offset:0, count:2500
-  └─HashAgg_19	1.00	root	group by:gad.aid, test.dd.dic, funcs:firstrow(gad.id), firstrow(gad.aid), firstrow(gad.cm), firstrow(gad.p1), firstrow(gad.p2), firstrow(gad.p3), firstrow(gad.p4), firstrow(gad.p5), firstrow(gad.p6_md5), firstrow(gad.p7_md5), firstrow(gad.ext), firstrow(gad.t), firstrow(test.dd.id), firstrow(test.dd.dic), firstrow(test.dd.ip), firstrow(test.dd.t)
-    └─IndexJoin_24	0.00	root	inner join, inner:IndexLookUp_23, outer key:gad.aid, inner key:test.dd.aid, other cond:eq(test.dd.ip, gad.ip), gt(test.dd.t, gad.t)
+  └─HashAgg_19	1.00	root	group by:test.dd.dic, test.gad.aid, funcs:firstrow(test.gad.id), firstrow(test.gad.aid), firstrow(test.gad.cm), firstrow(test.gad.p1), firstrow(test.gad.p2), firstrow(test.gad.p3), firstrow(test.gad.p4), firstrow(test.gad.p5), firstrow(test.gad.p6_md5), firstrow(test.gad.p7_md5), firstrow(test.gad.ext), firstrow(test.gad.t), firstrow(test.dd.id), firstrow(test.dd.dic), firstrow(test.dd.ip), firstrow(test.dd.t)
+    └─IndexJoin_24	0.00	root	inner join, inner:IndexLookUp_23, outer key:test.gad.aid, inner key:test.dd.aid, other cond:eq(test.dd.ip, test.gad.ip), gt(test.dd.t, test.gad.t)
       ├─IndexLookUp_23	0.00	root	
-      │ ├─IndexScan_20	10.00	cop	table:dd, index:aid, dic, range: decided by [gad.aid gad.ip], keep order:false, stats:pseudo
+      │ ├─IndexScan_20	10.00	cop	table:dd, index:aid, dic, range: decided by [eq(test.dd.aid, test.gad.aid)], keep order:false, stats:pseudo
       │ └─Selection_22	0.00	cop	eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
       │   └─TableScan_21	10.00	cop	table:dd, keep order:false, stats:pseudo
       └─IndexLookUp_33	3.33	root	
         ├─IndexScan_30	3333.33	cop	table:gad, index:t, range:(1478143908,+inf], keep order:false, stats:pseudo
-        └─Selection_32	3.33	cop	eq(gad.pt, "android"), not(isnull(gad.ip))
+        └─Selection_32	3.33	cop	eq(test.gad.pt, "android"), not(isnull(test.gad.ip))
           └─TableScan_31	3333.33	cop	table:st, keep order:false, stats:pseudo
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	count	task	operator info
-Projection_10	0.00	root	gad.id, sdk.id, gad.aid, gad.cm, sdk.dic, sdk.ip, sdk.t, gad.p1, gad.p2, gad.p3, gad.p4, gad.p5, gad.p6_md5, gad.p7_md5, gad.ext
+Projection_10	0.00	root	test.gad.id, test.sdk.id, test.gad.aid, test.gad.cm, test.sdk.dic, test.sdk.ip, test.sdk.t, test.gad.p1, test.gad.p2, test.gad.p3, test.gad.p4, test.gad.p5, test.gad.p6_md5, test.gad.p7_md5, test.gad.ext
 └─Limit_13	0.00	root	offset:0, count:3000
-  └─IndexJoin_18	0.00	root	inner join, inner:IndexLookUp_17, outer key:gad.aid, inner key:sdk.aid, other cond:eq(gad.dic, sdk.mac), lt(gad.t, sdk.t)
+  └─IndexJoin_18	0.00	root	inner join, inner:IndexLookUp_17, outer key:test.gad.aid, inner key:test.sdk.aid, other cond:eq(test.gad.dic, test.sdk.mac), lt(test.gad.t, test.sdk.t)
     ├─IndexLookUp_27	0.00	root	
     │ ├─IndexScan_24	3333.33	cop	table:gad, index:t, range:(1477971479,+inf], keep order:false, stats:pseudo
-    │ └─Selection_26	0.00	cop	eq(gad.bm, 0), eq(gad.dit, "mac"), eq(gad.pt, "ios"), not(isnull(gad.dic))
+    │ └─Selection_26	0.00	cop	eq(test.gad.bm, 0), eq(test.gad.dit, "mac"), eq(test.gad.pt, "ios"), not(isnull(test.gad.dic))
     │   └─TableScan_25	3333.33	cop	table:st, keep order:false, stats:pseudo
     └─IndexLookUp_17	0.00	root	
-      ├─IndexScan_14	10.00	cop	table:sdk, index:aid, dic, range: decided by [gad.aid gad.dic], keep order:false, stats:pseudo
-      └─Selection_16	0.00	cop	eq(sdk.bm, 0), eq(sdk.pt, "ios"), gt(sdk.t, 1477971479), not(isnull(sdk.mac)), not(isnull(sdk.t))
+      ├─IndexScan_14	10.00	cop	table:sdk, index:aid, dic, range: decided by [eq(test.sdk.aid, test.gad.aid)], keep order:false, stats:pseudo
+      └─Selection_16	0.00	cop	eq(test.sdk.bm, 0), eq(test.sdk.pt, "ios"), gt(test.sdk.t, 1477971479), not(isnull(test.sdk.mac)), not(isnull(test.sdk.t))
         └─TableScan_15	10.00	cop	table:dd, keep order:false, stats:pseudo
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	count	task	operator info
@@ -150,15 +150,15 @@ Projection_5	1.00	root	test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p
       └─TableScan_13	250.00	cop	table:st, keep order:false, stats:pseudo
 explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as cm, rr.gid as gid, rr.acd as acd, rr.t as t,dt.p1 as p1, dt.p2 as p2, dt.p3 as p3, dt.p4 as p4, dt.p5 as p5, dt.p6_md5 as p6, dt.p7_md5 as p7 from dt dt join rr rr on (rr.pt = 'ios' and rr.t > 1478185592 and dt.aid = rr.aid and dt.dic = rr.dic) where dt.pt = 'ios' and dt.t > 1478185592 and dt.bm = 0 limit 2000;
 id	count	task	operator info
-Projection_10	0.00	root	dt.id, dt.aid, dt.pt, dt.dic, dt.cm, rr.gid, rr.acd, rr.t, dt.p1, dt.p2, dt.p3, dt.p4, dt.p5, dt.p6_md5, dt.p7_md5
+Projection_10	0.00	root	test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	0.00	root	offset:0, count:2000
-  └─IndexJoin_19	0.00	root	inner join, inner:IndexLookUp_18, outer key:dt.aid, dt.dic, inner key:rr.aid, rr.dic
+  └─IndexJoin_19	0.00	root	inner join, inner:IndexLookUp_18, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic
     ├─TableReader_41	0.00	root	data:Selection_40
-    │ └─Selection_40	0.00	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592), not(isnull(dt.dic))
+    │ └─Selection_40	0.00	cop	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
     │   └─TableScan_39	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
-    └─IndexLookUp_18	3.33	root	
-      ├─IndexScan_15	10.00	cop	table:rr, index:aid, dic, range: decided by [dt.aid dt.dic], keep order:false, stats:pseudo
-      └─Selection_17	3.33	cop	eq(rr.pt, "ios"), gt(rr.t, 1478185592)
+    └─IndexLookUp_18	0.00	root	
+      ├─IndexScan_15	10.00	cop	table:rr, index:aid, dic, range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false, stats:pseudo
+      └─Selection_17	0.00	cop	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
         └─TableScan_16	10.00	cop	table:rr, keep order:false, stats:pseudo
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	count	task	operator info
