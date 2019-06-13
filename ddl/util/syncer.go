@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package util
 
 import (
 	"context"
@@ -50,6 +50,8 @@ const (
 	keyOpDefaultTimeout  = 2 * time.Second
 	keyOpRetryInterval   = 30 * time.Millisecond
 	checkVersInterval    = 20 * time.Millisecond
+
+	ddlPrompt = "ddl-syncer"
 )
 
 var (
@@ -59,8 +61,8 @@ var (
 	// SyncerSessionTTL is the etcd session's TTL in seconds.
 	// and it's an exported variable for testing.
 	SyncerSessionTTL = 10 * 60
-	// WaitTimeWhenErrorOccured is waiting interval when processing DDL jobs encounter errors.
-	WaitTimeWhenErrorOccured = 1 * time.Second
+	// ddlLogCtx uses for log.
+	ddlLogCtx = context.Background()
 )
 
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
