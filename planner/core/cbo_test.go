@@ -991,6 +991,47 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 	c.Assert(hasIndexLookUp21, IsTrue)
 }
 
+func (s *testAnalyzeSuite) TestVirtualGeneratedColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int as (a+1) virtual, c int as (b+1) virtual, d int as (c+1) virtual, key(b), index idx(c, d))")
+	tk.MustExec("insert into t1 (a) values (0)")
+
+	tk.MustQuery("explain select b from t1 where b=1").Check(testkit.Rows(
+		"IndexReader_6 10.00 root index:IndexScan_5",
+		"└─IndexScan_5 10.00 cop table:t1, index:b, range:[1,1], keep order:false, stats:pseudo"))
+	tk.MustQuery("select b from t1 where b=1").Check(testkit.Rows("1"))
+
+	tk.MustQuery("explain select b, c, d from t1 where b=1").Check(testkit.Rows(
+		"Projection_11 10.00 root cast(plus(test.t1.a, 1)), cast(plus(cast(plus(test.t1.a, 1)), 1)), cast(plus(cast(plus(cast(plus(test.t1.a, 1)), 1)), 1))",
+		"└─IndexLookUp_12 10.00 root ",
+		"  ├─IndexScan_9 10.00 cop table:t1, index:b, range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableScan_10 10.00 cop table:t1, keep order:false, stats:pseudo"))
+	tk.MustQuery("select b, c, d from t1 where b=1").Check(testkit.Rows("1 2 3"))
+
+	tk.MustQuery("explain select * from t1 where b=1").Check(testkit.Rows(
+		"Projection_11 10.00 root test.t1.a, cast(plus(test.t1.a, 1)), cast(plus(cast(plus(test.t1.a, 1)), 1)), cast(plus(cast(plus(cast(plus(test.t1.a, 1)), 1)), 1))",
+		"└─IndexLookUp_12 10.00 root ",
+		"  ├─IndexScan_9 10.00 cop table:t1, index:b, range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableScan_10 10.00 cop table:t1, keep order:false, stats:pseudo"))
+	tk.MustQuery("select * from t1 where b=1").Check(testkit.Rows("0 1 2 3"))
+
+	tk.MustQuery("explain select c from t1 where c=2 and d=3").Check(testkit.Rows(
+		"Projection_4 0.10 root test.t1.c",
+		"└─IndexReader_6 0.10 root index:IndexScan_5",
+		"  └─IndexScan_5 0.10 cop table:t1, index:c, d, range:[2 3,2 3], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("select c from t1 where c=2 and d=3").Check(testkit.Rows("2"))
+}
+
 func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
