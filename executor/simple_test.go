@@ -412,12 +412,12 @@ func (s *testSuite3) TestDropStats(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
-	h.Lease = 1
+	h.SetLease(1)
 	testKit.MustExec("drop stats t")
 	h.Update(is)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
-	h.Lease = 0
+	h.SetLease(0)
 }
 
 func (s *testSuite3) TestFlushTables(c *C) {

@@ -29,7 +29,7 @@ import (
 func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
-	lease := mathutil.MaxInt64(int64(h.Lease), int64(ddlLease))
+	lease := mathutil.MaxInt64(int64(h.Lease()), int64(ddlLease))
 	offset := DurationToTS(10 * time.Duration(lease))
 	if h.LastUpdateVersion() < offset {
 		return nil
