@@ -31,16 +31,18 @@ import (
 
 // Handle is the handler for expensive query.
 type Handle struct {
-	exitCh chan struct{}
+	memExceedConnCh chan uint64
+	exitCh          chan struct{}
 }
 
 // NewExpensiveQueryHandle builds a new expensive query handler.
 func NewExpensiveQueryHandle(exitCh chan struct{}) *Handle {
-	return &Handle{exitCh}
+	return &Handle{make(chan uint64, 1024), exitCh}
 }
 
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run(sm util.SessionManager) {
+	defer close(eqh.memExceedConnCh)
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 	curInterval := time.Second * time.Duration(threshold)
 	ticker := time.NewTicker(curInterval / 2)
@@ -66,10 +68,25 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 				ticker.Stop()
 				ticker = time.NewTicker(curInterval / 2)
 			}
+		case connID := <-eqh.memExceedConnCh:
+			if log.GetLevel() > zapcore.WarnLevel {
+				continue
+			}
+			info, ok := sm.GetProcessInfo(connID)
+			if !ok {
+				continue
+			}
+			logExpensiveQuery(time.Since(info.Time), info)
 		case <-eqh.exitCh:
 			return
 		}
 	}
+}
+
+// LogOnQueryExceedMemQuota passes the connID to `memExceedConnCh` to notify the
+// expensive query handler to log it.
+func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
+	eqh.memExceedConnCh <- connID
 }
 
 // logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
