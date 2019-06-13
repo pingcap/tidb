@@ -741,7 +741,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	}{
 		{
 			// test primary key feedback
-			sql: "select * from t where t.a <= 5",
+			sql: "select * from t where t.a <= 5 order by a desc",
 			hist: "column:1 ndv:4 totColSize:0\n" +
 				"num: 1 lower_bound: -9223372036854775808 upper_bound: 1 repeats: 0\n" +
 				"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n" +

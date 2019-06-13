@@ -128,6 +128,11 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
+// ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
+type ReloadExprPushdownBlacklist struct {
+	baseSchemaProducer
+}
+
 // Change represents a change plan.
 type Change struct {
 	baseSchemaProducer
