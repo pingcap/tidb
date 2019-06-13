@@ -852,7 +852,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 
 // TODO: more comments
 //	1. check if there are some virtual generated columns to handle;
-//	2. remove virtual columns in this table plan;
+//	2. substitute virtual columns in this table plan;
 //	3. substitute table filters in this table plan;
 //	4. distinguish table filters that can't be pushed down from these can be;
 //	5. if there are some table filters that can't be pushed down, add a Selection upon this DataSource;
@@ -869,19 +869,8 @@ func (ds *DataSource) resolveVirtualColumns(copTask *copTask, stats *property.St
 		return
 	}
 
-	// step 2
-	newSchema := ts.Schema().Clone()
-	newColumns := make([]*model.ColumnInfo, 0, len(ts.Columns))
-	for i := 0; i < len(newSchema.Columns); i++ {
-		if i < len(newColumns) {
-			if newColumns[i].IsGenerated() && !newColumns[i].GeneratedStored {
-				newColumns = append(newColumns[:i], newColumns[i+1:]...)
-				newSchema.Columns = append(newSchema.Columns[:i], newSchema.Columns[i+1:]...)
-			}
-		}
-	}
-	ts.schema = newSchema
-	ts.Columns = newColumns
+	// step 2: substitute virtual columns
+	ds.substituteVirtualColumns(ts)
 
 	// step 3
 	for i, expr := range ts.filterCondition {
@@ -910,6 +899,57 @@ func (ds *DataSource) resolveVirtualColumns(copTask *copTask, stats *property.St
 	proj.SetSchema(ds.Schema())
 	t = proj.attach2Task(t)
 	return
+}
+
+// substituteVirtualColumns substitute virtual columns to physical columns.
+func (ds *DataSource) substituteVirtualColumns(ts *PhysicalTableScan) {
+	// clone a new Schema to modify for safety
+	schema := ts.Schema().Clone()
+	colInfos := make([]*model.ColumnInfo, 0, len(ts.Columns))
+	colInfos = append(colInfos, ts.Columns...)
+
+	// derive physical columns from virtual columns
+	phyCols := make(map[int64]*expression.Column)        // physical columns this ts already has
+	virCols := make(map[int64]*expression.Column)        // virtual columns this ts has
+	phyColsFromVir := make(map[int64]*expression.Column) // physical columns derived from virtual columns
+	for i := 0; i < len(schema.Columns); i++ {
+		if i < len(colInfos) {
+			if colInfos[i].IsGenerated() && !colInfos[i].GeneratedStored {
+				virCols[schema.Columns[i].UniqueID] = schema.Columns[i]
+				expr := expression.ColumnSubstitute(schema.Columns[i], ds.virtualColSchema, ds.virtualColExprs)
+				for _, phyColFromVir := range expression.ExtractColumns(expr) {
+					phyColsFromVir[phyColFromVir.UniqueID] = phyColFromVir
+				}
+			} else {
+				phyCols[schema.Columns[i].UniqueID] = schema.Columns[i]
+			}
+		}
+	}
+
+	// remove virtual columns and add new derived physical columns
+	for i := 0; i < len(schema.Columns); i++ {
+		if _, ok := virCols[schema.Columns[i].UniqueID]; ok {
+			schema.Columns = append(schema.Columns[:i], schema.Columns[i+1:]...)
+			colInfos = append(colInfos[:i], colInfos[i+1:]...)
+		}
+	}
+	for id, col := range phyColsFromVir {
+		if _, ok := phyCols[id]; !ok {
+			schema.Columns = append(schema.Columns, col)
+			var colInfo *model.ColumnInfo
+			for _, ci := range ds.tableInfo.Cols() {
+				if ci.Name.O == col.ColName.O {
+					colInfo = ci
+					break
+				}
+			}
+			colInfos = append(colInfos, colInfo)
+			phyCols[id] = col
+		}
+	}
+
+	ts.Columns = colInfos
+	ts.SetSchema(schema)
 }
 
 func (ds *DataSource) addPushedDownSelection(copTask *copTask, ts *PhysicalTableScan, stats *property.StatsInfo) {
