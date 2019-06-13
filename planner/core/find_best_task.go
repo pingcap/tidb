@@ -848,7 +848,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-// TODO: more comments
+// pushDownSelAndResolveVirtualCols push some filters down to coprocessor and resolve virtual columns
 //	1. check if there are some virtual generated columns to handle;
 //	2. substitute virtual columns in this table plan;
 //	3. substitute table filters in this table plan;
