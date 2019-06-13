@@ -356,6 +356,24 @@ func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
 
 	// Check whether collected sentRequestsAddrs and sentRequests matches given ranges and stores.
 	checkSentRequests := func(expectedRanges []util.DelRangeTask, expectedStores []*metapb.Store) {
+		c.Logf("expectedRanges:")
+		for _, r := range expectedRanges {
+			c.Logf(" %+q, %+q", r.StartKey, r.EndKey)
+		}
+		c.Logf("expectedStores:")
+		for _, s := range expectedStores {
+			c.Logf(" %v", s.Address)
+		}
+
+		c.Logf("sentRequests:")
+		for _, r := range sentRequests {
+			c.Logf(" %+q, %+q", r.UnsafeDestroyRange.StartKey, r.UnsafeDestroyRange.EndKey)
+		}
+		c.Logf("sentRequestsAddrs:")
+		for _, s := range sentRequestsAddrs {
+			c.Logf(" %v", s)
+		}
+
 		for rangeIndex := range expectedRanges {
 			l := rangeIndex * len(expectedStores)
 			r := (rangeIndex + 1) * len(expectedStores)
