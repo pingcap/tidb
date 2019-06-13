@@ -60,10 +60,11 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		return errors.Trace(err)
 	}
 
-	schemaID, err := d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	schemaID := genIDs[0]
 	dbInfo := &model.DBInfo{
 		Name: schema,
 	}
@@ -967,10 +968,11 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 	// When this function is called by MockTableInfo, we should set a particular table id.
 	// So the `ddl` structure may be nil.
 	if d != nil {
-		tbInfo.ID, err = d.genGlobalID()
+		genIDs, err := d.genGlobalIDs(1)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		tbInfo.ID = genIDs[0]
 	}
 	for _, v := range cols {
 		v.ID = allocateColumnID(tbInfo)
@@ -1097,10 +1099,22 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	}
 
 	tblInfo := buildTableInfoWithLike(ident, referTbl.Meta())
-	tblInfo.ID, err = d.genGlobalID()
+	count := 1
+	if tblInfo.Partition != nil {
+		count += len(tblInfo.Partition.Definitions)
+	}
+	var genIDs []int64
+	genIDs, err = d.genGlobalIDs(count)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	tblInfo.ID = genIDs[0]
+	if tblInfo.Partition != nil {
+		for i := 0; i < len(tblInfo.Partition.Definitions); i++ {
+			tblInfo.Partition.Definitions[i].ID = genIDs[i+1]
+		}
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tblInfo.ID,
@@ -1135,6 +1149,12 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) mode
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
+	if referTblInfo.Partition != nil {
+		pi := *referTblInfo.Partition
+		pi.Definitions = make([]model.PartitionDefinition, len(referTblInfo.Partition.Definitions))
+		copy(pi.Definitions, referTblInfo.Partition.Definitions)
+		tblInfo.Partition = &pi
+	}
 	return tblInfo
 }
 
@@ -1647,8 +1667,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
-			ok, _ := hasAutoIncrementColumn(tbInfo)
-			if ok && op.UintValue != 0 {
+			if op.UintValue > 0 && tbInfo.PKIsHandle {
 				return errUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
@@ -1907,13 +1926,12 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ok, _ := hasAutoIncrementColumn(t.Meta())
-	if ok && uVal != 0 {
-		return errUnsupportedShardRowIDBits
-	}
 	if uVal == t.Meta().ShardRowIDBits {
 		// Nothing need to do.
 		return nil
+	}
+	if uVal > 0 && t.Meta().PKIsHandle {
+		return errUnsupportedShardRowIDBits
 	}
 	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
 	if err != nil {
@@ -2870,10 +2888,11 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newTableID, err := d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	newTableID := genIDs[0]
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
@@ -3168,8 +3187,12 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		Columns: meta.Partition.Columns,
 		Enable:  meta.Partition.Enable,
 	}
+	genIDs, err := d.genGlobalIDs(len(spec.PartDefinitions))
+	if err != nil {
+		return nil, err
+	}
 	buf := new(bytes.Buffer)
-	for _, def := range spec.PartDefinitions {
+	for ith, def := range spec.PartDefinitions {
 		if err := def.Clause.Validate(part.Type, len(part.Columns)); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -3190,14 +3213,10 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 			}
 			// Partition by range columns if len(part.Columns) != 0.
 		}
-		pid, err1 := d.genGlobalID()
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
-			ID:      pid,
+			ID:      genIDs[ith],
 			Comment: comment,
 		}
 
