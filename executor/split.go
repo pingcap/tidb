@@ -46,7 +46,7 @@ type SplitIndexRegionExec struct {
 
 type splitableStore interface {
 	SplitRegionAndScatter(splitKey kv.Key) (uint64, error)
-	WaitScatterRegionFinish(regionID uint64) error
+	WaitScatterRegionFinish(regionID uint64, backoffTime int) error
 }
 
 // Next implements the Executor Next interface.
@@ -73,11 +73,11 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 		regionIDs = append(regionIDs, regionID)
 
 	}
-	if !e.ctx.GetSessionVars().WaitTableSplitFinish {
+	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
 	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID)
+		err := s.WaitScatterRegionFinish(regionID, e.ctx.GetSessionVars().Backoff.GetWaitScatterRegionFinishBackoff())
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("wait scatter region failed",
 				zap.Uint64("regionID", regionID),
@@ -239,11 +239,11 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 		}
 		regionIDs = append(regionIDs, regionID)
 	}
-	if !e.ctx.GetSessionVars().WaitTableSplitFinish {
+	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
 	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID)
+		err := s.WaitScatterRegionFinish(regionID, e.ctx.GetSessionVars().Backoff.GetWaitScatterRegionFinishBackoff())
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("wait scatter region failed",
 				zap.Uint64("regionID", regionID),

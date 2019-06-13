@@ -99,10 +99,11 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 	return nil
 }
 
-func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
+func (s *tikvStore) WaitScatterRegionFinish(regionID uint64, backoffTime int) error {
 	logutil.Logger(context.Background()).Info("wait scatter region",
-		zap.Uint64("regionID", regionID))
-	bo := NewBackoffer(context.Background(), waitScatterRegionFinishBackoff)
+		zap.Uint64("regionID", regionID),
+		zap.Int("backoff time", backoffTime))
+	bo := NewBackoffer(context.Background(), backoffTime)
 	logFreq := 0
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)

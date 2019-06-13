@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -343,7 +344,7 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 type splitableStore interface {
 	SplitRegion(splitKey kv.Key) error
 	SplitRegionAndScatter(splitKey kv.Key) (uint64, error)
-	WaitScatterRegionFinish(regionID uint64) error
+	WaitScatterRegionFinish(regionID uint64, backoffTime int) error
 }
 
 func splitPartitionTableRegion(store kv.Storage, pi *model.PartitionInfo) {
@@ -365,7 +366,7 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	}
 }
 
-func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSplitFinish bool) {
+func preSplitTableShardRowIDBitsRegion(ctx sessionctx.Context, store kv.Storage, tblInfo *model.TableInfo, waitTableSplitFinish bool) {
 	s, ok := store.(splitableStore)
 	if !ok {
 		return
@@ -426,7 +427,7 @@ func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSp
 		return
 	}
 	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID)
+		err := s.WaitScatterRegionFinish(regionID, ctx.GetSessionVars().Backoff.GetWaitScatterRegionFinishBackoff())
 		if err != nil {
 			logutil.Logger(ddlLogCtx).Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 		}

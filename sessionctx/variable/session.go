@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -342,8 +343,8 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
-	// WaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
-	WaitTableSplitFinish bool
+	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
+	WaitSplitRegionFinish bool
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -379,6 +380,9 @@ type SessionVars struct {
 
 	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	LowResolutionTSO bool
+
+	// Backoff is used for set the back off time.
+	Backoff backoff.BackoffTime
 }
 
 // ConnectionInfo present connection used by audit.
@@ -792,8 +796,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SlowQueryFile = val
 	case TiDBEnableFastAnalyze:
 		s.EnableFastAnalyze = TiDBOptOn(val)
-	case TiDBWaitTableSplitFinish:
-		s.WaitTableSplitFinish = TiDBOptOn(val)
+	case TiDBWaitSplitRegionFinish:
+		s.WaitSplitRegionFinish = TiDBOptOn(val)
+	case TiDBWaitSplitRegionFinishBackoff:
+		s.Backoff.SetWaitScatterRegionFinishBackoff(int(tidbOptInt64(val, backoff.WaitScatterRegionFinishBackoff)))
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:

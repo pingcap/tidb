@@ -15,12 +15,14 @@ package executor_test
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -341,12 +343,21 @@ func (s *testSuite2) TestSetVar(c *C) {
 	_, err = tk.Exec("set global read_only = abc")
 	c.Assert(err, NotNil)
 
-	// test for tidb_wait_table_split_finish
-	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_wait_table_split_finish = 1")
-	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("1"))
-	tk.MustExec("set tidb_wait_table_split_finish = 0")
-	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("0"))
+	// test for tidb_wait_split_region_finish
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_wait_split_region_finish = 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_wait_split_region_finish = 0")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
+
+	// test for tidb_wait_split_region_finish_backoff
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish_backoff;`).Check(testkit.Rows(strconv.Itoa(backoff.WaitScatterRegionFinishBackoff)))
+	tk.MustExec("set tidb_wait_split_region_finish_backoff = 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish_backoff;`).Check(testkit.Rows("1"))
+	_, err = tk.Exec("set tidb_wait_split_region_finish_backoff = 0")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_wait_split_region_finish_backoff(0) cannot be smaller than 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish_backoff;`).Check(testkit.Rows("1"))
 
 	tk.MustExec("set session tidb_back_off_weight = 3")
 	tk.MustQuery("select @@session.tidb_back_off_weight;").Check(testkit.Rows("3"))

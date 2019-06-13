@@ -1274,7 +1274,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		var preSplitAndScatter func()
 		// do pre-split and scatter.
 		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-			preSplitAndScatter = func() { preSplitTableRegion(d.store, tbInfo, ctx.GetSessionVars().WaitTableSplitFinish) }
+			preSplitAndScatter = func() {
+				preSplitTableShardRowIDBitsRegion(ctx, d.store, tbInfo, ctx.GetSessionVars().WaitSplitRegionFinish)
+			}
 		} else if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			pi := tbInfo.GetPartitionInfo()
 			if pi != nil {
@@ -1284,7 +1286,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			}
 		}
 		if preSplitAndScatter != nil {
-			if ctx.GetSessionVars().WaitTableSplitFinish {
+			if ctx.GetSessionVars().WaitSplitRegionFinish {
 				preSplitAndScatter()
 			} else {
 				go preSplitAndScatter()
