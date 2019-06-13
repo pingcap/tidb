@@ -1030,6 +1030,21 @@ func (s *testAnalyzeSuite) TestVirtualGeneratedColumn(c *C) {
 		"  └─IndexScan_5 0.10 cop table:t1, index:c, d, range:[2 3,2 3], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select c from t1 where c=2 and d=3").Check(testkit.Rows("2"))
+
+	tk.MustExec(`CREATE TABLE person (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    address_info JSON,
+    city_no INT AS (JSON_EXTRACT(address_info, '$.city_no')) VIRTUAL,
+    KEY(city_no))`)
+	tk.MustExec(`INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS JSON))`)
+	tk.MustQuery(`EXPLAIN SELECT name FROM person where city_no=1`).Check(testkit.Rows(
+		"Projection_4 10.00 root test.person.name",
+		`└─Projection_11 10.00 root test.person.name, cast(json_extract(test.person.address_info, "$.city_no"))`,
+		`  └─IndexLookUp_12 10.00 root `,
+		`    ├─IndexScan_9 10.00 cop table:person, index:city_no, range:[1,1], keep order:false, stats:pseudo`,
+		`    └─TableScan_10 10.00 cop table:person, keep order:false, stats:pseudo`))
+	tk.MustQuery(`SELECT name FROM person where city_no=1`).Check(testkit.Rows("John"))
 }
 
 func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
