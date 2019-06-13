@@ -1239,7 +1239,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
-			if hasAutoIncrementColumn(tbInfo) && op.UintValue != 0 {
+			if op.UintValue > 0 && tbInfo.PKIsHandle {
 				return errUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
@@ -1452,12 +1452,12 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if hasAutoIncrementColumn(t.Meta()) && uVal != 0 {
-		return errUnsupportedShardRowIDBits
-	}
 	if uVal == t.Meta().ShardRowIDBits {
 		// Nothing need to do.
 		return nil
+	}
+	if uVal > 0 && t.Meta().PKIsHandle {
+		return errUnsupportedShardRowIDBits
 	}
 	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
 	if err != nil {
