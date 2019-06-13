@@ -60,7 +60,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		return errors.Trace(err)
 	}
 
-	genIDs, err := d.genGlobalID(1)
+	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -968,7 +968,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 	// When this function is called by MockTableInfo, we should set a particular table id.
 	// So the `ddl` structure may be nil.
 	if d != nil {
-		genIDs, err := d.genGlobalID(1)
+		genIDs, err := d.genGlobalIDs(1)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1104,7 +1104,7 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 		count += len(tblInfo.Partition.Definitions)
 	}
 	var genIDs []int64
-	genIDs, err = d.genGlobalID(count)
+	genIDs, err = d.genGlobalIDs(count)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2890,7 +2890,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	genIDs, err := d.genGlobalID(1)
+	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3189,7 +3189,7 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		Columns: meta.Partition.Columns,
 		Enable:  meta.Partition.Enable,
 	}
-	genIDs, err := d.genGlobalID(len(spec.PartDefinitions))
+	genIDs, err := d.genGlobalIDs(len(spec.PartDefinitions))
 	if err != nil {
 		return nil, err
 	}

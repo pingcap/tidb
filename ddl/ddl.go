@@ -495,14 +495,14 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
 }
 
-func (d *ddl) genGlobalID(count int) ([]int64, error) {
+func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	ret := make([]int64, count)
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
 
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
-				failpoint.Return(errors.New("gofail genGlobalID error"))
+				failpoint.Return(errors.New("gofail genGlobalIDs error"))
 			}
 		})
 

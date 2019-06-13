@@ -115,7 +115,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 }
 
 func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
-	genIDs, err := d.genGlobalID(int(pi.Num))
+	genIDs, err := d.genGlobalIDs(int(pi.Num))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -135,7 +135,7 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Create
 }
 
 func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
-	genIDs, err := d.genGlobalID(len(s.Partition.Definitions))
+	genIDs, err := d.genGlobalIDs(len(s.Partition.Definitions))
 	if err != nil {
 		return err
 	}
