@@ -482,6 +482,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchKeys) *tikvrpc.Reque
 			LockTtl:           c.lockTTL,
 			IsPessimisticLock: isPessimisticLock,
 			ForUpdateTs:       c.forUpdateTS,
+			TxnSize:           uint64(len(batch.keys)),
 		},
 		Context: pb.Context{
 			Priority: c.priority,
