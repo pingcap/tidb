@@ -159,9 +159,9 @@ func TestSyncerSimple(t *testing.T) {
 
 	// for StartCleanWork
 	go d.SchemaSyncer().StartCleanWork()
-	ttl := 10 * 60
-	// Make sure NeededCleanTTL > 1/3 ttl, then we definitely clean the ttl.
-	NeededCleanTTL = int64(5 * 60)
+	ttl := 10
+	// Make sure NeededCleanTTL > 2/3 ttl, then we definitely clean the ttl.
+	NeededCleanTTL = int64(9)
 	ttlKey := "session_ttl_key"
 	ttlVal := "session_ttl_val"
 	session, err := owner.NewSession(ctx, "", cli, owner.NewSessionDefaultRetryCnt, ttl)
