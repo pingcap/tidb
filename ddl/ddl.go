@@ -98,7 +98,7 @@ var (
 		"unsupported drop integer primary key")
 	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
 
-	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with auto_increment column.")
+	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with primary key as row id.")
 	errBlobKeyWithoutLength      = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
 	errIncorrectPrefixKey        = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 	errTooLongKey                = terror.ClassDDL.New(codeTooLongKey,
@@ -495,22 +495,28 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
 }
 
-func (d *ddl) genGlobalID() (int64, error) {
-	var globalID int64
+func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
+	ret := make([]int64, count)
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
 
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
-				failpoint.Return(errors.New("gofail genGlobalID error"))
+				failpoint.Return(errors.New("gofail genGlobalIDs error"))
 			}
 		})
 
-		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
+		m := meta.NewMeta(txn)
+		for i := 0; i < count; i++ {
+			ret[i], err = m.GenGlobalID()
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 
-	return globalID, errors.Trace(err)
+	return ret, err
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.

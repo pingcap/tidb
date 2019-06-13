@@ -458,3 +458,13 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	c.Assert(len(req.Prewrite.IsPessimisticLock), Greater, 0)
 	c.Assert(req.Prewrite.ForUpdateTs, Equals, uint64(100))
 }
+
+func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
+	txn := s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	err := txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	c.Assert(err, IsNil)
+	err = txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	c.Assert(err, IsNil)
+	c.Assert(txn.lockKeys, HasLen, 2)
+}
