@@ -56,7 +56,7 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 
 	children := make([]*tipb.Expr, 0, len(aggFunc.Args))
 	for _, arg := range aggFunc.Args {
-		pbArg := pc.ExprToPB(arg)
+		pbArg := pc.ExprToPB(sc, arg)
 		if pbArg == nil {
 			return nil
 		}

@@ -41,6 +41,15 @@ func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
 }
 
+// implicitParameters returns the implicit parameters of this function.
+// implicit parameters means some functions contain extra inner fields which will not
+// contain in `tipb.Expr.children` but must be pushed down to coprocessor
+func (b *baseBuiltinFunc) implicitParameters() []types.Datum {
+	// We will not use a field to store them because of only
+	// a few functions contain implicit parameters
+	return nil
+}
+
 func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 	b.pbCode = c
 }
@@ -244,6 +253,17 @@ type baseBuiltinCastFunc struct {
 	inUnion bool
 }
 
+// implicitParameters returns the implicit parameters of cast functions
+func (b *baseBuiltinCastFunc) implicitParameters() []types.Datum {
+	params := b.baseBuiltinFunc.implicitParameters()
+	if b.inUnion {
+		params = append(params, types.NewIntDatum(1))
+	} else {
+		params = append(params, types.NewIntDatum(0))
+	}
+	return params
+}
+
 func (b *baseBuiltinCastFunc) cloneFrom(from *baseBuiltinCastFunc) {
 	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
 	b.inUnion = from.inUnion
@@ -284,6 +304,10 @@ type builtinFunc interface {
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
 	PbCode() tipb.ScalarFuncSig
+	// implicitParameters returns the implicit parameters of a function.
+	// implicit parameters means some functions contain extra inner fields which will not
+	// contain in `tipb.Expr.children` but must be pushed down to coprocessor
+	implicitParameters() []types.Datum
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
 }

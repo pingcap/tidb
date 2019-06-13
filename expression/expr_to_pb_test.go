@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -592,4 +593,32 @@ func (s *testEvaluatorSuite) TestSortByItem2Pb(c *C) {
 	js, err = json.Marshal(pbByItem)
 	c.Assert(err, IsNil)
 	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},\"desc\":true}")
+}
+
+func (s *testEvaluatorSuite) TestImplicitParameters(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("all")`), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/PushDownTestSwitcher"), IsNil) }()
+
+	pc := PbConverter{client: client, sc: sc}
+
+	// None flag
+	cast := BuildCastFunction(mock.NewContext(), dg.genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	c.Assert(cast.(*ScalarFunction).Function.implicitParameters(), IsNil)
+	expr := pc.ExprToPB(sc, cast)
+	c.Assert(expr.Sig, Equals, tipb.ScalarFuncSig_CastStringAsInt)
+	c.Assert(len(expr.Val), Equals, 0)
+
+	// InUnion flag
+	castInUnion := BuildCastFunction4Union(mock.NewContext(), dg.genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	c.Assert(castInUnion.(*ScalarFunction).Function.implicitParameters(), DeepEquals, []types.Datum{types.NewIntDatum(1)})
+	expr = pc.ExprToPB(sc, castInUnion)
+	c.Assert(expr.Sig, Equals, tipb.ScalarFuncSig_CastStringAsInt)
+	c.Assert(len(expr.Val), Greater, 0)
+	datums, err := codec.Decode(expr.Val, 1)
+	c.Assert(err, IsNil)
+	c.Assert(datums, DeepEquals, []types.Datum{types.NewIntDatum(1)})
 }
