@@ -848,13 +848,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-// pushDownSelAndResolveVirtualCols push some filters down to coprocessor and resolve virtual columns
-//	1. check if there are some virtual generated columns to handle;
-//	2. substitute virtual columns in this table plan;
-//	3. substitute table filters in this table plan;
-//	4. distinguish table filters that can't be pushed down from these can be;
-//	5. if there are some table filters that can't be pushed down, add a Selection upon this DataSource;
-//	6. add a Projection upon this DataSource/Selection;
+// pushDownSelAndResolveVirtualCols push some filters down to coprocessor and resolve virtual columns.
+//	1. push down filters and check if there is virtual column.
+//	2. substitute virtual columns in TableScan's Schema to corresponding physical columns.
+//	3. substitute virtual columns in TableScan's filters and push them down.
+//	4. add a Projection upon this DataSource.
 func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *accessPath, stats *property.StatsInfo) (t task) {
 	// step 1
 	t = copTask
@@ -870,28 +868,22 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 		return
 	}
 
-	// step 2: substitute virtual columns
+	// step 2
 	ds.substituteVirtualColumns(ts)
 
 	// step 3
 	for i, expr := range ts.filterCondition {
 		ts.filterCondition[i] = expression.ColumnSubstitute(expr, ds.virtualColSchema, ds.virtualColExprs)
 	}
-
-	// step 4: since Cast functions cannot be pushed down, so all filter cannot be pushed down now.
-	cantBePushed := ts.filterCondition
+	cantBePushed := ts.filterCondition // all Cast cannot be pushed down now
 	ts.filterCondition = ts.filterCondition[:0]
-
-	// step 4.5: add a Cop Selection
 	ds.addPushedDownTableScan(copTask, ts, stats)
-
-	// step 5
-	if len(cantBePushed) > 0 {
+	if len(cantBePushed) > 0 { // for filters cannot be pushed down, we add a root Selection to handle them
 		sel := PhysicalSelection{Conditions: cantBePushed}.Init(ds.ctx, stats)
 		t = sel.attach2Task(copTask)
 	}
 
-	// step 6
+	// step 4
 	projExprs := make([]expression.Expression, 0, len(ds.Schema().Columns))
 	for _, c := range ds.Schema().Columns {
 		projExprs = append(projExprs, expression.ColumnSubstitute(c, ds.virtualColSchema, ds.virtualColExprs))
@@ -902,7 +894,7 @@ func (ds *DataSource) pushDownSelAndResolveVirtualCols(copTask *copTask, path *a
 	return
 }
 
-// substituteVirtualColumns substitute virtual columns to physical columns.
+// substituteVirtualColumns substitute virtual columns in TableScan's Schema to physical columns.
 func (ds *DataSource) substituteVirtualColumns(ts *PhysicalTableScan) {
 	// clone a new Schema to modify for safety
 	schema := ts.Schema().Clone()
@@ -949,6 +941,7 @@ func (ds *DataSource) substituteVirtualColumns(ts *PhysicalTableScan) {
 		}
 	}
 
+	// update TableScan's Schema
 	ts.Columns = colInfos
 	ts.SetSchema(schema)
 }
