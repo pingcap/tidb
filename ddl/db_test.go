@@ -63,9 +63,6 @@ var _ = Suite(&testDBSuite2{&testDBSuite{}})
 var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
-var _ = Suite(&testDBSuite6{&testDBSuite{}})
-var _ = Suite(&testDBSuite7{&testDBSuite{}})
-var _ = Suite(&testDBSuite8{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 
@@ -131,9 +128,6 @@ type testDBSuite2 struct{ *testDBSuite }
 type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
-type testDBSuite6 struct{ *testDBSuite }
-type testDBSuite7 struct{ *testDBSuite }
-type testDBSuite8 struct{ *testDBSuite }
 
 func assertErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
 	_, err := tk.Exec(sql)
@@ -144,7 +138,7 @@ func assertErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
 	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
 }
 
-func (s *testDBSuite6) TestAddIndexWithPK(c *C) {
+func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -494,7 +488,7 @@ func (s *testDBSuite5) TestCancelDropIndex(c *C) {
 }
 
 // TestCancelTruncateTable tests cancel ddl job which type is truncate table.
-func (s *testDBSuite7) TestCancelTruncateTable(c *C) {
+func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "create database if not exists test_truncate_table")
@@ -1276,7 +1270,7 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	s.tk.MustExec(sql)
 }
 
-func (s *testDBSuite8) TestColumn(c *C) {
+func (s *testDBSuite1) TestColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
@@ -1684,6 +1678,13 @@ func (s *testDBSuite5) TestCreateTableWithLike(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tbl1.Meta().ForeignKeys, IsNil)
 
+	// for table partition
+	s.tk.MustExec("use ctwl_db")
+	s.tk.MustExec("create table pt1 (id int) partition by range columns (id) (partition p0 values less than (10))")
+	s.tk.MustExec("insert into pt1 values (1),(2),(3),(4);")
+	s.tk.MustExec("create table ctwl_db1.pt1 like ctwl_db.pt1;")
+	s.tk.MustQuery("select * from ctwl_db1.pt1").Check(testkit.Rows())
+
 	// for failure cases
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
@@ -1701,7 +1702,7 @@ func (s *testDBSuite5) TestCreateTableWithLike(c *C) {
 }
 
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
-func (s *testDBSuite6) TestCreateTableWithLike2(c *C) {
+func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	s.tk.MustExec("drop table if exists t1,t2;")
@@ -2154,7 +2155,7 @@ func (s *testDBSuite5) TestRebaseAutoID(c *C) {
 	assertErrorCode(c, s.tk, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
 }
 
-func (s *testDBSuite7) TestCheckColumnDefaultValue(c *C) {
+func (s *testDBSuite5) TestCheckColumnDefaultValue(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
 	s.tk.MustExec("drop table if exists text_default_text;")
@@ -2331,7 +2332,7 @@ func (s *testDBSuite5) TestCheckConvertToCharacter(c *C) {
 	c.Assert(t.Cols()[0].Charset, Equals, "binary")
 }
 
-func (s *testDBSuite7) TestModifyColumnRollBack(c *C) {
+func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "drop table if exists t1")
@@ -2750,7 +2751,7 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("admin check table gcai_table")
 }
 
-func (s *testDBSuite6) TestIssue9100(c *C) {
+func (s *testDBSuite4) TestIssue9100(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));")
@@ -2793,7 +2794,7 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 
 }
 
-func (s *testDBSuite2) TestAlterShardRowIDBits(c *C) {
+func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	tk := s.tk
 
@@ -2859,4 +2860,9 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
+}
+
+func init() {
+	// Make sure it will only be executed once.
+	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
 }

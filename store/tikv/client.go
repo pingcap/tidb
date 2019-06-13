@@ -17,6 +17,7 @@ package tikv
 import (
 	"context"
 	"io"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -42,11 +43,11 @@ import (
 
 // MaxSendMsgSize set max gRPC request message size sent to server. If any request message size is larger than
 // current value, an error will be reported from gRPC.
-var MaxSendMsgSize = 1<<31 - 1
+var MaxSendMsgSize = 10 * 1024 * 1024
 
-// MaxCallMsgSize set max gRPC receive message size received from server. If any message size is larger than
+// MaxRecvMsgSize set max gRPC receive message size received from server. If any message size is larger than
 // current value, an error will be reported from gRPC.
-var MaxCallMsgSize = 1<<31 - 1
+var MaxRecvMsgSize = math.MaxInt64
 
 // Timeout durations.
 const (
@@ -258,7 +259,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
 			grpc.WithStreamInterceptor(streamInterceptor),
-			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxCallMsgSize)),
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxRecvMsgSize)),
 			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
 			grpc.WithBackoffMaxDelay(time.Second*3),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
@@ -334,6 +335,10 @@ type batchCommandsEntry struct {
 	// canceled indicated the request is canceled or not.
 	canceled int32
 	err      error
+}
+
+func (b *batchCommandsEntry) isCanceled() bool {
+	return atomic.LoadInt32(&b.canceled) == 1
 }
 
 const idleTimeout = 3 * time.Minute
@@ -476,6 +481,10 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			bestBatchWaitSize += 1
 		}
 
+		length = removeCanceledRequests(&entries, &requests)
+		if length == 0 {
+			continue // All requests are canceled.
+		}
 		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
 		for i := 0; i < length; i++ {
 			requestID := uint64(i) + maxBatchID - uint64(length)
@@ -504,6 +513,23 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			batchCommandsClient.failPendingRequests(err)
 		}
 	}
+}
+
+// removeCanceledRequests removes canceled requests before sending.
+func removeCanceledRequests(
+	entries *[]*batchCommandsEntry,
+	requests *[]*tikvpb.BatchCommandsRequest_Request) int {
+	validEntries := (*entries)[:0]
+	validRequets := (*requests)[:0]
+	for _, e := range *entries {
+		if !e.isCanceled() {
+			validEntries = append(validEntries, e)
+			validRequets = append(validRequets, e.req)
+		}
+	}
+	*entries = validEntries
+	*requests = validRequets
+	return len(*entries)
 }
 
 // rpcClient is RPC client struct.

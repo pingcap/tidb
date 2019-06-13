@@ -201,13 +201,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 type ExecuteExec struct {
 	baseExecutor
 
-	is        infoschema.InfoSchema
-	name      string
-	usingVars []expression.Expression
-	id        uint32
-	stmtExec  Executor
-	stmt      ast.StmtNode
-	plan      plannercore.Plan
+	is            infoschema.InfoSchema
+	name          string
+	usingVars     []expression.Expression
+	id            uint32
+	stmtExec      Executor
+	stmt          ast.StmtNode
+	plan          plannercore.Plan
+	lowerPriority bool
 }
 
 // Next implements the Executor Next interface.
@@ -235,7 +236,7 @@ func (e *ExecuteExec) Build(b *executorBuilder) error {
 	}
 	e.stmtExec = stmtExec
 	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
-	logExpensiveQuery(e.stmt, e.plan)
+	e.lowerPriority = needLowerPriority(e.plan)
 	return nil
 }
 

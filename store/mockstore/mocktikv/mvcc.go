@@ -42,11 +42,13 @@ type mvccValue struct {
 }
 
 type mvccLock struct {
-	startTS uint64
-	primary []byte
-	value   []byte
-	op      kvrpcpb.Op
-	ttl     uint64
+	startTS     uint64
+	primary     []byte
+	value       []byte
+	op          kvrpcpb.Op
+	ttl         uint64
+	forUpdateTS uint64
+	txnSize     uint64
 }
 
 type mvccEntry struct {
@@ -66,6 +68,7 @@ func (l *mvccLock) MarshalBinary() ([]byte, error) {
 	mh.WriteSlice(&buf, l.value)
 	mh.WriteNumber(&buf, l.op)
 	mh.WriteNumber(&buf, l.ttl)
+	mh.WriteNumber(&buf, l.forUpdateTS)
 	return buf.Bytes(), errors.Trace(mh.err)
 }
 
@@ -78,6 +81,7 @@ func (l *mvccLock) UnmarshalBinary(data []byte) error {
 	mh.ReadSlice(buf, &l.value)
 	mh.ReadNumber(buf, &l.op)
 	mh.ReadNumber(buf, &l.ttl)
+	mh.ReadNumber(buf, &l.forUpdateTS)
 	return errors.Trace(mh.err)
 }
 
@@ -429,7 +433,8 @@ type MVCCStore interface {
 	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS, forUpdateTS uint64, ttl uint64) []error
-	Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error
+	PessimisticRollback(keys [][]byte, startTS, forUpdateTS uint64) []error
+	Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS, ttl uint64) []error
 	Commit(keys [][]byte, startTS, commitTS uint64) error
 	Rollback(keys [][]byte, startTS uint64) error
 	Cleanup(key []byte, startTS uint64) error
