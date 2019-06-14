@@ -792,7 +792,7 @@ func (r *Region) GetMeta() *metapb.Region {
 	return proto.Clone(r.meta).(*metapb.Region)
 }
 
-// GetLeaderPeer returns leader region ID.
+// GetLeaderID returns leader region ID.
 func (r *Region) GetLeaderID() uint64 {
 	store := r.getStore()
 	if int(store.workStoreIdx) >= len(r.meta.Peers) {
