@@ -14,6 +14,7 @@
 package gcworker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"math"
@@ -350,54 +351,14 @@ func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
 	// Sort by address for checking.
 	sort.Slice(stores, func(i, j int) bool { return stores[i].Address < stores[j].Address })
 
-	// Hijack unsafe destroy range requests and collect them here.
-	sentRequestsAddrs := make([]string, 0, 3*3)
-	sentRequests := make([]*tikvrpc.Request, 0, 3*3)
+	sendReqCh := make(chan SentReq, 20)
 
-	// Check whether collected sentRequestsAddrs and sentRequests matches given ranges and stores.
-	checkSentRequests := func(expectedRanges []util.DelRangeTask, expectedStores []*metapb.Store) {
-		c.Logf("expectedRanges:")
-		for _, r := range expectedRanges {
-			c.Logf(" %+q, %+q", r.StartKey, r.EndKey)
-		}
-		c.Logf("expectedStores:")
-		for _, s := range expectedStores {
-			c.Logf(" %v", s.Address)
-		}
-
-		c.Logf("sentRequests:")
-		for _, r := range sentRequests {
-			c.Logf(" %+q, %+q", r.UnsafeDestroyRange.StartKey, r.UnsafeDestroyRange.EndKey)
-		}
-		c.Logf("sentRequestsAddrs:")
-		for _, s := range sentRequestsAddrs {
-			c.Logf(" %v", s)
-		}
-
-		for rangeIndex := range expectedRanges {
-			l := rangeIndex * len(expectedStores)
-			r := (rangeIndex + 1) * len(expectedStores)
-			addrs := sentRequestsAddrs[l:r]
-
-			sort.Slice(addrs, func(i, j int) bool {
-				return addrs[i] < addrs[j]
-			})
-			for storeIndex := range expectedStores {
-				i := rangeIndex*len(expectedRanges) + storeIndex
-				c.Assert(addrs[storeIndex], Equals, expectedStores[storeIndex].Address)
-				c.Assert(sentRequests[i].UnsafeDestroyRange.GetStartKey(), DeepEquals, expectedRanges[rangeIndex].StartKey)
-				c.Assert(sentRequests[i].UnsafeDestroyRange.GetEndKey(), DeepEquals, expectedRanges[rangeIndex].EndKey)
-			}
-		}
-	}
-
-	// Fail the first request and check if the other requests are sent.
-	isFirst := true
+	// The request sent to the specified key and store wil fail.
+	var failKey []byte = nil
+	var failStore *metapb.Store = nil
 	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		sentRequestsAddrs = append(sentRequestsAddrs, addr)
-		sentRequests = append(sentRequests, req)
-		if isFirst {
-			isFirst = false
+		sendReqCh <- SentReq{req, addr}
+		if bytes.Equal(req.UnsafeDestroyRange.GetStartKey(), failKey) && addr == failStore.GetAddress() {
 			return nil, errors.New("error")
 		}
 		return &tikvrpc.Response{
@@ -417,15 +378,13 @@ func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
 		}
 
 		// Make the first request fail.
-		isFirst = true
+		failKey = ranges[0].StartKey
+		failStore = stores[0]
 
 		err = deleteRangeFunc(context.Background(), 20)
 		c.Assert(err, IsNil)
-		c.Assert(isFirst, IsFalse)
 
-		checkSentRequests(ranges, stores)
-		sentRequests = sentRequests[:0]
-		sentRequestsAddrs = sentRequestsAddrs[:0]
+		s.checkDestroyRangeReq(c, sendReqCh, ranges, stores)
 
 		// The first delete range task should be still here since it didn't success.
 		se = createSession(s.gcWorker.store)
@@ -434,12 +393,13 @@ func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(remainingRanges, DeepEquals, ranges[:1])
 
+		failKey = nil
+		failStore = nil
+
 		// Delete the remaining range again.
 		err = deleteRangeFunc(context.Background(), 20)
 		c.Assert(err, IsNil)
-		checkSentRequests(ranges[:1], stores)
-		sentRequests = sentRequests[:0]
-		sentRequestsAddrs = sentRequestsAddrs[:0]
+		s.checkDestroyRangeReq(c, sendReqCh, ranges[:1], stores)
 
 		se = createSession(s.gcWorker.store)
 		remainingRanges, err = loadRangesFunc(se, 20)
@@ -452,6 +412,45 @@ func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
 	// Change the order because the first range is the last successfully deleted.
 	ranges = append(ranges[1:], ranges[0])
 	test(true)
+}
+
+type SentReq struct {
+	req  *tikvrpc.Request
+	addr string
+}
+
+// checkDestroyRangeReq checks whether given sentReq matches given ranges and stores.
+func (s *testGCWorkerSuite) checkDestroyRangeReq(c *C, sendReqCh chan SentReq, expectedRanges []util.DelRangeTask, expectedStores []*metapb.Store) {
+	sentReq := make([]SentReq, 0, len(expectedStores)*len(expectedStores))
+Loop:
+	for {
+		select {
+		case req := <-sendReqCh:
+			sentReq = append(sentReq, req)
+		default:
+			break Loop
+		}
+	}
+
+	sort.Slice(sentReq, func(i, j int) bool {
+		cmp := bytes.Compare(sentReq[i].req.UnsafeDestroyRange.StartKey, sentReq[j].req.UnsafeDestroyRange.StartKey)
+		return cmp < 0 || (cmp == 0 && sentReq[i].addr < sentReq[j].addr)
+	})
+
+	sortedRanges := append([]util.DelRangeTask{}, expectedRanges...)
+	sort.Slice(sortedRanges, func(i, j int) bool {
+		return bytes.Compare(sortedRanges[i].StartKey, sortedRanges[j].StartKey) < 0
+	})
+
+	for rangeIndex := range sortedRanges {
+		for storeIndex := range expectedStores {
+			i := rangeIndex*len(expectedStores) + storeIndex
+			c.Logf("%v %v %v", rangeIndex, storeIndex, i)
+			c.Assert(sentReq[i].addr, Equals, expectedStores[storeIndex].Address)
+			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
+			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
+		}
+	}
 }
 
 type testGCWorkerClient struct {
