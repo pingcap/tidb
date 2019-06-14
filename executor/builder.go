@@ -768,18 +768,13 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 	if b.err != nil {
 		return nil
 	}
-	us, err := b.buildUnionScanFromReader(reader, v)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	return us
+	return b.buildUnionScanFromReader(reader, v)
 }
 
 // buildUnionScanFromReader builds union scan executor from child executor.
 // Note that this function may be called by inner workers of index lookup join concurrently.
 // Be careful to avoid data race.
-func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) (Executor, error) {
+func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) Executor {
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), reader)}
 	// Get the handle column index of the below plannercore.
 	// We can guarantee that there must be only one col in the map.
@@ -833,9 +828,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.table = x.table
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
-		return reader, nil
+		return reader
 	}
-	return us, nil
+	return us
 }
 
 // buildMergeJoin builds MergeJoinExec executor.
@@ -2008,11 +2003,7 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	e, err := builder.buildUnionScanFromReader(reader, v)
-	if err != nil {
-		return nil, err
-	}
-	us := e.(*UnionScanExec)
+	us := builder.buildUnionScanFromReader(reader, v).(*UnionScanExec)
 	err = us.open(ctx)
 	return us, err
 }
