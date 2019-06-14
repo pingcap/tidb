@@ -524,9 +524,9 @@ type PrimaryKeyStatus int
 const (
 	// PrimaryKeyNotExists means no need to decode primary key column value when DecodeIndexKV.
 	PrimaryKeyNotExists PrimaryKeyStatus = iota
-	// PrimaryKeyNotExists means decode primary key column value as int64 when DecodeIndexKV.
+	// PrimaryKeyIsSigned means decode primary key column value as int64 when DecodeIndexKV.
 	PrimaryKeyIsSigned
-	// PrimaryKeyNotExists means decode primary key column value as uint64 when DecodeIndexKV.
+	// PrimaryKeyIsUnsigned means decode primary key column value as uint64 when DecodeIndexKV.
 	PrimaryKeyIsUnsigned
 )
 
