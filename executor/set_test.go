@@ -344,7 +344,7 @@ func (s *testSuite2) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 
 	// test for tidb_wait_split_region_finish
-	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_wait_split_region_finish = 1")
 	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_wait_split_region_finish = 0")
