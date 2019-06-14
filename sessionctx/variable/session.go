@@ -382,7 +382,7 @@ type SessionVars struct {
 	LowResolutionTSO bool
 
 	// Backoff is used for set the back off time.
-	Backoff backoff.BackoffTime
+	Backoff backoff.Time
 }
 
 // ConnectionInfo present connection used by audit.
