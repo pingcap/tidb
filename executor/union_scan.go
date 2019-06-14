@@ -111,6 +111,7 @@ type UnionScanExec struct {
 	snapshotRows        [][]types.Datum
 	cursor4SnapshotRows int
 	snapshotChunkBuffer *chunk.Chunk
+	mutableRow          chunk.MutRow
 }
 
 // Open implements the Executor Open interface.
@@ -352,9 +353,8 @@ func (us *UnionScanExec) getMemRow(h int64) ([]types.Datum, error) {
 	if err != nil {
 		return nil, err
 	}
-	mutableRow := chunk.MutRowFromTypes(us.retTypes())
-	mutableRow.SetDatums(data...)
-	matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
+	us.mutableRow.SetDatums(data...)
+	matched, _, err := expression.EvalBool(us.ctx, us.conditions, us.mutableRow.ToRow())
 	if err != nil {
 		return nil, err
 	}

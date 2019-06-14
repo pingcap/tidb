@@ -33,7 +33,7 @@ import (
 )
 
 type memIndexReader struct {
-	baseExecutor
+	ctx           sessionctx.Context
 	index         *model.IndexInfo
 	table         *model.TableInfo
 	kvRanges      []kv.KeyRange
@@ -57,7 +57,7 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		outputOffset = append(outputOffset, col.Index)
 	}
 	return &memIndexReader{
-		baseExecutor:     us.baseExecutor,
+		ctx:              us.ctx,
 		index:            idxReader.index,
 		table:            idxReader.table.Meta(),
 		kvRanges:         kvRanges,
@@ -135,15 +135,13 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 			return err
 		}
 		handles = append(handles, handle)
+		m.memIdxHandles[handle] = struct{}{}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	for _, h := range handles {
-		m.memIdxHandles[h] = struct{}{}
-	}
 	if m.desc {
 		for i, j := 0, len(handles)-1; i < j; i, j = i+1, j-1 {
 			handles[i], handles[j] = handles[j], handles[i]
@@ -216,7 +214,7 @@ func decodeHandle(data []byte) (int64, error) {
 }
 
 type memTableReader struct {
-	baseExecutor
+	ctx           sessionctx.Context
 	table         *model.TableInfo
 	columns       []*model.ColumnInfo
 	kvRanges      []kv.KeyRange
@@ -237,7 +235,7 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 	}
 
 	return &memTableReader{
-		baseExecutor:  us.baseExecutor,
+		ctx:           us.ctx,
 		table:         tblReader.table.Meta(),
 		columns:       us.columns,
 		kvRanges:      kvRanges,
@@ -352,7 +350,7 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 }
 
 type memIndexLookUpReader struct {
-	baseExecutor
+	ctx           sessionctx.Context
 	index         *model.IndexInfo
 	columns       []*model.ColumnInfo
 	table         table.Table
@@ -367,7 +365,7 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
-		baseExecutor:     us.baseExecutor,
+		ctx:              us.ctx,
 		index:            idxLookUpReader.index,
 		table:            idxLookUpReader.table.Meta(),
 		kvRanges:         kvRanges,
@@ -381,7 +379,7 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 	}
 
 	return &memIndexLookUpReader{
-		baseExecutor:  us.baseExecutor,
+		ctx:           us.ctx,
 		index:         idxLookUpReader.index,
 		columns:       idxLookUpReader.columns,
 		table:         idxLookUpReader.table,
@@ -406,13 +404,13 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 	}
 
 	memTblReader := &memTableReader{
-		baseExecutor:  m.baseExecutor,
+		ctx:           m.ctx,
 		table:         m.table.Meta(),
 		columns:       m.columns,
 		kvRanges:      tblKvRanges,
 		conditions:    m.conditions,
 		addedRows:     make([][]types.Datum, 0, len(handles)),
-		retFieldTypes: m.retTypes(),
+		retFieldTypes: m.retFieldTypes,
 		colIDs:        colIDs,
 		handleBytes:   m.idxReader.handleBytes,
 	}

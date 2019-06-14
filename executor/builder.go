@@ -780,6 +780,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	for _, cols := range v.Children()[0].Schema().TblID2Handle {
 		us.belowHandleIndex = cols[0].Index
 	}
+	us.mutableRow = chunk.MutRowFromTypes(us.retTypes())
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
