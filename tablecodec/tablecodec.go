@@ -14,6 +14,7 @@
 package tablecodec
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 	"time"
@@ -515,6 +516,51 @@ func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err erro
 		values = append(values, val)
 	}
 	return
+}
+
+type PrimaryKeyStatus int
+
+const (
+	PrimaryKeyNotExists PrimaryKeyStatus = iota
+	PrimaryKeyIsSigned
+	PrimaryKeyIsUnsigned
+)
+
+// DecodeIndexKV is used to decode index key values.
+func DecodeIndexKV(key, value []byte, colsLen int, pkStatus PrimaryKeyStatus) ([][]byte, error) {
+	values, b, err := CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		if pkStatus != PrimaryKeyNotExists {
+			values = append(values, b)
+		}
+	} else if pkStatus != PrimaryKeyNotExists {
+		handle, err := DecodeIndexValueAsHandle(value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var handleDatum types.Datum
+		if pkStatus == PrimaryKeyIsUnsigned {
+			handleDatum = types.NewUintDatum(uint64(handle))
+		} else {
+			handleDatum = types.NewIntDatum(handle)
+		}
+		handleBytes, err := codec.EncodeValue(nil, b, handleDatum)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		values = append(values, handleBytes)
+	}
+	return values, nil
+}
+
+func DecodeIndexValueAsHandle(data []byte) (int64, error) {
+	var h int64
+	buf := bytes.NewBuffer(data)
+	err := binary.Read(buf, binary.BigEndian, &h)
+	return h, errors.Trace(err)
 }
 
 // EncodeTableIndexPrefix encodes index prefix with tableID and idxID.

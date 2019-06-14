@@ -14,9 +14,6 @@
 package executor
 
 import (
-	"bytes"
-	"encoding/binary"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -151,29 +148,13 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 }
 
 func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType) ([]types.Datum, error) {
-	// this is from indexScanExec decodeIndexKV method.
-	values, b, err := tablecodec.CutIndexKeyNew(key, len(m.index.Columns))
+	pkStatus := tablecodec.PrimaryKeyIsSigned
+	if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
+		pkStatus = tablecodec.PrimaryKeyIsUnsigned
+	}
+	values, err := tablecodec.DecodeIndexKV(key, value, len(m.index.Columns), pkStatus)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if len(b) > 0 {
-		values = append(values, b)
-	} else if len(value) >= 8 {
-		handle, err := decodeHandle(value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		var handleDatum types.Datum
-		if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
-			handleDatum = types.NewUintDatum(uint64(handle))
-		} else {
-			handleDatum = types.NewIntDatum(handle)
-		}
-		m.handleBytes, err = codec.EncodeValue(m.ctx.GetSessionVars().StmtCtx, m.handleBytes[:0], handleDatum)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		values = append(values, m.handleBytes)
 	}
 
 	ds := make([]types.Datum, 0, len(m.outputOffset))
@@ -200,17 +181,10 @@ func (m *memIndexReader) decodeIndexHandle(key, value []byte, pkTp *types.FieldT
 		return d.GetInt64(), nil
 
 	} else if len(value) >= 8 {
-		return decodeHandle(value)
+		return tablecodec.DecodeIndexValueAsHandle(value)
 	}
 	// Should never execute to here.
 	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
-}
-
-func decodeHandle(data []byte) (int64, error) {
-	var h int64
-	buf := bytes.NewBuffer(data)
-	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, errors.Trace(err)
 }
 
 type memTableReader struct {
