@@ -464,7 +464,6 @@ func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []by
 	for {
 		curRegion, err := c.loadRegion(bo, startKey, false)
 		if err != nil {
-			// no region data, return error if failure.
 			return nil, errors.Trace(err)
 		}
 		c.mu.Lock()
