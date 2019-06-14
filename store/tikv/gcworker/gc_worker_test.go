@@ -445,7 +445,6 @@ Loop:
 	for rangeIndex := range sortedRanges {
 		for storeIndex := range expectedStores {
 			i := rangeIndex*len(expectedStores) + storeIndex
-			c.Logf("%v %v %v", rangeIndex, storeIndex, i)
 			c.Assert(sentReq[i].addr, Equals, expectedStores[storeIndex].Address)
 			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetStartKey(), DeepEquals, sortedRanges[rangeIndex].StartKey)
 			c.Assert(sentReq[i].req.UnsafeDestroyRange.GetEndKey(), DeepEquals, sortedRanges[rangeIndex].EndKey)
