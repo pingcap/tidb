@@ -1267,7 +1267,7 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 		e.result.AppendUint64(0, regions[i].region.Id)
 		e.result.AppendString(1, regions[i].start)
 		e.result.AppendString(2, regions[i].end)
-		e.result.AppendUint64(3, regions[i].leader.Id)
+		e.result.AppendUint64(3, regions[i].leaderID)
 		peers := ""
 		for i, peer := range regions[i].region.Peers {
 			if i > 0 {

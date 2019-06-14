@@ -22,6 +22,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -458,6 +459,27 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 	return regionIDs, nil
 }
 
+// LoadRegionsInKeyRange lists ids of regions in [start_key,end_key].
+func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regions []*Region, err error) {
+	for {
+		curRegion, err := c.loadRegion(bo, startKey, false)
+		if err != nil {
+			// no region data, return error if failure.
+			return nil, errors.Trace(err)
+		}
+		c.mu.Lock()
+		c.insertRegionToCache(curRegion)
+		c.mu.Unlock()
+
+		regions = append(regions, curRegion)
+		if curRegion.Contains(endKey) {
+			break
+		}
+		startKey = curRegion.EndKey()
+	}
+	return regions, nil
+}
+
 // InvalidateCachedRegion removes a cached Region.
 func (c *RegionCache) InvalidateCachedRegion(id RegionVerID) {
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -764,6 +786,20 @@ func (item *btreeItem) Less(other btree.Item) bool {
 // GetID returns id.
 func (r *Region) GetID() uint64 {
 	return r.meta.GetId()
+}
+
+// GetMeta returns region meta.
+func (r *Region) GetMeta() *metapb.Region {
+	return proto.Clone(r.meta).(*metapb.Region)
+}
+
+// GetLeaderPeer returns leader region ID.
+func (r *Region) GetLeaderID() uint64 {
+	store := r.getStore()
+	if int(store.workStoreIdx) >= len(r.meta.Peers) {
+		return 0
+	}
+	return r.meta.Peers[int(r.getStore().workStoreIdx)].Id
 }
 
 // WorkStorePeer returns current work store with work peer.

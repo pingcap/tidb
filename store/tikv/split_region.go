@@ -75,15 +75,6 @@ func (s *tikvStore) splitRegion(splitKey kv.Key) (*metapb.Region, error) {
 			zap.Binary("at", splitKey),
 			zap.Stringer("new region left", res.SplitRegion.GetLeft()),
 			zap.Stringer("new region right", res.SplitRegion.GetRight()))
-
-		// Reload region after split.
-		bo := NewBackoffer(context.Background(), GcOneRegionMaxBackoff)
-		if r := res.SplitRegion.GetLeft(); r != nil {
-			s.regionCache.LocateRegionByID(bo, r.Id)
-		}
-		if r := res.SplitRegion.GetRight(); r != nil {
-			s.regionCache.LocateRegionByID(bo, r.Id)
-		}
 		return res.SplitRegion.GetLeft(), nil
 	}
 }
