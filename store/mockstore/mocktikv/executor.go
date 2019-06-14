@@ -245,12 +245,6 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	return row, nil
 }
 
-const (
-	pkColNotExists = iota
-	pkColIsSigned
-	pkColIsUnsigned
-)
-
 type indexScanExec struct {
 	*tipb.IndexScan
 	colsLen        int
