@@ -15,14 +15,18 @@ package expression
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 type dataGen4Expr2PbTest struct {
@@ -411,6 +415,71 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
 		c.Assert(string(js), Equals, "null")
+	}
+}
+
+func (s *testEvaluatorSuite) TestPushDownSwitcher(c *C) {
+	var funcs = make([]Expression, 0)
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+
+	cases := []struct {
+		name   string
+		sig    tipb.ScalarFuncSig
+		enable bool
+	}{
+		{ast.And, tipb.ScalarFuncSig_BitAndSig, true},
+		{ast.Or, tipb.ScalarFuncSig_BitOrSig, false},
+		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNot, true},
+	}
+	var enabled []string
+	for i, funcName := range cases {
+		args := []Expression{dg.genColumn(mysql.TypeLong, 1)}
+		if i+1 < len(cases) {
+			args = append(args, dg.genColumn(mysql.TypeLong, 2))
+		}
+		fc, err := NewFunction(
+			mock.NewContext(),
+			funcName.name,
+			types.NewFieldType(mysql.TypeUnspecified),
+			args...,
+		)
+		c.Assert(err, IsNil)
+		funcs = append(funcs, fc)
+		if funcName.enable {
+			enabled = append(enabled, funcName.name)
+		}
+	}
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("all")`), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/PushDownTestSwitcher"), IsNil) }()
+
+	pbExprs := ExpressionsToPBList(sc, funcs, client)
+	c.Assert(len(pbExprs), Equals, len(cases))
+	for i, pbExpr := range pbExprs {
+		c.Assert(pbExpr.Sig, Equals, cases[i].sig, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
+	}
+
+	// All disabled
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("")`), IsNil)
+	pbExprs = ExpressionsToPBList(sc, funcs, client)
+	c.Assert(len(pbExprs), Equals, len(cases))
+	for i, pbExpr := range pbExprs {
+		c.Assert(pbExpr, IsNil, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
+	}
+
+	// Partial enabled
+	fpexpr := fmt.Sprintf(`return("%s")`, strings.Join(enabled, ","))
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", fpexpr), IsNil)
+	pbExprs = ExpressionsToPBList(sc, funcs, client)
+	c.Assert(len(pbExprs), Equals, len(cases))
+	for i, pbExpr := range pbExprs {
+		if !cases[i].enable {
+			c.Assert(pbExpr, IsNil, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
+			continue
+		}
+		c.Assert(pbExpr.Sig, Equals, cases[i].sig, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
 	}
 }
 
