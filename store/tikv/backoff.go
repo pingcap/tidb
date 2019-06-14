@@ -112,7 +112,7 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 		case <-time.After(time.Duration(realSleep) * time.Millisecond):
 			attempts++
 			lastSleep = sleep
-			return lastSleep
+			return realSleep
 		case <-ctx.Done():
 			return 0
 		}
@@ -214,6 +214,8 @@ const (
 	scatterRegionBackoff           = 20000
 	waitScatterRegionFinishBackoff = 120000
 	locateRegionMaxBackoff         = 20000
+	pessimisticLockMaxBackoff      = 10000
+	pessimisticRollbackMaxBackoff  = 10000
 )
 
 // CommitMaxBackoff is max sleep time of the 'commit' command

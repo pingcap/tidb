@@ -122,7 +122,7 @@ type Session interface {
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
-	ShowProcess() util.ProcessInfo
+	ShowProcess() *util.ProcessInfo
 	// PrePareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
@@ -909,19 +909,22 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	pi := util.ProcessInfo{
-		ID:      s.sessionVars.ConnectionID,
-		DB:      s.sessionVars.CurrentDB,
-		Command: command,
-		Plan:    s.currentPlan,
-		Time:    t,
-		State:   s.Status(),
-		Info:    sql,
+		ID:            s.sessionVars.ConnectionID,
+		DB:            s.sessionVars.CurrentDB,
+		Command:       command,
+		Plan:          s.currentPlan,
+		Time:          t,
+		State:         s.Status(),
+		Info:          sql,
+		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
+		StmtCtx:       s.sessionVars.StmtCtx,
+		StatsInfo:     plannercore.GetStatsInfo,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
 	}
-	s.processInfo.Store(pi)
+	s.processInfo.Store(&pi)
 }
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) ([]sqlexec.RecordSet, error) {
@@ -1460,6 +1463,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	err = executor.LoadExprPushdownBlacklist(se)
+	if err != nil {
+		return nil, err
+	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -1476,7 +1484,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	dom.InitExpensiveQueryHandle()
 	if raw, ok := store.(tikv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
@@ -1564,7 +1572,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 32
+	currentBootstrapVersion = 33
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1666,6 +1674,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBDisableTxnAutoRetry,
 	variable.TiDBEnableWindowFunction,
 	variable.TiDBEnableFastAnalyze,
+	variable.TiDBExpensiveQueryTimeThreshold,
 }
 
 var (
@@ -1799,11 +1808,11 @@ func (s *session) GetStore() kv.Storage {
 	return s.store
 }
 
-func (s *session) ShowProcess() util.ProcessInfo {
-	var pi util.ProcessInfo
+func (s *session) ShowProcess() *util.ProcessInfo {
+	var pi *util.ProcessInfo
 	tmp := s.processInfo.Load()
 	if tmp != nil {
-		pi = tmp.(util.ProcessInfo)
+		pi = tmp.(*util.ProcessInfo)
 	}
 	return pi
 }
