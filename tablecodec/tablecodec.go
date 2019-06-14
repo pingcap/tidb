@@ -518,15 +518,19 @@ func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err erro
 	return
 }
 
+// PrimaryKeyStatus is the primary key column status.
 type PrimaryKeyStatus int
 
 const (
+	// PrimaryKeyNotExists means no need to decode primary key column value when DecodeIndexKV.
 	PrimaryKeyNotExists PrimaryKeyStatus = iota
+	// PrimaryKeyNotExists means decode primary key column value as int64 when DecodeIndexKV.
 	PrimaryKeyIsSigned
+	// PrimaryKeyNotExists means decode primary key column value as uint64 when DecodeIndexKV.
 	PrimaryKeyIsUnsigned
 )
 
-// DecodeIndexKV is used to decode index key values.
+// DecodeIndexKV uses to decode index key values.
 func DecodeIndexKV(key, value []byte, colsLen int, pkStatus PrimaryKeyStatus) ([][]byte, error) {
 	values, b, err := CutIndexKeyNew(key, colsLen)
 	if err != nil {
@@ -556,6 +560,7 @@ func DecodeIndexKV(key, value []byte, colsLen int, pkStatus PrimaryKeyStatus) ([
 	return values, nil
 }
 
+// DecodeIndexValueAsHandle uses to decode index value as handle id.
 func DecodeIndexValueAsHandle(data []byte) (int64, error) {
 	var h int64
 	buf := bytes.NewBuffer(data)
