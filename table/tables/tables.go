@@ -796,7 +796,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	return nil
 }
 
-// removeRowIndex implements table.Table RemoveRowIndex interface.能
+// removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
 	return idx.Delete(sc, rm, vals, h, txn)
 }
