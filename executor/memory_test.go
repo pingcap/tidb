@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
 )
 
 var _ = SerialSuites(&testMemoryLeak{})
@@ -67,25 +66,29 @@ func (s *testMemoryLeak) SetUpSuite(c *C) {
 func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database test_mem")
-	tk.MustExec("use test_mem")
+	_, err = se.Execute(context.Background(), "create database test_mem")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_mem")
+	c.Assert(err, IsNil)
 
 	// prepare data
 	totalSize := uint64(256 << 20) // 256MB
 	blockSize := uint64(8 << 10)   // 8KB
 	delta := totalSize / 5
 	numRows := totalSize / blockSize
-	tk.MustExec(fmt.Sprintf("create table t (c varchar(%v))", blockSize))
-	defer tk.MustExec("drop table t")
-	//sql := fmt.Sprintf("insert into t values ('%s')", s.randStr(int(blockSize)))
+	_, err = se.Execute(context.Background(), fmt.Sprintf("create table t (c varchar(%v))", blockSize))
+	c.Assert(err, IsNil)
+	defer func() {
+		_, err = se.Execute(context.Background(), "drop table t")
+		c.Assert(err, IsNil)
+	}()
 	sql := fmt.Sprintf("insert into t values (space(%v))", blockSize)
 	for i := uint64(0); i < numRows; i++ {
-		tk.MustExec(sql)
+		_, err = se.Execute(context.Background(), sql)
+		c.Assert(err, IsNil)
 	}
 
-	_, err = se.Execute(context.Background(), "use test_mem")
-	c.Assert(err, IsNil)
+	// read data
 	runtime.GC()
 	allocatedBegin, inUseBegin := s.readMem()
 	records, err := se.Execute(context.Background(), "select * from t")
@@ -102,6 +105,7 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	}
 	c.Assert(rowCnt, Equals, int(numRows))
 
+	// check memory before close
 	runtime.GC()
 	allocatedAfter, inUseAfter := s.readMem()
 	c.Assert(allocatedAfter-allocatedBegin, GreaterEqual, totalSize)
