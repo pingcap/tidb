@@ -40,13 +40,13 @@ import (
 )
 
 type DDLForTest interface {
-	// SetLogHook sets the hook.
+	// SetHook sets the hook.
 	SetHook(h Callback)
 	// SetInterceptoror sets the interceptor.
 	SetInterceptoror(h Interceptor)
 }
 
-// SetLogHook implements DDL.SetLogHook interface.
+// SetHook implements DDL.SetLogHook interface.
 func (d *ddl) SetHook(h Callback) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
