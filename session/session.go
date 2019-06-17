@@ -188,75 +188,59 @@ type session struct {
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables struct {
 		// TODO: use double-checked locking to optimize performance.
-		sync.Mutex
 		holdLocks map[int64]model.TableLockTpInfo
 	}
 }
 
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
-	s.lockedTables.Lock()
 	for _, l := range locks {
 		s.lockedTables.holdLocks[l.TableID] = l
 	}
-	s.lockedTables.Unlock()
 }
 
 // ReleaseTableLocks releases table lock in the session lock map.
 func (s *session) ReleaseTableLocks(locks []model.TableLockTpInfo) {
-	s.lockedTables.Lock()
 	for _, l := range locks {
 		delete(s.lockedTables.holdLocks, l.TableID)
 	}
-	s.lockedTables.Unlock()
 }
 
 // ReleaseTableLockByTableIDs releases table lock in the session lock map by table ID.
 func (s *session) ReleaseTableLockByTableIDs(tableIDs []int64) {
-	s.lockedTables.Lock()
 	for _, tblID := range tableIDs {
 		delete(s.lockedTables.holdLocks, tblID)
 	}
-	s.lockedTables.Unlock()
 }
 
 // CheckTableLocked checks the table lock.
 func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
-	s.lockedTables.Lock()
 	lt, ok := s.lockedTables.holdLocks[tblID]
 	if !ok {
-		s.lockedTables.Unlock()
 		return false, model.TableLockNone
 	}
-	s.lockedTables.Unlock()
 	return true, lt.Tp
 }
 
 // GetAllTableLocks gets all table locks table id and db id hold by the session.
 func (s *session) GetAllTableLocks() []model.TableLockTpInfo {
-	s.lockedTables.Lock()
 	lockTpInfo := make([]model.TableLockTpInfo, 0, len(s.lockedTables.holdLocks))
 	for _, tl := range s.lockedTables.holdLocks {
 		lockTpInfo = append(lockTpInfo, tl)
 	}
-	s.lockedTables.Unlock()
 	return lockTpInfo
 }
 
 // HasLockedTables uses to check whether this session locked any tables.
 // If so, the session can only visit the table which locked by self.
 func (s *session) HasLockedTables() bool {
-	s.lockedTables.Lock()
 	b := len(s.lockedTables.holdLocks) > 0
-	s.lockedTables.Unlock()
 	return b
 }
 
 // ReleaseAllTableLocks releases all table locks hold by the session.
 func (s *session) ReleaseAllTableLocks() {
-	s.lockedTables.Lock()
 	s.lockedTables.holdLocks = make(map[int64]model.TableLockTpInfo)
-	s.lockedTables.Unlock()
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
