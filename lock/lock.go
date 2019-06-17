@@ -102,6 +102,7 @@ func checkLockTpMeetPrivilege(tp model.TableLockType, privilege mysql.PrivilegeT
 	return false
 }
 
+// CheckLockInDB uses to check operation on database.
 func (c *Checker) CheckLockInDB(db string, privilege mysql.PrivilegeType) error {
 	if c.ctx.HasLockedTables() {
 		switch privilege {
