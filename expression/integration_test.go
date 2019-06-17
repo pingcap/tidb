@@ -4192,7 +4192,7 @@ func (s *testIntegrationSuite) TestIssue9710(c *C) {
 	}
 }
 
-// for issue #9770
+// TestDecimalConvertToTime for issue #9770
 func (s *testIntegrationSuite) TestDecimalConvertToTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
@@ -4402,4 +4402,9 @@ func (s *testIntegrationSuite) TestIssue10181(c *C) {
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestMySQLDump80(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("/*!80000 SET SESSION information_schema_stats_expiry=0 */")
 }
