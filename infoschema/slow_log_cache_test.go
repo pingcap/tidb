@@ -22,8 +22,8 @@ func testRingBufferBasic(rb *ringBuffer, c *C) {
 			c.Assert(rb.isEmpty(), IsFalse)
 		}
 		c.Assert(rb.len(), Equals, l)
-		c.Assert(rb.readAtStart(), DeepEquals, startValue)
-		c.Assert(rb.readAtEnd(), DeepEquals, endValue)
+		c.Assert(rb.getStart(), DeepEquals, startValue)
+		c.Assert(rb.getEnd(), DeepEquals, endValue)
 		c.Assert(rb.readAll(), DeepEquals, allValues)
 		if len(allValues) == len(rb.data) {
 			c.Assert(rb.full, IsTrue)

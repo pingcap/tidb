@@ -65,7 +65,8 @@ var slowQueryCols = []columnInfo{
 }
 
 func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
-	return parseSlowLogFile(ctx.GetSessionVars().Location(), ctx.GetSessionVars().SlowQueryFile)
+	return globalSlowQueryReader.readSlowLogData(ctx.GetSessionVars().SlowQueryFile, ctx.GetSessionVars().Location())
+	//return parseSlowLogFile(ctx.GetSessionVars().Location(), ctx.GetSessionVars().SlowQueryFile)
 }
 
 // parseSlowLogFile uses to parse slow log file.
@@ -83,19 +84,31 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 	return ParseSlowLog(tz, bufio.NewReader(file))
 }
 
+func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, error) {
+	slowQueryData, err := ParseSlowLogData(tz, reader)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([][]types.Datum, len(slowQueryData))
+	for i := range slowQueryData {
+		rows[i] = slowQueryData[i].convertToDatumRow()
+	}
+	return rows, nil
+}
+
 // ParseSlowLog exports for testing.
 // TODO: optimize for parse huge log-file.
-func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, error) {
-	var rows [][]types.Datum
+func ParseSlowLogData(tz *time.Location, reader *bufio.Reader) ([]*slowQueryTuple, error) {
 	startFlag := false
 	var st *slowQueryTuple
+	var slowQueryData []*slowQueryTuple
 	for {
 		lineByte, err := getOneLine(reader)
 		if err != nil {
 			if err == io.EOF {
-				return rows, nil
+				return slowQueryData, nil
 			}
-			return rows, err
+			return slowQueryData, err
 		}
 		line := string(hack.String(lineByte))
 		// Check slow log entry start flag.
@@ -103,7 +116,7 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 			st = &slowQueryTuple{}
 			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
 			if err != nil {
-				return rows, err
+				return slowQueryData, err
 			}
 			startFlag = true
 			continue
@@ -121,16 +134,16 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 					}
 					err = st.setFieldValue(tz, field, fieldValues[i+1])
 					if err != nil {
-						return rows, err
+						return slowQueryData, err
 					}
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				// Get the sql string, and mark the start flag to false.
 				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)))
 				if err != nil {
-					return rows, err
+					return slowQueryData, err
 				}
-				rows = append(rows, st.convertToDatumRow())
+				slowQueryData = append(slowQueryData, st)
 				startFlag = false
 			} else {
 				startFlag = false
@@ -188,6 +201,17 @@ type slowQueryTuple struct {
 	maxWaitAddress    string
 	memMax            int64
 	sql               string
+	// endPos is the end offset in the file of this tuple.
+	endPos int64
+}
+
+func (st *slowQueryTuple) equal(st2 *slowQueryTuple) bool {
+	return st.time.Equal(st2.time) &&
+		st.txnStartTs == st2.txnStartTs &&
+		st.user == st2.user &&
+		st.host == st2.host &&
+		st.connID == st2.connID &&
+		st.sql == st2.sql
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string) error {
