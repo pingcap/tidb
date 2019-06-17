@@ -14,6 +14,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 )
@@ -203,10 +204,10 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, col := range x.ColTasks {
 			var colNames []string
 			if col.PKInfo != nil {
-				colNames = append(colNames, fmt.Sprintf("%s", col.PKInfo.Name.O))
+				colNames = append(colNames, col.PKInfo.Name.O)
 			}
 			for _, c := range col.ColsInfo {
-				colNames = append(colNames, fmt.Sprintf("%s", c.Name.O))
+				colNames = append(colNames, c.Name.O)
 			}
 			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}
@@ -221,9 +222,11 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str = fmt.Sprintf("%s->Insert", ToString(x.SelectPlan))
 		}
 	case *LogicalWindow:
-		str = fmt.Sprintf("Window(%s)", x.WindowFuncDesc.String())
+		buffer := bytes.NewBufferString("")
+		formatWindowFuncDescs(buffer, x.WindowFuncDescs)
+		str = fmt.Sprintf("Window(%s)", buffer.String())
 	case *PhysicalWindow:
-		str = fmt.Sprintf("Window(%s)", x.WindowFuncDesc.String())
+		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

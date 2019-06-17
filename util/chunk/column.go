@@ -47,7 +47,7 @@ type column struct {
 	length     int
 	nullCount  int
 	nullBitmap []byte
-	offsets    []int32
+	offsets    []int64
 	data       []byte
 	elemBuf    []byte
 }
@@ -70,6 +70,15 @@ func (c *column) reset() {
 func (c *column) isNull(rowIdx int) bool {
 	nullByte := c.nullBitmap[rowIdx/8]
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
+}
+
+func (c *column) copyConstruct() *column {
+	newCol := &column{length: c.length, nullCount: c.nullCount}
+	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
+	newCol.offsets = append(newCol.offsets, c.offsets...)
+	newCol.data = append(newCol.data, c.data...)
+	newCol.elemBuf = append(newCol.elemBuf, c.elemBuf...)
+	return newCol
 }
 
 func (c *column) appendNullBitmap(notNull bool) {
@@ -149,7 +158,7 @@ func (c *column) appendFloat64(f float64) {
 
 func (c *column) finishAppendVar() {
 	c.appendNullBitmap(true)
-	c.offsets = append(c.offsets, int32(len(c.data)))
+	c.offsets = append(c.offsets, int64(len(c.data)))
 	c.length++
 }
 

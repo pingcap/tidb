@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -133,7 +134,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1, 0)
+	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
@@ -151,7 +152,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		err = txn1.Set([]byte("b"), []byte("b1"))
 		c.Assert(err, IsNil)
-		committer, err = newTwoPhaseCommitter(txn1, 0)
+		committer, err = newTwoPhaseCommitterWithInit(txn1, 0)
 		c.Assert(err, IsNil)
 		err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 		c.Assert(err, IsNil)
@@ -173,7 +174,7 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1, 0)
+	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
 
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
@@ -183,12 +184,27 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 }
 
+func (s *testCommitterSuite) TestContextCancel2(c *C) {
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("a"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("b"), []byte("b"))
+	c.Assert(err, IsNil)
+	ctx, cancel := context.WithCancel(context.Background())
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	cancel()
+	// Secondary keys should not be canceled.
+	time.Sleep(time.Millisecond * 20)
+	c.Assert(s.isKeyLocked(c, []byte("b")), IsFalse)
+}
+
 func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	txn1, txn2, txn3 := s.begin(c), s.begin(c), s.begin(c)
 	// txn1 locks "b"
 	err := txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1, 0)
+	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
@@ -208,7 +224,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), txnRetryableMark), IsTrue)
+	c.Assert(kv.ErrWriteConflictInTiDB.Equal(err), IsTrue, Commentf("err: %s", err))
 }
 
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
@@ -304,24 +320,36 @@ func (s *testCommitterSuite) TestIllegalTso(c *C) {
 	txn.startTS = uint64(math.MaxUint64)
 	err := txn.Commit(context.Background())
 	c.Assert(err, NotNil)
+	errMsgMustContain(c, err, "invalid txnStartTS")
 }
 
 func errMsgMustContain(c *C, err error, msg string) {
 	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
 }
 
+func newTwoPhaseCommitterWithInit(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
+	c, err := newTwoPhaseCommitter(txn, connID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err = c.initKeysAndMutations(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return c, nil
+}
+
 func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	txn := s.begin(c)
 	err := txn.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	commiter, err := newTwoPhaseCommitter(txn, 0)
+	commiter, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
 	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
 	c.Assert(err, IsNil)
 	err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
 	c.Assert(err, NotNil)
-	errMsgMustContain(c, err, "write conflict")
+	errMsgMustContain(c, err, "conflictCommitTS")
 }
 
 func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
@@ -359,7 +387,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 
 	// clean again, shouldn't be failed when a rollback already exist.
 	ctx := context.Background()
-	commiter, err := newTwoPhaseCommitter(txn2, 0)
+	commiter, err := newTwoPhaseCommitterWithInit(txn2, 0)
 	c.Assert(err, IsNil)
 	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
 	c.Assert(err, IsNil)
@@ -394,13 +422,13 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 		txn1 := s.begin(c)
 		txn2 := s.begin(c)
 		txn2.Set([]byte("x1"), []byte("1"))
-		commiter2, err := newTwoPhaseCommitter(txn2, 2)
+		commiter2, err := newTwoPhaseCommitterWithInit(txn2, 2)
 		c.Assert(err, IsNil)
 		err = commiter2.execute(context.Background())
 		c.Assert(err, IsNil)
 		txn1.Set([]byte("x1"), []byte("1"))
 		txn1.Set([]byte("y1"), []byte("2"))
-		commiter1, err := newTwoPhaseCommitter(txn1, 2)
+		commiter1, err := newTwoPhaseCommitterWithInit(txn1, 2)
 		c.Assert(err, IsNil)
 		err = commiter1.execute(context.Background())
 		c.Assert(err, NotNil)
@@ -412,4 +440,31 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 		txn3.Commit(context.Background())
 	}
 	c.Assert(totalTime, Less, time.Millisecond*200)
+}
+
+func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
+	// This test checks that the isPessimisticLock field is set in the request even when no keys are pessimistic lock.
+	txn := s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	err := txn.Set([]byte("t1"), []byte("v1"))
+	c.Assert(err, IsNil)
+	commiter, err := newTwoPhaseCommitterWithInit(txn, 0)
+	c.Assert(err, IsNil)
+	commiter.forUpdateTS = 100
+	var batch batchKeys
+	batch.keys = append(batch.keys, []byte("t1"))
+	batch.region = RegionVerID{1, 1, 1}
+	req := commiter.buildPrewriteRequest(batch)
+	c.Assert(len(req.Prewrite.IsPessimisticLock), Greater, 0)
+	c.Assert(req.Prewrite.ForUpdateTs, Equals, uint64(100))
+}
+
+func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
+	txn := s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	err := txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	c.Assert(err, IsNil)
+	err = txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
+	c.Assert(err, IsNil)
+	c.Assert(txn.lockKeys, HasLen, 2)
 }

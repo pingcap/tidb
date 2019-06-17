@@ -82,38 +82,38 @@ func (s *testEncryptSuite) TestUnpad(c *C) {
 
 	// Invalid padding: incorrect block size
 	p = []byte{0x0A, 0x0B, 0x0C, 0x04, 0x04, 0x04, 0x04}
-	p, err = PKCS7Unpad(p, 8)
+	_, err = PKCS7Unpad(p, 8)
 	c.Assert(err, NotNil)
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x02, 0x03, 0x04, 0x04, 0x04, 0x04}
-	p, err = PKCS7Unpad(p, 8)
+	_, err = PKCS7Unpad(p, 8)
 	c.Assert(err, NotNil)
 
 	p = []byte{}
-	p, err = PKCS7Unpad(p, 8)
+	_, err = PKCS7Unpad(p, 8)
 	c.Assert(err, NotNil)
 
 	// Invalid padding: padding length > block length
 	p = []byte{0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09}
-	p, err = PKCS7Unpad(p, 8)
+	_, err = PKCS7Unpad(p, 8)
 	c.Assert(err, NotNil)
 
 	// Invalid padding: padding length == 0
 	p = []byte{0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x00}
 	//                                                   ^^^^
-	p, err = PKCS7Unpad(p, 8)
+	_, err = PKCS7Unpad(p, 8)
 	c.Assert(err, NotNil)
 
 	// Invalid padding: padding content invalid
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x0A, 0x0B, 0x0C, 0x0D, 0x04, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08}
 	//                                                         ^^^^
-	p, err = PKCS7Unpad(p, 8)
+	_, err = PKCS7Unpad(p, 8)
 	c.Assert(err, NotNil)
 
 	// Invalid padding: padding content invalid
 	p = []byte{0x03, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08}
 	//         ^^^^
-	p, err = PKCS7Unpad(p, 8)
+	_, err = PKCS7Unpad(p, 8)
 	c.Assert(err, NotNil)
 
 	// Invalid padding: padding content invalid

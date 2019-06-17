@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testTableSuite{})
@@ -43,12 +42,12 @@ type testTableSuite struct {
 
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
-	var err error
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
 	}
-	tblInfo.ID, err = d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	tblInfo.ID = genIDs[0]
 
 	cols := make([]*model.ColumnInfo, num)
 	for i := range cols {
@@ -63,20 +62,40 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 		col.ID = allocateColumnID(tblInfo)
 		cols[i] = col
 	}
-
 	tblInfo.Columns = cols
+	tblInfo.Charset = "utf8"
+	tblInfo.Collate = "utf8_bin"
+	return tblInfo
+}
+
+// testTableInfo creates a test table with num int columns and with no index.
+func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.TableInfo {
+	tblInfo := testTableInfo(c, d, name, num)
+	genIDs, err := d.genGlobalIDs(1)
+	c.Assert(err, IsNil)
+	pid := genIDs[0]
+	tblInfo.Partition = &model.PartitionInfo{
+		Type:   model.PartitionTypeRange,
+		Expr:   tblInfo.Columns[0].Name.L,
+		Enable: true,
+		Definitions: []model.PartitionDefinition{{
+			ID:       pid,
+			Name:     model.NewCIStr("p0"),
+			LessThan: []string{"maxvalue"},
+		}},
+	}
 
 	return tblInfo
 }
 
 // testViewInfo creates a test view with num int columns.
 func testViewInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
-	var err error
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
 	}
-	tblInfo.ID, err = d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	tblInfo.ID = genIDs[0]
 
 	cols := make([]*model.ColumnInfo, num)
 	viewCols := make([]model.CIStr, num)
@@ -130,7 +149,7 @@ func testCreateView(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 		TableID:    tblInfo.ID,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo},
+		Args:       []interface{}{tblInfo, false, 0},
 	}
 
 	c.Assert(tblInfo.IsView(), IsTrue)
@@ -178,8 +197,9 @@ func testDropTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, t
 }
 
 func testTruncateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
-	newTableID, err := d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	newTableID := genIDs[0]
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -245,7 +265,6 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 }
 
 func (s *testTableSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_table")
 	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 
@@ -257,7 +276,6 @@ func (s *testTableSuite) TearDownSuite(c *C) {
 	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 	s.d.Stop()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testTableSuite) TestTable(c *C) {

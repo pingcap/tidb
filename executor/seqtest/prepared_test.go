@@ -18,8 +18,6 @@ import (
 	"math"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -47,7 +45,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
-		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -71,7 +69,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 
 		// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
 		_, err = tk.Exec(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`)
-		c.Assert(terror.ErrorEqual(err, errors.New(`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '/*' and b = 'p'' at line 1`)), IsTrue, Commentf("err %v", err))
+		c.Assert(err.Error(), Equals, `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '/*' and b = 'p'' at line 1`)
 
 		// The `stmt_test5` should not be found.
 		_, err = tk.Exec(`set @a = 1; execute stmt_test_5 using @a;`)
@@ -218,7 +216,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.MustExec("create table prepare1 (a decimal(1))")
 		tk.MustExec("insert into prepare1 values(1);")
 		_, err = tk.Exec("prepare stmt FROM @sql1")
-		c.Assert(err.Error(), Equals, "line 1 column 4 near \"NULL\" (total length 4)")
+		c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 4 near \"NULL\" ")
 		tk.MustExec("SET @sql = 'update prepare1 set a=5 where a=?';")
 		_, err = tk.Exec("prepare stmt FROM @sql")
 		c.Assert(err, IsNil)
@@ -264,7 +262,7 @@ func (s *seqTestSuite) TestPreparedLimitOffset(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
-		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -307,7 +305,7 @@ func (s *seqTestSuite) TestPreparedNullParam(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
-		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -351,7 +349,7 @@ func (s *seqTestSuite) TestPrepareWithAggregation(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
-		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -386,7 +384,7 @@ func (s *seqTestSuite) TestPreparedIssue7579(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
-		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -430,6 +428,7 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
 		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
+	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}
@@ -440,7 +439,7 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
-		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -512,6 +511,7 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
 		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
+	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}
@@ -522,7 +522,7 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
-		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -571,6 +571,7 @@ func (s *seqTestSuite) TestPreparedDelete(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
 		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
+	metrics.ResettablePlanCacheCounterFortTest = true
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
 	pb := &dto.Metric{}
@@ -581,7 +582,7 @@ func (s *seqTestSuite) TestPreparedDelete(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
-		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -635,7 +636,7 @@ func (s *seqTestSuite) TestPrepareDealloc(c *C) {
 	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
-	plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+	plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -680,7 +681,7 @@ func (s *seqTestSuite) TestPreparedIssue8153(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
-		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -738,7 +739,7 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
-		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")

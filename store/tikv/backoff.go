@@ -22,11 +22,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -40,17 +44,48 @@ const (
 	DecorrJitter
 )
 
+var (
+	tikvBackoffCounterRPC          = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
+	tikvBackoffCounterLock         = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
+	tikvBackoffCounterLockFast     = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
+	tikvBackoffCounterPD           = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
+	tikvBackoffCounterRegionMiss   = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
+	tikvBackoffCounterUpdateLeader = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
+	tikvBackoffCounterServerBusy   = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
+	tikvBackoffCounterEmpty        = metrics.TiKVBackoffCounter.WithLabelValues("")
+)
+
+func (t backoffType) Counter() prometheus.Counter {
+	switch t {
+	case boTiKVRPC:
+		return tikvBackoffCounterRPC
+	case BoTxnLock:
+		return tikvBackoffCounterLock
+	case boTxnLockFast:
+		return tikvBackoffCounterLockFast
+	case BoPDRPC:
+		return tikvBackoffCounterPD
+	case BoRegionMiss:
+		return tikvBackoffCounterRegionMiss
+	case BoUpdateLeader:
+		return tikvBackoffCounterUpdateLeader
+	case boServerBusy:
+		return tikvBackoffCounterServerBusy
+	}
+	return tikvBackoffCounterEmpty
+}
+
 // NewBackoffFn creates a backoff func which implements exponential backoff with
 // optional jitters.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html
-func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
+func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs int) int {
 	if base < 2 {
 		// Top prevent panic in 'rand.Intn'.
 		base = 2
 	}
 	attempts := 0
 	lastSleep := base
-	return func(ctx context.Context) int {
+	return func(ctx context.Context, maxSleepMs int) int {
 		var sleep int
 		switch jitter {
 		case NoJitter:
@@ -64,15 +99,23 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
 		case DecorrJitter:
 			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
 		}
-		log.Debugf("backoff base %d, sleep %d", base, sleep)
-		select {
-		case <-time.After(time.Duration(sleep) * time.Millisecond):
-		case <-ctx.Done():
-		}
+		logutil.Logger(context.Background()).Debug("backoff",
+			zap.Int("base", base),
+			zap.Int("sleep", sleep))
 
-		attempts++
-		lastSleep = sleep
-		return lastSleep
+		realSleep := sleep
+		// when set maxSleepMs >= 0 in `tikv.BackoffWithMaxSleep` will force sleep maxSleepMs milliseconds.
+		if maxSleepMs >= 0 && realSleep > maxSleepMs {
+			realSleep = maxSleepMs
+		}
+		select {
+		case <-time.After(time.Duration(realSleep) * time.Millisecond):
+			attempts++
+			lastSleep = sleep
+			return realSleep
+		case <-ctx.Done():
+			return 0
+		}
 	}
 }
 
@@ -93,7 +136,7 @@ const (
 	boServerBusy
 )
 
-func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
+func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
 	if vars.Hook != nil {
 		vars.Hook(t.String(), vars)
 	}
@@ -144,7 +187,7 @@ func (t backoffType) TError() error {
 	case BoTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
 	case BoPDRPC:
-		return ErrPDServerTimeout.GenWithStackByArgs(txnRetryableMark)
+		return ErrPDServerTimeout
 	case BoRegionMiss, BoUpdateLeader:
 		return ErrRegionUnavailable
 	case boServerBusy:
@@ -168,6 +211,11 @@ const (
 	deleteRangeOneRegionMaxBackoff = 100000
 	rawkvMaxBackoff                = 20000
 	splitRegionBackoff             = 20000
+	scatterRegionBackoff           = 20000
+	waitScatterRegionFinishBackoff = 120000
+	locateRegionMaxBackoff         = 20000
+	pessimisticLockMaxBackoff      = 10000
+	pessimisticRollbackMaxBackoff  = 10000
 )
 
 // CommitMaxBackoff is max sleep time of the 'commit' command
@@ -177,7 +225,7 @@ var CommitMaxBackoff = 41000
 type Backoffer struct {
 	ctx context.Context
 
-	fn         map[backoffType]func(context.Context) int
+	fn         map[backoffType]func(context.Context, int) int
 	maxSleep   int
 	totalSleep int
 	errors     []error
@@ -202,14 +250,25 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 	if vars != nil {
 		b.vars = vars
 	}
+	// maxSleep is the max sleep time in millisecond.
+	// When it is multiplied by BackOffWeight, it should not be greater than MaxInt32.
+	if math.MaxInt32/b.vars.BackOffWeight >= b.maxSleep {
+		b.maxSleep *= b.vars.BackOffWeight
+	}
 	return b
 }
 
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	return b.BackoffWithMaxSleep(typ, -1, err)
+}
+
+// BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
+// and never sleep more than maxSleepMs for each sleep.
+func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err error) error {
 	if strings.Contains(err.Error(), mismatchClusterID) {
-		log.Fatalf("critical error %v", err)
+		logutil.Logger(context.Background()).Fatal("critical error", zap.Error(err))
 	}
 	select {
 	case <-b.ctx.Done():
@@ -217,10 +276,10 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	default:
 	}
 
-	metrics.TiKVBackoffCounter.WithLabelValues(typ.String()).Inc()
+	typ.Counter().Inc()
 	// Lazy initialize.
 	if b.fn == nil {
-		b.fn = make(map[backoffType]func(context.Context) int)
+		b.fn = make(map[backoffType]func(context.Context, int) int)
 	}
 	f, ok := b.fn[typ]
 	if !ok {
@@ -228,25 +287,30 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		b.fn[typ] = f
 	}
 
-	b.totalSleep += f(b.ctx)
+	b.totalSleep += f(b.ctx, maxSleepMs)
 	b.types = append(b.types, typ)
 
-	var startTs interface{} = ""
+	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
 		startTs = ts
 	}
-	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms), type: %s, txn_start_ts: %v", err, b.totalSleep, b.maxSleep, typ.String(), startTs)
+	logutil.Logger(context.Background()).Debug("retry later",
+		zap.Error(err),
+		zap.Int("totalSleep", b.totalSleep),
+		zap.Int("maxSleep", b.maxSleep),
+		zap.Stringer("type", typ),
+		zap.Reflect("txnStartTS", startTs))
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
 		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
-			if log.GetLevel() == log.DebugLevel || i >= len(b.errors)-3 {
+			if log.GetLevel() == zapcore.DebugLevel || i >= len(b.errors)-3 {
 				errMsg += "\n" + err.Error()
 			}
 		}
-		log.Warn(errMsg)
+		logutil.Logger(context.Background()).Warn(errMsg)
 		// Use the first backoff type to generate a MySQL error.
 		return b.types[0].TError()
 	}

@@ -35,7 +35,7 @@ func (s *testScanSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
-	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1)
+	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1, scanBatchSize*3)
 }
 
 func (s *testScanSuite) TearDownSuite(c *C) {
@@ -89,6 +89,16 @@ func (s *testScanSuite) TestScan(c *C) {
 		}
 		err := txn.Commit(context.Background())
 		c.Assert(err, IsNil)
+
+		if rowNum > 123 {
+			err = s.store.SplitRegion(encodeKey(s.prefix, s08d("key", 123)))
+			c.Assert(err, IsNil)
+		}
+
+		if rowNum > 456 {
+			err = s.store.SplitRegion(encodeKey(s.prefix, s08d("key", 456)))
+			c.Assert(err, IsNil)
+		}
 
 		txn2 := s.beginTxn(c)
 		val, err := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))

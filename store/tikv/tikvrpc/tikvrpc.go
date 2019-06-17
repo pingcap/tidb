@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -43,6 +44,8 @@ const (
 	CmdResolveLock
 	CmdGC
 	CmdDeleteRange
+	CmdPessimisticLock
+	CmdPessimisticRollback
 
 	CmdRawGet CmdType = 256 + iota
 	CmdRawBatchGet
@@ -61,6 +64,8 @@ const (
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
 	CmdSplitRegion
+
+	CmdDebugGetRegionProperties CmdType = 2048 + iota
 )
 
 func (t CmdType) String() string {
@@ -71,6 +76,10 @@ func (t CmdType) String() string {
 		return "Scan"
 	case CmdPrewrite:
 		return "Prewrite"
+	case CmdPessimisticLock:
+		return "PessimisticLock"
+	case CmdPessimisticRollback:
+		return "PessimisticRollback"
 	case CmdCommit:
 		return "Commit"
 	case CmdCleanup:
@@ -115,6 +124,8 @@ func (t CmdType) String() string {
 		return "MvccGetByStartTS"
 	case CmdSplitRegion:
 		return "SplitRegion"
+	case CmdDebugGetRegionProperties:
+		return "DebugGetRegionProperties"
 	}
 	return "Unknown"
 }
@@ -147,6 +158,11 @@ type Request struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyRequest
 	MvccGetByStartTs   *kvrpcpb.MvccGetByStartTsRequest
 	SplitRegion        *kvrpcpb.SplitRegionRequest
+
+	PessimisticLock     *kvrpcpb.PessimisticLockRequest
+	PessimisticRollback *kvrpcpb.PessimisticRollbackRequest
+
+	DebugGetRegionProperties *debugpb.GetRegionPropertiesRequest
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -192,8 +208,21 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawScan{RawScan: req.RawScan}}
 	case CmdCop:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Coprocessor{Coprocessor: req.Cop}}
+	case CmdPessimisticLock:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticLock{PessimisticLock: req.PessimisticLock}}
+	case CmdPessimisticRollback:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback}}
 	}
 	return nil
+}
+
+// IsDebugReq check whether the req is debug req.
+func (req *Request) IsDebugReq() bool {
+	switch req.Type {
+	case CmdDebugGetRegionProperties:
+		return true
+	}
+	return false
 }
 
 // Response wraps all kv/coprocessor responses.
@@ -224,6 +253,11 @@ type Response struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS   *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion        *kvrpcpb.SplitRegionResponse
+
+	PessimisticLock     *kvrpcpb.PessimisticLockResponse
+	PessimisticRollback *kvrpcpb.PessimisticRollbackResponse
+
+	DebugGetRegionProperties *debugpb.GetRegionPropertiesResponse
 }
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
@@ -269,6 +303,10 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 		return &Response{Type: CmdRawScan, RawScan: res.RawScan}
 	case *tikvpb.BatchCommandsResponse_Response_Coprocessor:
 		return &Response{Type: CmdCop, Cop: res.Coprocessor}
+	case *tikvpb.BatchCommandsResponse_Response_PessimisticLock:
+		return &Response{Type: CmdPessimisticLock, PessimisticLock: res.PessimisticLock}
+	case *tikvpb.BatchCommandsResponse_Response_PessimisticRollback:
+		return &Response{Type: CmdPessimisticRollback, PessimisticRollback: res.PessimisticRollback}
 	}
 	return nil
 }
@@ -297,6 +335,10 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.Scan.Context = ctx
 	case CmdPrewrite:
 		req.Prewrite.Context = ctx
+	case CmdPessimisticLock:
+		req.PessimisticLock.Context = ctx
+	case CmdPessimisticRollback:
+		req.PessimisticRollback.Context = ctx
 	case CmdCommit:
 		req.Commit.Context = ctx
 	case CmdCleanup:
@@ -363,6 +405,14 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		}
 	case CmdPrewrite:
 		resp.Prewrite = &kvrpcpb.PrewriteResponse{
+			RegionError: e,
+		}
+	case CmdPessimisticLock:
+		resp.PessimisticLock = &kvrpcpb.PessimisticLockResponse{
+			RegionError: e,
+		}
+	case CmdPessimisticRollback:
+		resp.PessimisticRollback = &kvrpcpb.PessimisticRollbackResponse{
 			RegionError: e,
 		}
 	case CmdCommit:
@@ -469,6 +519,10 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.Get.GetRegionError()
 	case CmdScan:
 		e = resp.Scan.GetRegionError()
+	case CmdPessimisticLock:
+		e = resp.PessimisticLock.GetRegionError()
+	case CmdPessimisticRollback:
+		e = resp.PessimisticRollback.GetRegionError()
 	case CmdPrewrite:
 		e = resp.Prewrite.GetRegionError()
 	case CmdCommit:
@@ -535,6 +589,10 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Scan, err = client.KvScan(ctx, req.Scan)
 	case CmdPrewrite:
 		resp.Prewrite, err = client.KvPrewrite(ctx, req.Prewrite)
+	case CmdPessimisticLock:
+		resp.PessimisticLock, err = client.KvPessimisticLock(ctx, req.PessimisticLock)
+	case CmdPessimisticRollback:
+		resp.PessimisticRollback, err = client.KVPessimisticRollback(ctx, req.PessimisticRollback)
 	case CmdCommit:
 		resp.Commit, err = client.KvCommit(ctx, req.Commit)
 	case CmdCleanup:
@@ -590,6 +648,20 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		return nil, errors.Trace(err)
 	}
 	return resp, nil
+}
+
+// CallDebugRPC launches a debug rpc call.
+func CallDebugRPC(ctx context.Context, client debugpb.DebugClient, req *Request) (*Response, error) {
+	resp := &Response{Type: req.Type}
+	resp.Type = req.Type
+	var err error
+	switch req.Type {
+	case CmdDebugGetRegionProperties:
+		resp.DebugGetRegionProperties, err = client.GetRegionProperties(ctx, req.DebugGetRegionProperties)
+	default:
+		return nil, errors.Errorf("invalid request type: %v", req.Type)
+	}
+	return resp, err
 }
 
 // Lease is used to implement grpc stream timeout.

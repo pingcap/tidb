@@ -23,7 +23,7 @@ import (
 )
 
 // RoundMode is the type for round mode.
-type RoundMode string
+type RoundMode int32
 
 // constant values.
 const (
@@ -49,18 +49,52 @@ const (
 	DivFracIncr = 4
 
 	// ModeHalfEven rounds normally.
-	ModeHalfEven RoundMode = "ModeHalfEven"
+	ModeHalfEven RoundMode = 5
 	// Truncate just truncates the decimal.
-	ModeTruncate RoundMode = "Truncate"
+	ModeTruncate RoundMode = 10
 	// Ceiling is not supported now.
-	modeCeiling RoundMode = "Ceiling"
+	modeCeiling RoundMode = 0
 )
 
 var (
 	wordBufLen = 9
-	powers10   = [10]int32{ten0, ten1, ten2, ten3, ten4, ten5, ten6, ten7, ten8, ten9}
-	dig2bytes  = [10]int{0, 1, 1, 2, 2, 3, 3, 4, 4, 4}
-	fracMax    = [8]int32{
+	mod9       = [128]int8{
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 1,
+	}
+	div9 = [128]int{
+		0, 0, 0, 0, 0, 0, 0, 0, 0,
+		1, 1, 1, 1, 1, 1, 1, 1, 1,
+		2, 2, 2, 2, 2, 2, 2, 2, 2,
+		3, 3, 3, 3, 3, 3, 3, 3, 3,
+		4, 4, 4, 4, 4, 4, 4, 4, 4,
+		5, 5, 5, 5, 5, 5, 5, 5, 5,
+		6, 6, 6, 6, 6, 6, 6, 6, 6,
+		7, 7, 7, 7, 7, 7, 7, 7, 7,
+		8, 8, 8, 8, 8, 8, 8, 8, 8,
+		9, 9, 9, 9, 9, 9, 9, 9, 9,
+		10, 10, 10, 10, 10, 10, 10, 10, 10,
+		11, 11, 11, 11, 11, 11, 11, 11, 11,
+		12, 12, 12, 12, 12, 12, 12, 12, 12,
+		13, 13, 13, 13, 13, 13, 13, 13, 13,
+		14, 14,
+	}
+	powers10  = [10]int32{ten0, ten1, ten2, ten3, ten4, ten5, ten6, ten7, ten8, ten9}
+	dig2bytes = [10]int{0, 1, 1, 2, 2, 3, 3, 4, 4, 4}
+	fracMax   = [8]int32{
 		900000000,
 		990000000,
 		999000000,
@@ -174,6 +208,9 @@ func countTrailingZeroes(i int, word int32) int {
 }
 
 func digitsToWords(digits int) int {
+	if digits+digitsPerWord-1 >= 0 && digits+digitsPerWord-1 < 128 {
+		return div9[digits+digitsPerWord-1]
+	}
 	return (digits + digitsPerWord - 1) / digitsPerWord
 }
 
@@ -756,16 +793,8 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 	wordsFrac := digitsToWords(int(d.digitsFrac))
 	wordsInt := digitsToWords(int(d.digitsInt))
 
-	var roundDigit int32
+	roundDigit := int32(roundMode)
 	/* TODO - fix this code as it won't work for CEILING mode */
-	switch roundMode {
-	case modeCeiling:
-		roundDigit = 0
-	case ModeHalfEven:
-		roundDigit = 5
-	case ModeTruncate:
-		roundDigit = 10
-	}
 
 	if wordsInt+wordsFracTo > wordBufLen {
 		wordsFracTo = wordBufLen - wordsInt
@@ -802,9 +831,9 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 	toIdx := wordsInt + wordsFracTo - 1
 	if frac == wordsFracTo*digitsPerWord {
 		doInc := false
-		switch roundDigit {
+		switch roundMode {
 		// Notice: No support for ceiling mode now.
-		case 0:
+		case modeCeiling:
 			// If any word after scale is not zero, do increment.
 			// e.g ceiling 3.0001 to scale 1, gets 3.1
 			idx := toIdx + (wordsFrac - wordsFracTo)
@@ -815,11 +844,11 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 				}
 				idx--
 			}
-		case 5:
+		case ModeHalfEven:
 			digAfterScale := d.wordBuf[toIdx+1] / digMask // the first digit after scale.
 			// If first digit after scale is 5 and round even, do increment if digit at scale is odd.
 			doInc = (digAfterScale > 5) || (digAfterScale == 5)
-		case 10:
+		case ModeTruncate:
 			// Never round, just truncate.
 			doInc = false
 		}
@@ -917,7 +946,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 		}
 	}
 	/* Here we check 999.9 -> 1000 case when we need to increase intDigCnt */
-	firstDig := to.digitsInt % digitsPerWord
+	firstDig := mod9[to.digitsInt]
 	if firstDig > 0 && to.wordBuf[toIdx] >= powers10[firstDig] {
 		to.digitsInt++
 	}
@@ -1363,7 +1392,6 @@ func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err e
 			*d = zeroMyDecimal
 			return binSize, ErrBadNumber
 		}
-		wordIdx++
 	}
 
 	if d.digitsInt == 0 && d.digitsFrac == 0 {
@@ -1797,7 +1825,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 		wordsFracTo = wordsFrac1 + wordsFrac2
 		idx1        = wordsInt1
 		idx2        = wordsInt2
-		idxTo       = 0
+		idxTo       int
 		tmp1        = wordsIntTo
 		tmp2        = wordsFracTo
 	)
@@ -2028,7 +2056,6 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 			idxTo++
 			digitsIntTo++
 		}
-		digitsIntTo++
 	}
 	i = digitsToWords(prec1)
 	len1 := i + digitsToWords(2*frac2+fracIncr+1) + 1
@@ -2040,7 +2067,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	copy(tmp1, from1.wordBuf[idx1:idx1+i])
 
 	start1 := 0
-	stop1 := len1
+	var stop1 int
 	start2 := idx2
 	stop2 := idx2 + digitsToWords(prec2) - 1
 

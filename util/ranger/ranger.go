@@ -242,8 +242,8 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 	return ranges, nil
 }
 
-// BuildTableRange will build range of pk for PhysicalTableScan
-func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+// buildColumnRange builds range from CNF conditions.
+func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, tableRange bool, colLen int) (ranges []*Range, err error) {
 	rb := builder{sc: sc}
 	rangePoints := fullRange
 	for _, cond := range accessConditions {
@@ -253,33 +253,38 @@ func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 		}
 	}
 	newTp := newFieldType(tp)
-	ranges, err := points2TableRanges(sc, rangePoints, newTp)
+	if tableRange {
+		ranges, err = points2TableRanges(sc, rangePoints, newTp)
+	} else {
+		ranges, err = points2Ranges(sc, rangePoints, newTp)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if colLen != types.UnspecifiedLength {
+		for _, ran := range ranges {
+			if fixRangeDatum(&ran.LowVal[0], colLen, tp) {
+				ran.LowExclude = false
+			}
+			if fixRangeDatum(&ran.HighVal[0], colLen, tp) {
+				ran.HighExclude = false
+			}
+		}
 	}
 	return ranges, nil
 }
 
-// BuildColumnRange builds the range for sampling histogram to calculate the row count.
-func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+// BuildTableRange builds range of PK column for PhysicalTableScan.
+func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+	return buildColumnRange(accessConditions, sc, tp, true, types.UnspecifiedLength)
+}
+
+// BuildColumnRange builds range from access conditions for general columns.
+func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, colLen int) ([]*Range, error) {
 	if len(conds) == 0 {
 		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
 	}
-
-	rb := builder{sc: sc}
-	rangePoints := fullRange
-	for _, cond := range conds {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond))
-		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
-		}
-	}
-	newTp := newFieldType(tp)
-	ranges, err := points2Ranges(sc, rangePoints, newTp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return ranges, nil
+	return buildColumnRange(conds, sc, tp, false, colLen)
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
@@ -416,14 +421,13 @@ func hasPrefix(lengths []int) bool {
 //    value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
 //    So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
 func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
-	hasCut := false
+	var hasCut bool
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
 		for i := 0; i < lowTail; i++ {
 			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
 		}
-		lowCut := false
-		lowCut = fixRangeDatum(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
+		lowCut := fixRangeDatum(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
 		if lowCut {
 			ran.LowExclude = false
 		}
@@ -431,8 +435,7 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 		for i := 0; i < highTail; i++ {
 			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
 		}
-		highCut := false
-		highCut = fixRangeDatum(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
+		highCut := fixRangeDatum(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
 		if highCut {
 			ran.HighExclude = false
 		}
@@ -492,7 +495,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 // 1. 'expr' must be either 'EQUAL' or 'IN' function.
 // 2. 'points' should not be empty.
 func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.Expression) expression.Expression {
-	// len(points) cannot be 0 here, since we impose early termination in extractEqAndInCondition
+	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	sf, _ := expr.(*expression.ScalarFunction)
 	// Constant and Column args should have same RetType, simply get from first arg
 	retType := sf.GetArgs()[0].GetType()

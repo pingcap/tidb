@@ -23,7 +23,7 @@ var (
 			Subsystem: "session",
 			Name:      "parse_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
-			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
+			Buckets:   prometheus.ExponentialBuckets(0.00004, 2, 22), // 40us ~ 168s
 		}, []string{LblSQLType})
 	SessionExecuteCompileDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -31,7 +31,8 @@ var (
 			Subsystem: "session",
 			Name:      "compile_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in query optimize.",
-			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
+			// Build plan may execute the statement, or allocate table ID, so it might take a long time.
+			Buckets: prometheus.ExponentialBuckets(0.00004, 2, 22), // 40us ~ 168s
 		}, []string{LblSQLType})
 	SessionExecuteRunDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -39,7 +40,7 @@ var (
 			Subsystem: "session",
 			Name:      "execute_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in running executor.",
-			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 13),
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 22), // 100us ~ 419s
 		}, []string{LblSQLType})
 	SchemaLeaseErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -54,7 +55,7 @@ var (
 			Subsystem: "session",
 			Name:      "retry_num",
 			Help:      "Bucketed histogram of session retry count.",
-			Buckets:   prometheus.LinearBuckets(0, 1, 10),
+			Buckets:   prometheus.LinearBuckets(0, 1, 20), // 0 ~ 20
 		})
 	SessionRetryErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -84,8 +85,8 @@ var (
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "transaction_statement_num",
-			Help:      "Buckated histogram of statements count in each transaction.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 12),
+			Help:      "Bucketed histogram of statements count in each transaction.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 65536
 		}, []string{LblSQLType, LblType})
 
 	TransactionDuration = prometheus.NewHistogramVec(
@@ -94,7 +95,7 @@ var (
 			Subsystem: "session",
 			Name:      "transaction_duration_seconds",
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 16), // range 1ms ~ 64s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1049s
 		}, []string{LblSQLType, LblType})
 )
 
@@ -106,6 +107,7 @@ const (
 	LblError       = "error"
 	LblRollback    = "rollback"
 	LblType        = "type"
+	LblDb          = "db"
 	LblResult      = "result"
 	LblSQLType     = "sql_type"
 	LblGeneral     = "general"

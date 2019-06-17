@@ -14,6 +14,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -23,49 +24,75 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 )
 
+// PreprocessOpt presents optional parameters to `Preprocess` method.
+type PreprocessOpt func(*preprocessor)
+
+// InPrepare is a PreprocessOpt that indicates preprocess is executing under prepare statement.
+func InPrepare(p *preprocessor) {
+	p.flag |= inPrepare
+}
+
+// InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
+func InTxnRetry(p *preprocessor) {
+	p.flag |= inTxnRetry
+}
+
 // Preprocess resolves table names of the node, and checks some statements validation.
-func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
-	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare, tableAliasInJoin: make([]map[string]interface{}, 0, 0)}
+func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
+	v := preprocessor{is: is, ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}
+	for _, optFn := range preprocessOpt {
+		optFn(&v)
+	}
 	node.Accept(&v)
 	return errors.Trace(v.err)
 }
 
+type preprocessorFlag uint8
+
+const (
+	// inPrepare is set when visiting in prepare statement.
+	inPrepare preprocessorFlag = 1 << iota
+	// inTxnRetry is set when visiting in transaction retry.
+	inTxnRetry
+	// inCreateOrDropTable is set when visiting create/drop table statement.
+	inCreateOrDropTable
+	// parentIsJoin is set when visiting node's parent is join.
+	parentIsJoin
+)
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
-	is        infoschema.InfoSchema
-	ctx       sessionctx.Context
-	err       error
-	inPrepare bool
-	// inCreateOrDropTable is true when visiting create/drop table statement.
-	inCreateOrDropTable bool
+	is   infoschema.InfoSchema
+	ctx  sessionctx.Context
+	err  error
+	flag preprocessorFlag
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
-
-	parentIsJoin bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
-		p.inCreateOrDropTable = true
+		p.flag |= inCreateOrDropTable
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
-		p.inCreateOrDropTable = true
+		p.flag |= inCreateOrDropTable
 		p.checkCreateViewGrammar(node)
 	case *ast.DropTableStmt:
-		p.inCreateOrDropTable = true
+		p.flag |= inCreateOrDropTable
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
-		p.inCreateOrDropTable = true
+		p.flag |= inCreateOrDropTable
 		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
 		p.checkCreateIndexGrammar(node)
@@ -74,6 +101,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
 		p.checkCreateDatabaseGrammar(node)
+	case *ast.AlterDatabaseStmt:
+		p.checkAlterDatabaseGrammar(node)
 	case *ast.DropDatabaseStmt:
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
@@ -84,24 +113,40 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		return in, true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
+	case *ast.CreateBindingStmt:
+		p.checkBindGrammar(node)
+	case *ast.RecoverTableStmt:
+		// The specified table in recover table statement maybe already been dropped.
+		// So skip check table name here, otherwise, recover table [table_name] syntax will return
+		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
+		return in, true
 	default:
-		p.parentIsJoin = false
+		p.flag &= ^parentIsJoin
 	}
 	return in, p.err != nil
+}
+
+func (p *preprocessor) checkBindGrammar(createBindingStmt *ast.CreateBindingStmt) {
+	originSQL := parser.Normalize(createBindingStmt.OriginSel.(*ast.SelectStmt).Text())
+	hintedSQL := parser.Normalize(createBindingStmt.HintedSel.(*ast.SelectStmt).Text())
+
+	if originSQL != hintedSQL {
+		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
+	}
 }
 
 func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
 	case *ast.CreateTableStmt:
-		p.inCreateOrDropTable = false
+		p.flag &= ^inCreateOrDropTable
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
 	case *ast.CreateViewStmt:
-		p.inCreateOrDropTable = false
+		p.flag &= ^inCreateOrDropTable
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
-		p.inCreateOrDropTable = false
+		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
-		if !p.inPrepare {
+		if p.flag&inPrepare == 0 {
 			p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
 			return
 		}
@@ -124,6 +169,28 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.Join:
 		if len(p.tableAliasInJoin) > 0 {
 			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
+		}
+	case *ast.FuncCallExpr:
+		// The arguments for builtin NAME_CONST should be constants
+		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_name-const for details
+		if x.FnName.L == ast.NameConst {
+			if len(x.Args) != 2 {
+				p.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(x.FnName.L)
+			} else {
+				_, isValueExpr1 := x.Args[0].(*driver.ValueExpr)
+				_, isValueExpr2 := x.Args[1].(*driver.ValueExpr)
+				if !isValueExpr1 || !isValueExpr2 {
+					p.err = ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
+				}
+			}
+			break
+		}
+
+		// no need sleep when retry transaction and avoid unexpect sleep caused by retry.
+		if p.flag&inTxnRetry > 0 && x.FnName.L == ast.Sleep {
+			if len(x.Args) == 1 {
+				x.Args[0] = ast.NewValueExpr(0)
+			}
 		}
 	}
 
@@ -259,6 +326,13 @@ func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) 
 	}
 }
 
+func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
+	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
+	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
+		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+	}
+}
+
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
@@ -274,10 +348,15 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
-			p.err = errors.Trace(err)
+			p.err = err
 			return
 		}
-		countPrimaryKey += isPrimary(colDef.Options)
+		isPrimary, err := checkColumnOptions(colDef.Options)
+		if err != nil {
+			p.err = err
+			return
+		}
+		countPrimaryKey += isPrimary
 		if countPrimaryKey > 1 {
 			p.err = infoschema.ErrMultiplePriKey
 			return
@@ -326,7 +405,6 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 			return
 		}
 	}
-	return
 }
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
@@ -339,7 +417,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 }
 
 func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
-	if !p.parentIsJoin {
+	if p.flag&parentIsJoin == 0 {
 		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
@@ -351,27 +429,48 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		p.err = err
 		return
 	}
-	p.parentIsJoin = true
+	p.flag |= parentIsJoin
 }
 
 func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
 	if ts, ok := node.(*ast.TableSource); ok {
-		_, exists := tableAliases[ts.AsName.L]
-		if len(ts.AsName.L) != 0 && exists {
-			return ErrNonUniqTable.GenWithStackByArgs(ts.AsName)
+		tabName := ts.AsName
+		if tabName.L == "" {
+			if tableNode, ok := ts.Source.(*ast.TableName); ok {
+				if tableNode.Schema.L != "" {
+					tabName = model.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
+				} else {
+					tabName = tableNode.Name
+				}
+			}
 		}
-		tableAliases[ts.AsName.L] = nil
+		_, exists := tableAliases[tabName.L]
+		if len(tabName.L) != 0 && exists {
+			return ErrNonUniqTable.GenWithStackByArgs(tabName)
+		}
+		tableAliases[tabName.L] = nil
 	}
 	return nil
 }
 
-func isPrimary(ops []*ast.ColumnOption) int {
+func checkColumnOptions(ops []*ast.ColumnOption) (int, error) {
+	isPrimary, isGenerated, isStored := 0, 0, false
+
 	for _, op := range ops {
-		if op.Tp == ast.ColumnOptionPrimaryKey {
-			return 1
+		switch op.Tp {
+		case ast.ColumnOptionPrimaryKey:
+			isPrimary = 1
+		case ast.ColumnOptionGenerated:
+			isGenerated = 1
+			isStored = op.Stored
 		}
 	}
-	return 0
+
+	if isPrimary > 0 && isGenerated > 0 && !isStored {
+		return isPrimary, ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
+	}
+
+	return isPrimary, nil
 }
 
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
@@ -496,7 +595,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		}
 		err := ddl.IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, tp.Charset)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		if tp.Decimal > mysql.MaxFloatingTypeScale {
@@ -596,14 +695,14 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		}
 		tn.Schema = model.NewCIStr(currentDB)
 	}
-	if p.inCreateOrDropTable {
+	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
 		// Skip resolving the table to avoid error.
 		return
 	}
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
-		p.err = errors.Trace(err)
+		p.err = err
 		return
 	}
 	tn.TableInfo = table.Meta()
@@ -636,7 +735,7 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 	for _, spec := range node.Specs {
 		if spec.Tp == ast.AlterTableRenameTable {
-			p.inCreateOrDropTable = true
+			p.flag |= inCreateOrDropTable
 			break
 		}
 	}

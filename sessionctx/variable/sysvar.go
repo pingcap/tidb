@@ -85,6 +85,7 @@ var (
 	ErrTruncatedWrongValue         = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 	ErrMaxPreparedStmtCountReached = terror.ClassVariable.New(CodeMaxPreparedStmtCountReached, mysql.MySQLErrName[mysql.ErrMaxPreparedStmtCountReached])
 	ErrUnsupportedValueForVar      = terror.ClassVariable.New(CodeUnknownStatusVar, "variable '%s' does not yet support value: %s")
+	ErrUnsupportedIsolationLevel   = terror.ClassVariable.New(CodeUnknownStatusVar, "The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
 )
 
 func init() {
@@ -108,7 +109,8 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
 
-func boolToIntStr(b bool) string {
+// BoolToIntStr converts bool to int string, for example "0" or "1".
+func BoolToIntStr(b bool) string {
 	if b {
 		return "1"
 	}
@@ -129,11 +131,11 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_version", "5.6.25"},
 	{ScopeGlobal, MaxConnections, "151"},
 	{ScopeGlobal | ScopeSession, BigTables, "0"},
-	{ScopeNone, "skip_external_locking", "ON"},
+	{ScopeNone, "skip_external_locking", "1"},
 	{ScopeGlobal, "slave_pending_jobs_size_max", "16777216"},
 	{ScopeNone, "innodb_sync_array_size", "1"},
 	{ScopeSession, "rand_seed2", ""},
-	{ScopeGlobal, "validate_password_check_user_name", "OFF"},
+	{ScopeGlobal, ValidatePasswordCheckUserName, "0"},
 	{ScopeGlobal, "validate_password_number_count", "1"},
 	{ScopeSession, "gtid_next", ""},
 	{ScopeGlobal | ScopeSession, SQLSelectLimit, "18446744073709551615"},
@@ -147,7 +149,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, MaxConnectErrors, "100"},
 	{ScopeGlobal, SyncBinlog, "0"},
 	{ScopeNone, "max_digest_length", "1024"},
-	{ScopeNone, "innodb_force_load_corrupted", "OFF"},
+	{ScopeNone, "innodb_force_load_corrupted", "0"},
 	{ScopeNone, "performance_schema_max_table_handles", "4000"},
 	{ScopeGlobal, InnodbFastShutdown, "1"},
 	{ScopeNone, "ft_max_word_len", "84"},
@@ -172,7 +174,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_max_undo_log_size", ""},
 	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096"},
 	{ScopeGlobal, ConnectTimeout, "10"},
-	{ScopeGlobal | ScopeSession, "collation_server", mysql.DefaultCollationName},
+	{ScopeGlobal | ScopeSession, CollationServer, mysql.DefaultCollationName},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},
 	{ScopeGlobal, "innodb_file_format", "Antelope"},
@@ -183,15 +185,15 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "thread_stack", "262144"},
 	{ScopeGlobal, "relay_log_info_repository", "FILE"},
 	{ScopeGlobal | ScopeSession, SQLLogBin, "1"},
-	{ScopeGlobal, "super_read_only", "OFF"},
+	{ScopeGlobal, SuperReadOnly, "0"},
 	{ScopeGlobal | ScopeSession, "max_delayed_threads", "20"},
 	{ScopeNone, "protocol_version", "10"},
 	{ScopeGlobal | ScopeSession, "new", "OFF"},
 	{ScopeGlobal | ScopeSession, "myisam_sort_buffer_size", "8388608"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_offset", "-1"},
-	{ScopeGlobal, "innodb_buffer_pool_dump_at_shutdown", "OFF"},
-	{ScopeGlobal | ScopeSession, "sql_notes", "ON"},
-	{ScopeGlobal, "innodb_cmp_per_index_enabled", "OFF"},
+	{ScopeGlobal, InnodbBufferPoolDumpAtShutdown, "0"},
+	{ScopeGlobal | ScopeSession, SQLNotes, "1"},
+	{ScopeGlobal, InnodbCmpPerIndexEnabled, "0"},
 	{ScopeGlobal, "innodb_ft_server_stopword_table", ""},
 	{ScopeNone, "performance_schema_max_file_instances", "7693"},
 	{ScopeNone, "log_output", "FILE"},
@@ -203,19 +205,19 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_events_statements_history_size", "10"},
 	{ScopeGlobal, GeneralLog, "0"},
 	{ScopeGlobal, "validate_password_dictionary_file", ""},
-	{ScopeGlobal, "binlog_order_commits", "ON"},
-	{ScopeGlobal, "master_verify_checksum", "OFF"},
+	{ScopeGlobal, BinlogOrderCommits, "1"},
+	{ScopeGlobal, MasterVerifyChecksum, "0"},
 	{ScopeGlobal, "key_cache_division_limit", "100"},
 	{ScopeGlobal, "rpl_semi_sync_master_trace_level", ""},
 	{ScopeGlobal | ScopeSession, "max_insert_delayed_threads", "20"},
 	{ScopeNone, "performance_schema_session_connect_attrs_size", "512"},
 	{ScopeGlobal | ScopeSession, "time_zone", "SYSTEM"},
 	{ScopeGlobal, "innodb_max_dirty_pages_pct", "75"},
-	{ScopeGlobal, "innodb_file_per_table", "ON"},
-	{ScopeGlobal, "innodb_log_compressed_pages", "ON"},
+	{ScopeGlobal, InnodbFilePerTable, "1"},
+	{ScopeGlobal, InnodbLogCompressedPages, "1"},
 	{ScopeGlobal, "master_info_repository", "FILE"},
 	{ScopeGlobal, "rpl_stop_slave_timeout", "31536000"},
-	{ScopeNone, "skip_networking", "OFF"},
+	{ScopeNone, "skip_networking", "0"},
 	{ScopeGlobal, "innodb_monitor_reset", ""},
 	{ScopeNone, "have_ssl", "DISABLED"},
 	{ScopeNone, "have_openssl", "DISABLED"},
@@ -225,7 +227,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "ssl_cipher", ""},
 	{ScopeNone, "tls_version", "TLSv1,TLSv1.1,TLSv1.2"},
 	{ScopeNone, "system_time_zone", "CST"},
-	{ScopeGlobal, "innodb_print_all_deadlocks", "OFF"},
+	{ScopeGlobal, InnodbPrintAllDeadlocks, "0"},
 	{ScopeNone, "innodb_autoinc_lock_mode", "1"},
 	{ScopeGlobal, "slave_net_timeout", "3600"},
 	{ScopeGlobal, "key_buffer_size", "8388608"},
@@ -238,19 +240,19 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "debug", ""},
 	{ScopeGlobal, "log_warnings", "1"},
 	{ScopeGlobal, OfflineMode, "0"},
-	{ScopeGlobal | ScopeSession, "innodb_strict_mode", "OFF"},
+	{ScopeGlobal | ScopeSession, InnodbStrictMode, "1"},
 	{ScopeGlobal, "innodb_rollback_segments", "128"},
 	{ScopeGlobal | ScopeSession, "join_buffer_size", "262144"},
 	{ScopeNone, "innodb_mirrored_log_groups", "1"},
 	{ScopeGlobal, "max_binlog_size", "1073741824"},
 	{ScopeGlobal, "sync_master_info", "10000"},
 	{ScopeGlobal, "concurrent_insert", "AUTO"},
-	{ScopeGlobal, "innodb_adaptive_hash_index", "ON"},
-	{ScopeGlobal, "innodb_ft_enable_stopword", "ON"},
+	{ScopeGlobal, InnodbAdaptiveHashIndex, "1"},
+	{ScopeGlobal, InnodbFtEnableStopword, "1"},
 	{ScopeGlobal, "general_log_file", "/usr/local/mysql/data/localhost.log"},
-	{ScopeGlobal | ScopeSession, "innodb_support_xa", "ON"},
+	{ScopeGlobal | ScopeSession, InnodbSupportXA, "1"},
 	{ScopeGlobal, "innodb_compression_level", "6"},
-	{ScopeNone, "innodb_file_format_check", "ON"},
+	{ScopeNone, "innodb_file_format_check", "1"},
 	{ScopeNone, "myisam_mmap_size", "18446744073709551615"},
 	{ScopeGlobal, "init_slave", ""},
 	{ScopeNone, "innodb_buffer_pool_instances", "8"},
@@ -258,13 +260,13 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "max_length_for_sort_data", "1024"},
 	{ScopeNone, "character_set_system", "utf8"},
 	{ScopeGlobal | ScopeSession, InteractiveTimeout, "28800"},
-	{ScopeGlobal, "innodb_optimize_fulltext_only", "OFF"},
+	{ScopeGlobal, InnodbOptimizeFullTextOnly, "0"},
 	{ScopeNone, "character_sets_dir", "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/"},
-	{ScopeGlobal | ScopeSession, "query_cache_type", "OFF"},
-	{ScopeNone, "innodb_rollback_on_timeout", "OFF"},
+	{ScopeGlobal | ScopeSession, QueryCacheType, "OFF"},
+	{ScopeNone, "innodb_rollback_on_timeout", "0"},
 	{ScopeGlobal | ScopeSession, "query_alloc_block_size", "8192"},
-	{ScopeGlobal, "slave_compressed_protocol", "OFF"},
-	{ScopeGlobal, "init_connect", ""},
+	{ScopeGlobal, SlaveCompressedProtocol, "0"},
+	{ScopeGlobal | ScopeSession, InitConnect, ""},
 	{ScopeGlobal, "rpl_semi_sync_slave_trace_level", ""},
 	{ScopeNone, "have_compress", "YES"},
 	{ScopeNone, "thread_concurrency", "10"},
@@ -273,14 +275,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, MaxUserConnections, "0"},
 	{ScopeNone, "performance_schema_max_thread_classes", "50"},
 	{ScopeGlobal, "innodb_api_trx_level", "0"},
-	{ScopeNone, "disconnect_on_expired_password", "ON"},
+	{ScopeNone, "disconnect_on_expired_password", "1"},
 	{ScopeNone, "performance_schema_max_file_classes", "50"},
 	{ScopeGlobal, "expire_logs_days", "0"},
-	{ScopeGlobal | ScopeSession, "binlog_rows_query_log_events", "OFF"},
+	{ScopeGlobal | ScopeSession, BinlogRowQueryLogEvents, "0"},
 	{ScopeGlobal, "default_password_lifetime", ""},
 	{ScopeNone, "pid_file", "/usr/local/mysql/data/localhost.pid"},
 	{ScopeNone, "innodb_undo_tablespaces", "0"},
-	{ScopeGlobal, "innodb_status_output_locks", "OFF"},
+	{ScopeGlobal, InnodbStatusOutputLocks, "0"},
 	{ScopeNone, "performance_schema_accounts_size", "100"},
 	{ScopeGlobal | ScopeSession, "max_error_count", "64"},
 	{ScopeGlobal, "max_write_lock_count", "18446744073709551615"},
@@ -288,36 +290,36 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_table_instances", "12500"},
 	{ScopeGlobal, "innodb_stats_persistent_sample_pages", "20"},
 	{ScopeGlobal, "show_compatibility_56", ""},
-	{ScopeGlobal, "log_slow_slave_statements", "OFF"},
+	{ScopeGlobal, LogSlowSlaveStatements, "0"},
 	{ScopeNone, "innodb_open_files", "2000"},
 	{ScopeGlobal, "innodb_spin_wait_delay", "6"},
 	{ScopeGlobal, "thread_cache_size", "9"},
-	{ScopeGlobal, "log_slow_admin_statements", "OFF"},
+	{ScopeGlobal, LogSlowAdminStatements, "0"},
 	{ScopeNone, "innodb_checksums", "ON"},
 	{ScopeNone, "hostname", ServerHostname},
 	{ScopeGlobal | ScopeSession, "auto_increment_offset", "1"},
 	{ScopeNone, "ft_stopword_file", "(built-in)"},
 	{ScopeGlobal, "innodb_max_dirty_pages_pct_lwm", "0"},
-	{ScopeGlobal, "log_queries_not_using_indexes", "OFF"},
+	{ScopeGlobal, LogQueriesNotUsingIndexes, "0"},
 	{ScopeSession, "timestamp", ""},
-	{ScopeGlobal | ScopeSession, "query_cache_wlock_invalidate", "OFF"},
+	{ScopeGlobal | ScopeSession, QueryCacheWlockInvalidate, "0"},
 	{ScopeGlobal | ScopeSession, "sql_buffer_result", "OFF"},
 	{ScopeGlobal | ScopeSession, "character_set_filesystem", "binary"},
 	{ScopeGlobal | ScopeSession, "collation_database", mysql.DefaultCollationName},
-	{ScopeGlobal | ScopeSession, "auto_increment_increment", "1"},
+	{ScopeGlobal | ScopeSession, AutoIncrementIncrement, "1"},
 	{ScopeGlobal | ScopeSession, "max_heap_table_size", "16777216"},
 	{ScopeGlobal | ScopeSession, "div_precision_increment", "4"},
 	{ScopeGlobal, "innodb_lru_scan_depth", "1024"},
 	{ScopeGlobal, "innodb_purge_rseg_truncate_frequency", ""},
-	{ScopeGlobal | ScopeSession, "sql_auto_is_null", "OFF"},
-	{ScopeNone, "innodb_api_enable_binlog", "OFF"},
+	{ScopeGlobal | ScopeSession, SQLAutoIsNull, "0"},
+	{ScopeNone, "innodb_api_enable_binlog", "0"},
 	{ScopeGlobal | ScopeSession, "innodb_ft_user_stopword_table", ""},
 	{ScopeNone, "server_id_bits", "32"},
 	{ScopeGlobal, "innodb_log_checksum_algorithm", ""},
-	{ScopeNone, "innodb_buffer_pool_load_at_startup", "OFF"},
+	{ScopeNone, "innodb_buffer_pool_load_at_startup", "1"},
 	{ScopeGlobal | ScopeSession, "sort_buffer_size", "262144"},
 	{ScopeGlobal, "innodb_flush_neighbors", "1"},
-	{ScopeNone, "innodb_use_sys_malloc", "ON"},
+	{ScopeNone, "innodb_use_sys_malloc", "1"},
 	{ScopeSession, PluginLoad, ""},
 	{ScopeSession, PluginDir, "/data/deploy/plugin"},
 	{ScopeNone, "performance_schema_max_socket_classes", "10"},
@@ -327,8 +329,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "slave_checkpoint_group", "512"},
 	{ScopeGlobal | ScopeSession, "character_set_client", mysql.DefaultCharset},
 	{ScopeNone, "slave_load_tmpdir", "/var/tmp/"},
-	{ScopeGlobal, "innodb_buffer_pool_dump_now", "OFF"},
-	{ScopeGlobal, "relay_log_purge", "ON"},
+	{ScopeGlobal, InnodbBufferPoolDumpNow, "0"},
+	{ScopeGlobal, RelayLogPurge, "1"},
 	{ScopeGlobal, "ndb_distribution", ""},
 	{ScopeGlobal, "myisam_data_pointer_size", "6"},
 	{ScopeGlobal, "ndb_optimization_delay", ""},
@@ -342,42 +344,42 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, MaxSortLength, "1024"},
 	{ScopeNone, "metadata_locks_hash_instances", "8"},
 	{ScopeGlobal, "ndb_eventbuffer_free_percent", ""},
-	{ScopeNone, "large_files_support", "ON"},
+	{ScopeNone, "large_files_support", "1"},
 	{ScopeGlobal, "binlog_max_flush_queue_time", "0"},
 	{ScopeGlobal, "innodb_fill_factor", ""},
 	{ScopeGlobal, "log_syslog_facility", ""},
 	{ScopeNone, "innodb_ft_min_token_size", "3"},
 	{ScopeGlobal | ScopeSession, "transaction_write_set_extraction", ""},
 	{ScopeGlobal | ScopeSession, "ndb_blob_write_batch_bytes", ""},
-	{ScopeGlobal, "automatic_sp_privileges", "ON"},
+	{ScopeGlobal, "automatic_sp_privileges", "1"},
 	{ScopeGlobal, "innodb_flush_sync", ""},
 	{ScopeNone, "performance_schema_events_statements_history_long_size", "10000"},
 	{ScopeGlobal, "innodb_monitor_disable", ""},
-	{ScopeNone, "innodb_doublewrite", "ON"},
+	{ScopeNone, "innodb_doublewrite", "1"},
 	{ScopeGlobal, "slave_parallel_type", ""},
-	{ScopeNone, "log_bin_use_v1_row_events", "OFF"},
+	{ScopeNone, "log_bin_use_v1_row_events", "0"},
 	{ScopeSession, "innodb_optimize_point_storage", ""},
-	{ScopeNone, "innodb_api_disable_rowlock", "OFF"},
+	{ScopeNone, "innodb_api_disable_rowlock", "0"},
 	{ScopeGlobal, "innodb_adaptive_flushing_lwm", "10"},
 	{ScopeNone, "innodb_log_files_in_group", "2"},
-	{ScopeGlobal, "innodb_buffer_pool_load_now", "OFF"},
+	{ScopeGlobal, InnodbBufferPoolLoadNow, "0"},
 	{ScopeNone, "performance_schema_max_rwlock_classes", "40"},
-	{ScopeNone, "binlog_gtid_simple_recovery", "OFF"},
-	{ScopeNone, "port", "3306"},
+	{ScopeNone, "binlog_gtid_simple_recovery", "1"},
+	{ScopeNone, Port, "4000"},
 	{ScopeNone, "performance_schema_digests_size", "10000"},
-	{ScopeGlobal | ScopeSession, "profiling", "OFF"},
+	{ScopeGlobal | ScopeSession, Profiling, "0"},
 	{ScopeNone, "lower_case_table_names", "2"},
 	{ScopeSession, "rand_seed1", ""},
 	{ScopeGlobal, "sha256_password_proxy_users", ""},
-	{ScopeGlobal | ScopeSession, "sql_quote_show_create", "ON"},
+	{ScopeGlobal | ScopeSession, SQLQuoteShowCreate, "1"},
 	{ScopeGlobal | ScopeSession, "binlogging_impossible_mode", "IGNORE_ERROR"},
-	{ScopeGlobal, "query_cache_size", "1048576"},
+	{ScopeGlobal | ScopeSession, QueryCacheSize, "1048576"},
 	{ScopeGlobal, "innodb_stats_transient_sample_pages", "8"},
-	{ScopeGlobal, "innodb_stats_on_metadata", "OFF"},
-	{ScopeNone, "server_uuid", "d530594e-1c86-11e5-878b-6b36ce6799ca"},
+	{ScopeGlobal, InnodbStatsOnMetadata, "0"},
+	{ScopeNone, "server_uuid", "00000000-0000-0000-0000-000000000000"},
 	{ScopeNone, "open_files_limit", "5000"},
 	{ScopeGlobal | ScopeSession, "ndb_force_send", ""},
-	{ScopeNone, "skip_show_database", "OFF"},
+	{ScopeNone, "skip_show_database", "0"},
 	{ScopeGlobal, "log_timestamps", ""},
 	{ScopeNone, "version_compile_machine", "x86_64"},
 	{ScopeGlobal, "slave_parallel_workers", "0"},
@@ -386,20 +388,19 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_syslog_include_pid", ""},
 	{ScopeSession, "last_insert_id", ""},
 	{ScopeNone, "innodb_ft_cache_size", "8000000"},
-	{ScopeNone, "log_bin", "OFF"},
-	{ScopeGlobal, "innodb_disable_sort_file_cache", "OFF"},
+	{ScopeNone, LogBin, "0"},
+	{ScopeGlobal, InnodbDisableSortFileCache, "0"},
 	{ScopeGlobal, "log_error_verbosity", ""},
 	{ScopeNone, "performance_schema_hosts_size", "100"},
 	{ScopeGlobal, "innodb_replication_delay", "0"},
-	{ScopeGlobal, "slow_query_log", "OFF"},
+	{ScopeGlobal, SlowQueryLog, "0"},
 	{ScopeSession, "debug_sync", ""},
-	{ScopeGlobal, "innodb_stats_auto_recalc", "ON"},
-	{ScopeGlobal, "timed_mutexes", "OFF"},
+	{ScopeGlobal, InnodbStatsAutoRecalc, "1"},
 	{ScopeGlobal | ScopeSession, "lc_messages", "en_US"},
 	{ScopeGlobal | ScopeSession, "bulk_insert_buffer_size", "8388608"},
-	{ScopeGlobal | ScopeSession, "binlog_direct_non_transactional_updates", "OFF"},
+	{ScopeGlobal | ScopeSession, BinlogDirectNonTransactionalUpdates, "0"},
 	{ScopeGlobal, "innodb_change_buffering", "all"},
-	{ScopeGlobal | ScopeSession, "sql_big_selects", "ON"},
+	{ScopeGlobal | ScopeSession, SQLBigSelects, "1"},
 	{ScopeGlobal | ScopeSession, CharacterSetResults, mysql.DefaultCharset},
 	{ScopeGlobal, "innodb_max_purge_lag_delay", "0"},
 	{ScopeGlobal | ScopeSession, "session_track_schema", ""},
@@ -409,10 +410,10 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "optimizer_trace", "enabled=off,one_line=off"},
 	{ScopeGlobal | ScopeSession, "read_rnd_buffer_size", "262144"},
 	{ScopeNone, "version_comment", "MySQL Community Server (Apache License 2.0)"},
-	{ScopeGlobal | ScopeSession, "net_write_timeout", "60"},
-	{ScopeGlobal, "innodb_buffer_pool_load_abort", "OFF"},
-	{ScopeGlobal | ScopeSession, "tx_isolation", "REPEATABLE-READ"},
-	{ScopeGlobal | ScopeSession, "transaction_isolation", "REPEATABLE-READ"},
+	{ScopeGlobal | ScopeSession, NetWriteTimeout, "60"},
+	{ScopeGlobal, InnodbBufferPoolLoadAbort, "0"},
+	{ScopeGlobal | ScopeSession, TxnIsolation, "REPEATABLE-READ"},
+	{ScopeGlobal | ScopeSession, TransactionIsolation, "REPEATABLE-READ"},
 	{ScopeGlobal | ScopeSession, "collation_connection", mysql.DefaultCollationName},
 	{ScopeGlobal, "rpl_semi_sync_master_timeout", ""},
 	{ScopeGlobal | ScopeSession, "transaction_prealloc_size", "4096"},
@@ -429,17 +430,17 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "large_pages", "OFF"},
 	{ScopeGlobal | ScopeSession, "session_track_system_variables", ""},
 	{ScopeGlobal, "innodb_change_buffer_max_size", "25"},
-	{ScopeGlobal, "log_bin_trust_function_creators", "OFF"},
+	{ScopeGlobal, LogBinTrustFunctionCreators, "0"},
 	{ScopeNone, "innodb_write_io_threads", "4"},
 	{ScopeGlobal, "mysql_native_password_proxy_users", ""},
-	{ScopeGlobal, "read_only", "OFF"},
+	{ScopeGlobal, serverReadOnly, "0"},
 	{ScopeNone, "large_page_size", "0"},
 	{ScopeNone, "table_open_cache_instances", "1"},
-	{ScopeGlobal, "innodb_stats_persistent", "ON"},
+	{ScopeGlobal, InnodbStatsPersistent, "1"},
 	{ScopeGlobal | ScopeSession, "session_track_state_change", ""},
 	{ScopeNone, "optimizer_switch", "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,subquery_materialization_cost_based=on,use_index_extensions=on"},
 	{ScopeGlobal, "delayed_queue_size", "1000"},
-	{ScopeNone, "innodb_read_only", "OFF"},
+	{ScopeNone, "innodb_read_only", "0"},
 	{ScopeNone, "datetime_format", "%Y-%m-%d %H:%i:%s"},
 	{ScopeGlobal, "log_syslog", ""},
 	{ScopeNone, "version", mysql.ServerVersion},
@@ -452,21 +453,21 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "ndb_index_stat_enable", ""},
 	{ScopeGlobal, "executed_gtids_compression_period", ""},
 	{ScopeNone, "time_format", "%H:%i:%s"},
-	{ScopeGlobal | ScopeSession, "old_alter_table", "OFF"},
+	{ScopeGlobal | ScopeSession, OldAlterTable, "0"},
 	{ScopeGlobal | ScopeSession, "long_query_time", "10.000000"},
-	{ScopeNone, "innodb_use_native_aio", "OFF"},
+	{ScopeNone, "innodb_use_native_aio", "0"},
 	{ScopeGlobal, "log_throttle_queries_not_using_indexes", "0"},
-	{ScopeNone, "locked_in_memory", "OFF"},
-	{ScopeNone, "innodb_api_enable_mdl", "OFF"},
+	{ScopeNone, "locked_in_memory", "0"},
+	{ScopeNone, "innodb_api_enable_mdl", "0"},
 	{ScopeGlobal, "binlog_cache_size", "32768"},
 	{ScopeGlobal, "innodb_compression_pad_pct_max", "50"},
 	{ScopeGlobal, InnodbCommitConcurrency, "0"},
 	{ScopeNone, "ft_min_word_len", "4"},
-	{ScopeGlobal, "enforce_gtid_consistency", "OFF"},
-	{ScopeGlobal, "secure_auth", "ON"},
+	{ScopeGlobal, EnforceGtidConsistency, "OFF"},
+	{ScopeGlobal, SecureAuth, "1"},
 	{ScopeNone, "max_tmp_tables", "32"},
-	{ScopeGlobal, "innodb_random_read_ahead", "OFF"},
-	{ScopeGlobal | ScopeSession, "unique_checks", "ON"},
+	{ScopeGlobal, InnodbRandomReadAhead, "0"},
+	{ScopeGlobal | ScopeSession, UniqueChecks, "1"},
 	{ScopeGlobal, "internal_tmp_disk_storage_engine", ""},
 	{ScopeGlobal | ScopeSession, "myisam_repair_threads", "1"},
 	{ScopeGlobal, "ndb_eventbuffer_max_alloc", ""},
@@ -480,14 +481,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "read_buffer_size", "131072"},
 	{ScopeNone, "innodb_read_io_threads", "4"},
 	{ScopeGlobal | ScopeSession, MaxSpRecursionDepth, "0"},
-	{ScopeNone, "ignore_builtin_innodb", "OFF"},
+	{ScopeNone, "ignore_builtin_innodb", "0"},
 	{ScopeGlobal, "rpl_semi_sync_master_enabled", ""},
 	{ScopeGlobal, "slow_query_log_file", "/usr/local/mysql/data/localhost-slow.log"},
 	{ScopeGlobal, "innodb_thread_sleep_delay", "10000"},
 	{ScopeNone, "license", "Apache License 2.0"},
 	{ScopeGlobal, "innodb_ft_aux_table", ""},
-	{ScopeGlobal | ScopeSession, "sql_warnings", "OFF"},
-	{ScopeGlobal | ScopeSession, "keep_files_on_create", "OFF"},
+	{ScopeGlobal | ScopeSession, SQLWarnings, "0"},
+	{ScopeGlobal | ScopeSession, KeepFilesOnCreate, "0"},
 	{ScopeGlobal, "slave_preserve_commit_order", ""},
 	{ScopeNone, "innodb_data_file_path", "ibdata1:12M:autoextend"},
 	{ScopeNone, "performance_schema_setup_actors_size", "100"},
@@ -499,9 +500,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_ft_total_cache_size", "640000000"},
 	{ScopeNone, "performance_schema_max_rwlock_instances", "9102"},
 	{ScopeGlobal, "table_open_cache", "2000"},
-	{ScopeNone, "log_slave_updates", "OFF"},
+	{ScopeNone, "log_slave_updates", "0"},
 	{ScopeNone, "performance_schema_events_stages_history_long_size", "10000"},
-	{ScopeGlobal | ScopeSession, "autocommit", "ON"},
+	{ScopeGlobal | ScopeSession, AutoCommit, "1"},
 	{ScopeSession, "insert_id", ""},
 	{ScopeGlobal | ScopeSession, "default_tmp_storage_engine", "InnoDB"},
 	{ScopeGlobal | ScopeSession, "optimizer_search_depth", "62"},
@@ -511,15 +512,17 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "character_set_database", mysql.DefaultCharset},
 	{ScopeNone, "have_symlink", "YES"},
 	{ScopeGlobal | ScopeSession, "storage_engine", "InnoDB"},
-	{ScopeGlobal | ScopeSession, "sql_log_off", "OFF"},
-	{ScopeNone, "explicit_defaults_for_timestamp", "ON"},
+	{ScopeGlobal | ScopeSession, "sql_log_off", "0"},
+	// In MySQL, the default value of `explicit_defaults_for_timestamp` is `0`.
+	// But In TiDB, it's set to `1` to be consistent with TiDB timestamp behavior.
+	// See: https://github.com/pingcap/tidb/pull/6068 for details
+	{ScopeNone, "explicit_defaults_for_timestamp", "1"},
 	{ScopeNone, "performance_schema_events_waits_history_size", "10"},
 	{ScopeGlobal, "log_syslog_tag", ""},
-	{ScopeGlobal | ScopeSession, "tx_read_only", "0"},
-	{ScopeGlobal | ScopeSession, "transaction_read_only", "0"},
+	{ScopeGlobal | ScopeSession, TxReadOnly, "0"},
+	{ScopeGlobal | ScopeSession, TransactionReadOnly, "0"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_point", ""},
 	{ScopeGlobal, "innodb_undo_log_truncate", ""},
-	{ScopeNone, "simplified_binlog_gtid_recovery", "OFF"},
 	{ScopeSession, "innodb_create_intrinsic", ""},
 	{ScopeGlobal, "gtid_executed_compression_period", ""},
 	{ScopeGlobal, "ndb_log_empty_epochs", ""},
@@ -534,14 +537,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "query_cache_min_res_unit", "4096"},
 	{ScopeGlobal | ScopeSession, "updatable_views_with_limit", "YES"},
 	{ScopeGlobal | ScopeSession, "optimizer_prune_level", "1"},
-	{ScopeGlobal, "slave_sql_verify_checksum", "ON"},
+	{ScopeGlobal, "slave_sql_verify_checksum", "1"},
 	{ScopeGlobal | ScopeSession, "completion_type", "NO_CHAIN"},
 	{ScopeGlobal, "binlog_checksum", "CRC32"},
 	{ScopeNone, "report_port", "3306"},
-	{ScopeGlobal | ScopeSession, "show_old_temporals", "OFF"},
+	{ScopeGlobal | ScopeSession, ShowOldTemporals, "0"},
 	{ScopeGlobal, "query_cache_limit", "1048576"},
 	{ScopeGlobal, "innodb_buffer_pool_size", "134217728"},
-	{ScopeGlobal, "innodb_adaptive_flushing", "ON"},
+	{ScopeGlobal, InnodbAdaptiveFlushing, "1"},
 	{ScopeNone, "datadir", "/usr/local/mysql/data/"},
 	{ScopeGlobal | ScopeSession, WaitTimeout, strconv.FormatInt(DefWaitTimeout, 10)},
 	{ScopeGlobal, "innodb_monitor_enable", ""},
@@ -559,22 +562,22 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_old_blocks_time", "1000"},
 	{ScopeGlobal, "innodb_stats_method", "nulls_equal"},
 	{ScopeGlobal | ScopeSession, InnodbLockWaitTimeout, "50"},
-	{ScopeGlobal, "local_infile", "ON"},
+	{ScopeGlobal, LocalInFile, "1"},
 	{ScopeGlobal | ScopeSession, "myisam_stats_method", "nulls_unequal"},
 	{ScopeNone, "version_compile_os", "osx10.8"},
-	{ScopeNone, "relay_log_recovery", "OFF"},
-	{ScopeNone, "old", "OFF"},
-	{ScopeGlobal | ScopeSession, "innodb_table_locks", "ON"},
-	{ScopeNone, "performance_schema", "OFF"},
+	{ScopeNone, "relay_log_recovery", "0"},
+	{ScopeNone, "old", "0"},
+	{ScopeGlobal | ScopeSession, InnodbTableLocks, "1"},
+	{ScopeNone, PerformanceSchema, "0"},
 	{ScopeNone, "myisam_recover_options", "OFF"},
-	{ScopeGlobal | ScopeSession, "net_buffer_length", "16384"},
+	{ScopeGlobal | ScopeSession, NetBufferLength, "16384"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_for_slave_count", ""},
 	{ScopeGlobal | ScopeSession, "binlog_row_image", "FULL"},
-	{ScopeNone, "innodb_locks_unsafe_for_binlog", "OFF"},
+	{ScopeNone, "innodb_locks_unsafe_for_binlog", "0"},
 	{ScopeSession, "rbr_exec_mode", ""},
 	{ScopeGlobal, "myisam_max_sort_file_size", "9223372036853727232"},
 	{ScopeNone, "back_log", "80"},
-	{ScopeNone, "lower_case_file_system", "ON"},
+	{ScopeNone, "lower_case_file_system", "1"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_no_slave", ""},
 	{ScopeGlobal | ScopeSession, GroupConcatMaxLen, "1024"},
 	{ScopeSession, "pseudo_thread_id", ""},
@@ -584,20 +587,20 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_undo_logs", "128"},
 	{ScopeNone, "performance_schema_max_cond_instances", "3504"},
 	{ScopeGlobal, "delayed_insert_limit", "100"},
-	{ScopeGlobal, "flush", "OFF"},
+	{ScopeGlobal, Flush, "0"},
 	{ScopeGlobal | ScopeSession, "eq_range_index_dive_limit", "10"},
 	{ScopeNone, "performance_schema_events_stages_history_size", "10"},
 	{ScopeGlobal | ScopeSession, "character_set_connection", mysql.DefaultCharset},
-	{ScopeGlobal, "myisam_use_mmap", "OFF"},
+	{ScopeGlobal, MyISAMUseMmap, "0"},
 	{ScopeGlobal | ScopeSession, "ndb_join_pushdown", ""},
-	{ScopeGlobal | ScopeSession, "character_set_server", mysql.DefaultCharset},
+	{ScopeGlobal | ScopeSession, CharacterSetServer, mysql.DefaultCharset},
 	{ScopeGlobal, "validate_password_special_char_count", "1"},
 	{ScopeNone, "performance_schema_max_thread_instances", "402"},
 	{ScopeGlobal, "slave_rows_search_algorithms", "TABLE_SCAN,INDEX_SCAN"},
 	{ScopeGlobal | ScopeSession, "ndbinfo_show_hidden", ""},
 	{ScopeGlobal | ScopeSession, "net_read_timeout", "30"},
 	{ScopeNone, "innodb_page_size", "16384"},
-	{ScopeGlobal, MaxAllowedPacket, "67108864"},
+	{ScopeGlobal | ScopeSession, MaxAllowedPacket, "67108864"},
 	{ScopeNone, "innodb_log_file_size", "50331648"},
 	{ScopeGlobal, "sync_relay_log_info", "10000"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_limit", "1"},
@@ -611,14 +614,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, SQLSafeUpdates, "0"},
 	{ScopeNone, "tmpdir", "/var/tmp/"},
 	{ScopeGlobal, "innodb_thread_concurrency", "0"},
-	{ScopeGlobal, "slave_allow_batching", "OFF"},
+	{ScopeGlobal, SlaveAllowBatching, "0"},
 	{ScopeGlobal, "innodb_buffer_pool_dump_pct", ""},
 	{ScopeGlobal | ScopeSession, "lc_time_names", "en_US"},
 	{ScopeGlobal | ScopeSession, "max_statement_time", ""},
 	{ScopeGlobal | ScopeSession, EndMakersInJSON, "0"},
 	{ScopeGlobal, AvoidTemporalUpgrade, "0"},
 	{ScopeGlobal, "key_cache_age_threshold", "300"},
-	{ScopeGlobal, "innodb_status_output", "OFF"},
+	{ScopeGlobal, InnodbStatusOutput, "0"},
 	{ScopeSession, "identity", ""},
 	{ScopeGlobal | ScopeSession, "min_examined_row_limit", "0"},
 	{ScopeGlobal, "sync_frm", "ON"},
@@ -627,24 +630,26 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, ErrorCount, "0"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
-	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
-	{ScopeSession, TiDBOptWriteRowID, boolToIntStr(DefOptWriteRowID)},
+	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
+	{ScopeSession, TiDBOptWriteRowID, BoolToIntStr(DefOptWriteRowID)},
 	{ScopeGlobal | ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal, TiDBAutoAnalyzeRatio, strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
 	{ScopeGlobal, TiDBAutoAnalyzeStartTime, DefAutoAnalyzeStartTime},
 	{ScopeGlobal, TiDBAutoAnalyzeEndTime, DefAutoAnalyzeEndTime},
 	{ScopeSession, TiDBChecksumTableConcurrency, strconv.Itoa(DefChecksumTableConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBDistSQLScanConcurrency, strconv.Itoa(DefDistSQLScanConcurrency)},
-	{ScopeGlobal | ScopeSession, TiDBOptInSubqToJoinAndAgg, boolToIntStr(DefOptInSubqToJoinAndAgg)},
+	{ScopeGlobal | ScopeSession, TiDBOptInSubqToJoinAndAgg, BoolToIntStr(DefOptInSubqToJoinAndAgg)},
+	{ScopeGlobal | ScopeSession, TiDBOptCorrelationThreshold, strconv.FormatFloat(DefOptCorrelationThreshold, 'f', -1, 64)},
+	{ScopeGlobal | ScopeSession, TiDBOptCorrelationExpFactor, strconv.Itoa(DefOptCorrelationExpFactor)},
 	{ScopeGlobal | ScopeSession, TiDBIndexJoinBatchSize, strconv.Itoa(DefIndexJoinBatchSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupConcurrency, strconv.Itoa(DefIndexLookupConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupJoinConcurrency, strconv.Itoa(DefIndexLookupJoinConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
-	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
-	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
-	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},
-	{ScopeSession, TiDBBatchCommit, boolToIntStr(DefBatchCommit)},
+	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, BoolToIntStr(DefSkipUTF8Check)},
+	{ScopeSession, TiDBBatchInsert, BoolToIntStr(DefBatchInsert)},
+	{ScopeSession, TiDBBatchDelete, BoolToIntStr(DefBatchDelete)},
+	{ScopeSession, TiDBBatchCommit, BoolToIntStr(DefBatchCommit)},
 	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeGlobal | ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
@@ -666,21 +671,33 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBHashAggPartialConcurrency, strconv.Itoa(DefTiDBHashAggPartialConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBHashAggFinalConcurrency, strconv.Itoa(DefTiDBHashAggFinalConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBBackoffLockFast, strconv.Itoa(kv.DefBackoffLockFast)},
+	{ScopeGlobal | ScopeSession, TiDBBackOffWeight, strconv.Itoa(kv.DefBackOffWeight)},
 	{ScopeGlobal | ScopeSession, TiDBRetryLimit, strconv.Itoa(DefTiDBRetryLimit)},
-	{ScopeGlobal | ScopeSession, TiDBDisableTxnAutoRetry, boolToIntStr(DefTiDBDisableTxnAutoRetry)},
-	{ScopeGlobal | ScopeSession, TiDBConstraintCheckInPlace, boolToIntStr(DefTiDBConstraintCheckInPlace)},
+	{ScopeGlobal | ScopeSession, TiDBDisableTxnAutoRetry, BoolToIntStr(DefTiDBDisableTxnAutoRetry)},
+	{ScopeGlobal | ScopeSession, TiDBConstraintCheckInPlace, BoolToIntStr(DefTiDBConstraintCheckInPlace)},
+	{ScopeSession, TiDBTxnMode, DefTiDBTxnMode},
 	{ScopeSession, TiDBOptimizerSelectivityLevel, strconv.Itoa(DefTiDBOptimizerSelectivityLevel)},
-	{ScopeGlobal | ScopeSession, TiDBEnableWindowFunction, boolToIntStr(DefEnableWindowFunction)},
+	{ScopeGlobal | ScopeSession, TiDBEnableWindowFunction, BoolToIntStr(DefEnableWindowFunction)},
+	{ScopeGlobal | ScopeSession, TiDBEnableFastAnalyze, BoolToIntStr(DefTiDBUseFastAnalyze)},
+	{ScopeGlobal | ScopeSession, TiDBSkipIsolationLevelCheck, BoolToIntStr(DefTiDBSkipIsolationLevelCheck)},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
+	{ScopeSession, TiDBDDLSlowOprThreshold, strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBConfig, ""},
 	{ScopeGlobal, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
+	{ScopeGlobal, TiDBDDLErrorCountLimit, strconv.Itoa(DefTiDBDDLErrorCountLimit)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
-	{ScopeSession, TiDBEnableRadixJoin, boolToIntStr(DefTiDBUseRadixJoin)},
+	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
+	{ScopeGlobal | ScopeSession, TiDBOptJoinReorderThreshold, strconv.Itoa(DefTiDBOptJoinReorderThreshold)},
+	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
+	{ScopeSession, TiDBSlowQueryFile, ""},
+	{ScopeSession, TiDBWaitTableSplitFinish, BoolToIntStr(DefTiDBWaitTableSplitFinish)},
+	{ScopeSession, TiDBLowResolutionTSO, "0"},
+	{ScopeSession, TiDBExpensiveQueryTimeThreshold, strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -693,8 +710,8 @@ func addSynonymsSysVariables(synonyms ...string) {
 }
 
 func initSynonymsSysVariables() {
-	addSynonymsSysVariables("tx_isolation", "transaction_isolation")
-	addSynonymsSysVariables("tx_read_only", "transaction_read_only")
+	addSynonymsSysVariables(TxnIsolation, TransactionIsolation)
+	addSynonymsSysVariables(TxReadOnly, TransactionReadOnly)
 }
 
 // SetNamesVariables is the system variable names related to set names statements.
@@ -741,6 +758,8 @@ const (
 	InnodbLockWaitTimeout = "innodb_lock_wait_timeout"
 	// SQLLogBin is the name for 'sql_log_bin' system variable.
 	SQLLogBin = "sql_log_bin"
+	// LogBin is the name for 'log_bin' system variable.
+	LogBin = "log_bin"
 	// MaxSortLength is the name for 'max_sort_length' system variable.
 	MaxSortLength = "max_sort_length"
 	// MaxSpRecursionDepth is the name for 'max_sp_recursion_depth' system variable.
@@ -797,6 +816,143 @@ const (
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
 	PluginLoad = "plugin_load"
+	// Port is the name for 'port' system variable.
+	Port = "port"
+	// DataDir is the name for 'datadir' system variable.
+	DataDir = "datadir"
+	// Profiling is the name for 'Profiling' system variable.
+	Profiling = "profiling"
+	// Socket is the name for 'socket' system variable.
+	Socket = "socket"
+	// BinlogOrderCommits is the name for 'binlog_order_commits' system variable.
+	BinlogOrderCommits = "binlog_order_commits"
+	// MasterVerifyChecksum is the name for 'master_verify_checksum' system variable.
+	MasterVerifyChecksum = "master_verify_checksum"
+	// ValidatePasswordCheckUserName is the name for 'validate_password_check_user_name' system variable.
+	ValidatePasswordCheckUserName = "validate_password_check_user_name"
+	// SuperReadOnly is the name for 'super_read_only' system variable.
+	SuperReadOnly = "super_read_only"
+	// SQLNotes is the name for 'sql_notes' system variable.
+	SQLNotes = "sql_notes"
+	// QueryCacheType is the name for 'query_cache_type' system variable.
+	QueryCacheType = "query_cache_type"
+	// SlaveCompressedProtocol is the name for 'slave_compressed_protocol' system variable.
+	SlaveCompressedProtocol = "slave_compressed_protocol"
+	// BinlogRowQueryLogEvents is the name for 'binlog_rows_query_log_events' system variable.
+	BinlogRowQueryLogEvents = "binlog_rows_query_log_events"
+	// LogSlowSlaveStatements is the name for 'log_slow_slave_statements' system variable.
+	LogSlowSlaveStatements = "log_slow_slave_statements"
+	// LogSlowAdminStatements is the name for 'log_slow_admin_statements' system variable.
+	LogSlowAdminStatements = "log_slow_admin_statements"
+	// LogQueriesNotUsingIndexes is the name for 'log_queries_not_using_indexes' system variable.
+	LogQueriesNotUsingIndexes = "log_queries_not_using_indexes"
+	// QueryCacheWlockInvalidate is the name for 'query_cache_wlock_invalidate' system variable.
+	QueryCacheWlockInvalidate = "query_cache_wlock_invalidate"
+	// SQLAutoIsNull is the name for 'sql_auto_is_null' system variable.
+	SQLAutoIsNull = "sql_auto_is_null"
+	// RelayLogPurge is the name for 'relay_log_purge' system variable.
+	RelayLogPurge = "relay_log_purge"
+	// AutomaticSpPrivileges is the name for 'automatic_sp_privileges' system variable.
+	AutomaticSpPrivileges = "automatic_sp_privileges"
+	// SQLQuoteShowCreate is the name for 'sql_quote_show_create' system variable.
+	SQLQuoteShowCreate = "sql_quote_show_create"
+	// SlowQueryLog is the name for 'slow_query_log' system variable.
+	SlowQueryLog = "slow_query_log"
+	// BinlogDirectNonTransactionalUpdates is the name for 'binlog_direct_non_transactional_updates' system variable.
+	BinlogDirectNonTransactionalUpdates = "binlog_direct_non_transactional_updates"
+	// SQLBigSelects is the name for 'sql_big_selects' system variable.
+	SQLBigSelects = "sql_big_selects"
+	// LogBinTrustFunctionCreators is the name for 'log_bin_trust_function_creators' system variable.
+	LogBinTrustFunctionCreators = "log_bin_trust_function_creators"
+	// OldAlterTable is the name for 'old_alter_table' system variable.
+	OldAlterTable = "old_alter_table"
+	// EnforceGtidConsistency is the name for 'enforce_gtid_consistency' system variable.
+	EnforceGtidConsistency = "enforce_gtid_consistency"
+	// SecureAuth is the name for 'secure_auth' system variable.
+	SecureAuth = "secure_auth"
+	// UniqueChecks is the name for 'unique_checks' system variable.
+	UniqueChecks = "unique_checks"
+	// SQLWarnings is the name for 'sql_warnings' system variable.
+	SQLWarnings = "sql_warnings"
+	// AutoCommit is the name for 'autocommit' system variable.
+	AutoCommit = "autocommit"
+	// KeepFilesOnCreate is the name for 'keep_files_on_create' system variable.
+	KeepFilesOnCreate = "keep_files_on_create"
+	// ShowOldTemporals is the name for 'show_old_temporals' system variable.
+	ShowOldTemporals = "show_old_temporals"
+	// LocalInFile is the name for 'local_infile' system variable.
+	LocalInFile = "local_infile"
+	// PerformanceSchema is the name for 'performance_schema' system variable.
+	PerformanceSchema = "performance_schema"
+	// Flush is the name for 'flush' system variable.
+	Flush = "flush"
+	// SlaveAllowBatching is the name for 'slave_allow_batching' system variable.
+	SlaveAllowBatching = "slave_allow_batching"
+	// MyISAMUseMmap is the name for 'myisam_use_mmap' system variable.
+	MyISAMUseMmap = "myisam_use_mmap"
+	// InnodbFilePerTable is the name for 'innodb_file_per_table' system variable.
+	InnodbFilePerTable = "innodb_file_per_table"
+	// InnodbLogCompressedPages is the name for 'innodb_log_compressed_pages' system variable.
+	InnodbLogCompressedPages = "innodb_log_compressed_pages"
+	// InnodbPrintAllDeadlocks is the name for 'innodb_print_all_deadlocks' system variable.
+	InnodbPrintAllDeadlocks = "innodb_print_all_deadlocks"
+	// InnodbStrictMode is the name for 'innodb_strict_mode' system variable.
+	InnodbStrictMode = "innodb_strict_mode"
+	// InnodbCmpPerIndexEnabled is the name for 'innodb_cmp_per_index_enabled' system variable.
+	InnodbCmpPerIndexEnabled = "innodb_cmp_per_index_enabled"
+	// InnodbBufferPoolDumpAtShutdown is the name for 'innodb_buffer_pool_dump_at_shutdown' system variable.
+	InnodbBufferPoolDumpAtShutdown = "innodb_buffer_pool_dump_at_shutdown"
+	// InnodbAdaptiveHashIndex is the name for 'innodb_adaptive_hash_index' system variable.
+	InnodbAdaptiveHashIndex = "innodb_adaptive_hash_index"
+	// InnodbFtEnableStopword is the name for 'innodb_ft_enable_stopword' system variable.
+	InnodbFtEnableStopword = "innodb_ft_enable_stopword"
+	// InnodbSupportXA is the name for 'innodb_support_xa' system variable.
+	InnodbSupportXA = "innodb_support_xa"
+	// InnodbOptimizeFullTextOnly is the name for 'innodb_optimize_fulltext_only' system variable.
+	InnodbOptimizeFullTextOnly = "innodb_optimize_fulltext_only"
+	// InnodbStatusOutputLocks is the name for 'innodb_status_output_locks' system variable.
+	InnodbStatusOutputLocks = "innodb_status_output_locks"
+	// InnodbBufferPoolDumpNow is the name for 'innodb_buffer_pool_dump_now' system variable.
+	InnodbBufferPoolDumpNow = "innodb_buffer_pool_dump_now"
+	// InnodbBufferPoolLoadNow is the name for 'innodb_buffer_pool_load_now' system variable.
+	InnodbBufferPoolLoadNow = "innodb_buffer_pool_load_now"
+	// InnodbStatsOnMetadata is the name for 'innodb_stats_on_metadata' system variable.
+	InnodbStatsOnMetadata = "innodb_stats_on_metadata"
+	// InnodbDisableSortFileCache is the name for 'innodb_disable_sort_file_cache' system variable.
+	InnodbDisableSortFileCache = "innodb_disable_sort_file_cache"
+	// InnodbStatsAutoRecalc is the name for 'innodb_stats_auto_recalc' system variable.
+	InnodbStatsAutoRecalc = "innodb_stats_auto_recalc"
+	// InnodbBufferPoolLoadAbort is the name for 'innodb_buffer_pool_load_abort' system variable.
+	InnodbBufferPoolLoadAbort = "innodb_buffer_pool_load_abort"
+	// InnodbStatsPersistent is the name for 'innodb_stats_persistent' system variable.
+	InnodbStatsPersistent = "innodb_stats_persistent"
+	// InnodbRandomReadAhead is the name for 'innodb_random_read_ahead' system variable.
+	InnodbRandomReadAhead = "innodb_random_read_ahead"
+	// InnodbAdaptiveFlushing is the name for 'innodb_adaptive_flushing' system variable.
+	InnodbAdaptiveFlushing = "innodb_adaptive_flushing"
+	// InnodbTableLocks is the name for 'innodb_table_locks' system variable.
+	InnodbTableLocks = "innodb_table_locks"
+	// InnodbStatusOutput is the name for 'innodb_status_output' system variable.
+	InnodbStatusOutput = "innodb_status_output"
+
+	// NetBufferLength is the name for 'net_buffer_length' system variable.
+	NetBufferLength = "net_buffer_length"
+	// QueryCacheSize is the name of 'query_cache_size' system variable.
+	QueryCacheSize = "query_cache_size"
+	// TxReadOnly is the name of 'tx_read_only' system variable.
+	TxReadOnly = "tx_read_only"
+	// TransactionReadOnly is the name of 'transaction_read_only' system variable.
+	TransactionReadOnly = "transaction_read_only"
+	// CharacterSetServer is the name of 'character_set_server' system variable.
+	CharacterSetServer = "character_set_server"
+	// AutoIncrementIncrement it the name of 'auto_increment_increment' system variable.
+	AutoIncrementIncrement = "auto_increment_increment"
+	// InitConnect is the name of 'init_connect' system variable.
+	InitConnect = "init_connect"
+	// CollationServer is the name of 'collation_server' variable.
+	CollationServer = "collation_server"
+	// NetWriteTimeout is the name of 'net_write_timeout' variable.
+	NetWriteTimeout = "net_write_timeout"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

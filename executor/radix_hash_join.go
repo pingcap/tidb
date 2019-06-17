@@ -23,9 +23,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mvmap"
-	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
+	"go.uber.org/zap"
 )
 
 var (
@@ -150,7 +151,8 @@ func (e *RadixHashJoinExec) doInnerPartition(workerID int) {
 // TODO: we need to evaluate the skewness for the partitions size, if the
 // skewness exceeds a threshold, we do not use partition phase.
 func (e *RadixHashJoinExec) preAlloc4InnerParts() (err error) {
-	hasNull, keyBuf := false, make([]byte, 0, 64)
+	var hasNull bool
+	keyBuf := make([]byte, 0, 64)
 	for chkIdx, chkNum := 0, e.innerResult.NumChunks(); chkIdx < chkNum; chkIdx++ {
 		chk := e.innerResult.GetChunk(chkIdx)
 		partPtrs := make([]partRowPtr, chk.NumRows())
@@ -174,9 +176,9 @@ func (e *RadixHashJoinExec) preAlloc4InnerParts() (err error) {
 	if e.numNonEmptyPart < len(e.innerParts) {
 		numTotalPart := len(e.innerParts)
 		numEmptyPart := numTotalPart - e.numNonEmptyPart
-		log.Debugf("[EMPTY_PART_IN_RADIX_HASH_JOIN] txn_start_ts:%v, num_empty_parts:%v, "+
-			"num_total_parts:%v, empty_ratio:%v", e.ctx.GetSessionVars().TxnCtx.StartTS,
-			numEmptyPart, numTotalPart, float64(numEmptyPart)/float64(numTotalPart))
+		logutil.Logger(context.Background()).Debug("empty partition in radix hash join", zap.Uint64("txnStartTS", e.ctx.GetSessionVars().TxnCtx.StartTS),
+			zap.Int("numEmptyParts", numEmptyPart), zap.Int("numTotalParts", numTotalPart),
+			zap.Float64("emptyRatio", float64(numEmptyPart)/float64(numTotalPart)))
 	}
 	return
 }

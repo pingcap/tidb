@@ -18,18 +18,20 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"go.uber.org/atomic"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
 var OptimizeAstNode func(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error)
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
-var AllowCartesianProduct = true
+var AllowCartesianProduct = atomic.NewBool(true)
 
 const (
 	flagPrunColumns uint64 = 1 << iota
@@ -43,7 +45,7 @@ const (
 	flagPartitionProcessor
 	flagPushDownAgg
 	flagPushDownTopN
-	flagJoinReOrderGreedy
+	flagJoinReOrder
 )
 
 var optRuleList = []logicalOptRule{
@@ -58,7 +60,7 @@ var optRuleList = []logicalOptRule{
 	&partitionProcessor{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
-	&joinReOrderGreedySolver{},
+	&joinReOrderSolver{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -77,15 +79,15 @@ func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoS
 	}
 	p, err := builder.Build(node)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return p, nil
 }
 
 // CheckPrivilege checks the privilege for a user.
-func CheckPrivilege(pm privilege.Manager, vs []visitInfo) error {
+func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
 	for _, v := range vs {
-		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
+		if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
 				return ErrPrivilegeCheckFail
 			}
@@ -99,14 +101,14 @@ func CheckPrivilege(pm privilege.Manager, vs []visitInfo) error {
 func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	logic, err := logicalOptimize(flag, logic)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	if !AllowCartesianProduct && existsCartesianProduct(logic) {
+	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	physical, err := physicalOptimize(logic)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	finalPlan := postOptimize(physical)
 	return finalPlan, nil
@@ -114,9 +116,7 @@ func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 
 func postOptimize(plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
-
-	// build projection below aggregation
-	plan = buildProjBelowAgg(plan)
+	plan = injectExtraProjection(plan)
 	return plan
 }
 
@@ -131,15 +131,15 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 		}
 		logic, err = rule.optimize(logic)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
-	return logic, errors.Trace(err)
+	return logic, err
 }
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	if _, err := logic.recursiveDeriveStats(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	logic.preparePossibleProperties()
@@ -151,14 +151,14 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 
 	t, err := logic.findBestTask(prop)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if t.invalid() {
 		return nil, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 
-	t.plan().ResolveIndices()
-	return t.plan(), nil
+	err = t.plan().ResolveIndices()
+	return t.plan(), err
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {

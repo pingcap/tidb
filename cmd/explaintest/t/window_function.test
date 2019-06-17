@@ -1,0 +1,11 @@
+use test;
+drop table if exists t;
+create table t (a int, b int, c timestamp, index idx(a));
+set @@tidb_enable_window_function = 1;
+explain select sum(a) over() from t;
+explain select sum(a) over(partition by a) from t;
+explain select sum(a) over(partition by a order by b) from t;
+explain select sum(a) over(partition by a order by b rows unbounded preceding) from t;
+explain select sum(a) over(partition by a order by b rows between 1 preceding and 1 following) from t;
+explain select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
+explain select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;

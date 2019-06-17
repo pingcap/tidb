@@ -210,7 +210,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 // If parentCert and parentCertKey is specified, the new certificate will be signed by the parentCert.
 // Otherwise, the new certificate will be self-signed and is a CA.
 func generateCert(sn int, commonName string, parentCert *x509.Certificate, parentCertKey *rsa.PrivateKey, outKeyFile string, outCertFile string) (*x509.Certificate, *rsa.PrivateKey, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 512)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 528)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -361,10 +361,6 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	server.Close()
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
-	connOverrider = func(config *mysql.Config) {
-		config.TLSConfig = "client-certificate"
-		config.Addr = "localhost:4004"
-	}
 	cfg = config.NewConfig()
 	cfg.Port = 4004
 	cfg.Status.ReportStatus = false
@@ -539,11 +535,11 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 		case 10, 11, 12, 15, 16:
 			// c_char char(20), c_varchar varchar(20), c_text_d text,
 			// c_set set('a', 'b', 'c'), c_enum enum('a', 'b', 'c')
-			c.Assert(col.Charset, Equals, uint16(tmysql.CharsetIDs[tmysql.DefaultCharset]), Commentf("index %d", i))
+			c.Assert(col.Charset, Equals, uint16(tmysql.CharsetNameToID(tmysql.DefaultCharset)), Commentf("index %d", i))
 			continue
 		}
 
-		c.Assert(col.Charset, Equals, uint16(tmysql.CharsetIDs["binary"]), Commentf("index %d", i))
+		c.Assert(col.Charset, Equals, uint16(tmysql.CharsetNameToID("binary")), Commentf("index %d", i))
 	}
 
 	// c_decimal decimal(6, 3)

@@ -19,6 +19,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
@@ -27,9 +28,12 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -82,9 +86,11 @@ type PrepareExec struct {
 	Fields     []*ast.ResultField
 }
 
+var prepareStmtLabel = stringutil.StringerStr("PrepareStmt")
+
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
-	base := newBaseExecutor(ctx, nil, "PrepareStmt")
+	base := newBaseExecutor(ctx, nil, prepareStmtLabel)
 	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
 		baseExecutor: base,
@@ -117,19 +123,16 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		var warns []error
 		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
 		for _, warn := range warns {
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
 		return ErrPrepareMulti
 	}
 	stmt := stmts[0]
-	if _, ok := stmt.(ast.DDLNode); ok {
-		return ErrPrepareDDL
-	}
 	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {
 		return err
@@ -137,15 +140,20 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
+	// DDL Statements can not accept parameters
+	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
+		return ErrPrepareDDL
+	}
+
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
 	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
 	if len(extractor.markers) > math.MaxUint16 {
 		return ErrPsManyParam
 	}
 
-	err = plannercore.Preprocess(e.ctx, stmt, e.is, true)
+	err = plannercore.Preprocess(e.ctx, stmt, e.is, plannercore.InPrepare)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// The parameter markers are appended in visiting order, which may not
@@ -166,12 +174,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum.SetNull()
+		param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		param.Datum.SetNull()
+		param.InExecute = false
 	}
 	var p plannercore.Plan
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if _, ok := stmt.(*ast.SelectStmt); ok {
 		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
@@ -191,13 +201,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 type ExecuteExec struct {
 	baseExecutor
 
-	is        infoschema.InfoSchema
-	name      string
-	usingVars []expression.Expression
-	id        uint32
-	stmtExec  Executor
-	stmt      ast.StmtNode
-	plan      plannercore.Plan
+	is            infoschema.InfoSchema
+	name          string
+	usingVars     []expression.Expression
+	id            uint32
+	stmtExec      Executor
+	stmt          ast.StmtNode
+	plan          plannercore.Plan
+	lowerPriority bool
 }
 
 // Next implements the Executor Next interface.
@@ -207,25 +218,25 @@ func (e *ExecuteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
-func (e *ExecuteExec) Build() error {
+func (e *ExecuteExec) Build(b *executorBuilder) error {
 	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if ok {
 		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	b := newExecutorBuilder(e.ctx, e.is)
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
+		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))
 		return errors.Trace(b.err)
 	}
 	e.stmtExec = stmtExec
 	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
-	logExpensiveQuery(e.stmt, e.plan)
+	e.lowerPriority = needLowerPriority(e.plan)
 	return nil
 }
 
@@ -266,24 +277,25 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 	is := GetInfoSchema(ctx)
 	execPlan, err := planner.Optimize(ctx, execStmt, is)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	stmt := &ExecStmt{
-		InfoSchema: GetInfoSchema(ctx),
+		InfoSchema: is,
 		Plan:       execPlan,
 		StmtNode:   execStmt,
 		Ctx:        ctx,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID]; ok {
 		stmt.Text = prepared.Stmt.Text()
+		ctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
 	}
 	return stmt, nil
 }
 
 func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
+	var ok bool
 	execID := stmt.ExecID
-	ok := false
 	if stmt.Name != "" {
 		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
 			return nil, plannercore.ErrStmtNotFound

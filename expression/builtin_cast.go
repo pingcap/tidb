@@ -465,7 +465,7 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	} else {
 		var uVal uint64
 		sc := b.ctx.GetSessionVars().StmtCtx
-		uVal, err = types.ConvertIntToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		uVal, err = types.ConvertIntToUint(sc, val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		res = float64(uVal)
 	}
 	return res, false, err
@@ -493,7 +493,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	} else {
 		var uVal uint64
 		sc := b.ctx.GetSessionVars().StmtCtx
-		uVal, err = types.ConvertIntToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		uVal, err = types.ConvertIntToUint(sc, val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		if err != nil {
 			return res, false, err
 		}
@@ -523,7 +523,7 @@ func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNul
 	} else {
 		var uVal uint64
 		sc := b.ctx.GetSessionVars().StmtCtx
-		uVal, err = types.ConvertIntToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		uVal, err = types.ConvertIntToUint(sc, val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		if err != nil {
 			return res, false, err
 		}
@@ -553,7 +553,7 @@ func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNul
 	}
 	res, err = types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return res, true, err
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -748,13 +748,13 @@ func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		return res, isNull, err
 	}
 	if !mysql.HasUnsignedFlag(b.tp.Flag) {
-		res, err = types.ConvertFloatToInt(val, types.SignedLowerBound[mysql.TypeLonglong], types.SignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
+		res, err = types.ConvertFloatToInt(val, types.IntergerSignedLowerBound(mysql.TypeLonglong), types.IntergerSignedUpperBound(mysql.TypeLonglong), mysql.TypeDouble)
 	} else if b.inUnion && val < 0 {
 		res = 0
 	} else {
 		var uintVal uint64
 		sc := b.ctx.GetSessionVars().StmtCtx
-		uintVal, err = types.ConvertFloatToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
+		uintVal, err = types.ConvertFloatToUint(sc, val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeDouble)
 		res = int64(uintVal)
 	}
 	return res, isNull, err
@@ -801,7 +801,15 @@ func (b *builtinCastRealAsStringSig) evalString(row chunk.Row) (res string, isNu
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+
+	bits := 64
+	if b.args[0].GetType().Tp == mysql.TypeFloat {
+		// b.args[0].EvalReal() casts the value from float32 to float64, for example:
+		// float32(208.867) is cast to float64(208.86700439)
+		// If we strconv.FormatFloat the value with 64bits, the result is incorrect!
+		bits = 32
+	}
+	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -826,7 +834,7 @@ func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, er
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err := types.ParseTime(sc, strconv.FormatFloat(val, 'f', -1, 64), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return types.Time{}, true, err
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -983,7 +991,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, i
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return res, false, err
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -1245,7 +1253,7 @@ func (b *builtinCastTimeAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if res, err = res.Convert(sc, b.tp.Tp); err != nil {
-		return res, true, err
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 	res, err = res.RoundFrac(sc, b.tp.Decimal)
 	if b.tp.Tp == mysql.TypeDate {
@@ -1506,7 +1514,7 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, 
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = val.ConvertToTime(sc, b.tp.Tp)
 	if err != nil {
-		return res, false, err
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 	res, err = res.RoundFrac(sc, b.tp.Decimal)
 	return res, false, err
@@ -1630,7 +1638,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTime(sc, s, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return res, false, err
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -1679,6 +1687,23 @@ func (i inCastContext) String() string {
 // @see BuildCastFunction4Union
 const inUnionCastContext inCastContext = 0
 
+// hasSpecialCast checks if this expr has its own special cast function.
+// for example(#9713): when doing arithmetic using results of function DayName,
+// "Monday" should be regarded as 0, "Tuesday" should be regarded as 1 and so on.
+func hasSpecialCast(ctx sessionctx.Context, expr Expression, tp *types.FieldType) bool {
+	switch f := expr.(type) {
+	case *ScalarFunction:
+		switch f.FuncName.L {
+		case ast.DayName:
+			switch tp.EvalType() {
+			case types.ETInt, types.ETReal:
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
 func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
@@ -1691,6 +1716,10 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	if hasSpecialCast(ctx, expr, tp) {
+		return expr
+	}
+
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:

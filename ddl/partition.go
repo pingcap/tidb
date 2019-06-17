@@ -42,6 +42,17 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if s.Partition == nil {
 		return nil, nil
 	}
+
+	// force-discard the unsupported types, even when @@tidb_enable_table_partition = 'on'
+	switch s.Partition.Tp {
+	case model.PartitionTypeKey:
+		// can't create a warning for KEY partition, it will fail an integration test :/
+		return nil, nil
+	case model.PartitionTypeList, model.PartitionTypeSystemTime:
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
+		return nil, nil
+	}
+
 	var enable bool
 	switch ctx.GetSessionVars().EnableTablePartition {
 	case "on":
@@ -50,11 +61,26 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		enable = false
 	default:
 		// When tidb_enable_table_partition = 'auto',
-		// Partition by range expression is enabled by default.
-		if s.Partition.Tp == model.PartitionTypeRange && s.Partition.ColumnNames == nil {
+		if s.Partition.Tp == model.PartitionTypeRange {
+			// Partition by range expression is enabled by default.
+			if s.Partition.ColumnNames == nil {
+				enable = true
+			}
+			// Partition by range columns and just one column.
+			if len(s.Partition.ColumnNames) == 1 {
+				enable = true
+			}
+		}
+		// Partition by hash is enabled by default.
+		// Note that linear hash is not enabled.
+		if s.Partition.Tp == model.PartitionTypeHash {
 			enable = true
 		}
 	}
+	if !enable {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
+	}
+
 	pi := &model.PartitionInfo{
 		Type:   s.Partition.Tp,
 		Enable: enable,
@@ -65,13 +91,17 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		s.Partition.Expr.Format(buf)
 		pi.Expr = buf.String()
 	} else if s.Partition.ColumnNames != nil {
+		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
+		if len(s.Partition.ColumnNames) != 1 {
+			pi.Enable = false
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedPartitionByRangeColumns)
+		}
 		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
 		for _, cn := range s.Partition.ColumnNames {
 			pi.Columns = append(pi.Columns, cn.Name)
 		}
 	}
 
-	// TODO: generate multiple global ID for paritions, reduce the times of obtaining the global ID from the storage.
 	if s.Partition.Tp == model.PartitionTypeRange {
 		if err := buildRangePartitionDefinitions(ctx, d, s, pi); err != nil {
 			return nil, errors.Trace(err)
@@ -85,37 +115,41 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 }
 
 func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	genIDs, err := d.genGlobalIDs(int(pi.Num))
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
-		pid, err := d.genGlobalID()
-		if err != nil {
-			return errors.Trace(err)
+		defs[i].ID = genIDs[i]
+		if len(s.Partition.Definitions) == 0 {
+			defs[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
+		} else {
+			def := s.Partition.Definitions[i]
+			defs[i].Name = def.Name
+			defs[i].Comment, _ = def.Comment()
 		}
-		defs[i].ID = pid
-		defs[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
 	}
 	pi.Definitions = defs
 	return nil
 }
 
 func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
-	for _, def := range s.Partition.Definitions {
-		pid, err := d.genGlobalID()
-		if err != nil {
-			return errors.Trace(err)
-		}
+	genIDs, err := d.genGlobalIDs(len(s.Partition.Definitions))
+	if err != nil {
+		return err
+	}
+	for ith, def := range s.Partition.Definitions {
+		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
-			ID:      pid,
-			Comment: def.Comment,
+			ID:      genIDs[ith],
+			Comment: comment,
 		}
 
-		if s.Partition.ColumnNames == nil && len(def.LessThan) != 1 {
-			return ErrTooManyValues.GenWithStackByArgs(s.Partition.Tp.String())
-		}
 		buf := new(bytes.Buffer)
 		// Range columns partitions support multi-column partitions.
-		for _, expr := range def.LessThan {
+		for _, expr := range def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs {
 			expr.Format(buf)
 			piDef.LessThan = append(piDef.LessThan, buf.String())
 			buf.Reset()
@@ -193,7 +227,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 	buf := new(bytes.Buffer)
 	s.Partition.Expr.Format(buf)
 	exprStr := buf.String()
-	if s.Partition.Tp == model.PartitionTypeRange {
+	if s.Partition.Tp == model.PartitionTypeRange || s.Partition.Tp == model.PartitionTypeHash {
 		// if partition by columnExpr, check the column type
 		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
 			for _, col := range cols {
@@ -206,13 +240,19 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 		}
 	}
 
-	e, err := expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
+	e, err := expression.ParseSimpleExprWithTableInfo(ctx, exprStr, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if e.GetType().EvalType() == types.ETInt {
 		return nil
 	}
+	if s.Partition.Tp == model.PartitionTypeHash {
+		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
+			return ErrNotAllowedTypeInPartition.GenWithStackByArgs(exprStr)
+		}
+	}
+
 	return ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION")
 }
 
@@ -273,7 +313,7 @@ func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string,
 
 		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
 			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-			if err2 == nil && isNull == false {
+			if err2 == nil && !isNull {
 				return uint64(res), true, nil
 			}
 		}
@@ -287,7 +327,7 @@ func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string,
 		// PARTITION p0 VALUES LESS THAN (63340531200)
 		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
 			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-			if err2 == nil && isNull == false {
+			if err2 == nil && !isNull {
 				return res, true, nil
 			}
 		}
@@ -343,7 +383,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -374,7 +414,7 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -414,7 +454,21 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	if piDefs > uint64(PartitionCountLimit) {
-		return ErrTooManyPartitions
+		return errors.Trace(ErrTooManyPartitions)
+	}
+	return nil
+}
+
+func checkNoHashPartitions(ctx sessionctx.Context, partitionNum uint64) error {
+	if partitionNum == 0 {
+		return ast.ErrNoParts.GenWithStackByArgs("partitions")
+	}
+	return nil
+}
+
+func checkNoRangePartitions(partitionNum int) error {
+	if partitionNum == 0 {
+		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("RANGE")
 	}
 	return nil
 }
@@ -431,62 +485,65 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 }
 
 // checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
-func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
+func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
 	// Returns directly if there is no constraint in the partition table.
 	// TODO: Remove the test 's.Partition.Expr == nil' when we support 'PARTITION BY RANGE COLUMNS'
 	if len(constraints) == 0 || s.Partition.Expr == nil {
 		return nil
 	}
 
-	// Extract the column names in table constraints to []map[string]struct{}.
-	consColNames := extractConstraintsColumnNames(constraints)
-
 	// Parse partitioning key, extract the column names in the partitioning key to slice.
 	buf := new(bytes.Buffer)
 	s.Partition.Expr.Format(buf)
-	var partkeys []string
-	e, err := expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
+	partCols, err := extractPartitionColumns(sctx, buf.String(), tblInfo)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	cols := expression.ExtractColumns(e)
-	for _, col := range cols {
-		partkeys = append(partkeys, col.ColName.L)
+		return err
 	}
 
 	// Checks that the partitioning key is included in the constraint.
-	for _, con := range consColNames {
-		// Every unique key on the table must use every column in the table's partitioning expression.
-		// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
-		if !checkConstraintIncludePartKey(partkeys, con) {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(primarykey)
+	// Every unique key on the table must use every column in the table's partitioning expression.
+	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
+	for _, constraint := range constraints {
+		switch constraint.Tp {
+		case ast.ConstraintPrimaryKey, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			if !checkUniqueKeyIncludePartKey(partCols, constraint.Keys) {
+				if constraint.Tp == ast.ConstraintPrimaryKey {
+					return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+				}
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+			}
 		}
 	}
 	return nil
 }
 
-// extractConstraintsColumnNames extract the column names in table constraints to []map[string]struct{}.
-func extractConstraintsColumnNames(cons []*ast.Constraint) []map[string]struct{} {
-	var constraints []map[string]struct{}
-	for _, v := range cons {
-		if v.Tp == ast.ConstraintUniq || v.Tp == ast.ConstraintPrimaryKey {
-			uniKeys := make(map[string]struct{})
-			for _, key := range v.Keys {
-				uniKeys[key.Column.Name.L] = struct{}{}
-			}
-			// Extract every unique key and primary key.
-			if len(uniKeys) != 0 {
-				constraints = append(constraints, uniKeys)
-			}
-		}
+func checkPartitionKeysConstraint(sctx sessionctx.Context, partExpr string, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo) error {
+	// Parse partitioning key, extract the column names in the partitioning key to slice.
+	partCols, err := extractPartitionColumns(sctx, partExpr, tblInfo)
+	if err != nil {
+		return err
 	}
-	return constraints
+
+	// Every unique key on the table must use every column in the table's partitioning expression.
+	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
+	if !checkUniqueKeyIncludePartKey(partCols, idxColNames) {
+		return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+	}
+	return nil
 }
 
-// checkConstraintIncludePartKey checks that the partitioning key is included in the constraint.
-func checkConstraintIncludePartKey(partkeys []string, constraints map[string]struct{}) bool {
-	for _, pk := range partkeys {
-		if _, ok := constraints[pk]; !ok {
+func extractPartitionColumns(sctx sessionctx.Context, partExpr string, tblInfo *model.TableInfo) ([]*expression.Column, error) {
+	e, err := expression.ParseSimpleExprWithTableInfo(sctx, partExpr, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return expression.ExtractColumns(e), nil
+}
+
+// checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
+func checkUniqueKeyIncludePartKey(partCols []*expression.Column, idxCols []*ast.IndexColName) bool {
+	for _, partCol := range partCols {
+		if !findColumnInIndexCols(partCol, idxCols) {
 			return false
 		}
 	}
@@ -512,20 +569,8 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		var newDef model.PartitionDefinition
-		if tblInfo.Partition.Type == model.PartitionTypeHash {
-			newDef = model.PartitionDefinition{
-				ID: pid,
-			}
-		} else if tblInfo.Partition.Type == model.PartitionTypeRange {
-			newDef = model.PartitionDefinition{
-				ID:       pid,
-				Name:     def.Name,
-				LessThan: def.LessThan,
-				Comment:  def.Comment,
-			}
-		}
+		newDef := def
+		newDef.ID = pid
 		newDefs = append(newDefs, newDef)
 	}
 	tblInfo.Partition.Definitions = newDefs

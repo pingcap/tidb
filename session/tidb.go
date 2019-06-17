@@ -37,8 +37,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type domainMap struct {
@@ -47,9 +48,17 @@ type domainMap struct {
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	key := store.UUID()
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
+
+	// If this is the only domain instance, and the caller doesn't provide store.
+	if len(dm.domains) == 1 && store == nil {
+		for _, r := range dm.domains {
+			return r, nil
+		}
+	}
+
+	key := store.UUID()
 	d = dm.domains[key]
 	if d != nil {
 		return
@@ -60,7 +69,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	ddlLease = schemaLease
 	statisticLease = statsLease
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
-		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
+		logutil.Logger(context.Background()).Info("new domain",
+			zap.String("store", store.UUID()),
+			zap.Stringer("ddl lease", ddlLease),
+			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
 		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
@@ -68,12 +80,13 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
-			log.Errorf("[ddl] init domain failed %v", errors.ErrorStack(errors.Trace(err1)))
+			logutil.Logger(context.Background()).Error("[ddl] init domain failed",
+				zap.Error(err1))
 		}
-		return true, errors.Trace(err1)
+		return true, err1
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	dm.domains[key] = d
 
@@ -120,7 +133,7 @@ func SetStatsLease(lease time.Duration) {
 
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
-	log.Debug("compiling", src)
+	logutil.Logger(context.Background()).Debug("compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
 	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
@@ -130,8 +143,10 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
-		log.Warnf("compiling %s, error: %v", src, err)
-		return nil, errors.Trace(err)
+		logutil.Logger(context.Background()).Warn("compiling",
+			zap.String("source", src),
+			zap.Error(err))
+		return nil, err
 	}
 	return stmts, nil
 }
@@ -140,14 +155,17 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) (sqlexec.Statement, error) {
 	compiler := executor.Compiler{Ctx: sctx}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	return stmt, errors.Trace(err)
+	return stmt, err
 }
 
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			log.Info("RollbackTxn for ddl/autocommit error.")
-			terror.Log(se.RollbackTxn(ctx))
+			logutil.Logger(context.Background()).Info("rollbackTxn for ddl/autocommit error.")
+			se.RollbackTxn(ctx)
+		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
+			logutil.Logger(context.Background()).Info("rollbackTxn for deadlock error", zap.Uint64("txn", se.txn.StartTS()))
+			se.RollbackTxn(ctx)
 		}
 		return meetsErr
 	}
@@ -166,8 +184,7 @@ func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, s
 	history := GetHistory(sctx)
 	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
-			err1 := se.RollbackTxn(ctx)
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 				history.Count(), sctx.GetSessionVars().IsAutocommit())
 		}
@@ -182,16 +199,21 @@ func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, s
 }
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (sqlexec.RecordSet, error) {
+func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", s.OriginText())
 		defer span1.Finish()
 	}
-
-	var err error
-	var rs sqlexec.RecordSet
 	se := sctx.(*session)
+	defer func() {
+		// If it is not a select statement, we record its slow log here,
+		// then it could include the transaction commit time.
+		if rs == nil {
+			s.(*executor.ExecStmt).LogSlowQuery(se.GetSessionVars().TxnCtx.StartTS, err != nil)
+		}
+	}()
+
 	err = se.checkTxnAborted(s)
 	if err != nil {
 		return nil, err
@@ -200,8 +222,8 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	sessVars := se.GetSessionVars()
 	// All the history should be added here.
 	sessVars.TxnCtx.StatementCount++
-	if !s.IsReadOnly() {
-		if err == nil {
+	if !s.IsReadOnly(sessVars) {
+		if err == nil && !sessVars.TxnCtx.IsPessimistic {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
 		if txn, err1 := sctx.Txn(false); err1 == nil {
@@ -213,7 +235,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				}
 			}
 		} else {
-			log.Error(err1)
+			logutil.Logger(context.Background()).Error("get txn error", zap.Error(err1))
 		}
 	}
 
@@ -229,7 +251,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// Reset txn state to invalid to dispose the pending start ts.
 		se.txn.changeToInvalid()
 	}
-	return rs, errors.Trace(err)
+	return rs, err
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
@@ -256,7 +278,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 
 		err := rs.Next(ctx, req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		if req.NumRows() == 0 {
 			break

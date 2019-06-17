@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -37,6 +36,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
+	defer cache.Close()
 
 	bo := NewBackoffer(context.Background(), 3000)
 
@@ -99,6 +99,7 @@ func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
+	defer cache.Close()
 
 	bo := NewBackoffer(context.Background(), 3000)
 
@@ -151,6 +152,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
+	defer cache.Close()
 	bo := NewBackoffer(context.Background(), 3000)
 
 	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), false, false)
@@ -164,7 +166,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	regionIDs = append(regionIDs, cluster.AllocID())
 	peerIDs = append(peerIDs, cluster.AllocID())
 	cluster.Split(regionIDs[1], regionIDs[2], []byte("q"), []uint64{peerIDs[2]}, storeID)
-	cache.DropRegion(tasks[1].region)
+	cache.InvalidateCachedRegion(tasks[1].region)
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), true, false)
 	c.Assert(err, IsNil)
@@ -292,13 +294,6 @@ func (s *testCoprocessorSuite) TestCopRangeSplit(c *C) {
 		splitCase{"p", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
 		splitCase{"t", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t")},
 	)
-}
-
-func coprocessorKeyRange(start, end string) *coprocessor.KeyRange {
-	return &coprocessor.KeyRange{
-		Start: []byte(start),
-		End:   []byte(end),
-	}
 }
 
 type splitCase struct {

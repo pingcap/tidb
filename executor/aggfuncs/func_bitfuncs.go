@@ -16,7 +16,6 @@ package aggfuncs
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -51,7 +50,7 @@ func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -76,7 +75,7 @@ func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -112,7 +111,7 @@ func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue

@@ -15,6 +15,8 @@ package executor
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -23,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // This file contains the implementation of the physical Projection Operator:
@@ -62,15 +65,23 @@ type ProjectionExec struct {
 	numWorkers  int64
 	workers     []*projectionWorker
 	childResult *chunk.Chunk
+
+	// parentReqRows indicates how many rows the parent executor is
+	// requiring. It is set when parallelExecute() is called and used by the
+	// concurrent projectionInputFetcher.
+	//
+	// NOTE: It should be protected by atomic operations.
+	parentReqRows int64
 }
 
 // Open implements the Executor Open interface.
 func (e *ProjectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	e.prepared = false
+	e.parentReqRows = int64(e.maxChunkSize)
 
 	// For now a Projection can not be executed vectorially only because it
 	// contains "SetVar" or "GetVar" functions, in this scenario this
@@ -151,13 +162,13 @@ func (e *ProjectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
-		return errors.Trace(e.unParallelExecute(ctx, req.Chunk))
+		return e.unParallelExecute(ctx, req.Chunk)
 	}
-	return errors.Trace(e.parallelExecute(ctx, req.Chunk))
+	return e.parallelExecute(ctx, req.Chunk)
 
 }
 
@@ -166,15 +177,18 @@ func (e *ProjectionExec) isUnparallelExec() bool {
 }
 
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
+	// transmit the requiredRows
+	e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
 	err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = e.evaluatorSuit.Run(e.ctx, e.childResult, chk)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) error {
+	atomic.StoreInt64(&e.parentReqRows, int64(chk.RequiredRows()))
 	if !e.prepared {
 		e.prepare(ctx)
 		e.prepared = true
@@ -187,7 +201,7 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 
 	err := <-output.done
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	chk.SwapColumns(output.chk)
@@ -201,6 +215,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 	// Initialize projectionInputFetcher.
 	e.fetcher = projectionInputFetcher{
+		proj:           e,
 		child:          e.children[0],
 		globalFinishCh: e.finishCh,
 		globalOutputCh: e.outputCh,
@@ -249,10 +264,11 @@ func (e *ProjectionExec) Close() error {
 		}
 		e.outputCh = nil
 	}
-	return errors.Trace(e.baseExecutor.Close())
+	return e.baseExecutor.Close()
 }
 
 type projectionInputFetcher struct {
+	proj           *ProjectionExec
 	child          Executor
 	globalFinishCh <-chan struct{}
 	globalOutputCh chan<- *projectionOutput
@@ -294,9 +310,11 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		f.globalOutputCh <- output
 
+		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
+		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
 		err := f.child.Next(ctx, chunk.NewRecordBatch(input.chk))
 		if err != nil || input.chk.NumRows() == 0 {
-			output.done <- errors.Trace(err)
+			output.done <- err
 			return
 		}
 
@@ -347,7 +365,7 @@ func (w *projectionWorker) run(ctx context.Context) {
 		}
 
 		err := w.evaluatorSuit.Run(w.sctx, input.chk, output.chk)
-		output.done <- errors.Trace(err)
+		output.done <- err
 
 		if err != nil {
 			return
@@ -362,7 +380,7 @@ func recoveryProjection(output *projectionOutput, r interface{}) {
 		output.done <- errors.Errorf("%v", r)
 	}
 	buf := util.GetStack()
-	log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
+	logutil.Logger(context.Background()).Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.String("stack", string(buf)))
 }
 
 func readProjectionInput(inputCh <-chan *projectionInput, finishCh <-chan struct{}) *projectionInput {

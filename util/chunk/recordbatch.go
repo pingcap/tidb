@@ -14,6 +14,7 @@
 package chunk
 
 // RecordBatch is input parameter of Executor.Next` method.
+// TODO: remove RecordBatch after finishing chunk size control.
 type RecordBatch struct {
 	*Chunk
 }

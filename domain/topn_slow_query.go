@@ -82,7 +82,6 @@ func (q *slowQueryQueue) Enqueue(info *SlowQueryInfo) {
 	}
 
 	q.data = append(q.data, info)[1:]
-	return
 }
 
 func (q *slowQueryQueue) Query(count int) []*SlowQueryInfo {
@@ -226,4 +225,5 @@ type SlowQueryInfo struct {
 	TableIDs string
 	IndexIDs string
 	Internal bool
+	Digest   string
 }

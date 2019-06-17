@@ -14,8 +14,10 @@
 package kv
 
 import (
-	"github.com/pingcap/errors"
-	log "github.com/sirupsen/logrus"
+	"context"
+
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // UnionIter is the iterator on an UnionStore.
@@ -42,7 +44,7 @@ func NewUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) (*UnionIt
 	}
 	err := it.updateCur()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return it, nil
 }
@@ -51,14 +53,14 @@ func NewUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) (*UnionIt
 func (iter *UnionIter) dirtyNext() error {
 	err := iter.dirtyIt.Next()
 	iter.dirtyValid = iter.dirtyIt.Valid()
-	return errors.Trace(err)
+	return err
 }
 
 // snapshotNext makes iter.snapshotIt go and update valid status.
 func (iter *UnionIter) snapshotNext() error {
 	err := iter.snapshotIt.Next()
 	iter.snapshotValid = iter.snapshotIt.Valid()
-	return errors.Trace(err)
+	return err
 }
 
 func (iter *UnionIter) updateCur() error {
@@ -79,7 +81,7 @@ func (iter *UnionIter) updateCur() error {
 			// if delete it
 			if len(iter.dirtyIt.Value()) == 0 {
 				if err := iter.dirtyNext(); err != nil {
-					return errors.Trace(err)
+					return err
 				}
 				continue
 			}
@@ -100,16 +102,16 @@ func (iter *UnionIter) updateCur() error {
 					// snapshot has a record, but txn says we have deleted it
 					// just go next
 					if err := iter.dirtyNext(); err != nil {
-						return errors.Trace(err)
+						return err
 					}
 					if err := iter.snapshotNext(); err != nil {
-						return errors.Trace(err)
+						return err
 					}
 					continue
 				}
 				// both go next
 				if err := iter.snapshotNext(); err != nil {
-					return errors.Trace(err)
+					return err
 				}
 				iter.curIsDirty = true
 				break
@@ -120,10 +122,11 @@ func (iter *UnionIter) updateCur() error {
 			} else {
 				// record from dirty comes first
 				if len(iter.dirtyIt.Value()) == 0 {
-					log.Warnf("[kv] delete a record not exists? k = %q", iter.dirtyIt.Key())
+					logutil.Logger(context.Background()).Warn("delete a record not exists?",
+						zap.Binary("key", iter.dirtyIt.Key()))
 					// jump over this deletion
 					if err := iter.dirtyNext(); err != nil {
-						return errors.Trace(err)
+						return err
 					}
 					continue
 				}
@@ -144,10 +147,10 @@ func (iter *UnionIter) Next() error {
 		err = iter.dirtyNext()
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	err = iter.updateCur()
-	return errors.Trace(err)
+	return err
 }
 
 // Value implements the Iterator Value interface.

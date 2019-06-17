@@ -80,7 +80,7 @@ type Context interface {
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
-	StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum)
+	StmtAddDirtyTableOP(op int, physicalID int64, handle int64, row []types.Datum)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 }

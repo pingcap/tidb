@@ -14,7 +14,6 @@
 package planner
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/cascades"
@@ -40,11 +39,13 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 		return nil, err
 	}
 
+	ctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
+	activeRoles := ctx.GetSessionVars().ActiveRoles
 	// Check privilege. Maybe it's better to move this to the Preprocess, but
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if err := plannercore.CheckPrivilege(pm, builder.GetVisitInfo()); err != nil {
+		if err := plannercore.CheckPrivilege(activeRoles, pm, builder.GetVisitInfo()); err != nil {
 			return nil, err
 		}
 	}
@@ -52,7 +53,7 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	// Handle the execute statement.
 	if execPlan, ok := p.(*plannercore.Execute); ok {
 		err := execPlan.OptimizePreparedPlan(ctx, is)
-		return p, errors.Trace(err)
+		return p, err
 	}
 
 	// Handle the non-logical plan statement.

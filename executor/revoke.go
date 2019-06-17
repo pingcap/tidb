@@ -58,19 +58,26 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	e.done = true
 
 	// Revoke for each user.
-	for _, user := range e.Users {
+	for idx, user := range e.Users {
 		// Check if user exists.
 		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !exists {
 			return errors.Errorf("Unknown user: %s", user.User)
 		}
 
+		if idx == 0 {
+			// Commit the old transaction, like DDL.
+			if err := e.ctx.NewTxn(ctx); err != nil {
+				return err
+			}
+			defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()
+		}
 		err = e.revokeOneUser(user.User.Username, user.User.Hostname)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
@@ -91,7 +98,7 @@ func (e *RevokeExec) revokeOneUser(user, host string) error {
 	case ast.GrantLevelDB:
 		ok, err := dbUserExists(e.ctx, user, host, dbName)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !ok {
 			return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on database %s", user, host, dbName)
@@ -99,7 +106,7 @@ func (e *RevokeExec) revokeOneUser(user, host string) error {
 	case ast.GrantLevelTable:
 		ok, err := tableUserExists(e.ctx, user, host, dbName, e.Level.TableName)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !ok {
 			return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on table %s.%s", user, host, dbName, e.Level.TableName)
@@ -109,7 +116,7 @@ func (e *RevokeExec) revokeOneUser(user, host string) error {
 	for _, priv := range e.Privs {
 		err := e.revokePriv(priv, user, host)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -133,11 +140,11 @@ func (e *RevokeExec) revokePriv(priv *ast.PrivElem, user, host string) error {
 func (e *RevokeExec) revokeGlobalPriv(priv *ast.PrivElem, user, host string) error {
 	asgns, err := composeGlobalPrivUpdate(priv.Priv, "N")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s'`, mysql.SystemDB, mysql.UserTable, asgns, user, host)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *RevokeExec) revokeDBPriv(priv *ast.PrivElem, userName, host string) error {
@@ -147,31 +154,31 @@ func (e *RevokeExec) revokeDBPriv(priv *ast.PrivElem, userName, host string) err
 	}
 	asgns, err := composeDBPrivUpdate(priv.Priv, "N")
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s';`, mysql.SystemDB, mysql.DBTable, asgns, userName, host, dbName)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *RevokeExec) revokeTablePriv(priv *ast.PrivElem, user, host string) error {
 	dbName, tbl, err := getTargetSchemaAndTable(e.ctx, e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	asgns, err := composeTablePrivUpdateForRevoke(e.ctx, priv.Priv, user, host, dbName, tbl.Meta().Name.O)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s';`, mysql.SystemDB, mysql.TablePrivTable, asgns, user, host, dbName, tbl.Meta().Name.O)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-	return errors.Trace(err)
+	return err
 }
 
 func (e *RevokeExec) revokeColumnPriv(priv *ast.PrivElem, user, host string) error {
 	dbName, tbl, err := getTargetSchemaAndTable(e.ctx, e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	for _, c := range priv.Cols {
 		col := table.FindCol(tbl.Cols(), c.Name.L)
@@ -180,12 +187,12 @@ func (e *RevokeExec) revokeColumnPriv(priv *ast.PrivElem, user, host string) err
 		}
 		asgns, err := composeColumnPrivUpdateForRevoke(e.ctx, priv.Priv, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s' AND Column_name='%s';`, mysql.SystemDB, mysql.ColumnPrivTable, asgns, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
 		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil

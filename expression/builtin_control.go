@@ -53,8 +53,8 @@ var (
 	_ builtinFunc = &builtinIfJSONSig{}
 )
 
-// inferType4ControlFuncs infer result type for builtin IF, IFNULL && NULLIF.
-func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
+// InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
+func InferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 	resultFieldType := &types.FieldType{}
 	if lhs.Tp == mysql.TypeNull {
 		*resultFieldType = *rhs
@@ -470,7 +470,7 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	retTp := inferType4ControlFuncs(args[1].GetType(), args[2].GetType())
+	retTp := InferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
 	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
 	retTp.Flag |= bf.tp.Flag
@@ -680,7 +680,7 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	lhs, rhs := args[0].GetType(), args[1].GetType()
-	retTp := inferType4ControlFuncs(lhs, rhs)
+	retTp := InferType4ControlFuncs(lhs, rhs)
 	retTp.Flag |= (lhs.Flag & mysql.NotNullFlag) | (rhs.Flag & mysql.NotNullFlag)
 	if lhs.Tp == mysql.TypeNull && rhs.Tp == mysql.TypeNull {
 		retTp.Tp = mysql.TypeNull

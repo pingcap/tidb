@@ -57,7 +57,7 @@ type QueryCtx interface {
 	CommitTxn(ctx context.Context) error
 
 	// RollbackTxn undoes the transaction operations.
-	RollbackTxn() error
+	RollbackTxn()
 
 	// WarningCount returns warning count of last executed command.
 	WarningCount() uint16
@@ -87,7 +87,7 @@ type QueryCtx interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 
 	// ShowProcess shows the information about the session.
-	ShowProcess() util.ProcessInfo
+	ShowProcess() *util.ProcessInfo
 
 	// GetSessionVars return SessionVars.
 	GetSessionVars() *variable.SessionVars

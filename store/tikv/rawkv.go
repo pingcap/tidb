@@ -33,6 +33,19 @@ var (
 	ErrMaxScanLimitExceeded = errors.New("limit should be less than MaxRawKVScanLimit")
 )
 
+var (
+	tikvRawkvCmdHistogramWithGet           = metrics.TiKVRawkvCmdHistogram.WithLabelValues("get")
+	tikvRawkvCmdHistogramWithBatchGet      = metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_get")
+	tikvRawkvCmdHistogramWithBatchPut      = metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_put")
+	tikvRawkvCmdHistogramWithDelete        = metrics.TiKVRawkvCmdHistogram.WithLabelValues("delete")
+	tikvRawkvCmdHistogramWithBatchDelete   = metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_delete")
+	tikvRawkvCmdHistogramWithRawScan       = metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_scan")
+	tikvRawkvCmdHistogramWithRawReversScan = metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_reverse_scan")
+
+	tikvRawkvSizeHistogramWithKey   = metrics.TiKVRawkvSizeHistogram.WithLabelValues("key")
+	tikvRawkvSizeHistogramWithValue = metrics.TiKVRawkvSizeHistogram.WithLabelValues("value")
+)
+
 const (
 	// rawBatchPutSize is the maximum size limit for rawkv each batch put request.
 	rawBatchPutSize = 16 * 1024
@@ -69,7 +82,15 @@ func NewRawKVClient(pdAddrs []string, security config.Security) (*RawKVClient, e
 
 // Close closes the client.
 func (c *RawKVClient) Close() error {
-	c.pdClient.Close()
+	if c.pdClient != nil {
+		c.pdClient.Close()
+	}
+	if c.regionCache != nil {
+		c.regionCache.Close()
+	}
+	if c.rpcClient == nil {
+		return nil
+	}
 	return c.rpcClient.Close()
 }
 
@@ -81,7 +102,7 @@ func (c *RawKVClient) ClusterID() uint64 {
 // Get queries value with the key. When the key does not exist, it returns `nil, nil`.
 func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	start := time.Now()
-	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvRawkvCmdHistogramWithGet.Observe(time.Since(start).Seconds()) }()
 
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawGet,
@@ -89,7 +110,7 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 			Key: key,
 		},
 	}
-	resp, _, err := c.sendReq(key, req)
+	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -110,7 +131,7 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 	start := time.Now()
 	defer func() {
-		metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds())
+		tikvRawkvCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
 	}()
 
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
@@ -139,9 +160,9 @@ func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 // Put stores a key-value pair to TiKV.
 func (c *RawKVClient) Put(key, value []byte) error {
 	start := time.Now()
-	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("put").Observe(time.Since(start).Seconds()) }()
-	metrics.TiKVRawkvSizeHistogram.WithLabelValues("key").Observe(float64(len(key)))
-	metrics.TiKVRawkvSizeHistogram.WithLabelValues("value").Observe(float64(len(value)))
+	defer func() { tikvRawkvCmdHistogramWithBatchPut.Observe(time.Since(start).Seconds()) }()
+	tikvRawkvSizeHistogramWithKey.Observe(float64(len(key)))
+	tikvRawkvSizeHistogramWithValue.Observe(float64(len(value)))
 
 	if len(value) == 0 {
 		return errors.New("empty value is not supported")
@@ -154,7 +175,7 @@ func (c *RawKVClient) Put(key, value []byte) error {
 			Value: value,
 		},
 	}
-	resp, _, err := c.sendReq(key, req)
+	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -172,7 +193,7 @@ func (c *RawKVClient) Put(key, value []byte) error {
 func (c *RawKVClient) BatchPut(keys, values [][]byte) error {
 	start := time.Now()
 	defer func() {
-		metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_put").Observe(time.Since(start).Seconds())
+		tikvRawkvCmdHistogramWithBatchPut.Observe(time.Since(start).Seconds())
 	}()
 
 	if len(keys) != len(values) {
@@ -191,7 +212,7 @@ func (c *RawKVClient) BatchPut(keys, values [][]byte) error {
 // Delete deletes a key-value pair from TiKV.
 func (c *RawKVClient) Delete(key []byte) error {
 	start := time.Now()
-	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvRawkvCmdHistogramWithDelete.Observe(time.Since(start).Seconds()) }()
 
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawDelete,
@@ -199,7 +220,7 @@ func (c *RawKVClient) Delete(key []byte) error {
 			Key: key,
 		},
 	}
-	resp, _, err := c.sendReq(key, req)
+	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -217,7 +238,7 @@ func (c *RawKVClient) Delete(key []byte) error {
 func (c *RawKVClient) BatchDelete(keys [][]byte) error {
 	start := time.Now()
 	defer func() {
-		metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_delete").Observe(time.Since(start).Seconds())
+		tikvRawkvCmdHistogramWithBatchDelete.Observe(time.Since(start).Seconds())
 	}()
 
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
@@ -275,7 +296,7 @@ func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
 // `Scan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
 func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
-	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_scan").Observe(time.Since(start).Seconds()) }()
+	defer func() { tikvRawkvCmdHistogramWithRawScan.Observe(time.Since(start).Seconds()) }()
 
 	if limit > MaxRawKVScanLimit {
 		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
@@ -290,7 +311,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 				Limit:    uint32(limit - len(keys)),
 			},
 		}
-		resp, loc, err := c.sendReq(startKey, req)
+		resp, loc, err := c.sendReq(startKey, req, false)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -310,11 +331,64 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 	return
 }
 
-func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, *KeyLocation, error) {
+// ReverseScan queries continuous kv pairs in range [endKey, startKey), up to limit pairs.
+// Direction is different from Scan, upper to lower.
+// If endKey is empty, it means unbounded.
+// If you want to include the startKey or exclude the endKey, append a '\0' to the key. For example, to scan
+// (endKey, startKey], you can write:
+// `ReverseScan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
+// It doesn't support Scanning from "", because locating the last Region is not yet implemented.
+func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
+	start := time.Now()
+	defer func() {
+		tikvRawkvCmdHistogramWithRawReversScan.Observe(time.Since(start).Seconds())
+	}()
+
+	if limit > MaxRawKVScanLimit {
+		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
+	}
+
+	for len(keys) < limit {
+		req := &tikvrpc.Request{
+			Type: tikvrpc.CmdRawScan,
+			RawScan: &kvrpcpb.RawScanRequest{
+				StartKey: startKey,
+				EndKey:   endKey,
+				Limit:    uint32(limit - len(keys)),
+				Reverse:  true,
+			},
+		}
+		resp, loc, err := c.sendReq(startKey, req, true)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		cmdResp := resp.RawScan
+		if cmdResp == nil {
+			return nil, nil, errors.Trace(ErrBodyMissing)
+		}
+		for _, pair := range cmdResp.Kvs {
+			keys = append(keys, pair.Key)
+			values = append(values, pair.Value)
+		}
+		startKey = loc.StartKey
+		if len(startKey) == 0 {
+			break
+		}
+	}
+	return
+}
+
+func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*tikvrpc.Response, *KeyLocation, error) {
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
-		loc, err := c.regionCache.LocateKey(bo, key)
+		var loc *KeyLocation
+		var err error
+		if reverse {
+			loc, err = c.regionCache.LocateEndKey(bo, key)
+		} else {
+			loc, err = c.regionCache.LocateKey(bo, key)
+		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

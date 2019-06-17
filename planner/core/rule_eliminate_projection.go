@@ -33,7 +33,7 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 // eliminated, returns true if the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// If this projection is specially added for `DO`, we keep it.
-	if p.CalculateNoDelay == true {
+	if p.CalculateNoDelay {
 		return false
 	}
 	if p.Schema().Len() == 0 {
@@ -55,9 +55,9 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
 	dst := replace[string(origin.HashCode(nil))]
 	if dst != nil {
-		colName, retType := origin.ColName, origin.RetType
+		colName, retType, inOperand := origin.ColName, origin.RetType, origin.InOperand
 		*origin = *dst
-		origin.ColName, origin.RetType = colName, retType
+		origin.ColName, origin.RetType, origin.InOperand = colName, retType, inOperand
 	}
 }
 
@@ -208,10 +208,15 @@ func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column)
 }
 
 func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, arg := range p.WindowFuncDesc.Args {
-		resolveExprAndReplace(arg, replace)
+	for _, desc := range p.WindowFuncDescs {
+		for _, arg := range desc.Args {
+			resolveExprAndReplace(arg, replace)
+		}
 	}
-	for _, item := range p.ByItems {
+	for _, item := range p.PartitionBy {
+		resolveColumnAndReplace(item.Col, replace)
+	}
+	for _, item := range p.OrderBy {
 		resolveColumnAndReplace(item.Col, replace)
 	}
 }

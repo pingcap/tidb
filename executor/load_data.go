@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -26,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 // LoadDataExec represents a load data executor.
@@ -34,12 +35,15 @@ type LoadDataExec struct {
 	baseExecutor
 
 	IsLocal      bool
+	OnDuplicate  ast.OnDuplicateKeyHandlingType
 	loadDataInfo *LoadDataInfo
 }
 
+var insertValuesLabel fmt.Stringer = stringutil.StringerStr("InsertValues")
+
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, insertValuesLabel), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
 		InsertValues: insertVal,
@@ -54,6 +58,10 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return errors.New("Load Data: don't support load data without local field")
+	}
+	// TODO: support load data with replace field.
+	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
+		return errors.New("Load Data: don't support load data with replace field")
 	}
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
@@ -209,7 +217,6 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	if len(prevData) == 0 && len(curData) == 0 {
 		return nil, false, nil
 	}
-
 	var line []byte
 	var isEOF, hasStarting, reachLimit bool
 	if len(prevData) > 0 && len(curData) == 0 {
@@ -220,7 +227,6 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
-
 		// If it doesn't find the terminated symbol and this data isn't the last data,
 		// the data can't be inserted.
 		if line == nil && !isEOF {
@@ -244,21 +250,21 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		}
 		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, false, err
 		}
 		rows = append(rows, e.colsToRow(cols))
 		e.rowCount++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
-			log.Infof("This insert rows has reached the batch %d, current total rows %d",
-				e.maxRowsInBatch, e.rowCount)
+			logutil.Logger(context.Background()).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
+				zap.Uint64("totalRows", e.rowCount))
 			break
 		}
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(rows)))
 	err := e.batchCheckAndInsert(rows, e.addRecordLD)
 	if err != nil {
-		return nil, reachLimit, errors.Trace(err)
+		return nil, reachLimit, err
 	}
 	return curData, reachLimit, nil
 }
@@ -291,8 +297,7 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 	}
 	row, err := e.getRow(e.row)
 	if err != nil {
-		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+		e.handleWarning(err)
 		return nil
 	}
 	return row
@@ -304,8 +309,7 @@ func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
 	}
 	h, err := e.addRecord(row)
 	if err != nil {
-		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+		e.handleWarning(err)
 	}
 	return h, nil
 }
@@ -313,28 +317,174 @@ func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
 type field struct {
 	str       []byte
 	maybeNull bool
+	enclosed  bool
+}
+
+type fieldWriter struct {
+	pos           int
+	enclosedChar  byte
+	fieldTermChar byte
+	term          *string
+	isEnclosed    bool
+	isLineStart   bool
+	isFieldStart  bool
+	ReadBuf       *[]byte
+	OutputBuf     []byte
+}
+
+func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf *[]byte, term *string) {
+	w.isEnclosed = false
+	w.isLineStart = true
+	w.isFieldStart = true
+	w.ReadBuf = readBuf
+	w.enclosedChar = enclosedChar
+	w.fieldTermChar = fieldTermChar
+	w.term = term
+}
+
+func (w *fieldWriter) putback() {
+	w.pos--
+}
+
+func (w *fieldWriter) getChar() (bool, byte) {
+	if w.pos < len(*w.ReadBuf) {
+		ret := (*w.ReadBuf)[w.pos]
+		w.pos++
+		return true, ret
+	}
+	return false, 0
+}
+
+func (w *fieldWriter) isTerminator() bool {
+	chkpt, isterm := w.pos, true
+	for i := 1; i < len(*w.term); i++ {
+		flag, ch := w.getChar()
+		if !flag || ch != (*w.term)[i] {
+			isterm = false
+			break
+		}
+	}
+	if !isterm {
+		w.pos = chkpt
+		return false
+	}
+	return true
+}
+
+func (w *fieldWriter) outputField(enclosed bool) field {
+	var fild []byte
+	start := 0
+	if enclosed {
+		start = 1
+	}
+	for i := start; i < len(w.OutputBuf); i++ {
+		fild = append(fild, w.OutputBuf[i])
+	}
+	if len(fild) == 0 {
+		fild = []byte("")
+	}
+	w.OutputBuf = w.OutputBuf[0:0]
+	w.isEnclosed = false
+	w.isFieldStart = true
+	return field{fild, false, enclosed}
+}
+
+func (w *fieldWriter) GetField() (bool, field) {
+	// The first return value implies whether fieldWriter read the last character of line.
+	if w.isLineStart {
+		_, ch := w.getChar()
+		if ch == w.enclosedChar {
+			w.isEnclosed = true
+			w.isFieldStart, w.isLineStart = false, false
+			w.OutputBuf = append(w.OutputBuf, ch)
+		} else {
+			w.putback()
+		}
+	}
+	for {
+		flag, ch := w.getChar()
+		if !flag {
+			ret := w.outputField(false)
+			return true, ret
+		}
+		if ch == w.enclosedChar && w.isFieldStart {
+			// If read enclosed char at field start.
+			w.isEnclosed = true
+			w.OutputBuf = append(w.OutputBuf, ch)
+			w.isLineStart, w.isFieldStart = false, false
+			continue
+		}
+		w.isLineStart, w.isFieldStart = false, false
+		if ch == w.fieldTermChar && !w.isEnclosed {
+			// If read filed terminate char.
+			if w.isTerminator() {
+				ret := w.outputField(false)
+				return false, ret
+			}
+			w.OutputBuf = append(w.OutputBuf, ch)
+		} else if ch == w.enclosedChar && w.isEnclosed {
+			// If read enclosed char, look ahead.
+			flag, ch = w.getChar()
+			if !flag {
+				ret := w.outputField(true)
+				return true, ret
+			} else if ch == w.enclosedChar {
+				w.OutputBuf = append(w.OutputBuf, ch)
+				continue
+			} else if ch == w.fieldTermChar {
+				// If the next char is fieldTermChar, look ahead.
+				if w.isTerminator() {
+					ret := w.outputField(true)
+					return false, ret
+				}
+				w.OutputBuf = append(w.OutputBuf, ch)
+			} else {
+				// If there is no terminator behind enclosedChar, put the char back.
+				w.OutputBuf = append(w.OutputBuf, w.enclosedChar)
+				w.putback()
+			}
+		} else if ch == '\\' {
+			// TODO: escape only support '\'
+			w.OutputBuf = append(w.OutputBuf, ch)
+			flag, ch = w.getChar()
+			if flag {
+				if ch == w.enclosedChar {
+					w.OutputBuf = append(w.OutputBuf, ch)
+				} else {
+					w.putback()
+				}
+			}
+		} else {
+			w.OutputBuf = append(w.OutputBuf, ch)
+		}
+	}
 }
 
 // getFieldsFromLine splits line according to fieldsInfo.
 func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
-	var sep []byte
-	if e.FieldsInfo.Enclosed != 0 {
-		if line[0] != e.FieldsInfo.Enclosed || line[len(line)-1] != e.FieldsInfo.Enclosed {
-			return nil, errors.Errorf("line %s should begin and end with %c", string(line), e.FieldsInfo.Enclosed)
-		}
-		line = line[1 : len(line)-1]
-		sep = make([]byte, 0, len(e.FieldsInfo.Terminated)+2)
-		sep = append(sep, e.FieldsInfo.Enclosed)
-		sep = append(sep, e.FieldsInfo.Terminated...)
-		sep = append(sep, e.FieldsInfo.Enclosed)
-	} else {
-		sep = []byte(e.FieldsInfo.Terminated)
+	var (
+		reader fieldWriter
+		fields []field
+	)
+
+	if len(line) == 0 {
+		str := []byte("")
+		fields = append(fields, field{str, false, false})
+		return fields, nil
 	}
-	rawCols := bytes.Split(line, sep)
-	fields := make([]field, 0, len(rawCols))
-	for _, v := range rawCols {
-		f := field{v, false}
-		fields = append(fields, f.escape())
+
+	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Terminated[0], &line, &e.FieldsInfo.Terminated)
+	for {
+		eol, f := reader.GetField()
+		f = f.escape()
+		if string(f.str) == "NULL" && !f.enclosed {
+			f.str = []byte{'N'}
+			f.maybeNull = true
+		}
+		fields = append(fields, f)
+		if eol {
+			break
+		}
 	}
 	return fields, nil
 }
@@ -354,7 +504,7 @@ func (f *field) escape() field {
 		f.str[pos] = c
 		pos++
 	}
-	return field{f.str[:pos], f.maybeNull}
+	return field{f.str[:pos], f.maybeNull, f.enclosed}
 }
 
 func (f *field) escapeChar(c byte) byte {

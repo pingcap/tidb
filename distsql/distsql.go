@@ -15,6 +15,7 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -43,9 +44,13 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
 	if resp == nil {
 		err := errors.New("client returns nil response")
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
+	// kvReq.MemTracker is used to trace and control memory usage in DistSQL layer;
+	// for streamResult, since it is a pipeline which has no buffer, it's not necessary to trace it;
+	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
+	// instead of creating a new one for simplification.
 	if kvReq.Streaming {
 		return &streamResult{
 			resp:       resp,
@@ -70,7 +75,22 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		ctx:        sctx,
 		feedback:   fb,
 		sqlType:    label,
+		memTracker: kvReq.MemTracker,
 	}, nil
+}
+
+// SelectWithRuntimeStats sends a DAG request, returns SelectResult.
+// The difference from Select is that SelectWithRuntimeStats will set copPlanIDs into selectResult,
+// which can help selectResult to collect runtime stats.
+func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer) (SelectResult, error) {
+	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)
+	if err == nil {
+		if selectResult, ok := sr.(*selectResult); ok {
+			selectResult.copPlanIDs = copPlanIDs
+		}
+	}
+	return sr, err
 }
 
 // Analyze do a analyze request.
