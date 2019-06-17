@@ -31,18 +31,24 @@ import (
 
 // Handle is the handler for expensive query.
 type Handle struct {
-	memExceedConnCh chan uint64
-	exitCh          chan struct{}
+	exitCh chan struct{}
+	sm     util.SessionManager
 }
 
 // NewExpensiveQueryHandle builds a new expensive query handler.
 func NewExpensiveQueryHandle(exitCh chan struct{}) *Handle {
-	return &Handle{make(chan uint64, 1024), exitCh}
+	return &Handle{exitCh: exitCh}
+}
+
+// SetSessionManager sets the SessionManager which is used to fetching the info
+// of all active sessions.
+func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
+	eqh.sm = sm
+	return eqh
 }
 
 // Run starts a expensive query checker goroutine at the start time of the server.
-func (eqh *Handle) Run(sm util.SessionManager) {
-	defer close(eqh.memExceedConnCh)
+func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 	curInterval := time.Second * time.Duration(threshold)
 	ticker := time.NewTicker(curInterval / 2)
@@ -52,7 +58,7 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 			if log.GetLevel() > zapcore.WarnLevel {
 				continue
 			}
-			processInfo := sm.ShowProcessList()
+			processInfo := eqh.sm.ShowProcessList()
 			for _, info := range processInfo {
 				if len(info.Info) == 0 || info.ExceedExpensiveTimeThresh {
 					continue
@@ -68,25 +74,22 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 				ticker.Stop()
 				ticker = time.NewTicker(curInterval / 2)
 			}
-		case connID := <-eqh.memExceedConnCh:
-			if log.GetLevel() > zapcore.WarnLevel {
-				continue
-			}
-			info, ok := sm.GetProcessInfo(connID)
-			if !ok {
-				continue
-			}
-			logExpensiveQuery(time.Since(info.Time), info)
 		case <-eqh.exitCh:
 			return
 		}
 	}
 }
 
-// LogOnQueryExceedMemQuota passes the connID to `memExceedConnCh` to notify the
-// expensive query handler to log it.
+// LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.
 func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
-	eqh.memExceedConnCh <- connID
+	if log.GetLevel() > zapcore.WarnLevel {
+		return
+	}
+	info, ok := eqh.sm.GetProcessInfo(connID)
+	if !ok {
+		return
+	}
+	logExpensiveQuery(time.Since(info.Time), info)
 }
 
 // logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
