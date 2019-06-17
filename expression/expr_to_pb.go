@@ -15,8 +15,10 @@ package expression
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -271,6 +273,23 @@ func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Express
 }
 
 func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
+	// Use the failpoint to control whether to push down an expression in the integration test.
+	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
+	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
+	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) bool {
+		enabled := val.(string)
+		if enabled == "all" {
+			return true
+		}
+		exprs := strings.Split(enabled, ",")
+		for _, expr := range exprs {
+			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
+				return true
+			}
+		}
+		return false
+	})
+
 	switch sf.FuncName.L {
 	case
 		// logical functions.
