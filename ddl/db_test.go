@@ -1679,6 +1679,13 @@ func (s *testDBSuite5) TestCreateTableWithLike(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tbl1.Meta().ForeignKeys, IsNil)
 
+	// for table partition
+	s.tk.MustExec("use ctwl_db")
+	s.tk.MustExec("create table pt1 (id int) partition by range columns (id) (partition p0 values less than (10))")
+	s.tk.MustExec("insert into pt1 values (1),(2),(3),(4);")
+	s.tk.MustExec("create table ctwl_db1.pt1 like ctwl_db.pt1;")
+	s.tk.MustQuery("select * from ctwl_db1.pt1").Check(testkit.Rows())
+
 	// for failure cases
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	assertErrorCode(c, s.tk, failSQL, tmysql.ErrNoSuchTable)
@@ -2020,23 +2027,18 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 
-	// Check create table with virtual generated column.
-	s.tk.MustExec(`CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual)`)
+	// Check create table with virtual and stored generated columns.
+	s.tk.MustExec(`CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored)`)
 
-	// Check desc table with virtual generated column.
+	// Check desc table with virtual and stored generated columns.
 	result := s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
-	// Check show create table with virtual generated column.
+	// Check show create table with virtual and stored generated columns.
 	result = s.tk.MustQuery(`show create table test_gv_ddl`)
 	result.Check(testkit.Rows(
-		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL,\n  `c` int(11) GENERATED ALWAYS AS (`b` + 2) STORED\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
-
-	// Check alter table add a stored generated column.
-	s.tk.MustExec(`alter table test_gv_ddl add column c int as (b+2) stored`)
-	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
 	// Check generated expression with blanks.
 	s.tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)))")
@@ -2050,28 +2052,32 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 		stmt string
 		err  int
 	}{
-		// drop/rename columns dependent by other column.
+		// Drop/rename columns dependent by other column.
 		{`alter table test_gv_ddl drop column a`, mysql.ErrDependentByGeneratedColumn},
 		{`alter table test_gv_ddl change column a anew int`, mysql.ErrBadField},
 
-		// modify/change stored status of generated columns.
+		// Modify/change stored status of generated columns.
 		{`alter table test_gv_ddl modify column b bigint`, mysql.ErrUnsupportedOnGeneratedColumn},
 		{`alter table test_gv_ddl change column c cnew bigint as (a+100)`, mysql.ErrUnsupportedOnGeneratedColumn},
 
-		// modify/change generated columns breaking prior.
+		// Modify/change generated columns breaking prior.
 		{`alter table test_gv_ddl modify column b int as (c+100)`, mysql.ErrGeneratedColumnNonPrior},
 		{`alter table test_gv_ddl change column b bnew int as (c+100)`, mysql.ErrGeneratedColumnNonPrior},
 
-		// refer not exist columns in generation expression.
+		// Refer not exist columns in generation expression.
 		{`create table test_gv_ddl_bad (a int, b int as (c+8))`, mysql.ErrBadField},
 
-		// refer generated columns non prior.
+		// Refer generated columns non prior.
 		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, mysql.ErrGeneratedColumnNonPrior},
 
-		// virtual generated columns cannot be primary key.
+		// Virtual generated columns cannot be primary key.
 		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b) primary key)`, mysql.ErrUnsupportedOnGeneratedColumn},
 		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(c))`, mysql.ErrUnsupportedOnGeneratedColumn},
 		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(a, c))`, mysql.ErrUnsupportedOnGeneratedColumn},
+
+		// Add stored generated column through alter table.
+		{`alter table test_gv_ddl add column d int as (b+2) stored`, mysql.ErrUnsupportedOnGeneratedColumn},
+		{`alter table test_gv_ddl modify column b int as (a + 8) stored`, mysql.ErrUnsupportedOnGeneratedColumn},
 	}
 	for _, tt := range genExprTests {
 		assertErrorCode(c, s.tk, tt.stmt, tt.err)

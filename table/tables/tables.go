@@ -443,7 +443,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	if !hasRecordID {
-		recordID, err = t.AllocAutoID(ctx)
+		recordID, err = t.AllocHandle(ctx)
 		if err != nil {
 			return 0, err
 		}
@@ -796,7 +796,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	return nil
 }
 
-// removeRowIndex implements table.Table RemoveRowIndex interface.能
+// removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
 	return idx.Delete(sc, rm, vals, h, txn)
 }
@@ -914,8 +914,13 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	return colVal, nil
 }
 
-// AllocAutoID implements table.Table AllocAutoID interface.
-func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+// AllocAutoIncrementValue implements table.Table AllocAutoIncrementValue interface.
+func (t *tableCommon) AllocAutoIncrementValue(ctx sessionctx.Context) (int64, error) {
+	return t.Allocator(ctx).Alloc(t.tableID)
+}
+
+// AllocHandle implements table.Table AllocHandle interface.
+func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	rowID, err := t.Allocator(ctx).Alloc(t.tableID)
 	if err != nil {
 		return 0, err

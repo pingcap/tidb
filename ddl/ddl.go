@@ -98,7 +98,7 @@ var (
 		"unsupported drop integer primary key")
 	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
 
-	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with auto_increment column.")
+	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with primary key as row id.")
 	errBlobKeyWithoutLength      = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
 	errIncorrectPrefixKey        = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 	errTooLongKey                = terror.ClassDDL.New(codeTooLongKey,
@@ -109,7 +109,6 @@ var (
 	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
 	errFileNotFound             = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename            = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
-	errBadField                 = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	errInvalidUseOfNull         = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
@@ -163,6 +162,8 @@ var (
 
 	// ErrColumnBadNull returns for a bad null value.
 	ErrColumnBadNull = terror.ClassDDL.New(codeBadNull, "column cann't be null")
+	// ErrBadField forbids to refer to unknown column.
+	ErrBadField = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	// ErrCantRemoveAllFields returns for deleting all columns.
 	ErrCantRemoveAllFields = terror.ClassDDL.New(codeCantRemoveAllFields, "can't delete all columns with ALTER TABLE")
 	// ErrCantDropFieldOrKey returns for dropping a non-existent field or key.
@@ -194,8 +195,6 @@ var (
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type.
 	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeErrFieldTypeNotAllowedAsPartitionField, mysql.MySQLErrName[mysql.ErrFieldTypeNotAllowedAsPartitionField])
-	// ErrPartitionsMustBeDefined returns each partition must be defined.
-	ErrPartitionsMustBeDefined = terror.ClassDDL.New(codePartitionsMustBeDefined, "For RANGE partitions each partition must be defined")
 	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
 	ErrPartitionMgmtOnNonpartitioned = terror.ClassDDL.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
 	// ErrDropPartitionNonExistent returns error in list of partition.
@@ -206,14 +205,10 @@ var (
 	ErrRangeNotIncreasing = terror.ClassDDL.New(codeRangeNotIncreasing, "VALUES LESS THAN value must be strictly increasing for each partition")
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
 	ErrPartitionMaxvalue = terror.ClassDDL.New(codePartitionMaxvalue, "MAXVALUE can only be used in last partition definition")
-	// ErrTooManyValues returns cannot have more than one value for this type of partitioning.
-	ErrTooManyValues = terror.ClassDDL.New(codeErrTooManyValues, mysql.MySQLErrName[mysql.ErrTooManyValues])
 	//ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
 	ErrDropLastPartition = terror.ClassDDL.New(codeDropLastPartition, mysql.MySQLErrName[mysql.ErrDropLastPartition])
 	//ErrTooManyPartitions returns too many partitions were defined.
 	ErrTooManyPartitions = terror.ClassDDL.New(codeTooManyPartitions, mysql.MySQLErrName[mysql.ErrTooManyPartitions])
-	//ErrNoParts returns no partition were defined.
-	ErrNoParts = terror.ClassDDL.New(codeNoParts, mysql.MySQLErrName[mysql.ErrNoParts])
 	//ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
 	ErrPartitionFunctionIsNotAllowed = terror.ClassDDL.New(codePartitionFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFunctionIsNotAllowed])
 	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.
@@ -235,8 +230,6 @@ var (
 	ErrTableCantHandleFt = terror.ClassDDL.New(codeErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
 	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
 	ErrFieldNotFoundPart = terror.ClassDDL.New(codeFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
-	// ErrPartitionColumnList returns "Inconsistency in usage of column lists for partitioning".
-	ErrPartitionColumnList = terror.ClassDDL.New(codePartitionColumnList, mysql.MySQLErrName[mysql.ErrPartitionColumnList])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -507,22 +500,28 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
 }
 
-func (d *ddl) genGlobalID() (int64, error) {
-	var globalID int64
+func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
+	ret := make([]int64, count)
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
 
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
-				failpoint.Return(errors.New("gofail genGlobalID error"))
+				failpoint.Return(errors.New("gofail genGlobalIDs error"))
 			}
 		})
 
-		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
+		m := meta.NewMeta(txn)
+		for i := 0; i < count; i++ {
+			ret[i], err = m.GenGlobalID()
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 
-	return globalID, errors.Trace(err)
+	return ret, err
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
@@ -736,6 +735,14 @@ const (
 	codeNotSupportedAlterOperation             = terror.ErrCode(mysql.ErrAlterOperationNotSupportedReason)
 	codeFieldNotFoundPart                      = terror.ErrCode(mysql.ErrFieldNotFoundPart)
 	codePartitionColumnList                    = terror.ErrCode(mysql.ErrPartitionColumnList)
+	codePartitionRequiresValues                = terror.ErrCode(mysql.ErrPartitionRequiresValues)
+	codePartitionWrongNoPart                   = terror.ErrCode(mysql.ErrPartitionWrongNoPart)
+	codePartitionWrongNoSubpart                = terror.ErrCode(mysql.ErrPartitionWrongNoSubpart)
+	codePartitionWrongValues                   = terror.ErrCode(mysql.ErrPartitionWrongValues)
+	codeRowSinglePartitionField                = terror.ErrCode(mysql.ErrRowSinglePartitionField)
+	codeSubpartition                           = terror.ErrCode(mysql.ErrSubpartition)
+	codeSystemVersioningWrongPartitions        = terror.ErrCode(mysql.ErrSystemVersioningWrongPartitions)
+	codeWrongPartitionTypeExpectedSystemTime   = terror.ErrCode(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 )
 
 func init() {
@@ -798,6 +805,14 @@ func init() {
 		codePartitionColumnList:                    mysql.ErrPartitionColumnList,
 		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
 		codeErrGeneratedColumnRefAutoInc:           mysql.ErrGeneratedColumnRefAutoInc,
+		codePartitionRequiresValues:                mysql.ErrPartitionRequiresValues,
+		codePartitionWrongNoPart:                   mysql.ErrPartitionWrongNoPart,
+		codePartitionWrongNoSubpart:                mysql.ErrPartitionWrongNoSubpart,
+		codePartitionWrongValues:                   mysql.ErrPartitionWrongValues,
+		codeRowSinglePartitionField:                mysql.ErrRowSinglePartitionField,
+		codeSubpartition:                           mysql.ErrSubpartition,
+		codeSystemVersioningWrongPartitions:        mysql.ErrSystemVersioningWrongPartitions,
+		codeWrongPartitionTypeExpectedSystemTime:   mysql.ErrWrongPartitionTypeExpectedSystemTime,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

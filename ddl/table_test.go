@@ -42,12 +42,12 @@ type testTableSuite struct {
 
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
-	var err error
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
 	}
-	tblInfo.ID, err = d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	tblInfo.ID = genIDs[0]
 
 	cols := make([]*model.ColumnInfo, num)
 	for i := range cols {
@@ -71,8 +71,9 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.TableInfo {
 	tblInfo := testTableInfo(c, d, name, num)
-	pid, err := d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	pid := genIDs[0]
 	tblInfo.Partition = &model.PartitionInfo{
 		Type:   model.PartitionTypeRange,
 		Expr:   tblInfo.Columns[0].Name.L,
@@ -89,12 +90,12 @@ func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.Table
 
 // testViewInfo creates a test view with num int columns.
 func testViewInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
-	var err error
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
 	}
-	tblInfo.ID, err = d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	tblInfo.ID = genIDs[0]
 
 	cols := make([]*model.ColumnInfo, num)
 	viewCols := make([]model.CIStr, num)
@@ -237,8 +238,9 @@ func testDropTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, t
 }
 
 func testTruncateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
-	newTableID, err := d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
+	newTableID := genIDs[0]
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
