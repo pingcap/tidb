@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 )
 
 // Checker uses to check tables lock.
@@ -34,12 +35,16 @@ func NewChecker(ctx sessionctx.Context, is infoschema.InfoSchema) *Checker {
 
 // CheckTableLock uses to check table lock.
 func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType) error {
-	if db == "" || table == "" {
+	if db == "" && table == "" {
 		return nil
 	}
 	// Below database are not support table lock.
 	if db == infoschema.LowerName || db == perfschema.LowerName || db == mysql.SystemDB {
 		return nil
+	}
+	// check operation on database.
+	if table == "" {
+		return c.CheckLockInDB(db, privilege)
 	}
 	switch privilege {
 	case mysql.ShowDBPriv, mysql.AllPrivMask:
@@ -95,4 +100,24 @@ func checkLockTpMeetPrivilege(tp model.TableLockType, privilege mysql.PrivilegeT
 		}
 	}
 	return false
+}
+
+func (c *Checker) CheckLockInDB(db string, privilege mysql.PrivilegeType) error {
+	if c.ctx.HasLockedTables() {
+		switch privilege {
+		case mysql.CreatePriv, mysql.DropPriv, mysql.AlterPriv:
+			return table.ErrLockOrActiveTransaction.GenWithStackByArgs()
+		}
+	}
+	if privilege == mysql.CreatePriv {
+		return nil
+	}
+	tables := c.is.SchemaTables(model.NewCIStr(db))
+	for _, tbl := range tables {
+		err := c.CheckTableLock(db, tbl.Meta().Name.L, privilege)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

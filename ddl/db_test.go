@@ -2900,7 +2900,6 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk.MustExec("create database test_lock")
 	tk.MustExec("create table test_lock.t3 (a int)")
 	tk.MustExec("lock tables t1 write, test_lock.t3 write")
-	tk.MustExec("drop database test_lock")
 	tk2.MustExec("create table t3 (a int)")
 	tk.MustExec("lock tables t1 write, t3 write")
 	tk.MustExec("drop table t3")
@@ -2934,6 +2933,22 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk.MustExec("create view v1 as select * from t1;")
 	_, err = tk.Exec("lock tables v1 read")
 	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+
+	// Test for create/drop/alter database when session is holding the table locks.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock table t1 write")
+	_, err = tk.Exec("drop database test")
+	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
+	_, err = tk.Exec("create database test_lock")
+	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
+	_, err = tk.Exec("alter database test charset='utf8mb4'")
+	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
+	// Test alter/drop database when other session is holding the table locks of the database.
+	tk2.MustExec("create database test_lock2")
+	_, err = tk2.Exec("drop database test")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("alter database test charset='utf8mb4'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
 
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
