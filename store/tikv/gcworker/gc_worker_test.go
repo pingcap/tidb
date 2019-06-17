@@ -308,7 +308,13 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	c.Assert(useDistributedGC, Equals, true)
 }
 
-func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
+const (
+	failRpcErr  = 0
+	failNilResp = 1
+	failErrResp = 2
+)
+
+func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	// Put some delete range tasks.
 	_, err := s.gcWorker.session.Execute(context.Background(), `INSERT INTO mysql.gc_delete_range VALUES
 		("1", "2", "31", "32", "10"),
@@ -358,13 +364,22 @@ func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
 	var failStore *metapb.Store = nil
 	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		sendReqCh <- SentReq{req, addr}
-		if bytes.Equal(req.UnsafeDestroyRange.GetStartKey(), failKey) && addr == failStore.GetAddress() {
-			return nil, errors.New("error")
-		}
-		return &tikvrpc.Response{
+		resp := &tikvrpc.Response{
 			Type:               tikvrpc.CmdUnsafeDestroyRange,
 			UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeResponse{},
-		}, nil
+		}
+		if bytes.Equal(req.UnsafeDestroyRange.GetStartKey(), failKey) && addr == failStore.GetAddress() {
+			if failType == failRpcErr {
+				return nil, errors.New("error")
+			} else if failType == failNilResp {
+				resp.UnsafeDestroyRange = nil
+			} else if failType == failErrResp {
+				resp.UnsafeDestroyRange.Error = "error"
+			} else {
+				panic("unreachable")
+			}
+		}
+		return resp, nil
 	}
 	defer func() { s.client.unsafeDestroyRangeHandler = nil }()
 
@@ -412,6 +427,12 @@ func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
 	// Change the order because the first range is the last successfully deleted.
 	ranges = append(ranges[1:], ranges[0])
 	test(true)
+}
+
+func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
+	s.testDeleteRangesFailureImpl(c, failRpcErr)
+	s.testDeleteRangesFailureImpl(c, failNilResp)
+	s.testDeleteRangesFailureImpl(c, failErrResp)
 }
 
 type SentReq struct {
