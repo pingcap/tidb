@@ -17,6 +17,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"runtime"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
@@ -24,11 +26,8 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"runtime"
-	"strings"
 )
 
 var _ = SerialSuites(&testMemoryLeak{})
@@ -73,13 +72,14 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	tk.MustExec("use test_mem")
 
 	// prepare data
-	totalSize := uint64(128 << 20) // 128MB
+	totalSize := uint64(256 << 20) // 256MB
 	blockSize := uint64(8 << 10)   // 8KB
+	delta := totalSize / 5
 	numRows := totalSize / blockSize
 	tk.MustExec(fmt.Sprintf("create table t (c varchar(%v))", blockSize))
 	defer tk.MustExec("drop table t")
-	randStr := strings.Repeat("x", int(blockSize))
-	sql := fmt.Sprintf("insert into t values ('%s')", randStr)
+	//sql := fmt.Sprintf("insert into t values ('%s')", s.randStr(int(blockSize)))
+	sql := fmt.Sprintf("insert into t values (space(%v))", blockSize)
 	for i := uint64(0); i < numRows; i++ {
 		tk.MustExec(sql)
 	}
@@ -92,28 +92,37 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	c.Assert(err, IsNil)
 	record := records[0]
 	rowCnt := 0
-	chk := chunk.RecordBatch{new(chunk.Chunk)}
+	chk := record.NewRecordBatch()
 	for {
-		c.Assert(record.Next(context.Background(), &chk), IsNil)
+		c.Assert(record.Next(context.Background(), chk), IsNil)
 		rowCnt += chk.NumRows()
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
+	c.Assert(rowCnt, Equals, int(numRows))
+
 	runtime.GC()
 	allocatedAfter, inUseAfter := s.readMem()
-
-	fmt.Println(">>> ", allocatedAfter-allocatedBegin, inUseAfter-inUseBegin)
-
 	c.Assert(allocatedAfter-allocatedBegin, GreaterEqual, totalSize)
-	fmt.Println(">>>>>>>>>>>>> ", inUseAfter-inUseBegin)
+	c.Assert(s.memDiff(inUseAfter, inUseBegin), Less, delta)
 
 	se.Close()
 	runtime.GC()
+	allocatedFinal, inUseFinal := s.readMem()
+	c.Assert(allocatedFinal-allocatedAfter, Less, delta)
+	c.Assert(s.memDiff(inUseFinal, inUseAfter), Less, delta)
 }
 
 func (s *testMemoryLeak) readMem() (allocated, heapInUse uint64) {
 	var stat runtime.MemStats
 	runtime.ReadMemStats(&stat)
 	return stat.TotalAlloc, stat.HeapInuse
+}
+
+func (s *testMemoryLeak) memDiff(m1, m2 uint64) uint64 {
+	if m1 > m2 {
+		return m1 - m2
+	}
+	return m2 - m1
 }
