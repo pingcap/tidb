@@ -309,7 +309,7 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 }
 
 const (
-	failRpcErr  = 0
+	failRPCErr  = 0
 	failNilResp = 1
 	failErrResp = 2
 )
@@ -369,7 +369,7 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 			UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeResponse{},
 		}
 		if bytes.Equal(req.UnsafeDestroyRange.GetStartKey(), failKey) && addr == failStore.GetAddress() {
-			if failType == failRpcErr {
+			if failType == failRPCErr {
 				return nil, errors.New("error")
 			} else if failType == failNilResp {
 				resp.UnsafeDestroyRange = nil
@@ -430,7 +430,7 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 }
 
 func (s *testGCWorkerSuite) TestDeleteRangesFailure(c *C) {
-	s.testDeleteRangesFailureImpl(c, failRpcErr)
+	s.testDeleteRangesFailureImpl(c, failRPCErr)
 	s.testDeleteRangesFailureImpl(c, failNilResp)
 	s.testDeleteRangesFailureImpl(c, failErrResp)
 }
