@@ -442,8 +442,7 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 	if !config.TableLockEnabled() {
 		return nil
 	}
-	err := domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
-	return err
+	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
 }
 
 func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
@@ -451,6 +450,5 @@ func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
 		return nil
 	}
 	lockedTables := e.ctx.GetAllTableLocks()
-	err := domain.GetDomain(e.ctx).DDL().UnlockTables(e.ctx, lockedTables)
-	return err
+	return domain.GetDomain(e.ctx).DDL().UnlockTables(e.ctx, lockedTables)
 }

@@ -3234,7 +3234,6 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 // LockTables uses to execute lock tables statement.
 func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
 	lockTables := make([]model.TableLockTpInfo, 0, len(stmt.TableLocks))
-	is := d.infoHandle.Get()
 	sessionInfo := model.SessionInfo{
 		ServerID:  d.GetID(),
 		SessionID: ctx.GetSessionVars().ConnectionID,
@@ -3251,13 +3250,9 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 			}
 			return infoschema.ErrAccessDenied
 		}
-		schema, ok := is.SchemaByName(tb.Schema)
-		if !ok {
-			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tb.Schema)
-		}
-		t, err := is.TableByName(tb.Schema, tb.Name)
+		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
 		if err != nil {
-			return infoschema.ErrTableNotExists.GenWithStackByArgs(tb.Schema, tb.Name)
+			return errors.Trace(err)
 		}
 		if t.Meta().IsView() {
 			return table.ErrUnsupportedOp.GenWithStackByArgs()

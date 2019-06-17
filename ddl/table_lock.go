@@ -74,7 +74,7 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 			tbInfo.Lock.State = model.TableLockStatePreLock
 			tbInfo.Lock.TS = t.StartTS
 			ver, err = updateVersionAndTableInfo(t, job, tbInfo, true)
-		// If the state of the lock is public, It means the lock is a read lock and already locked by other session,
+		// If the state of the lock is public, it means the lock is a read lock and already locked by other session,
 		// so this request of lock table doesn't need pre-lock state, just update the TS and table info is ok.
 		case model.TableLockStatePreLock, model.TableLockStatePublic:
 			tbInfo.Lock.State = model.TableLockStatePublic
@@ -222,7 +222,6 @@ func onUnlockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	}
 
 	ver, err = unlockTables(t, job, arg)
-
 	if arg.IndexOfUnlock == len(arg.UnlockTables) {
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, nil)
 	}

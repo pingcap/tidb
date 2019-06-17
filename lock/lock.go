@@ -74,8 +74,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 
-	switch privilege {
-	case mysql.SelectPriv:
+	if privilege == mysql.SelectPriv {
 		switch tb.Meta().Lock.Tp {
 		case model.TableLockRead, model.TableLockWriteLocal:
 			return nil
