@@ -2940,7 +2940,7 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
-func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
+func (s *testDBSuite4) TestConcurrentLockTables(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk := s.tk
@@ -2991,7 +2991,7 @@ func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
 	tk2.MustExec("unlock tables")
 }
 
-func (s *testDBSuite2) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
+func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
