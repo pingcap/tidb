@@ -387,3 +387,8 @@ func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][5], NotNil)
 	c.Assert(result.Rows()[1][6], Equals, "finished")
 }
+
+func (s *testTableSuite) TestColumnStatistics(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
+}
