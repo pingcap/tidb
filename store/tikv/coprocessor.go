@@ -808,9 +808,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, resp *copRespo
 		resp.detail = new(execdetails.ExecDetails)
 	}
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
-	if rpcCtx != nil {
-		resp.detail.CalleeAddress = rpcCtx.Addr
-	}
 	if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if handleTime := pbDetails.HandleTime; handleTime != nil {
 			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
