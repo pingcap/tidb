@@ -15,9 +15,9 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
-	"fmt"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
