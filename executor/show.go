@@ -1184,17 +1184,16 @@ func (e *ShowExec) fetchShowTableRegions() error {
 		return errors.Trace(err)
 	}
 
-	// Get table regions from from region cache.
-	regionCache := tikvStore.GetRegionCache()
+	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
 	var regions []regionMeta
 	if len(e.IndexName.L) != 0 {
 		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
-		regions, err = getTableIndexRegions(tb, indexInfo, regionCache, splitStore)
+		regions, err = getTableIndexRegions(tb, indexInfo, tikvStore, splitStore)
 	} else {
-		regions, err = getTableRegions(tb, regionCache, splitStore)
+		regions, err = getTableRegions(tb, tikvStore, splitStore)
 	}
 
 	if err != nil {
@@ -1204,28 +1203,28 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	return nil
 }
 
-func getTableRegions(tb table.Table, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
+func getTableRegions(tb table.Table, tikvStore tikv.Storage, splitStore splitableStore) ([]regionMeta, error) {
 	if info := tb.Meta().GetPartitionInfo(); info != nil {
-		return getPartitionTableRegions(info, tb.(table.PartitionedTable), regionCache, splitStore)
+		return getPartitionTableRegions(info, tb.(table.PartitionedTable), tikvStore, splitStore)
 	}
-	return getPhysicalTableRegions(tb.Meta().ID, tb.Meta(), regionCache, splitStore)
+	return getPhysicalTableRegions(tb.Meta().ID, tb.Meta(), tikvStore, splitStore)
 }
 
-func getTableIndexRegions(tb table.Table, indexInfo *model.IndexInfo, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
+func getTableIndexRegions(tb table.Table, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore splitableStore) ([]regionMeta, error) {
 	if info := tb.Meta().GetPartitionInfo(); info != nil {
-		return getPartitionIndexRegions(info, tb.(table.PartitionedTable), indexInfo, regionCache, splitStore)
+		return getPartitionIndexRegions(info, tb.(table.PartitionedTable), indexInfo, tikvStore, splitStore)
 	}
-	return getPhysicalIndexRegions(tb.Meta().ID, indexInfo, regionCache, splitStore)
+	return getPhysicalIndexRegions(tb.Meta().ID, indexInfo, tikvStore, splitStore)
 }
 
-func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
+func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, tikvStore tikv.Storage, splitStore splitableStore) ([]regionMeta, error) {
 	var regions []regionMeta
 	uniqueRegionID := make(map[uint64]struct{})
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.GetPartition(pid)
 		partition.GetPhysicalID()
-		partitionRegions, err := getPhysicalTableRegions(partition.GetPhysicalID(), tbl.Meta(), regionCache, splitStore)
+		partitionRegions, err := getPhysicalTableRegions(partition.GetPhysicalID(), tbl.Meta(), tikvStore, splitStore)
 		if err != nil {
 			return nil, err
 		}
@@ -1240,14 +1239,14 @@ func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTa
 	return regions, nil
 }
 
-func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, regionCache *tikv.RegionCache, splitStore splitableStore) ([]regionMeta, error) {
+func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore splitableStore) ([]regionMeta, error) {
 	var regions []regionMeta
 	uniqueRegionID := make(map[uint64]struct{})
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.GetPartition(pid)
 		partition.GetPhysicalID()
-		partitionRegions, err := getPhysicalIndexRegions(partition.GetPhysicalID(), indexInfo, regionCache, splitStore)
+		partitionRegions, err := getPhysicalIndexRegions(partition.GetPhysicalID(), indexInfo, tikvStore, splitStore)
 		if err != nil {
 			return nil, err
 		}

@@ -323,15 +323,16 @@ type regionMeta struct {
 	scattering bool
 }
 
-func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
+func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore tikv.Storage, s splitableStore) ([]regionMeta, error) {
 	uniqueRegionMap := make(map[uint64]struct{})
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalTableID)
+	regionCache := tikvStore.GetRegionCache()
 	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackoffer(context.Background(), 20000), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
-	recordRegions, err := getRegionMeta(regionCache, recordRegionMetas, uniqueRegionMap)
+	recordRegions, err := getRegionMeta(recordRegionMetas, uniqueRegionMap)
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +352,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 		if err != nil {
 			return nil, err
 		}
-		indexRegions, err := getRegionMeta(regionCache, regionMetas, uniqueRegionMap)
+		indexRegions, err := getRegionMeta(regionMetas, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}
@@ -366,18 +367,19 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	return regions, nil
 }
 
-func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, regionCache *tikv.RegionCache, s splitableStore) ([]regionMeta, error) {
+func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, s splitableStore) ([]regionMeta, error) {
 	uniqueRegionMap := make(map[uint64]struct{})
 	recordPrefix := tablecodec.GenTableRecordPrefix(physicalTableID)
 	tablePrefix := tablecodec.GenTablePrefix(physicalTableID)
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(physicalTableID, indexInfo.ID)
 
 	startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalTableID, indexInfo.ID)
+	regionCache := tikvStore.GetRegionCache()
 	regions, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackoffer(context.Background(), 20000), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
-	indexRegions, err := getRegionMeta(regionCache, regions, uniqueRegionMap)
+	indexRegions, err := getRegionMeta(regions, uniqueRegionMap)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +458,7 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 	return fmt.Sprintf("%x", key)
 }
 
-func getRegionMeta(regionCache *tikv.RegionCache, regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getRegionMeta(regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(regionMetas))
 	for _, r := range regionMetas {
 		if _, ok := uniqueRegionMap[r.GetID()]; ok {
