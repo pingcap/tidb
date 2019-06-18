@@ -204,6 +204,7 @@ func (s *testRangeTaskSuite) testRangeTaskErrorImpl(c *C, concurrency int) {
 			}
 
 			runner := NewRangeTaskRunner("test-error-runner", s.store, concurrency, handler)
+			runner.SetRegionsPerTask(1)
 			err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
 			// RunOnRange returns no error only when all sub tasks are done successfully.
 			c.Assert(err, NotNil)
