@@ -296,6 +296,13 @@ func (s *testCoprocessorSuite) TestCopRangeSplit(c *C) {
 	)
 }
 
+func (s *testCoprocessorSuite) TestRangeCheck(c *C) {
+	client := CopClient{}
+	c.Assert(client.validateRanges(buildKeyRanges("a", "b", "b", "c")), IsNil)
+	c.Assert(client.validateRanges(buildKeyRanges("a", "b", "a", "c")), NotNil)
+	c.Assert(client.validateRanges(buildKeyRanges("a", "b", "c", "d")), IsNil)
+}
+
 type splitCase struct {
 	key string
 	*copRanges
