@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
@@ -159,13 +160,9 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 }
 
 func mergeQueryFeedback(lq []*statistics.QueryFeedback, rq []*statistics.QueryFeedback) []*statistics.QueryFeedback {
-	for _, q := range rq {
-		if len(lq) >= int(MaxQueryFeedbackCount.Load()) {
-			break
-		}
-		lq = append(lq, q)
-	}
-	return lq
+	remained := mathutil.MinInt64(int64(len(rq)), MaxQueryFeedbackCount.Load()-int64(len(lq)))
+	remained = mathutil.MaxInt64(0, remained)
+	return append(lq, rq[:remained]...)
 }
 
 var (
@@ -337,10 +334,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	} else {
 		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", startTS, delta.Delta, delta.Count, id)
 	}
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
-	if err != nil {
-		return
-	}
+	err = execSQLs(context.Background(), exec, []string{sql})
 	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	return
 }
@@ -691,10 +685,7 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 		return s, s, errors.Trace(err)
 	}
 	e, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, end, time.UTC)
-	if err != nil {
-		return s, e, errors.Trace(err)
-	}
-	return s, e, nil
+	return s, e, err
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
@@ -740,16 +731,13 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
-	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()); needAnalyze {
+	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
 		logutil.Logger(context.Background()).Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
 		h.execAutoAnalyze(sql)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-		if _, ok := statsTbl.Indices[idx.ID]; !ok {
+		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
 			logutil.Logger(context.Background()).Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
 			h.execAutoAnalyze(sql)
@@ -944,11 +932,8 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount)
 		expected *= c.GetIncreaseFactor(t.Count)
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
 	q.Expected = int64(expected)
-	return nil
+	return err
 }
 
 func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Range, rangeCount float64, q *statistics.QueryFeedback) error {

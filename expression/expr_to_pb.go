@@ -15,7 +15,10 @@ package expression
 
 import (
 	"context"
+	"strings"
+	"sync/atomic"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -270,6 +273,23 @@ func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Express
 }
 
 func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
+	// Use the failpoint to control whether to push down an expression in the integration test.
+	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
+	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
+	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) bool {
+		enabled := val.(string)
+		if enabled == "all" {
+			return true
+		}
+		exprs := strings.Split(enabled, ",")
+		for _, expr := range exprs {
+			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
+				return true
+			}
+		}
+		return false
+	})
+
 	switch sf.FuncName.L {
 	case
 		// logical functions.
@@ -321,8 +341,16 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 
 		// date functions.
 		ast.DateFormat:
-
-		return true
+		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
+		return true && !disallowPushdown
 	}
 	return false
+}
+
+// DefaultExprPushdownBlacklist indicates the expressions which can not be pushed down to TiKV.
+var DefaultExprPushdownBlacklist *atomic.Value
+
+func init() {
+	DefaultExprPushdownBlacklist = new(atomic.Value)
+	DefaultExprPushdownBlacklist.Store(make(map[string]struct{}))
 }
