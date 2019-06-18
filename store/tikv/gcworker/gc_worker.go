@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
@@ -221,23 +220,6 @@ func (w *GCWorker) tick(ctx context.Context) {
 	}
 }
 
-const notBootstrappedVer = 0
-
-func (w *GCWorker) storeIsBootstrapped() bool {
-	var ver int64
-	err := kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
-		var err error
-		t := meta.NewMeta(txn)
-		ver, err = t.GetBootstrapVersion()
-		return errors.Trace(err)
-	})
-	if err != nil {
-		logutil.Logger(context.Background()).Error("[gc worker] check bootstrapped", zap.Error(err))
-		return false
-	}
-	return ver > notBootstrappedVer
-}
-
 // leaderTick of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx context.Context) error {
 	if w.gcIsRunning {
@@ -296,13 +278,12 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	}
 	doGC, safePoint, err := w.checkPrepare(ctx)
 	if doGC {
-		_, err = w.session.Execute(ctx, "COMMIT")
+		err = w.session.CommitTxn(ctx)
 		if err != nil {
 			return false, 0, errors.Trace(err)
 		}
 	} else {
-		_, err1 := w.session.Execute(ctx, "ROLLBACK")
-		terror.Log(errors.Trace(err1))
+		w.session.RollbackTxn(ctx)
 	}
 	return doGC, safePoint, errors.Trace(err)
 }
@@ -745,12 +726,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 	return nil
 }
 
-func (w *GCWorker) resolveLocksForRange(
-	ctx context.Context,
-	safePoint uint64,
-	startKey []byte,
-	endKey []byte,
-) (int, error) {
+func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (int, error) {
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
@@ -1094,27 +1070,24 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	w.session = se
 	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey)
 	if err != nil {
-		_, err1 := se.Execute(ctx, "ROLLBACK")
-		terror.Log(errors.Trace(err1))
+		se.RollbackTxn(ctx)
 		return false, errors.Trace(err)
 	}
 	logutil.Logger(context.Background()).Debug("[gc worker] got leader", zap.String("uuid", leader))
 	if leader == w.uuid {
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
-			_, err1 := se.Execute(ctx, "ROLLBACK")
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
-		_, err = se.Execute(ctx, "COMMIT")
+		err = se.CommitTxn(ctx)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
 
-	_, err = se.Execute(ctx, "ROLLBACK")
-	terror.Log(errors.Trace(err))
+	se.RollbackTxn(ctx)
 
 	_, err = se.Execute(ctx, "BEGIN")
 	if err != nil {
@@ -1131,30 +1104,26 @@ func (w *GCWorker) checkLeader() (bool, error) {
 
 		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid)
 		if err != nil {
-			_, err1 := se.Execute(ctx, "ROLLBACK")
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
 		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc)
 		if err != nil {
-			_, err1 := se.Execute(ctx, "ROLLBACK")
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
-			_, err1 := se.Execute(ctx, "ROLLBACK")
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
-		_, err = se.Execute(ctx, "COMMIT")
+		err = se.CommitTxn(ctx)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
-	_, err1 := se.Execute(ctx, "ROLLBACK")
-	terror.Log(errors.Trace(err1))
+	se.RollbackTxn(ctx)
 	return false, nil
 }
 
@@ -1291,14 +1260,7 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 // RunDistributedGCJob notifies TiKVs to do GC. It is exported for kv api, do not use it with GCWorker at the same time.
 // This function may not finish immediately because it may take some time to do resolveLocks.
 // Param concurrency specifies the concurrency of resolveLocks phase.
-func RunDistributedGCJob(
-	ctx context.Context,
-	s tikv.Storage,
-	pd pd.Client,
-	safePoint uint64,
-	identifier string,
-	concurrency int,
-) error {
+func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
 		store:    s,
 		uuid:     identifier,
