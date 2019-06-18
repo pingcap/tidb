@@ -791,3 +791,12 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(serverInfo.GitHash, Equals, printer.TiDBGitHash)
 	c.Assert(serverInfo.ID, Equals, ddl.GetID())
 }
+
+func (ts *HTTPHandlerTestSuite) TestHotRegionInfo(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/regions/hot")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+}
