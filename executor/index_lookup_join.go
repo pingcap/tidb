@@ -386,7 +386,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for !task.outerResult.IsFull() {
-		err := ow.executor.Next(ctx, chunk.NewRecordBatch(ow.executorChk))
+		err := Next(ctx, ow.executor, chunk.NewRecordBatch(ow.executorChk))
 		if err != nil {
 			return task, err
 		}
@@ -586,7 +586,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		err := innerExec.Next(ctx, chunk.NewRecordBatch(iw.executorChk))
+		err := Next(ctx, innerExec, chunk.NewRecordBatch(iw.executorChk))
 		if err != nil {
 			return err
 		}

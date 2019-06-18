@@ -142,7 +142,7 @@ func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 		if t.curRow == t.curIter.End() {
 			t.reallocReaderResult()
 			oldMemUsage := t.curResult.MemoryUsage()
-			err := t.reader.Next(t.ctx, chunk.NewRecordBatch(t.curResult))
+			err := Next(t.ctx, t.reader, chunk.NewRecordBatch(t.curResult))
 			// error happens or no more data.
 			if err != nil || t.curResult.NumRows() == 0 {
 				t.curRow = t.curIter.End()
@@ -389,7 +389,7 @@ func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context, requiredRows int
 		e.outerTable.chk.SetRequiredRows(requiredRows, e.maxChunkSize)
 	}
 
-	err = e.outerTable.reader.Next(ctx, chunk.NewRecordBatch(e.outerTable.chk))
+	err = Next(ctx, e.outerTable.reader, chunk.NewRecordBatch(e.outerTable.chk))
 	if err != nil {
 		return err
 	}
