@@ -546,7 +546,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 
 		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
-			logutil.Logger(ctx).Info("[gc worker] delete range failed on range",
+			logutil.Logger(ctx).Error("[gc worker] delete range failed on range",
 				zap.String("uuid", w.uuid),
 				zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey),
@@ -558,11 +558,12 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 		err = util.CompleteDeleteRange(se, r)
 		se.Close()
 		if err != nil {
-			logutil.Logger(ctx).Info("[gc worker] failed to mark delete range task done",
+			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
 				zap.String("uuid", w.uuid),
 				zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey),
 				zap.Error(err))
+			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 	}
 	logutil.Logger(ctx).Info("[gc worker] finish delete ranges",
@@ -596,7 +597,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error
 
 		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
-			logutil.Logger(ctx).Info("[gc worker] redo-delete range failed on range",
+			logutil.Logger(ctx).Error("[gc worker] redo-delete range failed on range",
 				zap.String("uuid", w.uuid),
 				zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey),
@@ -608,11 +609,12 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error
 		err := util.DeleteDoneRecord(se, r)
 		se.Close()
 		if err != nil {
-			logutil.Logger(ctx).Info("[gc worker] failed to remove delete_range_done record",
+			logutil.Logger(ctx).Error("[gc worker] failed to remove delete_range_done record",
 				zap.String("uuid", w.uuid),
 				zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey),
 				zap.Error(err))
+			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save_redo").Inc()
 		}
 	}
 	logutil.Logger(ctx).Info("[gc worker] finish redo-delete ranges",
@@ -630,6 +632,7 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 		logutil.Logger(ctx).Error("[gc worker] delete ranges: got an error while trying to get store list from PD",
 			zap.String("uuid", w.uuid),
 			zap.Error(err))
+		metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("get_stores").Inc()
 		return errors.Trace(err)
 	}
 
@@ -654,37 +657,34 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 			resp, err1 := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.UnsafeDestroyRangeTimeout)
 			if err1 == nil {
 				if resp == nil || resp.UnsafeDestroyRange == nil {
-					err1 = errors.New("[gc worker] unsafe destroy range returns nil response")
+					err1 = errors.Errorf("unsafe destroy range returns nil response from store %v", storeID)
 				} else {
 					errStr := resp.UnsafeDestroyRange.Error
 					if len(errStr) > 0 {
-						err1 = errors.New("[gc worker] unsafe destroy range failed: " + errStr)
+						err1 = errors.Errorf("unsafe destroy range failed on store %v: %s", storeID, errStr)
 					}
 				}
 			}
 
 			if err1 != nil {
-				metrics.GCUnsafeDestroyRangeFailuresCounter.Inc()
-				logutil.Logger(ctx).Error("[gc worker] unsafe destroy range failed",
-					zap.String("uuid", w.uuid),
-					zap.Uint64("storeID", storeID),
-					zap.Error(err1))
+				metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("send").Inc()
 			}
 			errChan <- err1
 		}()
 	}
 
+	var errs []string
 	for range stores {
 		err1 := <-errChan
 		if err1 != nil {
-			err = err1
+			errs = append(errs, err1.Error())
 		}
 	}
 
 	wg.Wait()
 
-	if err != nil {
-		return errors.New("[gc worker] destroy range failed on some stores")
+	if len(errs) > 0 {
+		return errors.Errorf("[gc worker] destroy range finished with errors: %v", errs)
 	}
 	return nil
 }

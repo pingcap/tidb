@@ -68,11 +68,11 @@ var (
 			Help:      "Counter of gc scan lock request more than once in the same region.",
 		})
 
-	GCUnsafeDestroyRangeFailuresCounter = prometheus.NewCounter(
+	GCUnsafeDestroyRangeFailuresCounterVec = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "gc_unsafe_destroy_range_failures",
 			Help:      "Counter of unsafe destroyrange failures",
-		})
+		}, []string{"type"})
 )
