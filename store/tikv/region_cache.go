@@ -469,7 +469,7 @@ func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, co
 		return nil, errors.Trace(err)
 	}
 	if len(regions) == 0 {
-		return startKey, nil
+		return nil, errors.New("PD returned no region")
 	}
 
 	c.mu.Lock()
@@ -676,10 +676,6 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]
 		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, limit)
 		if err != nil {
 			tikvRegionCacheCounterWithScanRegionsError.Inc()
-		} else {
-			tikvRegionCacheCounterWithScanRegionsOK.Inc()
-		}
-		if err != nil {
 			backoffErr = errors.Errorf(
 				"scanRegion from PD failed, startKey: %q, limit: %q, err: %v",
 				startKey,
@@ -687,6 +683,9 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]
 				err)
 			continue
 		}
+
+		tikvRegionCacheCounterWithScanRegionsOK.Inc()
+
 		if len(metas) == 0 {
 			return nil, errors.New("PD returned no region")
 		}
