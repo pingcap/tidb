@@ -839,10 +839,16 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 
 		if len(w.idxLookup.tblPlans) == 1 {
+			obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
+			for _, row := range task.rows {
+				handle := row.GetInt64(w.handleIdx)
+				obtainedHandlesMap[handle] = struct{}{}
+			}
+
 			// table scan in double read can never has conditions according to convertToIndexScan.
 			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
-			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
-				w.idxLookup.index.Name.O, handleCnt, len(task.rows))
+			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d, missing handles %v, total handles %v",
+				w.idxLookup.index.Name.O, handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap), GetLackHandles(task.handles, obtainedHandlesMap), task.handles)
 		}
 	}
 
