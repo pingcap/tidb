@@ -41,7 +41,7 @@ type ProcessInfo struct {
 	MaxExecutionTime uint64
 }
 
-// ToRow returns []interface{} for the row data of "show processlist" and "select * from infoschema.processlist".
+// ToRow returns []interface{} for the row data of "show processlist".
 func (pi *ProcessInfo) ToRow(full bool) []interface{} {
 	var info interface{}
 	if pi.Info != nil {
@@ -62,6 +62,12 @@ func (pi *ProcessInfo) ToRow(full bool) []interface{} {
 		fmt.Sprintf("%d", pi.State),
 		info,
 	}
+}
+
+// ToRowWithMem returns []interface{} for the row data of
+// "select * from information_schema.processlist".
+func (pi *ProcessInfo) ToRowWithMem(full bool) []interface{} {
+	return append(pi.ToRow(full), pi.StmtCtx.MemTracker.BytesConsumed())
 }
 
 // SessionManager is an interface for session manage. Show processlist and
