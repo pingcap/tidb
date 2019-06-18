@@ -4398,3 +4398,8 @@ func (s *testIntegrationSuite) TestIssue10181(c *C) {
 	tk.MustExec(`insert into t values(9223372036854775807), (18446744073709551615)`)
 	tk.MustQuery(`select * from t where a > 9223372036854775807-0.5 order by a`).Check(testkit.Rows(`9223372036854775807`, `18446744073709551615`))
 }
+
+func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
+}
