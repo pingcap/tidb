@@ -578,15 +578,6 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	return val, ok
 }
 
-// deleteSystemVar deletes a system variable.
-func (s *SessionVars) deleteSystemVar(name string) error {
-	if name != CharacterSetResults {
-		return ErrCantSetToNull
-	}
-	delete(s.systems, name)
-	return nil
-}
-
 func (s *SessionVars) setDDLReorgPriority(val string) {
 	val = strings.ToLower(val)
 	switch val {
