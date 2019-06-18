@@ -158,7 +158,11 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 			join := &apply.LogicalJoin
 			join.self = join
 
-			p = s.tryToTransSemiJoinToInnerJoin(join)
+			if p.context().GetSessionVars().AllowSemiJoinToInnerJoinAndAgg {
+				p = s.tryToTransSemiJoinToInnerJoin(join)
+			} else {
+				p = join
+			}
 		} else if sel, ok := innerPlan.(*LogicalSelection); ok {
 			// If the inner plan is a selection, we add this condition to join predicates.
 			// Notice that no matter what kind of join is, it's always right.

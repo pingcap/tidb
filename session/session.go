@@ -1659,6 +1659,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBDDLReorgBatchSize,
 	variable.TiDBDDLErrorCountLimit,
 	variable.TiDBOptInSubqToJoinAndAgg,
+	variable.TiDBOptSemiJoinToInnerJoinAndAgg,
 	variable.TiDBOptCorrelationThreshold,
 	variable.TiDBOptCorrelationExpFactor,
 	variable.TiDBDistSQLScanConcurrency,

@@ -158,6 +158,8 @@ const (
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
+	TiDBOptSemiJoinToInnerJoinAndAgg = "tidb_opt_semijoin_to_innerjoin_and_agg"
+
 	// tidb_opt_correlation_threshold is a guard to enable row count estimation using column order correlation.
 	TiDBOptCorrelationThreshold = "tidb_opt_correlation_threshold"
 
@@ -296,6 +298,7 @@ const (
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
 	DefOptInSubqToJoinAndAgg           = true
+	DefOptSemiJoinToInnerJoinAndAgg    = false
 	DefBatchInsert                     = false
 	DefBatchDelete                     = false
 	DefBatchCommit                     = false
