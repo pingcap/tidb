@@ -159,6 +159,10 @@ type RegionCache struct {
 	}
 	notifyCheckCh chan struct{}
 	closeCh       chan struct{}
+
+	hook struct {
+		switchPeer func()
+	}
 }
 
 // NewRegionCache creates a RegionCache.
@@ -365,6 +369,9 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
+		if c.hook.switchPeer != nil {
+			c.hook.switchPeer()
+		}
 		c.switchNextPeer(r, ctx.PeerIdx)
 		if scheduleReload {
 			r.scheduleReload()

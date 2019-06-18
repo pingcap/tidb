@@ -616,7 +616,8 @@ func sendBatchRequest(
 	select {
 	case connArray.batchCommandsCh <- entry:
 	case <-ctx1.Done():
-		logutil.Logger(context.Background()).Warn("send request is timeout", zap.String("to", addr))
+		logutil.Logger(context.Background()).Warn("send request is cancelled",
+			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
 		return nil, errors.Trace(ctx1.Err())
 	}
 
@@ -628,7 +629,8 @@ func sendBatchRequest(
 		return tikvrpc.FromBatchCommandsResponse(res), nil
 	case <-ctx1.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
-		logutil.Logger(context.Background()).Warn("send request is canceled", zap.String("to", addr))
+		logutil.Logger(context.Background()).Warn("wait response is cancelled",
+			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
 		return nil, errors.Trace(ctx1.Err())
 	}
 }
