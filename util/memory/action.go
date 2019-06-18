@@ -17,6 +17,7 @@ import (
 	"context"
 	"sync"
 
+	"fmt"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -87,7 +88,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	if a.logHook != nil {
 		a.logHook(a.ConnID)
 	}
-	panic(PanicMemoryExceed + t.String())
+	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
 }
 
 var (
