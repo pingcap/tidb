@@ -139,7 +139,7 @@ func (s *testRangeTaskSuite) checkRanges(c *C, obtained []kv.KeyRange, expected 
 }
 
 func batchRanges(ranges []kv.KeyRange, batchSize int) []kv.KeyRange {
-	result := make([]kv.KeyRange, 0)
+	result := make([]kv.KeyRange, 0, len(ranges))
 
 	for i := 0; i < len(ranges); i += batchSize {
 		lastRange := i + batchSize - 1
