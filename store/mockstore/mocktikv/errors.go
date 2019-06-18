@@ -39,7 +39,7 @@ func (e *ErrKeyAlreadyExist) Error() string {
 	return fmt.Sprintf("key already exist, key: %q", e.Key)
 }
 
-// ErrRetryable suggests that client may restart the txn. e.g. write conflict.
+// ErrRetryable suggests that client may restart the txn.
 type ErrRetryable string
 
 func (e ErrRetryable) Error() string {

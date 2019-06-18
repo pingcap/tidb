@@ -70,6 +70,15 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
+	t1, err = o.GetLowResolutionTimestamp(ctx)
+	c.Assert(err, IsNil)
+	t2, err = o.GetLowResolutionTimestamp(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(t1, Less, t2)
+	f := o.GetLowResolutionTimestampAsync(ctx)
+	c.Assert(f, NotNil)
+	_ = o.UntilExpired(0, 0)
+
 	// Check retry.
 	var wg sync.WaitGroup
 	wg.Add(2)

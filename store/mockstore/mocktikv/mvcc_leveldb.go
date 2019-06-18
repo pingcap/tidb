@@ -173,13 +173,6 @@ func newScanIterator(db *leveldb.DB, startKey, endKey []byte) (*Iterator, []byte
 	return iter, startKey, nil
 }
 
-// iterDecoder tries to decode an Iterator value.
-// If current iterator value can be decoded by this decoder, store the value and call iter.Next(),
-// Otherwise current iterator is not touched and returns false.
-type iterDecoder interface {
-	Decode(iter *Iterator) (bool, error)
-}
-
 type lockDecoder struct {
 	lock      mvccLock
 	expectKey []byte
@@ -266,37 +259,6 @@ func (dec *skipDecoder) Decode(iter *Iterator) (bool, error) {
 		iter.Next()
 	}
 	return false, nil
-}
-
-type mvccEntryDecoder struct {
-	expectKey []byte
-	// mvccEntry represents values and lock is valid.
-	mvccEntry
-}
-
-// Decode decodes a mvcc entry.
-func (dec *mvccEntryDecoder) Decode(iter *Iterator) (bool, error) {
-	ldec := lockDecoder{expectKey: dec.expectKey}
-	ok, err := ldec.Decode(iter)
-	if err != nil {
-		return ok, errors.Trace(err)
-	}
-	if ok {
-		dec.mvccEntry.lock = &ldec.lock
-	}
-	for iter.Valid() {
-		vdec := valueDecoder{expectKey: dec.expectKey}
-		ok, err = vdec.Decode(iter)
-		if err != nil {
-			return ok, errors.Trace(err)
-		}
-		if !ok {
-			break
-		}
-		dec.mvccEntry.values = append(dec.mvccEntry.values, vdec.value)
-	}
-	succ := dec.mvccEntry.lock != nil || len(dec.mvccEntry.values) > 0
-	return succ, nil
 }
 
 // Get implements the MVCCStore interface.

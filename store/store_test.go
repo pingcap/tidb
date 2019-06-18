@@ -161,6 +161,12 @@ func mustGet(c *C, txn kv.Transaction) {
 	}
 }
 
+func (s *testKVSuite) TestNew(c *C) {
+	store, err := New("goleveldb://relative/path")
+	c.Assert(err, NotNil)
+	c.Assert(store, IsNil)
+}
+
 func (s *testKVSuite) TestGetSet(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
@@ -662,4 +668,20 @@ func (s *testKVSuite) TestRetryOpenStore(c *C) {
 	c.Assert(err, NotNil)
 	elapse := time.Since(begin)
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second), Commentf("elapse: %s", elapse))
+}
+
+func (s *testKVSuite) TestOpenStore(c *C) {
+	Register("open", &brokenStore{})
+	store, err := newStoreWithRetry(":", 3)
+	if store != nil {
+		defer store.Close()
+	}
+	c.Assert(err, NotNil)
+}
+
+func (s *testKVSuite) TestRegister(c *C) {
+	err := Register("retry", &brokenStore{})
+	c.Assert(err, IsNil)
+	err = Register("retry", &brokenStore{})
+	c.Assert(err, NotNil)
 }

@@ -46,13 +46,6 @@ func (o *MockOracle) Disable() {
 	o.stop = true
 }
 
-func (o *MockOracle) setOffset(offset time.Duration) {
-	o.Lock()
-	defer o.Unlock()
-
-	o.offset = offset
-}
-
 // AddOffset adds the offset of the oracle.
 func (o *MockOracle) AddOffset(d time.Duration) {
 	o.Lock()

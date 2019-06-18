@@ -98,6 +98,9 @@ type mockAction struct {
 	called bool
 }
 
+func (a *mockAction) SetLogHook(hook func(uint64)) {
+}
+
 func (a *mockAction) Action(t *Tracker) {
 	a.called = true
 }

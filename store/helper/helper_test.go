@@ -24,6 +24,7 @@ import (
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -80,6 +81,12 @@ func (s *HelperTestSuite) TestHotRegion(c *C) {
 	regionMetric, err := helper.FetchHotRegion(pdapi.HotRead)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
 	c.Assert(fmt.Sprintf("%v", regionMetric), Equals, "map[1:{100 1 0}]")
+	dbInfo := &model.DBInfo{
+		Name: model.NewCIStr("test"),
+	}
+	c.Assert(err, IsNil)
+	_, err = helper.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	c.Assert(err, IsNil, Commentf("err: %+v", err))
 }
 
 func (s *HelperTestSuite) TestTiKVRegionsInfo(c *C) {

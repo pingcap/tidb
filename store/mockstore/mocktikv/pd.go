@@ -103,7 +103,7 @@ func (c *pdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) 
 }
 
 func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
-	panic("unimplemented")
+	return 0, nil
 }
 
 func (c *pdClient) Close() {
