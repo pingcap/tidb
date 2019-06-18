@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -382,7 +381,7 @@ type SessionVars struct {
 	LowResolutionTSO bool
 
 	// Backoff is used for set the back off time.
-	Backoff backoff.Time
+	BackoffTimeVars BackoffTimer
 }
 
 // ConnectionInfo present connection used by audit.
@@ -800,7 +799,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBWaitSplitRegionFinish:
 		s.WaitSplitRegionFinish = TiDBOptOn(val)
 	case TiDBWaitSplitRegionFinishBackoff:
-		s.Backoff.SetWaitScatterRegionFinishBackoff(int(tidbOptInt64(val, backoff.WaitScatterRegionFinishBackoff)))
+		s.BackoffTimeVars.SetWaitScatterRegionFinishBackoff(tidbOptPositiveInt32(val, DefWaitScatterRegionFinishBackoff))
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
@@ -997,6 +996,25 @@ const (
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
 )
+
+type BackoffTimer struct {
+	waitScatterRegionFinish int
+}
+
+// GetWaitScatterRegionFinishBackoff gets the back off time of waitScatterRegionFinish.
+func (b *BackoffTimer) GetWaitScatterRegionFinishBackoff() int {
+	if b.waitScatterRegionFinish > 0 {
+		return b.waitScatterRegionFinish
+	}
+	return DefWaitScatterRegionFinishBackoff
+}
+
+// SetWaitScatterRegionFinishBackoff sets the back off time of waitScatterRegionFinish.
+func (b *BackoffTimer) SetWaitScatterRegionFinishBackoff(t int) {
+	if t > 0 {
+		b.waitScatterRegionFinish = t
+	}
+}
 
 // SlowLogFormat uses for formatting slow log.
 // The slow log output is like below:

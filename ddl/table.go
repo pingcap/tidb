@@ -427,7 +427,7 @@ func preSplitTableShardRowIDBitsRegion(ctx sessionctx.Context, store kv.Storage,
 		return
 	}
 	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID, ctx.GetSessionVars().Backoff.GetWaitScatterRegionFinishBackoff())
+		err := s.WaitScatterRegionFinish(regionID, ctx.GetSessionVars().BackoffTimeVars.GetWaitScatterRegionFinishBackoff())
 		if err != nil {
 			logutil.Logger(ddlLogCtx).Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 		}

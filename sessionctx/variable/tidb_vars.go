@@ -338,6 +338,7 @@ const (
 	DefTiDBSkipIsolationLevelCheck     = false
 	DefTiDBWaitSplitRegionFinish       = true
 	DefTiDBExpensiveQueryTimeThreshold = 60 // 60s
+	DefWaitScatterRegionFinishBackoff  = 120000
 )
 
 // Process global variables.

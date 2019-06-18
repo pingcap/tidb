@@ -77,7 +77,7 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 		return nil
 	}
 	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID, e.ctx.GetSessionVars().Backoff.GetWaitScatterRegionFinishBackoff())
+		err := s.WaitScatterRegionFinish(regionID, e.ctx.GetSessionVars().BackoffTimeVars.GetWaitScatterRegionFinishBackoff())
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("wait scatter region failed",
 				zap.Uint64("regionID", regionID),
@@ -243,7 +243,7 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 		return nil
 	}
 	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID, e.ctx.GetSessionVars().Backoff.GetWaitScatterRegionFinishBackoff())
+		err := s.WaitScatterRegionFinish(regionID, e.ctx.GetSessionVars().BackoffTimeVars.GetWaitScatterRegionFinishBackoff())
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("wait scatter region failed",
 				zap.Uint64("regionID", regionID),

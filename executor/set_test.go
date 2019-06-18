@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -351,7 +350,7 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
 
 	// test for tidb_wait_split_region_finish_backoff
-	tk.MustQuery(`select @@session.tidb_wait_split_region_finish_backoff;`).Check(testkit.Rows(strconv.Itoa(backoff.WaitScatterRegionFinishBackoff)))
+	tk.MustQuery(`select @@session.tidb_wait_split_region_finish_backoff;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitScatterRegionFinishBackoff)))
 	tk.MustExec("set tidb_wait_split_region_finish_backoff = 1")
 	tk.MustQuery(`select @@session.tidb_wait_split_region_finish_backoff;`).Check(testkit.Rows("1"))
 	_, err = tk.Exec("set tidb_wait_split_region_finish_backoff = 0")
