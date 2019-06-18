@@ -52,6 +52,8 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	case mysql.CreatePriv, mysql.CreateViewPriv:
 		if c.ctx.HasLockedTables() {
+			// TODO: For `create table t_exists ...` statement, mysql will check out `t_exists` first, but in TiDB now,
+			//  will return below error first.
 			return infoschema.ErrTableNotLocked.GenWithStackByArgs(table)
 		}
 		return nil
