@@ -2655,17 +2655,23 @@ func (s *testDBSuite4) TestIfNotExists(c *C) {
 	s.mustExec(c, sql)
 	assertErrorCode(c, s.tk, sql, tmysql.ErrDupFieldName)
 	s.mustExec(c, "alter table t1 add column if not exists b int")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1060|Duplicate column name 'b'"))
 
 	// ADD INDEX
 	sql = "alter table t1 add index idx_b (b)"
 	s.mustExec(c, sql)
 	assertErrorCode(c, s.tk, sql, tmysql.ErrDupKeyName)
 	s.mustExec(c, "alter table t1 add index if not exists idx_b (b)")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b"))
 
 	// CREATE INDEX
 	sql = "create index idx_b on t1 (b)"
 	assertErrorCode(c, s.tk, sql, tmysql.ErrDupKeyName)
 	s.mustExec(c, "create index if not exists idx_b on t1 (b)")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b"))
 
 	// ADD PARTITION
 	s.mustExec(c, "drop table if exists t2")
@@ -2674,6 +2680,8 @@ func (s *testDBSuite4) TestIfNotExists(c *C) {
 	s.mustExec(c, sql)
 	assertErrorCode(c, s.tk, sql, tmysql.ErrSameNamePartition)
 	s.mustExec(c, "alter table t2 add partition if not exists (partition p2 values less than (30))")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1517|Duplicate partition name p2"))
 }
 
 func (s *testDBSuite4) TestIfExists(c *C) {
@@ -2687,17 +2695,23 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	s.mustExec(c, sql)
 	assertErrorCode(c, s.tk, sql, tmysql.ErrCantDropFieldOrKey)
 	s.mustExec(c, "alter table t1 drop column if exists b") // only `a` exists now
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|column b doesn't exist"))
 
 	// CHANGE COLUMN
 	sql = "alter table t1 change column b c int"
 	assertErrorCode(c, s.tk, sql, tmysql.ErrBadField)
 	s.mustExec(c, "alter table t1 change column if exists b c int")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1054|Unknown column 'b' in 't1'"))
 	s.mustExec(c, "alter table t1 change column if exists a c int") // only `c` exists now
 
 	// MODIFY COLUMN
 	sql = "alter table t1 modify column a bigint"
 	assertErrorCode(c, s.tk, sql, tmysql.ErrBadField)
 	s.mustExec(c, "alter table t1 modify column if exists a bigint")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1054|Unknown column 'a' in 't1'"))
 	s.mustExec(c, "alter table t1 modify column if exists c bigint") // only `c` exists now
 
 	// DROP INDEX
@@ -2706,6 +2720,8 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	s.mustExec(c, sql)
 	assertErrorCode(c, s.tk, sql, tmysql.ErrCantDropFieldOrKey)
 	s.mustExec(c, "alter table t1 drop index if exists idx_c")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|index idx_c doesn't exist"))
 
 	// DROP PARTITION
 	s.mustExec(c, "drop table if exists t2")
@@ -2714,6 +2730,8 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	s.mustExec(c, sql)
 	assertErrorCode(c, s.tk, sql, tmysql.ErrDropPartitionNonExistent)
 	s.mustExec(c, "alter table t2 drop partition if exists p1")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to p1"))
 }
 
 func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {

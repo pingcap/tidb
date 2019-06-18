@@ -196,7 +196,7 @@ var (
 	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
 	ErrPartitionMgmtOnNonpartitioned = terror.ClassDDL.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
 	// ErrDropPartitionNonExistent returns error in list of partition.
-	ErrDropPartitionNonExistent = terror.ClassDDL.New(codeDropPartitionNonExistent, " Error in list of partitions to %s")
+	ErrDropPartitionNonExistent = terror.ClassDDL.New(codeDropPartitionNonExistent, "Error in list of partitions to %s")
 	// ErrSameNamePartition returns duplicate partition name.
 	ErrSameNamePartition = terror.ClassDDL.New(codeSameNamePartition, "Duplicate partition name %s")
 	// ErrRangeNotIncreasing returns values less than value must be strictly increasing for each partition.
