@@ -1969,7 +1969,7 @@ func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Id
 	return schema, t, nil
 }
 
-func checkColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
+func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 	for _, constraint := range col.Options {
 		switch constraint.Tp {
 		case ast.ColumnOptionAutoIncrement:
@@ -1987,8 +1987,8 @@ func checkColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 // AddColumn will add a new column to the table.
 func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
-	// Check whether the added column constraints are supported.
-	err := checkColumnConstraint(specNewColumn, ti)
+
+	err := checkUnsupportedColumnConstraint(specNewColumn, ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2025,15 +2025,17 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
 				return errors.Trace(err)
 			}
-			referableColNames := make(map[string]struct{}, len(t.Cols()))
-			for _, col := range t.Cols() {
-				referableColNames[col.Name.L] = struct{}{}
+
+			if option.Stored {
+				return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
 			}
+
 			_, dependColNames := findDependedColumnNames(specNewColumn)
 			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 				return errors.Trace(err)
 			}
-			if err = columnNamesCover(referableColNames, dependColNames); err != nil {
+
+			if err = checkDependedColExist(dependColNames, t.Cols()); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -2694,7 +2696,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	// Check whether alter column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return errBadField.GenWithStackByArgs(colName, ident.Name)
+		return ErrBadField.GenWithStackByArgs(colName, ident.Name)
 	}
 
 	// Clean the NoDefaultValueFlag value.
@@ -3048,7 +3050,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	}
 
 	tblInfo := t.Meta()
-	// Check before put the job is put to the queue.
+	// Check before the job is put to the queue.
 	// This check is redudant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
