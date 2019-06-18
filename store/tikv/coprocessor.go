@@ -36,10 +36,14 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	atomicValue "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
-var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+var (
+	tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+	RangeCheck                                = atomicValue.NewBool(false)
+)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -51,9 +55,11 @@ type CopClient struct {
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
-	err := c.validateRanges(req.KeyRanges)
-	if err != nil {
-		return copErrorResponse{err}
+	if RangeCheck.Load() {
+		err := c.validateRanges(req.KeyRanges)
+		if err != nil {
+			return copErrorResponse{err}
+		}
 	}
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
 	if err != nil {

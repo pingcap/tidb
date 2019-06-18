@@ -87,6 +87,7 @@ const (
 	nmTokenLimit       = "token-limit"
 	nmPluginDir        = "plugin-dir"
 	nmPluginLoad       = "plugin-load"
+	nmRangeCheck       = "range-check"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -112,6 +113,7 @@ var (
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 	pluginDir        = flag.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
 	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
+	rangeCheck       = flag.Bool(nmRangeCheck, false, "validate the range before sending to storage engine")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -402,6 +404,9 @@ func overrideConfig() {
 	if actualFlags[nmPluginDir] {
 		cfg.Plugin.Dir = *pluginDir
 	}
+	if actualFlags[nmRangeCheck] {
+		cfg.RangeCheck = *rangeCheck
+	}
 
 	// Log
 	if actualFlags[nmLogLevel] {
@@ -458,6 +463,7 @@ func setGlobalVars() {
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	}
+	tikv.RangeCheck.Store(cfg.RangeCheck)
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 

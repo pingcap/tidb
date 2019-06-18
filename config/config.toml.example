@@ -54,6 +54,9 @@ check-mb4-value-in-utf8 = true
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 
+# range-check is used for enabling the validation of the range sending to tikv. Error will be thrown if the start key is not larger than the end key.
+range-check = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
