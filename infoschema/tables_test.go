@@ -114,6 +114,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 		User:    "root",
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
@@ -275,7 +276,9 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		DB:      "information_schema",
 		Command: byte(1),
 		State:   1,
-		Info:    "do something"}
+		Info:    "do something",
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
 	sm.processInfoMap[2] = &util.ProcessInfo{
 		ID:      2,
 		User:    "user-2",
@@ -283,9 +286,17 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		DB:      "test",
 		Command: byte(2),
 		State:   2,
-		Info:    "do something"}
+		Info:    "do something",
+		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
+	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
+		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something 0",
+			"2 user-2 localhost test Init DB 9223372036 2 do something 0"))
+	tk.MustQuery("SHOW PROCESSLIST;").Check(
+		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something",
+			"2 user-2 localhost test Init DB 9223372036 2 do something"))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(
 		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something",
 			"2 user-2 localhost test Init DB 9223372036 2 do something"))
 }
