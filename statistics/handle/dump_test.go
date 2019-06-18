@@ -105,9 +105,9 @@ func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	h := s.do.StatsHandle()
-	oriLease := h.Lease
-	h.Lease = 1
-	defer func() { h.Lease = oriLease }()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() { h.SetLease(oriLease) }()
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t drop column a")
