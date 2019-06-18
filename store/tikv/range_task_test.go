@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sort"
 
 	. "github.com/pingcap/check"
@@ -156,6 +157,8 @@ func batchRanges(ranges []kv.KeyRange, batchSize int) []kv.KeyRange {
 }
 
 func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
+	c.Logf("Test RangeTask, concurrency: %v", concurrency)
+
 	ranges := make(chan *kv.KeyRange, 100)
 
 	handler := func(ctx context.Context, r kv.KeyRange) (int, error) {
@@ -163,11 +166,7 @@ func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 		return 1, nil
 	}
 
-	runner := NewRangeTaskRunner(
-		"test-runner",
-		s.store,
-		concurrency,
-		handler)
+	runner := NewRangeTaskRunner("test-runner", s.store, concurrency, handler)
 
 	for regionsPerTask := 1; regionsPerTask <= 5; regionsPerTask++ {
 		for i, r := range s.testRanges {
@@ -186,5 +185,34 @@ func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 func (s *testRangeTaskSuite) TestRangeTask(c *C) {
 	for concurrency := 1; concurrency < 5; concurrency++ {
 		s.testRangeTaskImpl(c, concurrency)
+	}
+}
+
+func (s *testRangeTaskSuite) testRangeTaskErrorImpl(c *C, concurrency int) {
+	for i, r := range s.testRanges {
+		// Iterate all sub tasks and make it an error
+		subRanges := s.expectedRanges[i]
+		for _, subRange := range subRanges {
+			errKey := subRange.StartKey
+			c.Logf("Test RangeTask Error concurrency: %v, range: [%+q, %+q), errKey: %+q", concurrency, r.StartKey, r.EndKey, errKey)
+
+			handler := func(ctx context.Context, r kv.KeyRange) (int, error) {
+				if bytes.Equal(r.StartKey, errKey) {
+					return 0, errors.New("test error")
+				}
+				return 1, nil
+			}
+
+			runner := NewRangeTaskRunner("test-error-runner", s.store, concurrency, handler)
+			err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
+			// RunOnRange returns no error only when all sub tasks are done successfully.
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
+func (s *testRangeTaskSuite) TestRangeTaskError(c *C) {
+	for concurrency := 1; concurrency < 5; concurrency++ {
+		s.testRangeTaskErrorImpl(c, concurrency)
 	}
 }

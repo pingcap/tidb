@@ -18,12 +18,17 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -79,6 +84,7 @@ func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
 	// Update can see the change, so this statement affects 0 roews.
 	tk1.MustExec("update pessimistic set v = 3 where v = 1")
 	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(0))
+	c.Assert(session.GetHistory(tk1.Se).Count(), Equals, 0)
 	// select for update can see the change of another transaction.
 	tk1.MustQuery("select * from pessimistic for update").Check(testkit.Rows("1 2"))
 	// plain select can not see the change of another transaction.
@@ -164,4 +170,63 @@ func (s *testPessimisticSuite) TestTxnMode(c *C) {
 		c.Check(tk.Se.GetSessionVars().TxnCtx.IsPessimistic, Equals, tt.isPessimistic)
 		tk.MustExec("rollback")
 	}
+}
+
+func (s *testPessimisticSuite) TestDeadlock(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists deadlock")
+	tk.MustExec("create table deadlock (k int primary key, v int)")
+	tk.MustExec("insert into deadlock values (1, 1), (2, 1)")
+
+	syncCh := make(chan struct{})
+	go func() {
+		tk1 := testkit.NewTestKitWithInit(c, s.store)
+		tk1.MustExec("begin pessimistic")
+		tk1.MustExec("update deadlock set v = v + 1 where k = 2")
+		<-syncCh
+		tk1.MustExec("update deadlock set v = v + 1 where k = 1")
+		<-syncCh
+	}()
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update deadlock set v = v + 1 where k = 1")
+	syncCh <- struct{}{}
+	time.Sleep(time.Millisecond * 10)
+	_, err := tk.Exec("update deadlock set v = v + 1 where k = 2")
+	e, ok := errors.Cause(err).(*terror.Error)
+	c.Assert(ok, IsTrue)
+	c.Assert(int(e.Code()), Equals, mysql.ErrLockDeadlock)
+	syncCh <- struct{}{}
+}
+
+func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists pessimistic")
+	tk.MustExec("create table single_statement (id int primary key, v int)")
+	tk.MustExec("insert into single_statement values (1, 1), (2, 1), (3, 1), (4, 1)")
+	tblID := tk.GetTableID("single_statement")
+	s.cluster.SplitTable(s.mvccStore, tblID, 2)
+	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, 1))
+	region1, _ := s.cluster.GetRegionByKey(region1Key)
+	region1ID := region1.Id
+	region2Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, 3))
+	region2, _ := s.cluster.GetRegionByKey(region2Key)
+	region2ID := region2.Id
+
+	syncCh := make(chan bool)
+	go func() {
+		tk2.MustExec("begin pessimistic")
+		<-syncCh
+		s.cluster.ScheduleDelay(tk2.Se.GetSessionVars().TxnCtx.StartTS, region2ID, time.Millisecond*3)
+		tk2.MustExec("update single_statement set v = v + 1")
+		tk2.MustExec("commit")
+		<-syncCh
+	}()
+	tk.MustExec("begin pessimistic")
+	syncCh <- true
+	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*3)
+	tk.MustExec("update single_statement set v = v + 1")
+	tk.MustExec("commit")
+	syncCh <- true
 }

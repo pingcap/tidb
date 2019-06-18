@@ -19,6 +19,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -42,14 +43,24 @@ type Cluster struct {
 	id      uint64
 	stores  map[uint64]*Store
 	regions map[uint64]*Region
+
+	// delayEvents is used to control the execution sequence of rpc requests for test.
+	delayEvents map[delayKey]time.Duration
+	delayMu     sync.Mutex
+}
+
+type delayKey struct {
+	startTS  uint64
+	regionID uint64
 }
 
 // NewCluster creates an empty cluster. It needs to be bootstrapped before
 // providing service.
 func NewCluster() *Cluster {
 	return &Cluster{
-		stores:  make(map[uint64]*Store),
-		regions: make(map[uint64]*Region),
+		stores:      make(map[uint64]*Store),
+		regions:     make(map[uint64]*Region),
+		delayEvents: make(map[delayKey]time.Duration),
 	}
 }
 
@@ -389,6 +400,26 @@ func (c *Cluster) SplitIndex(mvccStore MVCCStore, tableID, indexID int64, count 
 // Only works for single store.
 func (c *Cluster) SplitKeys(mvccStore MVCCStore, start, end kv.Key, count int) {
 	c.splitRange(mvccStore, NewMvccKey(start), NewMvccKey(end), count)
+}
+
+// ScheduleDelay schedules a delay event for a transaction on a region.
+func (c *Cluster) ScheduleDelay(startTS, regionID uint64, dur time.Duration) {
+	c.delayMu.Lock()
+	c.delayEvents[delayKey{startTS: startTS, regionID: regionID}] = dur
+	c.delayMu.Unlock()
+}
+
+func (c *Cluster) handleDelay(startTS, regionID uint64) {
+	key := delayKey{startTS: startTS, regionID: regionID}
+	c.delayMu.Lock()
+	dur, ok := c.delayEvents[key]
+	if ok {
+		delete(c.delayEvents, key)
+	}
+	c.delayMu.Unlock()
+	if ok {
+		time.Sleep(dur)
+	}
 }
 
 func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int) {

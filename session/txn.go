@@ -314,13 +314,7 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 		if !keyNeedToLock(k, v) {
 			return nil
 		}
-		if mb := st.Transaction.GetMemBuffer(); mb != nil {
-			_, err1 := mb.Get(k)
-			if err1 == nil {
-				// Key is already in txn MemBuffer, must already been locked, we don't need to lock it again.
-				return nil
-			}
-		}
+		// If the key is already locked, it will be deduplicated in LockKeys method later.
 		// The statement MemBuffer will be reused, so we must copy the key here.
 		keys = append(keys, append([]byte{}, k...))
 		return nil

@@ -81,11 +81,10 @@ TopN_7	1.00	root	test.t2.c2:asc, offset:0, count:1
     └─TableScan_13	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	count	task	operator info
-IndexLookUp_12	0.00	root	
-├─Selection_10	0.00	cop	gt(test.t1.c1, 1)
-│ └─IndexScan_8	0.00	cop	table:t1, index:c2, range:[1,1], keep order:false
-└─Selection_11	0.00	cop	lt(test.t1.c3, 1)
-  └─TableScan_9	0.00	cop	table:t1, keep order:false, stats:pseudo
+IndexLookUp_11	0.00	root	
+├─IndexScan_8	0.00	cop	table:t1, index:c2, range:(1 1,1 +inf], keep order:false
+└─Selection_10	0.00	cop	lt(test.t1.c3, 1)
+  └─TableScan_9	0.00	cop	table:t1, keep order:false
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	count	task	operator info
 TableReader_7	0.50	root	data:Selection_6
