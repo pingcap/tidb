@@ -222,7 +222,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	// All the history should be added here.
 	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly(sessVars) {
-		if err == nil {
+		if err == nil && !sessVars.TxnCtx.IsPessimistic {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
 		if txn, err1 := sctx.Txn(false); err1 == nil {

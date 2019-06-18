@@ -477,8 +477,8 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 			// The schema maybe changed, must reload schema then the schema validator can restart.
 			exitLoop := do.mustReload()
+			// domain is cosed.
 			if exitLoop {
-				// domain is closed.
 				logutil.Logger(context.Background()).Error("domain is closed, exit loadSchemaInLoop")
 				return
 			}
@@ -502,10 +502,8 @@ func (do *Domain) mustRestartSyncer() error {
 			return nil
 		}
 		// If the domain has stopped, we return an error immediately.
-		select {
-		case <-do.exit:
+		if do.isClose() {
 			return err
-		default:
 		}
 		time.Sleep(time.Second)
 		logutil.Logger(context.Background()).Info("restart the schema syncer failed", zap.Error(err))
@@ -522,17 +520,23 @@ func (do *Domain) mustReload() (exitLoop bool) {
 			return false
 		}
 
-		logutil.Logger(context.Background()).Info("reload the schema failed", zap.Error(err))
 		// If the domain is closed, we returns immediately.
-		select {
-		case <-do.exit:
-			logutil.Logger(context.Background()).Info("domain is closed")
+		logutil.Logger(context.Background()).Info("reload the schema failed", zap.Error(err))
+		if do.isClose() {
 			return true
-		default:
 		}
-
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+func (do *Domain) isClose() bool {
+	select {
+	case <-do.exit:
+		logutil.Logger(context.Background()).Info("domain is closed")
+		return true
+	default:
+	}
+	return false
 }
 
 // Close closes the Domain and release its resource.
@@ -628,7 +632,16 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
 	ctx := context.Background()
 	callback := &ddlCallback{do: do}
+	d := do.ddl
 	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
+	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
+		if val.(bool) {
+			if err := do.ddl.Stop(); err != nil {
+				logutil.Logger(context.Background()).Error("stop DDL failed", zap.Error(err))
+			}
+			do.ddl = d
+		}
+	})
 
 	err := do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
@@ -875,6 +888,8 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	statsHandle := handle.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
+	do.wg.Add(1)
+	go do.loadStatsWorker()
 	if do.statsLease <= 0 {
 		return nil
 	}
@@ -906,22 +921,15 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	return statsOwner
 }
 
-func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
-	defer recoverInDomain("updateStatsWorker", false)
+func (do *Domain) loadStatsWorker() {
+	defer recoverInDomain("loadStatsWorker", false)
+	defer do.wg.Done()
 	lease := do.statsLease
-	deltaUpdateDuration := lease * 20
+	if lease == 0 {
+		lease = 3 * time.Second
+	}
 	loadTicker := time.NewTicker(lease)
 	defer loadTicker.Stop()
-	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
-	defer deltaUpdateTicker.Stop()
-	loadHistogramTicker := time.NewTicker(lease)
-	defer loadHistogramTicker.Stop()
-	gcStatsTicker := time.NewTicker(100 * lease)
-	defer gcStatsTicker.Stop()
-	dumpFeedbackTicker := time.NewTicker(200 * lease)
-	defer dumpFeedbackTicker.Stop()
-	loadFeedbackTicker := time.NewTicker(5 * lease)
-	defer loadFeedbackTicker.Stop()
 	statsHandle := do.StatsHandle()
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
@@ -930,10 +938,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	} else {
 		logutil.Logger(context.Background()).Info("init stats info time", zap.Duration("take time", time.Since(t)))
 	}
-	defer func() {
-		do.SetStatsUpdating(false)
-		do.wg.Done()
-	}()
 	for {
 		select {
 		case <-loadTicker.C:
@@ -941,37 +945,60 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("update stats info failed", zap.Error(err))
 			}
+			err = statsHandle.LoadNeededHistograms()
+			if err != nil {
+				logutil.Logger(context.Background()).Debug("load histograms failed", zap.Error(err))
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+	defer recoverInDomain("updateStatsWorker", false)
+	lease := do.statsLease
+	deltaUpdateTicker := time.NewTicker(20 * lease)
+	defer deltaUpdateTicker.Stop()
+	gcStatsTicker := time.NewTicker(100 * lease)
+	defer gcStatsTicker.Stop()
+	dumpFeedbackTicker := time.NewTicker(200 * lease)
+	defer dumpFeedbackTicker.Stop()
+	loadFeedbackTicker := time.NewTicker(5 * lease)
+	defer loadFeedbackTicker.Stop()
+	statsHandle := do.StatsHandle()
+	defer func() {
+		do.SetStatsUpdating(false)
+		do.wg.Done()
+	}()
+	for {
+		select {
 		case <-do.exit:
 			statsHandle.FlushStats()
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
-			err = statsHandle.HandleDDLEvent(t)
+			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("handle ddl event failed", zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
-			err = statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
+			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("dump stats delta failed", zap.Error(err))
 			}
 			statsHandle.UpdateErrorRate(do.InfoSchema())
-		case <-loadHistogramTicker.C:
-			err = statsHandle.LoadNeededHistograms()
-			if err != nil {
-				logutil.Logger(context.Background()).Debug("load histograms failed", zap.Error(err))
-			}
 		case <-loadFeedbackTicker.C:
 			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
 			if !owner.IsOwner() {
 				continue
 			}
-			err = statsHandle.HandleUpdateStats(do.InfoSchema())
+			err := statsHandle.HandleUpdateStats(do.InfoSchema())
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("update stats using feedback failed", zap.Error(err))
 			}
 		case <-dumpFeedbackTicker.C:
-			err = statsHandle.DumpStatsFeedbackToKV()
+			err := statsHandle.DumpStatsFeedbackToKV()
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("dump stats feedback failed", zap.Error(err))
 			}
@@ -979,7 +1006,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if !owner.IsOwner() {
 				continue
 			}
-			err = statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
+			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("GC stats failed", zap.Error(err))
 			}

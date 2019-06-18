@@ -564,3 +564,10 @@ func (s testMarshal) TestMarshalmvccValue(c *C) {
 	c.Assert(v.commitTS, Equals, v1.commitTS)
 	c.Assert(string(v.value), Equals, string(v.value))
 }
+
+func (s *testMVCCLevelDB) TestErrors(c *C) {
+	c.Assert((&ErrKeyAlreadyExist{}).Error(), Equals, `key already exist, key: ""`)
+	c.Assert(ErrAbort("txn").Error(), Equals, "abort: txn")
+	c.Assert(ErrAlreadyCommitted(0).Error(), Equals, "txn already committed")
+	c.Assert((&ErrConflict{}).Error(), Equals, "write conflict")
+}

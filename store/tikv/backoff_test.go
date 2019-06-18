@@ -11,26 +11,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics
+package tikv
 
 import (
+	"context"
+	"errors"
 	. "github.com/pingcap/check"
 )
 
-func (s *testStatisticsSuite) TestMoveToHistory(c *C) {
-	numJobs := numMaxHistoryJobs*2 + 1
-	jobs := make([]*AnalyzeJob, 0, numJobs)
-	for i := 0; i < numJobs; i++ {
-		job := &AnalyzeJob{}
-		AddNewAnalyzeJob(job)
-		jobs = append(jobs, job)
-	}
-	MoveToHistory(jobs[0])
-	c.Assert(len(GetAllAnalyzeJobs()), Equals, numJobs)
-	for i := 1; i < numJobs; i++ {
-		MoveToHistory(jobs[i])
-	}
-	c.Assert(len(GetAllAnalyzeJobs()), Equals, numMaxHistoryJobs)
-	ClearHistoryJobs()
-	c.Assert(len(GetAllAnalyzeJobs()), Equals, 0)
+type testBackoffSuite struct {
+	OneByOneSuite
+	store *tikvStore
+}
+
+var _ = Suite(&testLockSuite{})
+
+func (s *testBackoffSuite) SetUpTest(c *C) {
+	s.store = NewTestStore(c).(*tikvStore)
+}
+
+func (s *testBackoffSuite) TearDownTest(c *C) {
+	s.store.Close()
+}
+
+func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
+	b := NewBackoffer(context.TODO(), 2000)
+	err := b.BackoffWithMaxSleep(boTxnLockFast, 30, errors.New("test"))
+	c.Assert(err, NotNil)
+	c.Assert(b.totalSleep, Equals, 30)
 }
