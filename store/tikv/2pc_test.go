@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -35,6 +36,10 @@ type testCommitterSuite struct {
 }
 
 var _ = Suite(&testCommitterSuite{})
+
+func (s *testCommitterSuite) SetUpSuite(c *C) {
+	PessimisticLockTTL = uint64(config.MinPessimisticTTL / time.Millisecond)
+}
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
@@ -467,4 +472,19 @@ func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
 	err = txn.LockKeys(context.Background(), 100, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
 	c.Assert(txn.lockKeys, HasLen, 2)
+}
+
+func (s *testCommitterSuite) TestPessimistOptimisticConflict(c *C) {
+	txnPes := s.begin(c)
+	txnPes.SetOption(kv.Pessimistic, true)
+	err := txnPes.LockKeys(context.Background(), txnPes.startTS, kv.Key("pes"))
+	c.Assert(err, IsNil)
+	c.Assert(txnPes.IsPessimistic(), IsTrue)
+	c.Assert(txnPes.lockKeys, HasLen, 1)
+	txnOpt := s.begin(c)
+	err = txnOpt.Set(kv.Key("pes"), []byte("v"))
+	c.Assert(err, IsNil)
+	err = txnOpt.Commit(context.Background())
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue)
+	c.Assert(txnPes.Commit(context.Background()), IsNil)
 }
