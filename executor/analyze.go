@@ -995,6 +995,7 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	if stats.Lease() > 0 {
 		rowCount = mathutil.MinInt64(stats.GetTableStats(e.tblInfo).Count, rowCount)
 	}
+	rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
 	// build CMSketch
 	var ndv, scaleRatio uint64
 	collector.CMSketch, ndv, scaleRatio = statistics.NewCMSketchWithTopN(defaultCMSketchDepth, defaultCMSketchWidth, data, 20, uint64(rowCount))
