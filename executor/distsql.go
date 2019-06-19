@@ -847,8 +847,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 
 			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
 				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
-				zap.Any("missing_handles", GetLackHandles(task.handles, obtainedHandlesMap)),
-				zap.Any("total_handles", task.handles))
+				zap.Int64s("missing_handles", GetLackHandles(task.handles, obtainedHandlesMap)),
+				zap.Int64s("total_handles", task.handles))
 
 			// table scan in double read can never has conditions according to convertToIndexScan.
 			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
