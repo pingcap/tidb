@@ -557,7 +557,7 @@ func (c *rpcClient) closeConns() {
 			array.Close()
 		}
 		for _, array := range c.conns {
-			array.waitGroup.Done()
+			array.waitGroup.Wait()
 		}
 	}
 	c.Unlock()
