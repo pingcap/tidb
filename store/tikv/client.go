@@ -35,10 +35,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	gcodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
-	gstatus "google.golang.org/grpc/status"
 )
 
 // MaxSendMsgSize set max gRPC request message size sent to server. If any request message size is larger than
@@ -618,8 +616,9 @@ func sendBatchRequest(
 	select {
 	case connArray.batchCommandsCh <- entry:
 	case <-ctx1.Done():
-		logutil.Logger(context.Background()).Warn("send request is timeout", zap.String("to", addr))
-		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
+		logutil.Logger(context.Background()).Warn("send request is cancelled",
+			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
+		return nil, errors.Trace(ctx1.Err())
 	}
 
 	select {
@@ -630,8 +629,9 @@ func sendBatchRequest(
 		return tikvrpc.FromBatchCommandsResponse(res), nil
 	case <-ctx1.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
-		logutil.Logger(context.Background()).Warn("send request is canceled", zap.String("to", addr))
-		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
+		logutil.Logger(context.Background()).Warn("wait response is cancelled",
+			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
+		return nil, errors.Trace(ctx1.Err())
 	}
 }
 
