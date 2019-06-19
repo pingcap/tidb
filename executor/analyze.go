@@ -996,6 +996,7 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 	if handle.Lease() > 0 && !tblStats.Pseudo {
 		rowCount = mathutil.MinInt64(tblStats.Count, rowCount)
 	}
+	// Adjust the row count in case of too small table row count.
 	rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
 	// build CMSketch
 	var ndv, scaleRatio uint64
