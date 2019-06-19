@@ -3367,21 +3367,24 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 }
 
 func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
-	is := d.infoHandle.Get()
 	uniqueTableID := make(map[int64]struct{})
 	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
 	// Check whether the table was already locked by other.
 	for _, tb := range tables {
-		if tb.Schema.L == "information_schema" || tb.Schema.L == "performance_schema" || tb.Schema.L == "mysql" {
-			return table.ErrUnsupportedOp
+		// TODO: replace const string "performance_schema" with xxx.LowerName.
+		// Currently use perfschema.LowerName will have import cycle problem.
+		if tb.Schema.L == infoschema.LowerName || tb.Schema.L == "performance_schema" || tb.Schema.L == mysql.SystemDB {
+			if ctx.GetSessionVars().User != nil {
+				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
+			}
+			return infoschema.ErrAccessDenied
 		}
-		schema, ok := is.SchemaByName(tb.Schema)
-		if !ok {
-			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tb.Schema)
-		}
-		t, err := is.TableByName(tb.Schema, tb.Name)
+		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
 		if err != nil {
-			return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(tb.Schema, tb.Name))
+			return errors.Trace(err)
+		}
+		if t.Meta().IsView() {
+			return table.ErrUnsupportedOp.GenWithStackByArgs()
 		}
 		tbInfo := t.Meta()
 
