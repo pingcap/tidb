@@ -658,8 +658,6 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 	))
 	h := dom.StatsHandle()
 	h.Clear()
-	h.Lease = 1
-	defer func() { h.Lease = 0 }()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t where b = 1").Check(testkit.Rows(
 		"TableReader_7 0.00 root data:Selection_6",
