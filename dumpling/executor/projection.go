@@ -91,7 +91,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	}
 
 	if e.isUnparallelExec() {
-		e.childResult = e.children[0].newFirstChunk()
+		e.childResult = newFirstChunk(e.children[0])
 	}
 
 	return nil
@@ -236,11 +236,11 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 		})
 
 		e.fetcher.inputCh <- &projectionInput{
-			chk:          e.children[0].newFirstChunk(),
+			chk:          newFirstChunk(e.children[0]),
 			targetWorker: e.workers[i],
 		}
 		e.fetcher.outputCh <- &projectionOutput{
-			chk:  e.newFirstChunk(),
+			chk:  newFirstChunk(e),
 			done: make(chan error, 1),
 		}
 	}
