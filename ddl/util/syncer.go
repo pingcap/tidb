@@ -413,11 +413,10 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 }
 
 const (
-	opDefaultRetryCnt     = 10
-	failedGetTTLLimit     = 20
-	checkCleanJobInterval = 1 * time.Second
-	opDefaultTimeout      = 3 * time.Second
-	opRetryInterval       = 500 * time.Millisecond
+	opDefaultRetryCnt = 10
+	failedGetTTLLimit = 20
+	opDefaultTimeout  = 3 * time.Second
+	opRetryInterval   = 500 * time.Millisecond
 )
 
 // NeededCleanTTL is exported for testing.
@@ -425,13 +424,12 @@ var NeededCleanTTL = int64(-60)
 
 func (s *schemaVersionSyncer) StartCleanWork() {
 	for {
-		time.Sleep(checkCleanJobInterval)
-		if !s.ownerChecker.IsOwner() {
-			continue
-		}
-
 		select {
 		case <-s.notifyCleanExpiredPathsCh:
+			if !s.ownerChecker.IsOwner() {
+				continue
+			}
+
 			for i := 0; i < opDefaultRetryCnt; i++ {
 				childCtx, cancelFunc := context.WithTimeout(context.Background(), opDefaultTimeout)
 				resp, err := s.etcdCli.Leases(childCtx)
@@ -448,7 +446,6 @@ func (s *schemaVersionSyncer) StartCleanWork() {
 			}
 		case <-s.quiteCh:
 			return
-		default:
 		}
 	}
 }

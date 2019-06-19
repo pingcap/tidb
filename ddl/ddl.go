@@ -450,7 +450,8 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 			func() { d.schemaSyncer.StartCleanWork() },
 			func(r interface{}) {
 				if r != nil {
-					logutil.Logger(ddlLogCtx).Error("[ddl] DDL syncer clean worker meet panic", zap.String("ID", d.uuid))
+					logutil.Logger(ddlLogCtx).Error("[ddl] DDL syncer clean worker meet panic",
+						zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
 					metrics.PanicCounter.WithLabelValues(metrics.LabelDDLSyncer).Inc()
 				}
 			})

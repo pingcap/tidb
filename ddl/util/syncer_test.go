@@ -182,15 +182,20 @@ func TestSyncerSimple(t *testing.T) {
 	checkRespKV(t, 1, ttlKey, ttlVal, resp.Kvs...)
 	d.SchemaSyncer().NotifyCleanExpiredPaths()
 	// Make sure the clean worker is done.
-	var isNotified bool
+	notifiedCnt := 1
 	for i := 0; i < 100; i++ {
-		isNotified = d.SchemaSyncer().NotifyCleanExpiredPaths()
+		isNotified := d.SchemaSyncer().NotifyCleanExpiredPaths()
 		if isNotified {
+			notifiedCnt++
+		}
+		// notifyCleanExpiredPathsCh's length is 1,
+		// so when notifiedCnt is 3, we can make sure the clean worker is done at least once.
+		if notifiedCnt == 3 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if !isNotified {
+	if notifiedCnt != 3 {
 		t.Fatal("clean worker don't finish")
 	}
 	// Make sure the ttlKey is removed in etcd.
@@ -228,7 +233,7 @@ func isTimeoutError(err error) bool {
 func checkRespKV(t *testing.T, kvCount int, key, val string,
 	kvs ...*mvccpb.KeyValue) {
 	if len(kvs) != kvCount {
-		t.Fatalf("resp key %s kvs %v length is != 1", key, kvs)
+		t.Fatalf("resp key %s kvs %v length is != %d", key, kvs, kvCount)
 	}
 	if kvCount == 0 {
 		return
