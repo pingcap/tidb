@@ -847,6 +847,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
 		cc.server.releaseToken(token)
+		vars := cc.ctx.GetSessionVars()
+		atomic.StoreUint32(&vars.Killed, 0)
 		span.Finish()
 	}()
 
