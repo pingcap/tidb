@@ -15,7 +15,6 @@ package latch
 
 import (
 	"bytes"
-	"context"
 	"math/bits"
 	"sort"
 	"sync"

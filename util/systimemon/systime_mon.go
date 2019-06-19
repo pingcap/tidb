@@ -14,7 +14,6 @@
 package systimemon
 
 import (
-	"context"
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"

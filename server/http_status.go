@@ -16,7 +16,6 @@ package server
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"

@@ -18,7 +18,6 @@
 package tables
 
 import (
-	"context"
 	"encoding/binary"
 	"math"
 	"strings"

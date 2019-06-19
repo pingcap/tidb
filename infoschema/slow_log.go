@@ -15,7 +15,6 @@ package infoschema
 
 import (
 	"bufio"
-	"context"
 	"io"
 	"os"
 	"strconv"

@@ -14,7 +14,6 @@
 package binloginfo
 
 import (
-	"context"
 	"regexp"
 	"strings"
 	"sync"

@@ -15,7 +15,6 @@ package tables
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"sort"
 	"strings"

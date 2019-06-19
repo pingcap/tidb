@@ -15,7 +15,6 @@ package config
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"

@@ -15,7 +15,6 @@ package printer
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 

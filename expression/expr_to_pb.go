@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"context"
 	"strings"
 	"sync/atomic"
 

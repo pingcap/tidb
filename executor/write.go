@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"context"
 	"strings"
 
 	"github.com/pingcap/parser/ast"

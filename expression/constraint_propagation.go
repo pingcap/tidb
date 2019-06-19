@@ -15,7 +15,6 @@ package expression
 
 import (
 	"bytes"
-	"context"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"

@@ -15,7 +15,6 @@ package types
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 	"regexp"

@@ -14,7 +14,6 @@
 package expensivequery
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"

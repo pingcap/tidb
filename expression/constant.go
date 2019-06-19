@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/pingcap/parser/mysql"

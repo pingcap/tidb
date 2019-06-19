@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"context"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"

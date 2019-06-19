@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"context"
 	"encoding/gob"
 	"math"
 	"math/rand"

@@ -18,7 +18,6 @@
 package expression
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"regexp"

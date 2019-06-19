@@ -14,7 +14,6 @@
 package privileges
 
 import (
-	"context"
 	"strings"
 
 	"github.com/pingcap/parser/auth"

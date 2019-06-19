@@ -14,7 +14,6 @@
 package meta
 
 import (
-	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"

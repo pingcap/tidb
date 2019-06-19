@@ -15,7 +15,6 @@
 package signal
 
 import (
-	"context"
 	"log"
 	"os"
 	"os/signal"

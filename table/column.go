@@ -18,7 +18,6 @@
 package table
 
 import (
-	"context"
 	"strings"
 	"time"
 	"unicode/utf8"

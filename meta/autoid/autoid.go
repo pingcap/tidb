@@ -14,7 +14,6 @@
 package autoid
 
 import (
-	"context"
 	"math"
 	"sync"
 	"sync/atomic"
