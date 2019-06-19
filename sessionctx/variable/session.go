@@ -433,6 +433,7 @@ func NewSessionVars() *SessionVars {
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
+		BackoffTimeVars:             BackoffTimer{waitScatterRegionFinish: DefWaitScatterRegionFinishBackoff},
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -995,10 +996,7 @@ type BackoffTimer struct {
 
 // GetWaitScatterRegionFinishBackoff gets the back off time of waitScatterRegionFinish.
 func (b *BackoffTimer) GetWaitScatterRegionFinishBackoff() int {
-	if b.waitScatterRegionFinish > 0 {
-		return b.waitScatterRegionFinish
-	}
-	return DefWaitScatterRegionFinishBackoff
+	return b.waitScatterRegionFinish
 }
 
 // SlowLogFormat uses for formatting slow log.
