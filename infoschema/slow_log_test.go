@@ -119,7 +119,7 @@ select * from t;
 	slowLog.WriteString(sql)
 
 	writeDataToFile(slowLog.String())
-	rows, err = infoschema.ParseSlowLogRows(logFile, loc)
+	_, err = infoschema.ParseSlowLogRows(logFile, loc)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "single line length exceeds limit: 65536")
 
