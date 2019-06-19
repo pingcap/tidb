@@ -790,7 +790,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBWaitSplitRegionFinish:
 		s.WaitSplitRegionFinish = TiDBOptOn(val)
 	case TiDBWaitSplitRegionFinishBackoff:
-		s.BackoffTimeVars.SetWaitScatterRegionFinishBackoff(tidbOptPositiveInt32(val, DefWaitScatterRegionFinishBackoff))
+		s.BackoffTimeVars.waitScatterRegionFinish = tidbOptPositiveInt32(val, DefWaitScatterRegionFinishBackoff)
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
@@ -998,13 +998,6 @@ func (b *BackoffTimer) GetWaitScatterRegionFinishBackoff() int {
 		return b.waitScatterRegionFinish
 	}
 	return DefWaitScatterRegionFinishBackoff
-}
-
-// SetWaitScatterRegionFinishBackoff sets the back off time of waitScatterRegionFinish.
-func (b *BackoffTimer) SetWaitScatterRegionFinishBackoff(t int) {
-	if t > 0 {
-		b.waitScatterRegionFinish = t
-	}
 }
 
 // SlowLogFormat uses for formatting slow log.
