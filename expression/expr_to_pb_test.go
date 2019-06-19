@@ -605,20 +605,30 @@ func (s *testEvaluatorSuite) TestImplicitParameters(c *C) {
 
 	pc := PbConverter{client: client, sc: sc}
 
-	// None flag
+	// InUnion flag is false in `BuildCastFunction` when `ScalarFuncSig_CastStringAsInt`
 	cast := BuildCastFunction(mock.NewContext(), dg.genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
-	c.Assert(cast.(*ScalarFunction).Function.implicitParameters(), IsNil)
+	c.Assert(cast.(*ScalarFunction).Function.implicitParameters(), DeepEquals, []types.Datum{types.NewIntDatum(0)})
 	expr := pc.ExprToPB(sc, cast)
 	c.Assert(expr.Sig, Equals, tipb.ScalarFuncSig_CastStringAsInt)
+	c.Assert(len(expr.Val), Greater, 0)
+	datums, err := codec.Decode(expr.Val, 1)
+	c.Assert(err, IsNil)
+	c.Assert(datums, DeepEquals, []types.Datum{types.NewIntDatum(0)})
+
+	// InUnion flag is nil in `BuildCastFunction4Union` when `ScalarFuncSig_CastIntAsString`
+	castInUnion := BuildCastFunction4Union(mock.NewContext(), dg.genColumn(mysql.TypeLonglong, 1), types.NewFieldType(mysql.TypeString))
+	c.Assert(castInUnion.(*ScalarFunction).Function.implicitParameters(), IsNil)
+	expr = pc.ExprToPB(sc, castInUnion)
+	c.Assert(expr.Sig, Equals, tipb.ScalarFuncSig_CastIntAsString)
 	c.Assert(len(expr.Val), Equals, 0)
 
-	// InUnion flag
-	castInUnion := BuildCastFunction4Union(mock.NewContext(), dg.genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	// InUnion flag is true in `BuildCastFunction4Union` when `ScalarFuncSig_CastStringAsInt`
+	castInUnion = BuildCastFunction4Union(mock.NewContext(), dg.genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
 	c.Assert(castInUnion.(*ScalarFunction).Function.implicitParameters(), DeepEquals, []types.Datum{types.NewIntDatum(1)})
 	expr = pc.ExprToPB(sc, castInUnion)
 	c.Assert(expr.Sig, Equals, tipb.ScalarFuncSig_CastStringAsInt)
 	c.Assert(len(expr.Val), Greater, 0)
-	datums, err := codec.Decode(expr.Val, 1)
+	datums, err = codec.Decode(expr.Val, 1)
 	c.Assert(err, IsNil)
 	c.Assert(datums, DeepEquals, []types.Datum{types.NewIntDatum(1)})
 }
