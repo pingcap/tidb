@@ -49,71 +49,93 @@ func (s *slowQueryReader) readSlowLogData(filePath string, tz *time.Location) ([
 		return s.readSlowLogDataWithCache(tz)
 
 	}
-	return s.ReadSlowLogDataFromFile(tz, filePath, 0, nil, nil)
+	return s.ReadSlowLogDataFromFileWithUpdateCache(tz, filePath, 0, nil, nil)
 }
 
 func (s *slowQueryReader) readSlowLogDataWithCache(tz *time.Location) ([][]types.Datum, error) {
 	s.RLock()
-	cacheStartTime := s.readCacheAtStart().time
-	beforeCacheTuples, err := parseSlowLogDataFromFile(tz, s.cache.filePath, 0, func(t time.Time) bool {
-		return t.Before(cacheStartTime)
-	}, nil)
+	// Get before cached tuples.
+	beforeCacheTuples, hasTruncate, err := s.parseSlowLogDataFromFileBeforeCachedAndCheckTruncate(tz)
 	if err != nil {
 		s.RUnlock()
 		return nil, err
 	}
+	// Try to avoid reallocate memory.
 	rows := make([][]types.Datum, len(beforeCacheTuples), s.cache.buf.len()+len(beforeCacheTuples)+100)
 	// get all cache tuples.
+	rows = s.getSlowLogDataFromCache(tz, rows)
+	cacheEndTime := s.readCacheAtEnd().time
+	startReadPosAfterCache := s.cache.getEndPos()
+	s.RUnlock()
+
+	if hasTruncate {
+		startReadPosAfterCache = 0
+	}
+	// Get after cached tuples. Put this out lock is for reduce lock time.
+	afterCacheTuples, err := s.parseSlowLogDataFromFileAfterCached(tz, cacheEndTime, startReadPosAfterCache)
+	logutil.Logger(context.Background()).Info("slow query read data with cache", zap.Int("before cached", len(beforeCacheTuples)), zap.Int("cached", len(rows)), zap.Int("after cached", len(afterCacheTuples)))
+
+	// Fill before cached tuples.
+	for i := range beforeCacheTuples {
+		rows[i] = beforeCacheTuples[i].convertToDatumRow()
+	}
+	// Append after cache tuples.
+	for i := range afterCacheTuples {
+		rows = append(rows, afterCacheTuples[i].convertToDatumRow())
+	}
+	// Update cache.
+	go s.updateCache(s.cache.filePath, afterCacheTuples)
+	return rows, nil
+}
+
+func (s *slowQueryReader) parseSlowLogDataFromFileBeforeCachedAndCheckTruncate(tz *time.Location) ([]*slowQueryTuple, bool, error) {
+	cacheStartTime := s.readCacheAtStart().time
+	first := true
+	hasTruncate := false
+	beforeCacheTuples, err := parseSlowLogDataFromFile(tz, s.cache.filePath, 0, func(t time.Time) bool {
+		if first {
+			first = false
+			hasTruncate = t.After(cacheStartTime)
+		}
+		return t.Before(cacheStartTime)
+	}, nil)
+	return beforeCacheTuples, hasTruncate, err
+}
+
+func (s *slowQueryReader) getSlowLogDataFromCache(tz *time.Location, rows [][]types.Datum) [][]types.Datum {
 	s.cache.buf.iterate(func(d interface{}) bool {
 		tuple := d.(*slowQueryTuple)
 		rows = append(rows, tuple.convertToDatumRow())
 		return false
 	})
-	cacheEndTime := s.readCacheAtEnd().time
-	cacheEndPos := s.cache.getEndPos()
-	s.RUnlock()
+	return rows
+}
 
-	var afterCacheTuples []*slowQueryTuple
-	afterCacheTuples, err = parseSlowLogDataFromFile(tz, s.cache.filePath, cacheEndPos, nil, func(t time.Time) bool {
+func (s *slowQueryReader) parseSlowLogDataFromFileAfterCached(tz *time.Location, cacheEndTime time.Time, offset int64) ([]*slowQueryTuple, error) {
+	afterCacheTuples, err := parseSlowLogDataFromFile(tz, s.cache.filePath, offset, nil, func(t time.Time) bool {
 		return t.Before(cacheEndTime) || t.Equal(cacheEndTime)
 	})
 	if err != nil {
-		if !seekFileError.Equal(err) {
-			return nil, err
-		}
-		afterCacheTuples, err = parseSlowLogDataFromFile(tz, s.cache.filePath, 0, nil, func(t time.Time) bool {
-			return t.Before(cacheEndTime) || t.Equal(cacheEndTime)
-		})
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
-	logutil.Logger(context.Background()).Info("slow query read data with cache", zap.Int("before cache", len(beforeCacheTuples)), zap.Int("cache", len(rows)), zap.Int("after cache", len(afterCacheTuples)))
-
-	// fill before cache tuples.
-	for i := range beforeCacheTuples {
-		rows[i] = beforeCacheTuples[i].convertToDatumRow()
-	}
-	// append after cache tuples.
-	for i := range afterCacheTuples {
-		rows = append(rows, afterCacheTuples[i].convertToDatumRow())
-	}
-	go s.updateCache(s.cache.filePath, afterCacheTuples)
-	return rows, nil
+	return afterCacheTuples, err
 }
 
-func (s *slowQueryReader) getSlowLogDataFromCache(tz *time.Location) ([][]types.Datum, error) {
-
-	return nil, nil
-}
-
-func (s *slowQueryReader) ReadSlowLogDataFromFile(tz *time.Location, filePath string, offset int64, filterFn func(t time.Time) bool, bypassFn func(t time.Time) bool) ([][]types.Datum, error) {
+func (s *slowQueryReader) ReadSlowLogDataFromFileWithUpdateCache(tz *time.Location, filePath string, offset int64, filterFn func(t time.Time) bool, bypassFn func(t time.Time) bool) ([][]types.Datum, error) {
 	tuples, err := parseSlowLogDataFromFile(tz, filePath, offset, filterFn, bypassFn)
 	if err != nil {
 		return nil, err
 	}
 	go s.updateCache(filePath, tuples)
 	return convertSlowLogTuplesToDatums(tuples), nil
+}
+
+func (s *slowQueryReader) ReadSlowLogDataFromFileWithoutUpdateCache(tz *time.Location, filePath string, offset int64, filterFn func(t time.Time) bool, bypassFn func(t time.Time) bool) ([][]types.Datum, []*slowQueryTuple, error) {
+	tuples, err := parseSlowLogDataFromFile(tz, filePath, offset, filterFn, bypassFn)
+	if err != nil {
+		return nil, nil, err
+	}
+	return convertSlowLogTuplesToDatums(tuples), tuples, nil
 }
 
 func convertSlowLogTuplesToDatums(tuples []*slowQueryTuple) [][]types.Datum {
@@ -141,7 +163,7 @@ func parseSlowLogDataFromFile(tz *time.Location, filePath string, offset int64, 
 
 	if offset > 0 {
 		if _, err := file.Seek(offset, 0); err != nil {
-			return nil, seekFileError
+			return nil, err
 		}
 	}
 

@@ -60,8 +60,6 @@ var (
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
 	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
-
-	seekFileError = terror.ClassSchema.New(codeSeekFileError, "seek file error")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -304,8 +302,7 @@ func (h *Handle) EmptyClone() *Handle {
 
 // Schema error codes.
 const (
-	codeSeekFileError     terror.ErrCode = 1
-	codeDBDropExists                     = 1008
+	codeDBDropExists      terror.ErrCode = 1008
 	codeDatabaseNotExists                = 1049
 	codeTableNotExists                   = 1146
 	codeColumnNotExists                  = 1054
@@ -345,7 +342,6 @@ func init() {
 		codeTooManyKeyParts:     mysql.ErrTooManyKeyParts,
 		codeKeyNameDuplicate:    mysql.ErrDupKeyName,
 		codeKeyNotExists:        mysql.ErrKeyDoesNotExist,
-		codeSeekFileError:       1,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

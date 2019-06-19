@@ -90,15 +90,75 @@ func (*testSlowLogBufferSuit) TestSlowQueryReader(c *C) {
 	logNum := 10
 	slowQueryBufferSize = 10
 	prepareSlowLogFile(logFile, c, logNum)
-	readFileTuples, err := globalSlowQueryReader.ReadSlowLogDataFromFile(time.Local, logFile, 0, nil, nil)
+	// readFileFirst indicate read file first or read cache first. Read file first will update the cache.
+	checkCache := func(totalSize, cacheSize, beforeCacheSize, afterCacheSize int, updateCache bool) {
+		// get total tuples by parse file.
+		readFileRows, readFileTuples, err := globalSlowQueryReader.ReadSlowLogDataFromFileWithoutUpdateCache(time.Local, logFile, 0, nil, nil)
+		c.Assert(err, IsNil)
+		c.Assert(len(readFileRows), Equals, totalSize)
+		if updateCache {
+			globalSlowQueryReader.updateCache(logFile, readFileTuples)
+		}
+
+		// Check cache parameter.
+		c.Assert(globalSlowQueryReader.cache.filePath, Equals, logFile)
+		c.Assert(globalSlowQueryReader.cache.buf.len(), Equals, cacheSize)
+		c.Assert(globalSlowQueryReader.cache.getEndPos() != 0, IsTrue)
+		// Get before cached tuples.
+		beforeCachedTuples, _, err := globalSlowQueryReader.parseSlowLogDataFromFileBeforeCachedAndCheckTruncate(time.Local)
+		c.Assert(err, IsNil)
+		c.Assert(len(beforeCachedTuples), Equals, beforeCacheSize)
+		c.Assert(globalSlowQueryReader.getSlowLogDataFromCache(time.Local, nil), DeepEquals, readFileRows[beforeCacheSize:totalSize-afterCacheSize])
+		// Get after cached tuples.
+		cacheEndTime := globalSlowQueryReader.readCacheAtEnd().time
+		cacheEndPos := globalSlowQueryReader.cache.getEndPos()
+		afterCachedTuples, err := globalSlowQueryReader.parseSlowLogDataFromFileAfterCached(time.Local, cacheEndTime, cacheEndPos)
+		c.Assert(err, IsNil)
+		c.Assert(len(afterCachedTuples), Equals, afterCacheSize)
+	}
+	checkCache(10, 10, 0, 0, true)
+
+	// Test append new log data.
+	appendToSlowLogFile(logFile, c, 1)
+	checkCache(11, 10, 0, 1, false)
+	checkCache(11, 10, 1, 0, true)
+
+	appendToSlowLogFile(logFile, c, 1)
+	readFileRows, _, err := globalSlowQueryReader.ReadSlowLogDataFromFileWithoutUpdateCache(time.Local, logFile, 0, nil, nil)
 	c.Assert(err, IsNil)
-	c.Assert(len(readFileTuples), Equals, logNum)
-	c.Assert(globalSlowQueryReader.cache.filePath, Equals, logFile)
-	c.Assert(globalSlowQueryReader.cache.buf.len(), Equals, 10)
+	readCacheRows, err := globalSlowQueryReader.readSlowLogDataWithCache(time.Local)
+	c.Assert(readFileRows, DeepEquals, readCacheRows)
+	checkCache(12, 10, 2, 0, false)
+
+	// Test truncate log file.
+	truncateSlowLogFile(logFile, c)
+	readFileRowsAfterTruncate, _, err := globalSlowQueryReader.ReadSlowLogDataFromFileWithoutUpdateCache(time.Local, logFile, 0, nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(len(readFileRowsAfterTruncate), Equals, 0)
+	readCacheRowsAfterTruncate, err := globalSlowQueryReader.readSlowLogDataWithCache(time.Local)
+	c.Assert(readCacheRowsAfterTruncate, DeepEquals, readFileRows[2:])
+
+	appendToSlowLogFile(logFile, c, 1)
+	readFileRowsAfterTruncate, _, err = globalSlowQueryReader.ReadSlowLogDataFromFileWithoutUpdateCache(time.Local, logFile, 0, nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(len(readFileRowsAfterTruncate), Equals, 1)
+
+	readCacheRowsAfterTruncate, err = globalSlowQueryReader.readSlowLogDataWithCache(time.Local)
+	c.Assert(len(readCacheRowsAfterTruncate), Equals, 11)
+	c.Assert(readCacheRowsAfterTruncate[:10], DeepEquals, readFileRows[2:])
+	c.Assert(readCacheRowsAfterTruncate[10], DeepEquals, readFileRowsAfterTruncate[0])
 }
 
 func prepareSlowLogFile(filePath string, c *C, num int) {
 	f, err := os.Create(filePath)
+	c.Assert(err, IsNil)
+	appendToSlowLogFile(filePath, c, num)
+	err = f.Close()
+	c.Assert(err, IsNil)
+}
+
+func appendToSlowLogFile(filePath string, c *C, num int) {
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_WRONLY, 0644)
 	c.Assert(err, IsNil)
 	for i := 0; i < num; i++ {
 		now := time.Now()
@@ -113,6 +173,15 @@ func prepareSlowLogFile(filePath string, c *C, num int) {
 		_, err = f.WriteString(logStr)
 		c.Assert(err, IsNil)
 	}
+	err = f.Close()
+	c.Assert(err, IsNil)
+}
+
+func truncateSlowLogFile(filePath string, c *C) {
+	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
+	c.Assert(err, IsNil)
+	err = f.Truncate(0)
+	c.Assert(err, IsNil)
 	err = f.Close()
 	c.Assert(err, IsNil)
 }
