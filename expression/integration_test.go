@@ -4366,3 +4366,8 @@ func (s *testIntegrationSuite) TestMySQLExtAssignment(c *C) {
 	tk.MustExec("set @count := 100;")
 	tk.MustExec("set @count := @count + 5;")
 }
+
+func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
+}
