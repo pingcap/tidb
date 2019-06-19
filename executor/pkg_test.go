@@ -35,7 +35,7 @@ type MockExec struct {
 
 func (m *MockExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	req.Reset()
-	colTypes := m.retTypes()
+	colTypes := retTypes(m)
 	for ; m.curRowIdx < len(m.Rows) && req.NumRows() < req.Capacity(); m.curRowIdx++ {
 		curRow := m.Rows[m.curRowIdx]
 		for i := 0; i < curRow.Len(); i++ {
@@ -88,7 +88,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	innerFilter := outerFilter.Clone()
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	joiner := newJoiner(sctx, plannercore.InnerJoin, false,
-		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.retTypes(), innerExec.retTypes())
+		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, retTypes(outerExec), retTypes(innerExec))
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(sctx, joinSchema, nil),
@@ -98,10 +98,10 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		innerFilter:  []expression.Expression{innerFilter},
 		joiner:       joiner,
 	}
-	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.initCap, innerExec.maxChunkSize)
-	join.innerChunk = innerExec.newFirstChunk()
-	join.outerChunk = outerExec.newFirstChunk()
-	joinChk := join.newFirstChunk()
+	join.innerList = chunk.NewList(retTypes(innerExec), innerExec.initCap, innerExec.maxChunkSize)
+	join.innerChunk = newFirstChunk(innerExec)
+	join.outerChunk = newFirstChunk(outerExec)
+	joinChk := newFirstChunk(join)
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
 		err := join.Next(ctx, chunk.NewRecordBatch(joinChk))

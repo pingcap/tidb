@@ -19,10 +19,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/expression"
+	// "github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
+	// "github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -39,8 +39,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 	return &PointGetExecutor{
-		ctx:     b.ctx,
-		schema:  p.Schema(),
+		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
+		// ctx:     b.ctx,
+		// schema:  p.Schema(),
 		tblInfo: p.TblInfo,
 		idxInfo: p.IndexInfo,
 		idxVals: p.IndexValues,
@@ -51,9 +52,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 
 // PointGetExecutor executes point select query.
 type PointGetExecutor struct {
-	ctx      sessionctx.Context
-	schema   *expression.Schema
-	tps      []*types.FieldType
+	baseExecutor
+
+	// ctx sessionctx.Context
+	// schema       *expression.Schema
+	// tps      []*types.FieldType
 	tblInfo  *model.TableInfo
 	handle   int64
 	idxInfo  *model.IndexInfo
@@ -242,21 +245,21 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
-// Schema implements the Executor interface.
-func (e *PointGetExecutor) Schema() *expression.Schema {
-	return e.schema
-}
+// // Schema implements the Executor interface.
+// func (e *PointGetExecutor) Schema() *expression.Schema {
+// 	return e.schema
+// }
 
-func (e *PointGetExecutor) retTypes() []*types.FieldType {
-	if e.tps == nil {
-		e.tps = make([]*types.FieldType, e.schema.Len())
-		for i := range e.schema.Columns {
-			e.tps[i] = e.schema.Columns[i].RetType
-		}
-	}
-	return e.tps
-}
+// func (e *PointGetExecutor) retTypes() []*types.FieldType {
+// 	if e.tps == nil {
+// 		e.tps = make([]*types.FieldType, e.schema.Len())
+// 		for i := range e.schema.Columns {
+// 			e.tps[i] = e.schema.Columns[i].RetType
+// 		}
+// 	}
+// 	return e.tps
+// }
 
-func (e *PointGetExecutor) newFirstChunk() *chunk.Chunk {
-	return chunk.New(e.retTypes(), 1, 1)
-}
+// func (e *PointGetExecutor) newFirstChunk() *chunk.Chunk {
+// 	return chunk.New(e.retTypes(), 1, 1)
+// }
