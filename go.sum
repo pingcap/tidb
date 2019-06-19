@@ -16,6 +16,10 @@ github.com/coreos/etcd v3.2.18+incompatible/go.mod h1:uF7uidLiAD3TWHmW31ZFd/JWoc
 github.com/coreos/go-semver v0.2.0/go.mod h1:nnelYz7RCh+5ahJtPPxZlU+153eP4D4r3EedlOD2RNk=
 github.com/coreos/go-systemd v0.0.0-20180202092358-40e2722dffea/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
 github.com/coreos/pkg v0.0.0-20160727233714-3ac0863d7acf/go.mod h1:E3G3o1h8I7cfcXa63jLwjI0eiQQMgzzUDFVpN/nH/eA=
+github.com/crazycs520/parser v0.0.0-20190619121024-40e7ecaa504a h1:mij7LmNM+GCtIVFM/AZNwv4M2xCgm5w3WVVCLhMz3d8=
+github.com/crazycs520/parser v0.0.0-20190619121024-40e7ecaa504a/go.mod h1:xLjI+gnWYexq011WPMEvCNS8rFM9qe1vdojIEzSKPuc=
+github.com/crazycs520/parser v0.0.0-20190619121853-a6bb78486e7f h1:9oZ1G26gYo3ZvZBCeduAdHOIj1y1fm1dynqvEm+Iy10=
+github.com/crazycs520/parser v0.0.0-20190619121853-a6bb78486e7f/go.mod h1:xLjI+gnWYexq011WPMEvCNS8rFM9qe1vdojIEzSKPuc=
 github.com/cznic/mathutil v0.0.0-20160613104831-78ad7f262603 h1:hhR9hTi0ligs11JjfGDBP332clNOJRdW0Ci5oHtEC+0=
 github.com/cznic/mathutil v0.0.0-20160613104831-78ad7f262603/go.mod h1:e6NPNENfs9mPDVNRekM7lKScauxd5kXTr1Mfyig6TDM=
 github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65 h1:hxuZop6tSoOi0sxFzoGGYdRqNrPubyaIf9KoBG9tPiE=

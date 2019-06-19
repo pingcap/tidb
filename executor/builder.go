@@ -168,6 +168,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
 		return b.buildIndexLookUpReader(v)
+	case *plannercore.SplitIndexRegion:
+		return b.buildSplitIndexRegion(v)
 	default:
 		b.err = ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
@@ -1320,6 +1322,17 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExecs...),
 	}
 	return e
+}
+
+func (b *executorBuilder) buildSplitIndexRegion(v *plannercore.SplitIndexRegion) Executor {
+	base := newBaseExecutor(b.ctx, nil, v.ExplainID())
+	base.initCap = chunk.ZeroCapacity
+	return &SplitIndexRegionExec{
+		baseExecutor: base,
+		table:        v.Table,
+		indexInfo:    v.IndexInfo,
+		valueLists:   v.ValueLists,
+	}
 }
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {

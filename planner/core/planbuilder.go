@@ -224,6 +224,8 @@ func (b *planBuilder) build(node ast.Node) (Plan, error) {
 		return b.buildSimple(node.(ast.StmtNode)), nil
 	case ast.DDLNode:
 		return b.buildDDL(x)
+	case *ast.SplitIndexRegionStmt:
+		return b.buildSplitIndexRegion(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -1424,6 +1426,46 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 func (b *planBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	p := &LoadStats{Path: ld.Path}
 	return p
+}
+
+func (b *planBuilder) buildSplitIndexRegion(node *ast.SplitIndexRegionStmt) (Plan, error) {
+	tblInfo := node.Table.TableInfo
+	indexInfo := tblInfo.FindIndexByName(strings.ToLower(node.IndexName))
+	if indexInfo == nil {
+		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
+	}
+
+	indexValues := make([][]types.Datum, 0, len(node.ValueLists))
+	for i, valuesItem := range node.ValueLists {
+		if len(valuesItem) > len(indexInfo.Columns) {
+			return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
+		}
+		valueList := make([]types.Datum, 0, len(valuesItem))
+		for j, valueItem := range valuesItem {
+			x, ok := valueItem.(*driver.ValueExpr)
+			if !ok {
+				return nil, errors.New("expect constant values")
+			}
+			colOffset := indexInfo.Columns[j].Offset
+			value, err := x.Datum.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &tblInfo.Columns[colOffset].FieldType)
+			if err != nil {
+				return nil, err
+			}
+
+			valueList = append(valueList, value)
+		}
+		indexValues = append(indexValues, valueList)
+	}
+	tableInPlan, ok := b.is.TableByID(tblInfo.ID)
+	if !ok {
+		return nil, errors.Errorf("Can't get table %s.", tblInfo.Name.O)
+	}
+	return &SplitIndexRegion{
+		Table:      tableInPlan,
+		IndexInfo:  indexInfo,
+		ValueLists: indexValues,
+	}, nil
+
 }
 
 func (b *planBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
