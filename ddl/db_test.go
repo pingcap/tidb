@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -2764,6 +2765,9 @@ func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
 }
 
 func (s *testDBSuite2) TestLockTables(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
 	s.tk = testkit.NewTestKit(c, s.store)
 	tk := s.tk
 	tk.MustExec("use test")
@@ -2960,6 +2964,9 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
 func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
 	s.tk = testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk := s.tk
