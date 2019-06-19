@@ -178,7 +178,7 @@ func (s *testExecSuite) TestTableReaderRequiredRows(c *C) {
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
 		exec := buildTableReader(sctx)
 		c.Assert(exec.Open(ctx), IsNil)
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
 			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
@@ -230,7 +230,7 @@ func (s *testExecSuite) TestIndexReaderRequiredRows(c *C) {
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
 		exec := buildIndexReader(sctx)
 		c.Assert(exec.Open(ctx), IsNil)
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
 			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)

@@ -239,7 +239,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.groupKeyBuffer = make([]byte, 0, 8)
 	e.groupValDatums = make([]types.Datum, 0, len(e.groupKeyBuffer))
-	e.childResult = e.children[0].newFirstChunk()
+	e.childResult = newFirstChunk(e.children[0])
 }
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
@@ -275,12 +275,12 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			partialResultsMap: make(aggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
 			groupValDatums:    make([]types.Datum, 0, len(e.GroupByItems)),
-			chk:               e.children[0].newFirstChunk(),
+			chk:               newFirstChunk(e.children[0]),
 		}
 
 		e.partialWorkers[i] = w
 		e.inputCh <- &HashAggInput{
-			chk:        e.children[0].newFirstChunk(),
+			chk:        newFirstChunk(e.children[0]),
 			giveBackCh: w.inputCh,
 		}
 	}
@@ -295,7 +295,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			outputCh:            e.finalOutputCh,
 			finalResultHolderCh: e.finalInputCh,
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
-			mutableRow:          chunk.MutRowFromTypes(e.retTypes()),
+			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
 		}
 	}
 }
@@ -772,7 +772,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	e.childResult = e.children[0].newFirstChunk()
+	e.childResult = newFirstChunk(e.children[0])
 	e.executed = false
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
