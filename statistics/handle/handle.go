@@ -70,7 +70,7 @@ type Handle struct {
 	// feedback is used to store query feedback info.
 	feedback []*statistics.QueryFeedback
 
-	Lease time.Duration
+	lease atomic2.Duration
 }
 
 // Clear the StatsCache, only for test.
@@ -99,9 +99,9 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		ddlEventCh: make(chan *util.Event, 100),
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
-		Lease:      lease,
 		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount.Load()),
 	}
+	handle.lease.Store(lease)
 	// It is safe to use it concurrently because the exec won't touch the ctx.
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
@@ -110,6 +110,16 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.StatsCache.Store(StatsCache{})
 	return handle
+}
+
+// Lease returns the stats lease.
+func (h *Handle) Lease() time.Duration {
+	return h.lease.Load()
+}
+
+// SetLease sets the stats lease.
+func (h *Handle) SetLease(lease time.Duration) {
+	h.lease.Store(lease)
 }
 
 // GetQueryFeedback gets the query feedback. It is only use in test.
@@ -133,7 +143,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := DurationToTS(3 * h.Lease)
+	offset := DurationToTS(3 * h.Lease())
 	if lastVersion >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -402,7 +412,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *statistics.Table, 
 		// 2. this column is not handle, and:
 		// 3. the column doesn't has buckets before, and:
 		// 4. loadAll is false.
-		notNeedLoad := h.Lease > 0 &&
+		notNeedLoad := h.Lease() > 0 &&
 			!isHandle &&
 			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
 			!loadAll
