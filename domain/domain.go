@@ -888,6 +888,8 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	statsHandle := handle.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
+	do.wg.Add(1)
+	go do.loadStatsWorker()
 	if do.statsLease <= 0 {
 		return nil
 	}
@@ -919,22 +921,15 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	return statsOwner
 }
 
-func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
-	defer recoverInDomain("updateStatsWorker", false)
+func (do *Domain) loadStatsWorker() {
+	defer recoverInDomain("loadStatsWorker", false)
+	defer do.wg.Done()
 	lease := do.statsLease
-	deltaUpdateDuration := lease * 20
+	if lease == 0 {
+		lease = 3 * time.Second
+	}
 	loadTicker := time.NewTicker(lease)
 	defer loadTicker.Stop()
-	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
-	defer deltaUpdateTicker.Stop()
-	loadHistogramTicker := time.NewTicker(lease)
-	defer loadHistogramTicker.Stop()
-	gcStatsTicker := time.NewTicker(100 * lease)
-	defer gcStatsTicker.Stop()
-	dumpFeedbackTicker := time.NewTicker(200 * lease)
-	defer dumpFeedbackTicker.Stop()
-	loadFeedbackTicker := time.NewTicker(5 * lease)
-	defer loadFeedbackTicker.Stop()
 	statsHandle := do.StatsHandle()
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
@@ -943,10 +938,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	} else {
 		logutil.Logger(context.Background()).Info("init stats info time", zap.Duration("take time", time.Since(t)))
 	}
-	defer func() {
-		do.SetStatsUpdating(false)
-		do.wg.Done()
-	}()
 	for {
 		select {
 		case <-loadTicker.C:
@@ -954,37 +945,60 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("update stats info failed", zap.Error(err))
 			}
+			err = statsHandle.LoadNeededHistograms()
+			if err != nil {
+				logutil.Logger(context.Background()).Debug("load histograms failed", zap.Error(err))
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+	defer recoverInDomain("updateStatsWorker", false)
+	lease := do.statsLease
+	deltaUpdateTicker := time.NewTicker(20 * lease)
+	defer deltaUpdateTicker.Stop()
+	gcStatsTicker := time.NewTicker(100 * lease)
+	defer gcStatsTicker.Stop()
+	dumpFeedbackTicker := time.NewTicker(200 * lease)
+	defer dumpFeedbackTicker.Stop()
+	loadFeedbackTicker := time.NewTicker(5 * lease)
+	defer loadFeedbackTicker.Stop()
+	statsHandle := do.StatsHandle()
+	defer func() {
+		do.SetStatsUpdating(false)
+		do.wg.Done()
+	}()
+	for {
+		select {
 		case <-do.exit:
 			statsHandle.FlushStats()
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
-			err = statsHandle.HandleDDLEvent(t)
+			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("handle ddl event failed", zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
-			err = statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
+			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("dump stats delta failed", zap.Error(err))
 			}
 			statsHandle.UpdateErrorRate(do.InfoSchema())
-		case <-loadHistogramTicker.C:
-			err = statsHandle.LoadNeededHistograms()
-			if err != nil {
-				logutil.Logger(context.Background()).Debug("load histograms failed", zap.Error(err))
-			}
 		case <-loadFeedbackTicker.C:
 			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
 			if !owner.IsOwner() {
 				continue
 			}
-			err = statsHandle.HandleUpdateStats(do.InfoSchema())
+			err := statsHandle.HandleUpdateStats(do.InfoSchema())
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("update stats using feedback failed", zap.Error(err))
 			}
 		case <-dumpFeedbackTicker.C:
-			err = statsHandle.DumpStatsFeedbackToKV()
+			err := statsHandle.DumpStatsFeedbackToKV()
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("dump stats feedback failed", zap.Error(err))
 			}
@@ -992,7 +1006,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if !owner.IsOwner() {
 				continue
 			}
-			err = statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
+			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
 				logutil.Logger(context.Background()).Debug("GC stats failed", zap.Error(err))
 			}
