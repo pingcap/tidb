@@ -988,6 +988,7 @@ const (
 	SlowLogMemMax = "Mem_max"
 )
 
+// BackoffTimer contains variable back off time.
 type BackoffTimer struct {
 	waitScatterRegionFinish int
 }
