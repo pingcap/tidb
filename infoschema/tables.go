@@ -862,7 +862,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 			continue
 		}
 
-		rows := pi.ToRowWithMem(true)
+		rows := pi.ToRow()
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
