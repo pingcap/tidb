@@ -3366,10 +3366,63 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	return errors.Trace(err)
 }
 
+func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
+	is := d.infoHandle.Get()
+	uniqueTableID := make(map[int64]struct{})
+	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
+	// Check whether the table was already locked by other.
+	for _, tb := range tables {
+		if tb.Schema.L == "information_schema" || tb.Schema.L == "performance_schema" || tb.Schema.L == "mysql" {
+			return table.ErrUnsupportedOp
+		}
+		schema, ok := is.SchemaByName(tb.Schema)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tb.Schema)
+		}
+		t, err := is.TableByName(tb.Schema, tb.Name)
+		if err != nil {
+			return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(tb.Schema, tb.Name))
+		}
+		tbInfo := t.Meta()
+
+		if tbInfo.Lock == nil || len(tbInfo.Lock.Sessions) == 0 {
+			continue
+		}
+
+		if _, ok := uniqueTableID[t.Meta().ID]; ok {
+			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
+		}
+		uniqueTableID[t.Meta().ID] = struct{}{}
+		cleanupTables = append(cleanupTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID})
+	}
+	if len(cleanupTables) == 0 {
+		return nil
+	}
+
+	arg := &lockTablesArg{
+		UnlockTables: cleanupTables,
+		IsCleanup:    true,
+	}
+	job := &model.Job{
+		SchemaID:   cleanupTables[0].SchemaID,
+		TableID:    cleanupTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseTableLocks(cleanupTables)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 type lockTablesArg struct {
 	LockTables    []model.TableLockTpInfo
 	IndexOfLock   int
 	UnlockTables  []model.TableLockTpInfo
 	IndexOfUnlock int
 	SessionInfo   model.SessionInfo
+	IsCleanup     bool
 }
