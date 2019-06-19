@@ -57,12 +57,17 @@ func NewNotifyDeleteRangeTask(store Storage, startKey []byte, endKey []byte, con
 	return task
 }
 
+// getRunnerName returns a name for RangeTaskRunner.
+func (t *DeleteRangeTask) getRunnerName() string {
+	if t.notifyOnly {
+		return "delete-range-notify"
+	}
+	return "delete-range"
+}
+
 // Execute performs the delete range operation.
 func (t *DeleteRangeTask) Execute(ctx context.Context) error {
-	runnerName := "delete-range"
-	if t.notifyOnly {
-		runnerName += "-notify"
-	}
+	runnerName := t.getRunnerName()
 
 	runner := NewRangeTaskRunner(runnerName, t.store, t.concurrency, t.sendReqOnRange)
 	err := runner.RunOnRange(ctx, t.startKey, t.endKey)
