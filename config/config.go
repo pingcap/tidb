@@ -539,6 +539,9 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
 	c.OOMAction = strings.ToLower(c.OOMAction)
+	if c.OOMAction != OOMActionLog && c.OOMAction != OOMActionCancel {
+		return fmt.Errorf("unsupported OOMAction %v, TiDB only supports [%v, %v]", c.OOMAction, OOMActionLog, OOMActionCancel)
+	}
 
 	// lower_case_table_names is allowed to be 0, 1, 2
 	if c.LowerCaseTableNames < 0 || c.LowerCaseTableNames > 2 {
