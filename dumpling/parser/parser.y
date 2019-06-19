@@ -6515,6 +6515,12 @@ AdminStmt:
  			Tp: ast.AdminReloadExprPushdownBlacklist,
  		}
  	}
+|	"ADMIN" "CLEANUP" "TABLE" "LOCK" TableNameList
+	{
+		$$ = &ast.CleanupTableLockStmt{
+			Tables: $5.([]*ast.TableName),
+		}
+	}
 
 AdminShowSlow:
 	"RECENT" NUM

@@ -2576,6 +2576,11 @@ func (s *testParserSuite) TestLockUnlockTables(c *C) {
 		{`LOCK TABLE t2 WRITE`, true, "LOCK TABLES `t2` WRITE"},
 		{`LOCK TABLE t2 WRITE LOCAL;`, true, "LOCK TABLES `t2` WRITE LOCAL"},
 		{`LOCK TABLE t1 WRITE, t2 READ;`, true, "LOCK TABLES `t1` WRITE, `t2` READ"},
+
+		// for cleanup table lock.
+		{"ADMIN CLEANUP TABLE LOCK", false, ""},
+		{"ADMIN CLEANUP TABLE LOCK t", true, "ADMIN CLEANUP TABLE LOCK `t`"},
+		{"ADMIN CLEANUP TABLE LOCK t1,t2", true, "ADMIN CLEANUP TABLE LOCK `t1`, `t2`"},
 	}
 	s.RunTest(c, table)
 }
