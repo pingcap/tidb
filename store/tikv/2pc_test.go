@@ -37,12 +37,9 @@ type testCommitterSuite struct {
 
 var _ = Suite(&testCommitterSuite{})
 
-func (s *testCommitterSuite) SetUpSuite(c *C) {
-	PessimisticLockTTL = uint64(config.MinPessimisticTTL / time.Millisecond)
-}
-
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
+	PessimisticLockTTL = uint64(config.MinPessimisticTTL / time.Millisecond)
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
 	mvccStore, err := mocktikv.NewMVCCLevelDB("")
 	c.Assert(err, IsNil)
