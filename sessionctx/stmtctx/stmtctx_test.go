@@ -43,4 +43,8 @@ func TestCopTasksDetails(t *testing.T) {
 		c.MaxWaitAddress != "100" {
 		t.Fatal(c)
 	}
+	fields := c.ToZapFields()
+	if len(fields) != 9 {
+		t.Fatal(c)
+	}
 }
