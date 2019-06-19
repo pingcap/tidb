@@ -159,10 +159,6 @@ type RegionCache struct {
 	}
 	notifyCheckCh chan struct{}
 	closeCh       chan struct{}
-
-	hook struct {
-		switchPeer func()
-	}
 }
 
 // NewRegionCache creates a RegionCache.

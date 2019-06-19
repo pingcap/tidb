@@ -180,31 +180,6 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	c.Assert(resp.RawPut, NotNil)
 }
 
-func (s *testRegionRequestSuite) TestOnSendFailedWithCancelAndTimeoutError(c *C) {
-	defer func() {
-		s.regionRequestSender.regionCache.hook.switchPeer = nil
-	}()
-	region, err := s.cache.LocateRegionByID(s.bo, s.region)
-	c.Assert(err, IsNil)
-	c.Assert(region, NotNil)
-	rpcCtx, err := s.regionRequestSender.regionCache.GetRPCContext(s.bo, region.Region)
-	c.Assert(err, IsNil)
-	c.Assert(rpcCtx, NotNil)
-
-	var switchToOtherPeer bool
-	s.regionRequestSender.regionCache.hook.switchPeer = func() {
-		switchToOtherPeer = true
-	}
-
-	err = s.regionRequestSender.onSendFail(s.bo, rpcCtx, context.Canceled)
-	c.Assert(errors.Cause(err), Equals, context.Canceled)
-	c.Assert(switchToOtherPeer, IsFalse)
-
-	err = s.regionRequestSender.onSendFail(s.bo, rpcCtx, context.DeadlineExceeded)
-	c.Assert(err, NotNil)
-	c.Assert(switchToOtherPeer, IsTrue)
-}
-
 func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
