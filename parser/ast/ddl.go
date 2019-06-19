@@ -1313,6 +1313,44 @@ func (n *UnlockTablesStmt) Restore(ctx *RestoreCtx) error {
 	return nil
 }
 
+// CleanupTableLockStmt is a statement to cleanup table lock.
+type CleanupTableLockStmt struct {
+	ddlNode
+
+	Tables []*TableName
+}
+
+// Accept implements Node Accept interface.
+func (n *CleanupTableLockStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CleanupTableLockStmt)
+	for i := range n.Tables {
+		node, ok := n.Tables[i].Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// Restore implements Node interface.
+func (n *CleanupTableLockStmt) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("ADMIN CLEANUP TABLE LOCK ")
+	for i, v := range n.Tables {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CleanupTableLockStmt.Tables[%d]", i)
+		}
+	}
+	return nil
+}
+
 // TableOptionType is the type for TableOption
 type TableOptionType int
 
