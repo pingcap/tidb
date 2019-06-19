@@ -1302,10 +1302,13 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	sc := &stmtctx.StatementContext{
-		TimeZone:   vars.Location(),
-		MemTracker: memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
-	}
+	sc := vars.StmtCtx
+
+	// Reset StatementContext
+	*sc = stmtctx.StatementContext{}
+	sc.TimeZone = vars.Location()
+	sc.MemTracker = memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery)
+
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
