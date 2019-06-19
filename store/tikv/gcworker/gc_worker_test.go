@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
@@ -41,6 +42,7 @@ type testGCWorkerSuite struct {
 	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
 	dom      *domain.Domain
+	pdClient pd.Client
 }
 
 var _ = Suite(&testGCWorkerSuite{})
@@ -59,7 +61,8 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	gcWorker, err := NewGCWorker(s.store, mocktikv.NewPDClient(s.cluster))
+	s.pdClient = mocktikv.NewPDClient(s.cluster)
+	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	c.Assert(err, IsNil)
 	gcWorker.Start()
 	gcWorker.Close()
@@ -288,4 +291,20 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, true)
+}
+
+func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
+	gcSafePointCacheInterval = 0
+	err := RunGCJob(context.Background(), s.store, 0, "mock", 1)
+	c.Assert(err, IsNil)
+	gcWorker, err := NewGCWorker(s.store, s.pdClient)
+	c.Assert(err, IsNil)
+	gcWorker.Start()
+	gcWorker.(*GCWorker).runGCJob(context.Background(), 0, 1)
+	gcWorker.Close()
+}
+
+func (s *testGCWorkerSuite) TestRunDistGCJob(c *C) {
+	err := RunDistributedGCJob(context.Background(), s.store, s.pdClient, 0, "mock", 1)
+	c.Assert(err, IsNil)
 }
