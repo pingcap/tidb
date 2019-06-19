@@ -40,13 +40,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	}
 	return &PointGetExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
-		// ctx:     b.ctx,
-		// schema:  p.Schema(),
-		tblInfo: p.TblInfo,
-		idxInfo: p.IndexInfo,
-		idxVals: p.IndexValues,
-		handle:  p.Handle,
-		startTS: startTS,
+		tblInfo:      p.TblInfo,
+		idxInfo:      p.IndexInfo,
+		idxVals:      p.IndexValues,
+		handle:       p.Handle,
+		startTS:      startTS,
 	}
 }
 
@@ -54,9 +52,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 type PointGetExecutor struct {
 	baseExecutor
 
-	// ctx sessionctx.Context
-	// schema       *expression.Schema
-	// tps      []*types.FieldType
 	tblInfo  *model.TableInfo
 	handle   int64
 	idxInfo  *model.IndexInfo
@@ -244,22 +239,3 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	}
 	return nil
 }
-
-// // Schema implements the Executor interface.
-// func (e *PointGetExecutor) Schema() *expression.Schema {
-// 	return e.schema
-// }
-
-// func (e *PointGetExecutor) retTypes() []*types.FieldType {
-// 	if e.tps == nil {
-// 		e.tps = make([]*types.FieldType, e.schema.Len())
-// 		for i := range e.schema.Columns {
-// 			e.tps[i] = e.schema.Columns[i].RetType
-// 		}
-// 	}
-// 	return e.tps
-// }
-
-// func (e *PointGetExecutor) newFirstChunk() *chunk.Chunk {
-// 	return chunk.New(e.retTypes(), 1, 1)
-// }

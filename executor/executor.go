@@ -86,8 +86,8 @@ type baseExecutor struct {
 	runtimeStats  *execdetails.RuntimeStats
 }
 
-// This returns the baseExecutor of an executor, don't override this method!
-func (e *baseExecutor) This() *baseExecutor {
+// base returns the baseExecutor of an executor, don't override this method!
+func (e *baseExecutor) base() *baseExecutor {
 	return e
 }
 
@@ -123,13 +123,13 @@ func (e *baseExecutor) Schema() *expression.Schema {
 
 // newFirstChunk creates a new chunk to buffer current executor's result.
 func newFirstChunk(e Executor) *chunk.Chunk {
-	base := e.This()
+	base := e.base()
 	return chunk.New(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
 // retTypes returns all output column types.
 func retTypes(e Executor) []*types.FieldType {
-	base := e.This()
+	base := e.base()
 	return base.retFieldTypes
 }
 
@@ -173,14 +173,11 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 // return a batch of rows, other than a single row in Volcano.
 // NOTE: Executors must call "chk.Reset()" before appending their results to it.
 type Executor interface {
-	This() *baseExecutor
+	base() *baseExecutor
 	Open(context.Context) error
 	Next(ctx context.Context, req *chunk.RecordBatch) error
 	Close() error
 	Schema() *expression.Schema
-
-	// retTypes() []*types.FieldType
-	// newFirstChunk() *chunk.Chunk
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
