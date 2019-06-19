@@ -54,4 +54,16 @@ func (s testSuite) TestConfig(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(store.(LatchEnableChecker).IsLatchEnabled(), IsFalse)
 	store.Close()
+
+	store, err = driver.Open(":")
+	c.Assert(err, NotNil)
+	if store != nil {
+		store.Close()
+	}
+
+	store, err = driver.Open("faketikv://")
+	c.Assert(err, NotNil)
+	if store != nil {
+		store.Close()
+	}
 }

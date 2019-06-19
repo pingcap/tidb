@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
@@ -289,6 +290,10 @@ func (s *testDBSuite3) TestCancelAddIndex(c *C) {
 
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
+	originBatchSize := s.tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
+	s.tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
+	defer s.tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
 	// let hook.OnJobUpdatedExported has chance to cancel the job.
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
@@ -2756,6 +2761,338 @@ func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
 	_, err = tk.Exec("insert into t1 set a=1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
+}
+
+func (s *testDBSuite2) TestLockTables(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	defer tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+
+	// recover table lock config.
+	originValue := config.GetGlobalConfig().EnableTableLock
+	defer func() {
+		config.GetGlobalConfig().EnableTableLock = originValue
+	}()
+
+	// Test for enable table lock config.
+	config.GetGlobalConfig().EnableTableLock = false
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	config.GetGlobalConfig().EnableTableLock = true
+
+	// Test lock 1 table.
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	tk.MustExec("lock tables t1 read")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockRead)
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+
+	// Test lock multi tables.
+	tk.MustExec("lock tables t1 write, t2 read")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockRead)
+	tk.MustExec("lock tables t1 read, t2 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockRead)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockWrite)
+	tk.MustExec("lock tables t2 write")
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockWrite)
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
+	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	// Test read lock.
+	tk.MustExec("lock tables t1 read")
+	tk.MustQuery("select * from t1")
+	tk2.MustQuery("select * from t1")
+	_, err := tk.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+	_, err = tk.Exec("update t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+	_, err = tk.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("update t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk2.MustExec("lock tables t1 read")
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
+
+	// Test write lock.
+	_, err = tk.Exec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk2.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write")
+	tk.MustQuery("select * from t1")
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a=1")
+
+	_, err = tk2.Exec("select * from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	// Test write local lock.
+	tk.MustExec("lock tables t1 write local")
+	tk.MustQuery("select * from t1")
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 set a=1")
+
+	tk2.MustQuery("select * from t1")
+	_, err = tk2.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("lock tables t1 read")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	// Test none unique table.
+	_, err = tk.Exec("lock tables t1 read, t1 write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrNonuniqTable), IsTrue)
+
+	// Test lock table by other session in transaction and commit without retry.
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=1")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1")
+	tk2.MustExec("lock tables t1 write")
+	_, err = tk.Exec("commit")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[domain:2]Information schema is changed. [try again later]")
+
+	// Test lock table by other session in transaction and commit with retry.
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1")
+	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
+	tk2.MustExec("lock tables t1 write")
+	_, err = tk.Exec("commit")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue, Commentf("err: %v\n", err))
+
+	// Test for lock the same table multiple times.
+	tk2.MustExec("lock tables t1 write")
+	tk2.MustExec("lock tables t1 write, t2 read")
+
+	// Test lock tables and drop tables
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write, t2 write")
+	tk.MustExec("drop table t1")
+	tk2.MustExec("create table t1 (a int)")
+	tk.MustExec("lock tables t1 write, t2 read")
+
+	// Test lock tables and drop database.
+	tk.MustExec("unlock tables")
+	tk.MustExec("create database test_lock")
+	tk.MustExec("create table test_lock.t3 (a int)")
+	tk.MustExec("lock tables t1 write, test_lock.t3 write")
+	tk2.MustExec("create table t3 (a int)")
+	tk.MustExec("lock tables t1 write, t3 write")
+	tk.MustExec("drop table t3")
+
+	// Test lock tables and truncate tables.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write, t2 read")
+	tk.MustExec("truncate table t1")
+	tk.MustExec("insert into t1 set a=1")
+	_, err = tk2.Exec("insert into t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	// Test for lock unsupported schema tables.
+	_, err = tk2.Exec("lock tables performance_schema.global_status write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
+	_, err = tk2.Exec("lock tables information_schema.tables write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
+	_, err = tk2.Exec("lock tables mysql.db write")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
+
+	// Test create table/view when session is holding the table locks.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock tables t1 write, t2 read")
+	_, err = tk.Exec("create table t3 (a int)")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
+	_, err = tk.Exec("create view v1 as select * from t1;")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
+
+	// Test for lock view was not supported.
+	tk.MustExec("unlock tables")
+	tk.MustExec("create view v1 as select * from t1;")
+	_, err = tk.Exec("lock tables v1 read")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+
+	// Test for create/drop/alter database when session is holding the table locks.
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock table t1 write")
+	_, err = tk.Exec("drop database test")
+	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
+	_, err = tk.Exec("create database test_lock")
+	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
+	_, err = tk.Exec("alter database test charset='utf8mb4'")
+	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
+	// Test alter/drop database when other session is holding the table locks of the database.
+	tk2.MustExec("create database test_lock2")
+	_, err = tk2.Exec("drop database test")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("alter database test charset='utf8mb4'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+}
+
+// TestConcurrentLockTables test concurrent lock/unlock tables.
+func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk := s.tk
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int)")
+	tk2.MustExec("use test")
+
+	// recover table lock config.
+	originValue := config.GetGlobalConfig().EnableTableLock
+	defer func() {
+		config.GetGlobalConfig().EnableTableLock = originValue
+	}()
+
+	// Test for enable table lock config.
+	config.GetGlobalConfig().EnableTableLock = true
+
+	// Test concurrent lock tables read.
+	sql1 := "lock tables t1 read"
+	sql2 := "lock tables t1 read"
+	s.testParallelExecSQL(c, sql1, sql2, tk.Se, tk2.Se, func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+	})
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+
+	// Test concurrent lock tables write.
+	sql1 = "lock tables t1 write"
+	sql2 = "lock tables t1 write"
+	s.testParallelExecSQL(c, sql1, sql2, tk.Se, tk2.Se, func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(terror.ErrorEqual(err2, infoschema.ErrTableLocked), IsTrue)
+	})
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+
+	// Test concurrent lock tables write local.
+	sql1 = "lock tables t1 write local"
+	sql2 = "lock tables t1 write local"
+	s.testParallelExecSQL(c, sql1, sql2, tk.Se, tk2.Se, func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(terror.ErrorEqual(err2, infoschema.ErrTableLocked), IsTrue)
+	})
+
+	tk.MustExec("unlock tables")
+	tk2.MustExec("unlock tables")
+}
+
+func (s *testDBSuite2) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
+	callback := &ddl.TestDDLCallback{}
+	times := 0
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
+		if times != 0 {
+			return
+		}
+		var qLen int
+		for {
+			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				jobs, err1 := admin.GetDDLJobs(txn)
+				if err1 != nil {
+					return err1
+				}
+				qLen = len(jobs)
+				return nil
+			})
+			c.Assert(err, IsNil)
+			if qLen == 2 {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		times++
+	}
+	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
+	d.(ddl.DDLForTest).SetHook(callback)
+
+	wg := sync.WaitGroup{}
+	var err1 error
+	var err2 error
+	wg.Add(2)
+	ch := make(chan struct{})
+	// Make sure the sql1 is put into the DDLJobQueue.
+	go func() {
+		var qLen int
+		for {
+			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				jobs, err3 := admin.GetDDLJobs(txn)
+				if err3 != nil {
+					return err3
+				}
+				qLen = len(jobs)
+				return nil
+			})
+			c.Assert(err, IsNil)
+			if qLen == 1 {
+				// Make sure sql2 is executed after the sql1.
+				close(ch)
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		_, err1 = se1.Execute(context.Background(), sql1)
+	}()
+	go func() {
+		defer wg.Done()
+		<-ch
+		_, err2 = se2.Execute(context.Background(), sql2)
+	}()
+
+	wg.Wait()
+	f(c, err1, err2)
+}
+
+func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {
+	tb := testGetTableByName(c, se, dbName, tableName)
+	dom := domain.GetDomain(se)
+	if lockTp != model.TableLockNone {
+		c.Assert(tb.Meta().Lock, NotNil)
+		c.Assert(tb.Meta().Lock.Tp, Equals, lockTp)
+		c.Assert(tb.Meta().Lock.State, Equals, model.TableLockStatePublic)
+		c.Assert(len(tb.Meta().Lock.Sessions) == 1, IsTrue)
+		c.Assert(tb.Meta().Lock.Sessions[0].ServerID, Equals, dom.DDL().GetID())
+		c.Assert(tb.Meta().Lock.Sessions[0].SessionID, Equals, se.GetSessionVars().ConnectionID)
+	} else {
+		c.Assert(tb.Meta().Lock, IsNil)
+	}
 }
 
 func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {

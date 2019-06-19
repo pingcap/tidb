@@ -295,3 +295,82 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "0")
 	c.Assert(v.CorrelationThreshold, Equals, float64(0))
 }
+
+func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
+	ddRegWorker := maxDDLReorgWorkerCount + 1
+	SetDDLReorgWorkerCounter(ddRegWorker)
+	c.Assert(maxDDLReorgWorkerCount, Equals, GetDDLReorgWorkerCounter())
+
+	ddlReorgBatchSize := MaxDDLReorgBatchSize + 1
+	SetDDLReorgBatchSize(ddlReorgBatchSize)
+	c.Assert(MaxDDLReorgBatchSize, Equals, GetDDLReorgBatchSize())
+	ddlReorgBatchSize = MinDDLReorgBatchSize - 1
+	SetDDLReorgBatchSize(ddlReorgBatchSize)
+	c.Assert(MinDDLReorgBatchSize, Equals, GetDDLReorgBatchSize())
+
+	val := tidbOptInt64("a", 1)
+	c.Assert(val, Equals, int64(1))
+	val2 := tidbOptFloat64("b", 1.2)
+	c.Assert(val2, Equals, 1.2)
+}
+
+func (s *testVarsutilSuite) TestValidate(c *C) {
+	v := NewSessionVars()
+	v.GlobalVarsAccessor = NewMockGlobalAccessor()
+	v.TimeZone = time.UTC
+
+	tests := []struct {
+		key   string
+		value string
+		error bool
+	}{
+		{TiDBAutoAnalyzeStartTime, "15:04", false},
+		{TiDBAutoAnalyzeStartTime, "15:04 -0700", false},
+		{DelayKeyWrite, "ON", false},
+		{DelayKeyWrite, "OFF", false},
+		{DelayKeyWrite, "ALL", false},
+		{DelayKeyWrite, "3", true},
+		{ForeignKeyChecks, "3", true},
+		{MaxSpRecursionDepth, "256", false},
+		{SessionTrackGtids, "OFF", false},
+		{SessionTrackGtids, "OWN_GTID", false},
+		{SessionTrackGtids, "ALL_GTIDS", false},
+		{SessionTrackGtids, "ON", true},
+		{EnforceGtidConsistency, "OFF", false},
+		{EnforceGtidConsistency, "ON", false},
+		{EnforceGtidConsistency, "WARN", false},
+		{QueryCacheType, "OFF", false},
+		{QueryCacheType, "ON", false},
+		{QueryCacheType, "DEMAND", false},
+		{QueryCacheType, "3", true},
+		{SecureAuth, "1", false},
+		{SecureAuth, "3", true},
+		{MyISAMUseMmap, "ON", false},
+		{MyISAMUseMmap, "OFF", false},
+		{TiDBEnableTablePartition, "ON", false},
+		{TiDBEnableTablePartition, "OFF", false},
+		{TiDBEnableTablePartition, "AUTO", false},
+		{TiDBEnableTablePartition, "UN", true},
+		{TiDBOptCorrelationExpFactor, "a", true},
+		{TiDBOptCorrelationExpFactor, "-10", true},
+		{TiDBOptCorrelationThreshold, "a", true},
+		{TiDBOptCorrelationThreshold, "-2", true},
+		{TxnIsolation, "READ-UNCOMMITTED", true},
+		{TiDBInitChunkSize, "a", true},
+		{TiDBInitChunkSize, "-1", true},
+		{TiDBMaxChunkSize, "a", true},
+		{TiDBMaxChunkSize, "-1", true},
+		{TiDBOptJoinReorderThreshold, "a", true},
+		{TiDBOptJoinReorderThreshold, "-1", true},
+	}
+
+	for _, t := range tests {
+		_, err := ValidateSetSystemVar(v, t.key, t.value)
+		if t.error {
+			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
+		} else {
+			c.Assert(err, IsNil, Commentf("%v got err=%v", t, err))
+		}
+	}
+
+}

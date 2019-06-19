@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
@@ -49,6 +50,7 @@ type testGCWorkerSuite struct {
 	gcWorker *GCWorker
 	dom      *domain.Domain
 	client   *testGCWorkerClient
+	pdClient pd.Client
 }
 
 var _ = Suite(&testGCWorkerSuite{})
@@ -77,7 +79,8 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	gcWorker, err := NewGCWorker(s.store, mocktikv.NewPDClient(s.cluster))
+	s.pdClient = mocktikv.NewPDClient(s.cluster)
+	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	c.Assert(err, IsNil)
 	gcWorker.Start()
 	gcWorker.Close()
@@ -396,7 +399,7 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 		failKey = ranges[0].StartKey
 		failStore = stores[0]
 
-		err = deleteRangeFunc(context.Background(), 20)
+		err = deleteRangeFunc(context.Background(), 20, 1)
 		c.Assert(err, IsNil)
 
 		s.checkDestroyRangeReq(c, sendReqCh, ranges, stores)
@@ -412,7 +415,7 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 		failStore = nil
 
 		// Delete the remaining range again.
-		err = deleteRangeFunc(context.Background(), 20)
+		err = deleteRangeFunc(context.Background(), 20, 1)
 		c.Assert(err, IsNil)
 		s.checkDestroyRangeReq(c, sendReqCh, ranges[:1], stores)
 
@@ -486,4 +489,20 @@ func (c *testGCWorkerClient) SendRequest(ctx context.Context, addr string, req *
 	}
 
 	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
+	gcSafePointCacheInterval = 0
+	err := RunGCJob(context.Background(), s.store, 0, "mock", 1)
+	c.Assert(err, IsNil)
+	gcWorker, err := NewGCWorker(s.store, s.pdClient)
+	c.Assert(err, IsNil)
+	gcWorker.Start()
+	gcWorker.(*GCWorker).runGCJob(context.Background(), 0, 1)
+	gcWorker.Close()
+}
+
+func (s *testGCWorkerSuite) TestRunDistGCJob(c *C) {
+	err := RunDistributedGCJob(context.Background(), s.store, s.pdClient, 0, "mock", 1)
+	c.Assert(err, IsNil)
 }

@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
@@ -221,23 +220,6 @@ func (w *GCWorker) tick(ctx context.Context) {
 	}
 }
 
-const notBootstrappedVer = 0
-
-func (w *GCWorker) storeIsBootstrapped() bool {
-	var ver int64
-	err := kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
-		var err error
-		t := meta.NewMeta(txn)
-		ver, err = t.GetBootstrapVersion()
-		return errors.Trace(err)
-	})
-	if err != nil {
-		logutil.Logger(context.Background()).Error("[gc worker] check bootstrapped", zap.Error(err))
-		return false
-	}
-	return ver > notBootstrappedVer
-}
-
 // leaderTick of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx context.Context) error {
 	if w.gcIsRunning {
@@ -296,13 +278,12 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	}
 	doGC, safePoint, err := w.checkPrepare(ctx)
 	if doGC {
-		_, err = w.session.Execute(ctx, "COMMIT")
+		err = w.session.CommitTxn(ctx)
 		if err != nil {
 			return false, 0, errors.Trace(err)
 		}
 	} else {
-		_, err1 := w.session.Execute(ctx, "ROLLBACK")
-		terror.Log(errors.Trace(err1))
+		w.session.RollbackTxn(ctx)
 	}
 	return doGC, safePoint, errors.Trace(err)
 }
@@ -471,7 +452,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		w.done <- errors.Trace(err)
 		return
 	}
-	err = w.deleteRanges(ctx, safePoint)
+	err = w.deleteRanges(ctx, safePoint, concurrency)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] delete range returns an error",
 			zap.String("uuid", w.uuid),
@@ -480,7 +461,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		w.done <- errors.Trace(err)
 		return
 	}
-	err = w.redoDeleteRanges(ctx, safePoint)
+	err = w.redoDeleteRanges(ctx, safePoint, concurrency)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] redo-delete range returns an error",
 			zap.String("uuid", w.uuid),
@@ -527,7 +508,8 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 }
 
 // deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`
-func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
+// `concurrency` specifies the concurrency to send NotifyDeleteRange.
+func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("delete_range").Inc()
 
 	se := createSession(w.store)
@@ -544,7 +526,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
 
-		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
+		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] delete range failed on range",
 				zap.String("uuid", w.uuid),
@@ -575,7 +557,8 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 }
 
 // redoDeleteRanges checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
-func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error {
+// `concurrency` specifies the concurrency to send NotifyDeleteRange.
+func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("redo_delete_range").Inc()
 
 	// We check delete range records that are deleted about 24 hours ago.
@@ -595,7 +578,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
 
-		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
+		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] redo-delete range failed on range",
 				zap.String("uuid", w.uuid),
@@ -625,7 +608,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error
 	return nil
 }
 
-func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte) error {
+func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte, concurrency int) error {
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
 	stores, err := w.getUpStores(ctx)
 	if err != nil {
@@ -686,6 +669,14 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 	if len(errs) > 0 {
 		return errors.Errorf("[gc worker] destroy range finished with errors: %v", errs)
 	}
+
+	// Notify all affected regions in the range that UnsafeDestroyRange occurs.
+	notifyTask := tikv.NewNotifyDeleteRangeTask(w.store, startKey, endKey, concurrency)
+	err = notifyTask.Execute(ctx)
+	if err != nil {
+		return errors.Annotate(err, "[gc worker] failed notifying regions affected by UnsafeDestroyRange")
+	}
+
 	return nil
 }
 
@@ -787,12 +778,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 	return nil
 }
 
-func (w *GCWorker) resolveLocksForRange(
-	ctx context.Context,
-	safePoint uint64,
-	startKey []byte,
-	endKey []byte,
-) (int, error) {
+func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (int, error) {
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
@@ -1136,27 +1122,24 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	w.session = se
 	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey)
 	if err != nil {
-		_, err1 := se.Execute(ctx, "ROLLBACK")
-		terror.Log(errors.Trace(err1))
+		se.RollbackTxn(ctx)
 		return false, errors.Trace(err)
 	}
 	logutil.Logger(context.Background()).Debug("[gc worker] got leader", zap.String("uuid", leader))
 	if leader == w.uuid {
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
-			_, err1 := se.Execute(ctx, "ROLLBACK")
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
-		_, err = se.Execute(ctx, "COMMIT")
+		err = se.CommitTxn(ctx)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
 
-	_, err = se.Execute(ctx, "ROLLBACK")
-	terror.Log(errors.Trace(err))
+	se.RollbackTxn(ctx)
 
 	_, err = se.Execute(ctx, "BEGIN")
 	if err != nil {
@@ -1173,30 +1156,26 @@ func (w *GCWorker) checkLeader() (bool, error) {
 
 		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid)
 		if err != nil {
-			_, err1 := se.Execute(ctx, "ROLLBACK")
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
 		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc)
 		if err != nil {
-			_, err1 := se.Execute(ctx, "ROLLBACK")
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
-			_, err1 := se.Execute(ctx, "ROLLBACK")
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
-		_, err = se.Execute(ctx, "COMMIT")
+		err = se.CommitTxn(ctx)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
-	_, err1 := se.Execute(ctx, "ROLLBACK")
-	terror.Log(errors.Trace(err1))
+	se.RollbackTxn(ctx)
 	return false, nil
 }
 
@@ -1333,14 +1312,7 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 // RunDistributedGCJob notifies TiKVs to do GC. It is exported for kv api, do not use it with GCWorker at the same time.
 // This function may not finish immediately because it may take some time to do resolveLocks.
 // Param concurrency specifies the concurrency of resolveLocks phase.
-func RunDistributedGCJob(
-	ctx context.Context,
-	s tikv.Storage,
-	pd pd.Client,
-	safePoint uint64,
-	identifier string,
-	concurrency int,
-) error {
+func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
 		store:    s,
 		uuid:     identifier,
@@ -1395,5 +1367,5 @@ func NewMockGCWorker(store tikv.Storage) (*MockGCWorker, error) {
 // DeleteRanges calls deleteRanges internally, just for test.
 func (w *MockGCWorker) DeleteRanges(ctx context.Context, safePoint uint64) error {
 	logutil.Logger(ctx).Error("deleteRanges is called")
-	return w.worker.deleteRanges(ctx, safePoint)
+	return w.worker.deleteRanges(ctx, safePoint, 1)
 }
