@@ -128,6 +128,7 @@ func (*testSlowLogBufferSuit) TestSlowQueryReader(c *C) {
 	parseFileRows, err := ParseSlowLogRows(logFile, time.Local)
 	c.Assert(err, IsNil)
 	readWithCacheRows, err := globalSlowQueryReader.getSlowLogDataWithCache(time.Local)
+	c.Assert(err, IsNil)
 	c.Assert(parseFileRows, DeepEquals, readWithCacheRows)
 	checkCache(12, 10, 2, 0, false)
 
@@ -139,6 +140,7 @@ func (*testSlowLogBufferSuit) TestSlowQueryReader(c *C) {
 	c.Assert(len(parseFileRows), Equals, 0)
 
 	readWithCacheRows, err = globalSlowQueryReader.getSlowLogDataWithCache(time.Local)
+	c.Assert(err, IsNil)
 	c.Assert(readWithCacheRows, DeepEquals, cacheRows)
 
 	// Test append new log after truncate.
@@ -148,6 +150,7 @@ func (*testSlowLogBufferSuit) TestSlowQueryReader(c *C) {
 	c.Assert(len(parseFileRows), Equals, 1)
 
 	readWithCacheRows, err = globalSlowQueryReader.getSlowLogDataWithCache(time.Local)
+	c.Assert(err, IsNil)
 	c.Assert(len(readWithCacheRows), Equals, 11)
 	c.Assert(readWithCacheRows[:10], DeepEquals, cacheRows)
 	c.Assert(readWithCacheRows[10], DeepEquals, parseFileRows[0])

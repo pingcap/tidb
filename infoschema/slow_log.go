@@ -75,6 +75,17 @@ func ReadSlowLogData(filePath string, tz *time.Location) ([][]types.Datum, error
 	return globalSlowQueryReader.getSlowLogData(filePath, tz)
 }
 
+// ParseSlowLogRows reads slow log data by parse slow log file.
+// It won't use the cache data.
+// It is exporting for testing.
+func ParseSlowLogRows(filePath string, tz *time.Location) ([][]types.Datum, error) {
+	tuples, err := parseSlowLogDataFromFile(tz, filePath, 0, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return convertSlowLogTuplesToDatums(tuples), nil
+}
+
 // ReadSlowLogDataFromFile reads slow query data from slow log file.
 // If filterFn(t) return false, will stop read and return directly.
 // If bypassFn(t) return true, will bypass the current tuple.

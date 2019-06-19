@@ -35,32 +35,24 @@ var globalSlowQueryReader slowLogReader
 // It will cache the data in a ring buffer to avoid repeated read file and parse data.
 type slowLogReader struct {
 	sync.RWMutex
+	// TODO: support adjust cache size.
 	cache *slowLogCache
-}
-
-// ParseSlowLogRows uses to read slow log data by parse slow log file.
-// It won't use the cache data.
-// It is exporting for testing.
-func ParseSlowLogRows(filePath string, tz *time.Location) ([][]types.Datum, error) {
-	tuples, err := parseSlowLogDataFromFile(tz, filePath, 0, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	return convertSlowLogTuplesToDatums(tuples), nil
 }
 
 // getSlowLogData uses to get slow log data.
 // It will try to get from cache data first.
 // If cache not match, it will get data by parse slow log file, and then update the cache by async.
 func (s *slowLogReader) getSlowLogData(filePath string, tz *time.Location) ([][]types.Datum, error) {
-	if s.cache != nil && s.cache.filePath == filePath && !s.cache.buf.isEmpty() {
+	if s.cacheValid(filePath) {
 		// try read with buffer.
 		return s.getSlowLogDataWithCache(tz)
 
 	}
-	return s.parseSlowLogFileWithUpdateCache(tz, filePath, 0, nil, nil)
+	return s.parseSlowLogFileAndUpdateCache(tz, filePath, 0, nil, nil)
 }
 
+// getSlowLogDataWithCache gets data from cache and get the remain data by parse slow log file.
+// It will update cache if has new data.
 func (s *slowLogReader) getSlowLogDataWithCache(tz *time.Location) ([][]types.Datum, error) {
 	s.RLock()
 	// Get before cached tuples.
@@ -82,6 +74,9 @@ func (s *slowLogReader) getSlowLogDataWithCache(tz *time.Location) ([][]types.Da
 	}
 	// Get after cached tuples. Put this out lock is for reduce lock time.
 	afterCacheTuples, err := s.parseSlowLogFileAfterCached(tz, cacheEndTime, readOffsetAfterCache)
+	if err != nil {
+		return nil, err
+	}
 	logutil.Logger(context.Background()).Info("slow query read data with cache", zap.Int("before cached", len(beforeCacheTuples)), zap.Int("cached", len(rows)), zap.Int("after cached", len(afterCacheTuples)))
 
 	// Fill before cached tuples.
@@ -97,7 +92,8 @@ func (s *slowLogReader) getSlowLogDataWithCache(tz *time.Location) ([][]types.Da
 	return rows, nil
 }
 
-func (s *slowLogReader) parseSlowLogFileWithUpdateCache(tz *time.Location, filePath string, offset int64, filterFn func(t time.Time) bool, bypassFn func(t time.Time) bool) ([][]types.Datum, error) {
+// parseSlowLogFileAndUpdateCache gets data by parse the slow log file, and then update the cache.
+func (s *slowLogReader) parseSlowLogFileAndUpdateCache(tz *time.Location, filePath string, offset int64, filterFn func(t time.Time) bool, bypassFn func(t time.Time) bool) ([][]types.Datum, error) {
 	tuples, err := parseSlowLogDataFromFile(tz, filePath, offset, filterFn, bypassFn)
 	if err != nil {
 		return nil, err
@@ -106,6 +102,8 @@ func (s *slowLogReader) parseSlowLogFileWithUpdateCache(tz *time.Location, fileP
 	return convertSlowLogTuplesToDatums(tuples), nil
 }
 
+// parseSlowLogFileBeforeCachedAndCheckTruncate parse slow log file data which before cached start time
+// and check the log file has been truncated.
 func (s *slowLogReader) parseSlowLogFileBeforeCachedAndCheckTruncate(tz *time.Location) ([]*slowQueryTuple, bool, error) {
 	cacheStartTime := s.cache.getStartTime()
 	first := true
@@ -120,6 +118,7 @@ func (s *slowLogReader) parseSlowLogFileBeforeCachedAndCheckTruncate(tz *time.Lo
 	return beforeCacheTuples, hasTruncate, err
 }
 
+// getSlowLogRowsFromCache gets slow log rows from cache.
 func (s *slowLogReader) getSlowLogRowsFromCache(tz *time.Location, rows [][]types.Datum) [][]types.Datum {
 	s.cache.buf.iterate(func(d interface{}) bool {
 		tuple := d.(*slowQueryTuple)
@@ -129,6 +128,7 @@ func (s *slowLogReader) getSlowLogRowsFromCache(tz *time.Location, rows [][]type
 	return rows
 }
 
+// parseSlowLogFileAfterCached parse slow log file data which after cached end time.
 func (s *slowLogReader) parseSlowLogFileAfterCached(tz *time.Location, cacheEndTime time.Time, offset int64) ([]*slowQueryTuple, error) {
 	afterCacheTuples, err := parseSlowLogDataFromFile(tz, s.cache.filePath, offset, nil, func(t time.Time) bool {
 		return t.Before(cacheEndTime) || t.Equal(cacheEndTime)
@@ -179,6 +179,11 @@ func newSlowLogBuffer(filePath string, size int) *slowLogCache {
 		filePath: filePath,
 		buf:      newRingBuffer(size),
 	}
+}
+
+// cacheValid validates whether the cache is validate for the target file path.
+func (s *slowLogReader) cacheValid(filePath string) bool {
+	return s.cache != nil && s.cache.filePath == filePath && !s.cache.buf.isEmpty()
 }
 
 func (c *slowLogCache) getEndOffset() int64 {
