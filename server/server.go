@@ -530,12 +530,8 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 }
 
 func killConn(conn *clientConn) {
-	conn.mu.RLock()
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-	if cancelFunc != nil {
-		cancelFunc()
-	}
+	sessVars := conn.ctx.GetSessionVars()
+	atomic.StoreUint32(&sessVars.Killed, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.

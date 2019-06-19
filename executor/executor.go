@@ -182,12 +182,11 @@ type Executor interface {
 
 // Next is a wrapper function on e.Next(), it handles some common codes.
 func Next(ctx context.Context, e Executor, req *chunk.RecordBatch) error {
-	select {
-	case <-ctx.Done():
-		req.Reset()
-		return errors.Trace(ctx.Err())
-	default:
+	sessVars := e.base().ctx.GetSessionVars()
+	if atomic.LoadUint32(&sessVars.Killed) != 0 {
+		return ErrQueryInterrupted
 	}
+
 	return e.Next(ctx, req)
 }
 
