@@ -102,7 +102,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		FieldType: *colTypeForHandle,
 	})
 
-	e.srcChunk = e.newFirstChunk()
+	e.srcChunk = newFirstChunk(e)
 	dagPB, err := e.buildDAGPB()
 	if err != nil {
 		return err
