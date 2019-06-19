@@ -41,7 +41,7 @@ require (
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190528074401-b942b3f4108f
+	github.com/pingcap/kvproto v0.0.0-20190619024611-a4759dfe3753
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
 	github.com/pingcap/parser v0.0.0-20190612052718-3b36f86d9b7b
 	github.com/pingcap/pd v0.0.0-20190617100349-293d4b5189bf
