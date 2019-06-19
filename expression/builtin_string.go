@@ -266,7 +266,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			logutil.Logger(context.Background()).Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
+			logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
@@ -324,7 +324,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
-				logutil.Logger(context.Background()).Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
+				logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
 			bf.tp.Flen += argType.Flen
 		}
@@ -1796,7 +1796,7 @@ func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			logutil.Logger(context.Background()).Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
+			logutil.BgLogger().Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
 		}
 		if isNull || err != nil || length > mysql.MaxBlobWidth {
 			return mysql.MaxBlobWidth
@@ -2176,7 +2176,7 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	oldStr := result
 	result, _, err = transform.String(encoding.NewDecoder(), result)
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("change charset of string",
+		logutil.BgLogger().Warn("change charset of string",
 			zap.String("string", oldStr),
 			zap.String("charset", charsetName),
 			zap.Error(err))

@@ -5985,7 +5985,7 @@ func (b *builtinTimeFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	dur, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	// if err != nil, then dur is ZeroDuration, outputs 00:00:00 in this case which follows the behavior of mysql.
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("time_format.args[0].EvalDuration failed", zap.Error(err))
+		logutil.BgLogger().Warn("time_format.args[0].EvalDuration failed", zap.Error(err))
 	}
 	if isNull {
 		return "", isNull, err

@@ -83,7 +83,7 @@ var ignoreError uint32
 // DisableSkipBinlogFlag disable the skipBinlog flag.
 func DisableSkipBinlogFlag() {
 	atomic.StoreUint32(&skipBinlog, 0)
-	logutil.Logger(context.Background()).Warn("[binloginfo] disable the skipBinlog flag")
+	logutil.BgLogger().Warn("[binloginfo] disable the skipBinlog flag")
 }
 
 // SetIgnoreError sets the ignoreError flag, this function called when TiDB start
@@ -111,9 +111,9 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	// it will retry in PumpsClient if write binlog fail.
 	err := info.Client.WriteBinlog(info.Data)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("write binlog failed", zap.Error(err))
+		logutil.BgLogger().Error("write binlog failed", zap.Error(err))
 		if atomic.LoadUint32(&ignoreError) == 1 {
-			logutil.Logger(context.Background()).Error("write binlog fail but error ignored")
+			logutil.BgLogger().Error("write binlog fail but error ignored")
 			metrics.CriticalErrorCounter.Add(1)
 			// If error happens once, we'll stop writing binlog.
 			atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)

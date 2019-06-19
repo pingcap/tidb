@@ -245,6 +245,8 @@ var SlowQueryLogger = log.StandardLogger()
 // SlowQueryZapLogger is used to log slow query, InitZapLogger will modify it according to config file.
 var SlowQueryZapLogger = zaplog.L()
 
+var bgctxLogger = zaplog.L()
+
 // InitLogger initializes PD's logger.
 func InitLogger(cfg *LogConfig) error {
 	log.SetLevel(stringToLogLevel(cfg.Level))
@@ -282,6 +284,7 @@ func InitZapLogger(cfg *LogConfig) error {
 		return errors.Trace(err)
 	}
 	zaplog.ReplaceGlobals(gl, props)
+	bgctxLogger = gl
 
 	if len(cfg.SlowQueryFile) != 0 {
 		sqfCfg := zaplog.FileLogConfig{
@@ -328,6 +331,11 @@ func Logger(ctx context.Context) *zap.Logger {
 		return ctxlogger
 	}
 	return zaplog.L()
+}
+
+// BgLogger is alias of `logutil.BgLogger()`
+func BgLogger() *zap.Logger {
+	return bgctxLogger
 }
 
 // WithConnID attaches connId to context.

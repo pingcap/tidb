@@ -171,7 +171,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 	if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
 		s, err := getPreparedStmt(execStmt, vars)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("getPreparedStmt failed", zap.Error(err))
+			logutil.BgLogger().Error("getPreparedStmt failed", zap.Error(err))
 			return false
 		}
 		return ast.IsReadOnly(s)
@@ -510,7 +510,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 			return nil, err
 		}
 		if useMaxTS {
-			logutil.Logger(context.Background()).Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
+			logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else if ctx.GetSessionVars().SnapshotTS != 0 {
 			if _, ok := a.Plan.(*plannercore.CheckTable); ok {

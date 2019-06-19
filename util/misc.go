@@ -73,7 +73,7 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 			recoverFn(r)
 		}
 		if r != nil {
-			logutil.Logger(context.Background()).Error("panic in the recoverable goroutine",
+			logutil.BgLogger().Error("panic in the recoverable goroutine",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 		}
@@ -111,7 +111,7 @@ func SyntaxError(err error) error {
 	if err == nil {
 		return nil
 	}
-	logutil.Logger(context.Background()).Error("syntax error", zap.Error(err))
+	logutil.BgLogger().Error("syntax error", zap.Error(err))
 
 	// If the error is already a terror with stack, pass it through.
 	if errors.HasStack(err) {

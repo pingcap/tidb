@@ -290,7 +290,7 @@ func (latches *Latches) recycle(currentTS uint64) {
 		total += latch.recycle(currentTS)
 		latch.Unlock()
 	}
-	logutil.Logger(context.Background()).Debug("recycle",
+	logutil.BgLogger().Debug("recycle",
 		zap.Time("start at", time.Now()),
 		zap.Int("count", total))
 }

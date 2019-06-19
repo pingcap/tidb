@@ -77,7 +77,7 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 	}
 	defer func() {
 		if err = file.Close(); err != nil {
-			logutil.Logger(context.Background()).Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
+			logutil.BgLogger().Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
 		}
 	}()
 	return ParseSlowLog(tz, bufio.NewReader(file))

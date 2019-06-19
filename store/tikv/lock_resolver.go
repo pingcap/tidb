@@ -189,7 +189,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		}
 	}
 	if len(expiredLocks) != len(locks) {
-		logutil.Logger(context.Background()).Error("BatchResolveLocks: maybe safe point is wrong!",
+		logutil.BgLogger().Error("BatchResolveLocks: maybe safe point is wrong!",
 			zap.Int("get locks", len(locks)),
 			zap.Int("expired locks", len(expiredLocks)))
 		return false, nil
@@ -208,7 +208,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		}
 		txnInfos[l.TxnID] = uint64(status)
 	}
-	logutil.Logger(context.Background()).Info("BatchResolveLocks: lookup txn status",
+	logutil.BgLogger().Info("BatchResolveLocks: lookup txn status",
 		zap.Duration("cost time", time.Since(startTime)),
 		zap.Int("num of txn", len(txnInfos)))
 
@@ -253,7 +253,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, errors.Errorf("unexpected resolve err: %s", keyErr)
 	}
 
-	logutil.Logger(context.Background()).Info("BatchResolveLocks: resolve locks in a batch",
+	logutil.BgLogger().Info("BatchResolveLocks: resolve locks in a batch",
 		zap.Duration("cost time", time.Since(startTime)),
 		zap.Int("num of locks", len(expiredLocks)))
 	return true, nil
@@ -374,7 +374,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
-			logutil.Logger(context.Background()).Error("getTxnStatus error", zap.Error(err))
+			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
 			return status, err
 		}
 		if cmdResp.CommitVersion != 0 {
@@ -435,7 +435,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)
-			logutil.Logger(context.Background()).Error("resolveLock error", zap.Error(err))
+			logutil.BgLogger().Error("resolveLock error", zap.Error(err))
 			return err
 		}
 		if cleanWholeRegion {

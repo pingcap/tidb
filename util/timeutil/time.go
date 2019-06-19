@@ -76,9 +76,9 @@ func InferSystemTZ() string {
 			if err2 == nil {
 				return name
 			}
-			logutil.Logger(context.Background()).Error("infer timezone failed", zap.Error(err2))
+			logutil.BgLogger().Error("infer timezone failed", zap.Error(err2))
 		}
-		logutil.Logger(context.Background()).Error("locate timezone files failed", zap.Error(err1))
+		logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))
 	case tz != "" && tz != "UTC":
 		for _, source := range zoneSources {
 			if _, err := os.Stat(source + tz); err == nil {

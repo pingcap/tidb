@@ -55,7 +55,7 @@ func (a *LogOnExceed) Action(t *Tracker) {
 	if !a.acted {
 		a.acted = true
 		if a.logHook == nil {
-			logutil.Logger(context.Background()).Warn("memory exceeds quota",
+			logutil.BgLogger().Warn("memory exceeds quota",
 				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String())))
 			return
 		}

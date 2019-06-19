@@ -305,7 +305,7 @@ func (t Time) ToNumber() *MyDecimal {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("[fatal] never happen because we've control the format!")
+		logutil.BgLogger().Error("[fatal] never happen because we've control the format!")
 	}
 
 	if t.Fsp > 0 {

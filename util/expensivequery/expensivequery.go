@@ -150,5 +150,5 @@ func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
 	}
 	logFields = append(logFields, zap.String("sql", sql))
 
-	logutil.Logger(context.Background()).Warn("expensive_query", logFields...)
+	logutil.BgLogger().Warn("expensive_query", logFields...)
 }

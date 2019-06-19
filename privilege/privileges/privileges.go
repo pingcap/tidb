@@ -84,13 +84,13 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
-		logutil.Logger(context.Background()).Error("get user privilege record fail",
+		logutil.BgLogger().Error("get user privilege record fail",
 			zap.String("user", user), zap.String("host", host))
 		return ""
 	}
 	pwd := record.Password
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
-		logutil.Logger(context.Background()).Error("user password from system DB not like sha1sum", zap.String("user", user))
+		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return ""
 	}
 	return pwd
@@ -108,7 +108,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
-		logutil.Logger(context.Background()).Error("get user privilege record fail",
+		logutil.BgLogger().Error("get user privilege record fail",
 			zap.String("user", user), zap.String("host", host))
 		return
 	}
@@ -119,7 +119,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	// Login a locked account is not allowed.
 	locked := record.AccountLocked
 	if locked {
-		logutil.Logger(context.Background()).Error("try to login a locked account",
+		logutil.BgLogger().Error("try to login a locked account",
 			zap.String("user", user), zap.String("host", host))
 		success = false
 		return
@@ -127,7 +127,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 
 	pwd := record.Password
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
-		logutil.Logger(context.Background()).Error("user password from system DB not like sha1sum", zap.String("user", user))
+		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return
 	}
 
@@ -145,7 +145,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 
 	hpwd, err := auth.DecodePassword(pwd)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("decode password string failed", zap.Error(err))
+		logutil.BgLogger().Error("decode password string failed", zap.Error(err))
 		return
 	}
 
@@ -214,7 +214,7 @@ func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.Ro
 	for _, r := range roleList {
 		ok := mysqlPrivilege.FindRole(u, h, r)
 		if !ok {
-			logutil.Logger(context.Background()).Error("find role failed", zap.Stringer("role", r))
+			logutil.BgLogger().Error("find role failed", zap.Stringer("role", r))
 			return false, r.String()
 		}
 	}
@@ -230,7 +230,7 @@ func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentit
 	mysqlPrivilege := p.Handle.Get()
 	ok := mysqlPrivilege.FindRole(user.Username, user.Hostname, role)
 	if !ok {
-		logutil.Logger(context.Background()).Error("find role failed", zap.Stringer("role", role))
+		logutil.BgLogger().Error("find role failed", zap.Stringer("role", role))
 		return false
 	}
 	return true
