@@ -1,7 +1,12 @@
 package infoschema
 
 import (
+	"fmt"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/logutil"
+	"math/rand"
+	"os"
+	"time"
 )
 
 var _ = Suite(&testSlowLogBufferSuit{})
@@ -78,4 +83,36 @@ func testRingBufferBasic(rb *ringBuffer, c *C) {
 
 	rb.resize(5)
 	checkFunc(3, 11, 13, []interface{}{11, 12, 13})
+}
+
+func (*testSlowLogBufferSuit) TestSlowQueryReader(c *C) {
+	logFile := "tidb-slow.log"
+	logNum := 10
+	slowQueryBufferSize = 10
+	prepareSlowLogFile(logFile, c, logNum)
+	readFileTuples, err := globalSlowQueryReader.ReadSlowLogDataFromFile(time.Local, logFile, 0, nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(len(readFileTuples), Equals, logNum)
+	c.Assert(globalSlowQueryReader.cache.filePath, Equals, logFile)
+	c.Assert(globalSlowQueryReader.cache.buf.len(), Equals, 10)
+}
+
+func prepareSlowLogFile(filePath string, c *C, num int) {
+	f, err := os.Create(filePath)
+	c.Assert(err, IsNil)
+	for i := 0; i < num; i++ {
+		now := time.Now()
+		logStr := fmt.Sprintf("# Time: %v\n", now.Format(logutil.SlowLogTimeFormat))
+		logStr += fmt.Sprintf("# Txn_start_ts: %v\n", now.Unix())
+		logStr += fmt.Sprintf("# Query_time: %v\n", rand.Float64())
+		logStr += fmt.Sprintf("# Process_time: %v\n", rand.Float64())
+		logStr += fmt.Sprintf("# Is_internal: %v\n", true)
+		logStr += fmt.Sprintf("# Digest: %v\n", "abcdefghijk")
+		logStr += fmt.Sprintf("# Stats: %v\n", "pseudo")
+		logStr += fmt.Sprintf("select * from t%v;\n", i)
+		_, err = f.WriteString(logStr)
+		c.Assert(err, IsNil)
+	}
+	err = f.Close()
+	c.Assert(err, IsNil)
 }

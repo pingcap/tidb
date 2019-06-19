@@ -102,49 +102,9 @@ func (s *slowQueryReader) readSlowLogDataWithCache(tz *time.Location) ([][]types
 	return rows, nil
 }
 
-func (s *slowQueryReader) readCacheAtStart() *slowQueryTuple {
-	tuple := s.cache.buf.getStart()
-	if tuple == nil {
-		return nil
-	}
-	return tuple.(*slowQueryTuple)
-}
+func (s *slowQueryReader) getSlowLogDataFromCache(tz *time.Location) ([][]types.Datum, error) {
 
-func (s *slowQueryReader) readCacheAtEnd() *slowQueryTuple {
-	tuple := s.cache.buf.getEnd()
-	if tuple == nil {
-		return nil
-	}
-	return tuple.(*slowQueryTuple)
-}
-
-func (s *slowQueryReader) updateCache(filePath string, tuples []*slowQueryTuple) {
-	s.Lock()
-	defer s.Unlock()
-	if s.cache == nil {
-		s.cache = newSlowQueryBuffer(config.GetGlobalConfig().Log.SlowQueryFile, slowQueryBufferSize)
-	}
-	if filePath != s.cache.filePath {
-		logutil.Logger(context.Background()).Info("slow query update cache", zap.String("cache file", s.cache.filePath), zap.String("data file", filePath))
-		return
-	}
-	if s.cache.buf.isEmpty() {
-		for i := range tuples {
-			s.cache.buf.write(tuples[i])
-		}
-		return
-	}
-	cacheEndTuple := s.readCacheAtEnd()
-	for i := range tuples {
-		if tuples[i].time.Before(cacheEndTuple.time) {
-			continue
-		}
-		if tuples[i].equal(cacheEndTuple) {
-			continue
-		}
-
-		s.cache.buf.write(tuples[i])
-	}
+	return nil, nil
 }
 
 func (s *slowQueryReader) ReadSlowLogDataFromFile(tz *time.Location, filePath string, offset int64, filterFn func(t time.Time) bool, bypassFn func(t time.Time) bool) ([][]types.Datum, error) {
@@ -245,6 +205,51 @@ func parseSlowLogDataFromFile(tz *time.Location, filePath string, offset int64, 
 			}
 		}
 	}
+}
+
+func (s *slowQueryReader) updateCache(filePath string, tuples []*slowQueryTuple) {
+	s.Lock()
+	defer s.Unlock()
+	if s.cache == nil {
+		s.cache = newSlowQueryBuffer(config.GetGlobalConfig().Log.SlowQueryFile, slowQueryBufferSize)
+	}
+	if filePath != s.cache.filePath {
+		logutil.Logger(context.Background()).Info("slow query cache file not match", zap.String("cache file", s.cache.filePath), zap.String("data file", filePath))
+		return
+	}
+	if s.cache.buf.isEmpty() {
+		for i := range tuples {
+			s.cache.buf.write(tuples[i])
+		}
+		return
+	}
+	cacheEndTuple := s.readCacheAtEnd()
+	for i := range tuples {
+		if tuples[i].time.Before(cacheEndTuple.time) {
+			continue
+		}
+		if tuples[i].equal(cacheEndTuple) {
+			continue
+		}
+
+		s.cache.buf.write(tuples[i])
+	}
+}
+
+func (s *slowQueryReader) readCacheAtStart() *slowQueryTuple {
+	tuple := s.cache.buf.getStart()
+	if tuple == nil {
+		return nil
+	}
+	return tuple.(*slowQueryTuple)
+}
+
+func (s *slowQueryReader) readCacheAtEnd() *slowQueryTuple {
+	tuple := s.cache.buf.getEnd()
+	if tuple == nil {
+		return nil
+	}
+	return tuple.(*slowQueryTuple)
 }
 
 type slowQueryBuffer struct {
