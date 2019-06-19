@@ -19,10 +19,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	// "github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	// "github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -38,7 +36,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		b.err = err
 		return nil
 	}
-	return &PointGetExecutor{
+	e := &PointGetExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
 		tblInfo:      p.TblInfo,
 		idxInfo:      p.IndexInfo,
@@ -46,6 +44,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		handle:       p.Handle,
 		startTS:      startTS,
 	}
+	e.base().initCap = 1
+	e.base().maxChunkSize = 1
+	return e
 }
 
 // PointGetExecutor executes point select query.
