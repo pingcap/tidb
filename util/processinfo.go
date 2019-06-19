@@ -36,6 +36,9 @@ type ProcessInfo struct {
 	StmtCtx                   *stmtctx.StatementContext
 	StatsInfo                 func(interface{}) map[string]uint64
 	ExceedExpensiveTimeThresh bool
+	// MaxExecutionTime is the timeout for select statement, in milliseconds.
+	// If the query takes too long, kill it.
+	MaxExecutionTime uint64
 }
 
 // ToRow returns []interface{} for the row data of "show processlist" and "select * from infoschema.processlist".

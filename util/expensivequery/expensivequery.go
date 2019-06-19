@@ -63,9 +63,12 @@ func (eqh *Handle) Run() {
 				if len(info.Info) == 0 || info.ExceedExpensiveTimeThresh {
 					continue
 				}
-				if costTime := time.Since(info.Time); costTime >= curInterval {
+				costTime := time.Since(info.Time)
+				if costTime >= curInterval {
 					logExpensiveQuery(costTime, info)
 					info.ExceedExpensiveTimeThresh = true
+				} else if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
+					eqh.sm.Kill(info.ID, true)
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)

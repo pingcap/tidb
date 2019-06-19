@@ -116,7 +116,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
-	SetProcessInfo(string, time.Time, byte)
+	SetProcessInfo(string, time.Time, byte, uint64)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -956,18 +956,19 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
+func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
 	pi := util.ProcessInfo{
-		ID:            s.sessionVars.ConnectionID,
-		DB:            s.sessionVars.CurrentDB,
-		Command:       command,
-		Plan:          s.currentPlan,
-		Time:          t,
-		State:         s.Status(),
-		Info:          sql,
-		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
-		StmtCtx:       s.sessionVars.StmtCtx,
-		StatsInfo:     plannercore.GetStatsInfo,
+		ID:               s.sessionVars.ConnectionID,
+		DB:               s.sessionVars.CurrentDB,
+		Command:          command,
+		Plan:             s.currentPlan,
+		Time:             t,
+		State:            s.Status(),
+		Info:             sql,
+		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		StmtCtx:          s.sessionVars.StmtCtx,
+		StatsInfo:        plannercore.GetStatsInfo,
+		MaxExecutionTime: maxExecutionTime,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username

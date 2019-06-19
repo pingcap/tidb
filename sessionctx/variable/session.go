@@ -379,6 +379,11 @@ type SessionVars struct {
 
 	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	LowResolutionTSO bool
+
+	// MaxExecutionTime is the timeout for select statement, in milliseconds.
+	// If the value is 0, timeouts are not enabled.
+	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
+	MaxExecutionTime uint64
 }
 
 // ConnectionInfo present connection used by audit.

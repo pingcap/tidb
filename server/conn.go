@@ -858,7 +858,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastCmd = string(hack.String(data))
 	token := cc.server.getToken()
 	defer func() {
-		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
+		cc.ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
@@ -871,9 +871,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
-		cc.ctx.SetProcessInfo("", t, cmd)
+		cc.ctx.SetProcessInfo("", t, cmd, 0)
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd)
+		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd, 0)
 	}
 
 	switch cmd {
