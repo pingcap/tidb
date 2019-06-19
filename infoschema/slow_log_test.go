@@ -14,8 +14,8 @@
 package infoschema_test
 
 import (
-	"bufio"
 	"bytes"
+	"os"
 	"strings"
 	"time"
 
@@ -38,10 +38,25 @@ func (s *testSuite) TestParseSlowLogFile(c *C) {
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8 Cop_wait_addr: 0.0.0.0:20160
 # Mem_max: 70724
 select * from t;`)
-	reader := bufio.NewReader(slowLog)
+	logFile := "tidb-slow.log"
+	writeDataToFile := func(data string) {
+		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_RDWR, 0644)
+		c.Assert(err, IsNil)
+		err = f.Truncate(0)
+		c.Assert(err, IsNil)
+		_, err = f.Seek(0, 0)
+		c.Assert(err, IsNil)
+		_, err = f.WriteString(slowLog.String())
+		c.Assert(err, IsNil)
+		f.Close()
+		c.Assert(err, IsNil)
+	}
+
+	writeDataToFile(slowLog.String())
+
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	rows, err := infoschema.ParseSlowLog(loc, reader)
+	rows, err := infoschema.ParseSlowLogRows(logFile, loc)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows), Equals, 1)
 	recordString := ""
@@ -69,8 +84,9 @@ select a# from t;
 # Stats: t1:1,t2:2
 select * from t;
 `)
-	reader = bufio.NewReader(slowLog)
-	_, err = infoschema.ParseSlowLog(loc, reader)
+	writeDataToFile(slowLog.String())
+
+	_, err = infoschema.ParseSlowLogRows(logFile, loc)
 	c.Assert(err, IsNil)
 
 	// test for time format compatibility.
@@ -80,8 +96,8 @@ select * from t;
 # Time: 2019-04-24-19:41:21.716221 +0800
 select * from t;
 `)
-	reader = bufio.NewReader(slowLog)
-	rows, err = infoschema.ParseSlowLog(loc, reader)
+	writeDataToFile(slowLog.String())
+	rows, err = infoschema.ParseSlowLogRows(logFile, loc)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows) == 2, IsTrue)
 	t0Str, err := rows[0][0].ToString()
@@ -101,14 +117,18 @@ select * from t;
 	variable.MaxOfMaxAllowedPacket = 65536
 	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
 	slowLog.WriteString(sql)
-	reader = bufio.NewReader(slowLog)
-	_, err = infoschema.ParseSlowLog(loc, reader)
+
+	writeDataToFile(slowLog.String())
+	rows, err = infoschema.ParseSlowLogRows(logFile, loc)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "single line length exceeds limit: 65536")
 
 	variable.MaxOfMaxAllowedPacket = originValue
-	reader = bufio.NewReader(slowLog)
-	_, err = infoschema.ParseSlowLog(loc, reader)
+	writeDataToFile(slowLog.String())
+	_, err = infoschema.ParseSlowLogRows(logFile, loc)
+	c.Assert(err, IsNil)
+
+	err = os.Remove(logFile)
 	c.Assert(err, IsNil)
 }
 
@@ -153,9 +173,17 @@ select * from t
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8
 # Mem_max: 70724
 select * from t;`)
-	scanner := bufio.NewReader(slowLog)
+	logFile := "tidb-slow.log"
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_RDWR, 0644)
+	c.Assert(err, IsNil)
+	_, err = f.WriteString(slowLog.String())
+	c.Assert(err, IsNil)
+	err = f.Close()
+	c.Assert(err, IsNil)
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	_, err = infoschema.ParseSlowLog(loc, scanner)
+	_, err = infoschema.ReadSlowLogData(logFile, loc)
+	c.Assert(err, IsNil)
+	err = os.Remove(logFile)
 	c.Assert(err, IsNil)
 }

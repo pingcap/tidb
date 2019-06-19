@@ -65,13 +65,21 @@ var slowQueryCols = []columnInfo{
 }
 
 func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
-	return globalSlowQueryReader.readSlowLogData(ctx.GetSessionVars().SlowQueryFile, ctx.GetSessionVars().Location())
-	//return parseSlowLogFile(ctx.GetSessionVars().Location(), ctx.GetSessionVars().SlowQueryFile)
+	return ReadSlowLogData(ctx.GetSessionVars().SlowQueryFile, ctx.GetSessionVars().Location())
 }
 
-// parseSlowLogFile uses to parse slow log file.
+// ReadSlowLogData uses to read slow log data.
+// It is exporting for testing.
 // TODO: Support parse multiple log-files.
-func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, error) {
+func ReadSlowLogData(filePath string, tz *time.Location) ([][]types.Datum, error) {
+	return globalSlowQueryReader.getSlowLogData(filePath, tz)
+}
+
+// ReadSlowLogDataFromFile reads slow query data from slow log file.
+// If filterFn(t) return false, will stop read and return directly.
+// If bypassFn(t) return true, will bypass the current tuple.
+// ReadSlowLogDataFromFile exports for testing.
+func parseSlowLogDataFromFile(tz *time.Location, filePath string, offset int64, filterFn func(t time.Time) bool, bypassFn func(t time.Time) bool) ([]*slowQueryTuple, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -81,34 +89,25 @@ func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, erro
 			logutil.Logger(context.Background()).Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
 		}
 	}()
-	return ParseSlowLog(tz, bufio.NewReader(file))
-}
 
-func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, error) {
-	slowQueryData, err := ParseSlowLogData(tz, reader)
-	if err != nil {
-		return nil, err
+	if offset > 0 {
+		if _, err := file.Seek(offset, 0); err != nil {
+			return nil, err
+		}
 	}
-	rows := make([][]types.Datum, len(slowQueryData))
-	for i := range slowQueryData {
-		rows[i] = slowQueryData[i].convertToDatumRow()
-	}
-	return rows, nil
-}
-
-// ParseSlowLog exports for testing.
-// TODO: optimize for parse huge log-file.
-func ParseSlowLogData(tz *time.Location, reader *bufio.Reader) ([]*slowQueryTuple, error) {
+	var tuples []*slowQueryTuple
+	reader := bufio.NewReader(file)
 	startFlag := false
+	currentOffset := offset
 	var st *slowQueryTuple
-	var slowQueryData []*slowQueryTuple
 	for {
 		lineByte, err := getOneLine(reader)
+		currentOffset += int64(len(lineByte) + 1)
 		if err != nil {
 			if err == io.EOF {
-				return slowQueryData, nil
+				return tuples, nil
 			}
-			return slowQueryData, err
+			return tuples, err
 		}
 		line := string(hack.String(lineByte))
 		// Check slow log entry start flag.
@@ -116,9 +115,15 @@ func ParseSlowLogData(tz *time.Location, reader *bufio.Reader) ([]*slowQueryTupl
 			st = &slowQueryTuple{}
 			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
 			if err != nil {
-				return slowQueryData, err
+				return tuples, err
 			}
 			startFlag = true
+			if filterFn != nil && !filterFn(st.time) {
+				return tuples, err
+			}
+			if bypassFn != nil && bypassFn(st.time) {
+				startFlag = false
+			}
 			continue
 		}
 
@@ -134,16 +139,17 @@ func ParseSlowLogData(tz *time.Location, reader *bufio.Reader) ([]*slowQueryTupl
 					}
 					err = st.setFieldValue(tz, field, fieldValues[i+1])
 					if err != nil {
-						return slowQueryData, err
+						return tuples, err
 					}
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				// Get the sql string, and mark the start flag to false.
 				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)))
 				if err != nil {
-					return slowQueryData, err
+					return tuples, err
 				}
-				slowQueryData = append(slowQueryData, st)
+				st.endOffset = currentOffset
+				tuples = append(tuples, st)
 				startFlag = false
 			} else {
 				startFlag = false
@@ -201,8 +207,8 @@ type slowQueryTuple struct {
 	maxWaitAddress    string
 	memMax            int64
 	sql               string
-	// endPos is the end offset in the file of this tuple.
-	endPos int64
+	// endOffset is the end offset in the file of this tuple.
+	endOffset int64
 }
 
 func (st *slowQueryTuple) equal(st2 *slowQueryTuple) bool {
@@ -397,4 +403,12 @@ func ParseTime(s string) (time.Time, error) {
 		}
 	}
 	return t, err
+}
+
+func convertSlowLogTuplesToDatums(tuples []*slowQueryTuple) [][]types.Datum {
+	rows := make([][]types.Datum, len(tuples))
+	for i := range tuples {
+		rows[i] = tuples[i].convertToDatumRow()
+	}
+	return rows
 }

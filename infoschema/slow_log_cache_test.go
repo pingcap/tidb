@@ -93,26 +93,27 @@ func (*testSlowLogBufferSuit) TestSlowQueryReader(c *C) {
 	// readFileFirst indicate read file first or read cache first. Read file first will update the cache.
 	checkCache := func(totalSize, cacheSize, beforeCacheSize, afterCacheSize int, updateCache bool) {
 		// get total tuples by parse file.
-		readFileRows, readFileTuples, err := globalSlowQueryReader.ReadSlowLogDataFromFileWithoutUpdateCache(time.Local, logFile, 0, nil, nil)
+		parseFileTuples, err := parseSlowLogDataFromFile(time.Local, logFile, 0, nil, nil)
 		c.Assert(err, IsNil)
-		c.Assert(len(readFileRows), Equals, totalSize)
+		parseFileRows := convertSlowLogTuplesToDatums(parseFileTuples)
+		c.Assert(len(parseFileRows), Equals, totalSize)
 		if updateCache {
-			globalSlowQueryReader.updateCache(logFile, readFileTuples)
+			globalSlowQueryReader.updateCache(logFile, parseFileTuples)
 		}
 
 		// Check cache parameter.
 		c.Assert(globalSlowQueryReader.cache.filePath, Equals, logFile)
 		c.Assert(globalSlowQueryReader.cache.buf.len(), Equals, cacheSize)
-		c.Assert(globalSlowQueryReader.cache.getEndPos() != 0, IsTrue)
+		c.Assert(globalSlowQueryReader.cache.getEndOffset() != 0, IsTrue)
 		// Get before cached tuples.
-		beforeCachedTuples, _, err := globalSlowQueryReader.parseSlowLogDataFromFileBeforeCachedAndCheckTruncate(time.Local)
+		beforeCachedTuples, _, err := globalSlowQueryReader.parseSlowLogFileBeforeCachedAndCheckTruncate(time.Local)
 		c.Assert(err, IsNil)
 		c.Assert(len(beforeCachedTuples), Equals, beforeCacheSize)
-		c.Assert(globalSlowQueryReader.getSlowLogDataFromCache(time.Local, nil), DeepEquals, readFileRows[beforeCacheSize:totalSize-afterCacheSize])
+		c.Assert(globalSlowQueryReader.getSlowLogRowsFromCache(time.Local, nil), DeepEquals, parseFileRows[beforeCacheSize:totalSize-afterCacheSize])
 		// Get after cached tuples.
-		cacheEndTime := globalSlowQueryReader.readCacheAtEnd().time
-		cacheEndPos := globalSlowQueryReader.cache.getEndPos()
-		afterCachedTuples, err := globalSlowQueryReader.parseSlowLogDataFromFileAfterCached(time.Local, cacheEndTime, cacheEndPos)
+		cacheEndTime := globalSlowQueryReader.cache.getEndTime()
+		cacheEndOffset := globalSlowQueryReader.cache.getEndOffset()
+		afterCachedTuples, err := globalSlowQueryReader.parseSlowLogFileAfterCached(time.Local, cacheEndTime, cacheEndOffset)
 		c.Assert(err, IsNil)
 		c.Assert(len(afterCachedTuples), Equals, afterCacheSize)
 	}
@@ -124,29 +125,35 @@ func (*testSlowLogBufferSuit) TestSlowQueryReader(c *C) {
 	checkCache(11, 10, 1, 0, true)
 
 	appendToSlowLogFile(logFile, c, 1)
-	readFileRows, _, err := globalSlowQueryReader.ReadSlowLogDataFromFileWithoutUpdateCache(time.Local, logFile, 0, nil, nil)
+	parseFileRows, err := ParseSlowLogRows(logFile, time.Local)
 	c.Assert(err, IsNil)
-	readCacheRows, err := globalSlowQueryReader.readSlowLogDataWithCache(time.Local)
-	c.Assert(readFileRows, DeepEquals, readCacheRows)
+	readWithCacheRows, err := globalSlowQueryReader.getSlowLogDataWithCache(time.Local)
+	c.Assert(parseFileRows, DeepEquals, readWithCacheRows)
 	checkCache(12, 10, 2, 0, false)
 
 	// Test truncate log file.
+	cacheRows := globalSlowQueryReader.getSlowLogRowsFromCache(time.Local, nil)
 	truncateSlowLogFile(logFile, c)
-	readFileRowsAfterTruncate, _, err := globalSlowQueryReader.ReadSlowLogDataFromFileWithoutUpdateCache(time.Local, logFile, 0, nil, nil)
+	parseFileRows, err = ParseSlowLogRows(logFile, time.Local)
 	c.Assert(err, IsNil)
-	c.Assert(len(readFileRowsAfterTruncate), Equals, 0)
-	readCacheRowsAfterTruncate, err := globalSlowQueryReader.readSlowLogDataWithCache(time.Local)
-	c.Assert(readCacheRowsAfterTruncate, DeepEquals, readFileRows[2:])
+	c.Assert(len(parseFileRows), Equals, 0)
 
+	readWithCacheRows, err = globalSlowQueryReader.getSlowLogDataWithCache(time.Local)
+	c.Assert(readWithCacheRows, DeepEquals, cacheRows)
+
+	// Test append new log after truncate.
 	appendToSlowLogFile(logFile, c, 1)
-	readFileRowsAfterTruncate, _, err = globalSlowQueryReader.ReadSlowLogDataFromFileWithoutUpdateCache(time.Local, logFile, 0, nil, nil)
+	parseFileRows, err = ParseSlowLogRows(logFile, time.Local)
 	c.Assert(err, IsNil)
-	c.Assert(len(readFileRowsAfterTruncate), Equals, 1)
+	c.Assert(len(parseFileRows), Equals, 1)
 
-	readCacheRowsAfterTruncate, err = globalSlowQueryReader.readSlowLogDataWithCache(time.Local)
-	c.Assert(len(readCacheRowsAfterTruncate), Equals, 11)
-	c.Assert(readCacheRowsAfterTruncate[:10], DeepEquals, readFileRows[2:])
-	c.Assert(readCacheRowsAfterTruncate[10], DeepEquals, readFileRowsAfterTruncate[0])
+	readWithCacheRows, err = globalSlowQueryReader.getSlowLogDataWithCache(time.Local)
+	c.Assert(len(readWithCacheRows), Equals, 11)
+	c.Assert(readWithCacheRows[:10], DeepEquals, cacheRows)
+	c.Assert(readWithCacheRows[10], DeepEquals, parseFileRows[0])
+
+	err = os.Remove(logFile)
+	c.Assert(err, IsNil)
 }
 
 func prepareSlowLogFile(filePath string, c *C, num int) {
