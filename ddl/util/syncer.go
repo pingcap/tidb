@@ -435,7 +435,7 @@ func (s *schemaVersionSyncer) StartCleanWork() {
 				resp, err := s.etcdCli.Leases(childCtx)
 				cancelFunc()
 				if err != nil {
-					logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, failed to get leases.", zap.Error(err))
+					logutil.BgLogger().Info("[ddl] syncer clean expired paths, failed to get leases.", zap.Error(err))
 					continue
 				}
 
@@ -484,7 +484,7 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 		ttlResp, err := s.etcdCli.TimeToLive(childCtx, lease.ID)
 		cancelFunc()
 		if err != nil {
-			logutil.Logger(ddlLogCtx).Info("[ddl] syncer clean expired paths, failed to get one TTL.", zap.String("leaseID", leaseID), zap.Error(err))
+			logutil.BgLogger().Info("[ddl] syncer clean expired paths, failed to get one TTL.", zap.String("leaseID", leaseID), zap.Error(err))
 			failedGetIDs++
 			continue
 		}
@@ -501,11 +501,11 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 		_, err = s.etcdCli.Revoke(childCtx, lease.ID)
 		cancelFunc()
 		if err != nil && terror.ErrorEqual(err, rpctypes.ErrLeaseNotFound) {
-			logutil.Logger(ddlLogCtx).Warn("[ddl] syncer clean expired paths, failed to revoke lease.", zap.String("leaseID", leaseID),
+			logutil.BgLogger().Warn("[ddl] syncer clean expired paths, failed to revoke lease.", zap.String("leaseID", leaseID),
 				zap.Int64("TTL", ttlResp.TTL), zap.Error(err))
 			failedRevokeIDs++
 		}
-		logutil.Logger(ddlLogCtx).Warn("[ddl] syncer clean expired paths,", zap.String("leaseID", leaseID), zap.Int64("TTL", ttlResp.TTL))
+		logutil.BgLogger().Warn("[ddl] syncer clean expired paths,", zap.String("leaseID", leaseID), zap.Int64("TTL", ttlResp.TTL))
 		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerCleanOneExpirePath, metrics.RetLabel(err)).Observe(time.Since(st).Seconds())
 	}
 
