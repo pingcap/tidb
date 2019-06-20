@@ -14,7 +14,11 @@
 package util
 
 import (
+	"fmt"
 	"time"
+
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 // ProcessInfo is a struct used for show processlist statement.
@@ -23,17 +27,44 @@ type ProcessInfo struct {
 	User    string
 	Host    string
 	DB      string
-	Command string
+	Command byte
 	Time    time.Time
 	State   uint16
 	Info    string
-	Mem     int64
+	StmtCtx *stmtctx.StatementContext
+}
+
+// ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
+func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
+	var info string
+	if full {
+		info = pi.Info
+	} else {
+		info = fmt.Sprintf("%.100v", pi.Info)
+	}
+	t := uint64(time.Since(pi.Time) / time.Second)
+	return []interface{}{
+		pi.ID,
+		pi.User,
+		pi.Host,
+		pi.DB,
+		mysql.Command2Str[pi.Command],
+		t,
+		fmt.Sprintf("%d", pi.State),
+		info,
+	}
+}
+
+// ToRow returns []interface{} for the row data of
+// "SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST".
+func (pi *ProcessInfo) ToRow() []interface{} {
+	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed())
 }
 
 // SessionManager is an interface for session manage. Show processlist and
 // kill statement rely on this interface.
 type SessionManager interface {
 	// ShowProcessList returns map[connectionID]ProcessInfo
-	ShowProcessList() map[uint64]ProcessInfo
+	ShowProcessList() map[uint64]*ProcessInfo
 	Kill(connectionID uint64, query bool)
 }

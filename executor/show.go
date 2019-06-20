@@ -203,24 +203,8 @@ func (e *ShowExec) fetchShowProcessList() error {
 
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
-		var info string
-		if e.Full {
-			info = pi.Info
-		} else {
-			info = fmt.Sprintf("%.100v", pi.Info)
-		}
-
-		e.appendRow([]interface{}{
-			pi.ID,
-			pi.User,
-			pi.Host,
-			pi.DB,
-			pi.Command,
-			uint64(time.Since(pi.Time) / time.Second),
-			fmt.Sprintf("%d", pi.State),
-			info,
-			pi.Mem,
-		})
+		row := pi.ToRowForShow(e.Full)
+		e.appendRow(row)
 	}
 	return nil
 }
