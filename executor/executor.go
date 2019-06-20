@@ -180,6 +180,16 @@ type Executor interface {
 	Schema() *expression.Schema
 }
 
+// Next is a wrapper function on e.Next(), it handles some common codes.
+func Next(ctx context.Context, e Executor, req *chunk.RecordBatch) error {
+	sessVars := e.base().ctx.GetSessionVars()
+	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+		return ErrQueryInterrupted
+	}
+
+	return e.Next(ctx, req)
+}
+
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
 type CancelDDLJobsExec struct {
 	baseExecutor
@@ -559,7 +569,7 @@ func (e *CheckIndexExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	}
 	chk := newFirstChunk(e.src)
 	for {
-		err := e.src.Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.src, chunk.NewRecordBatch(chk))
 		if err != nil {
 			return err
 		}
@@ -668,7 +678,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	}
 
 	req.GrowAndReset(e.maxChunkSize)
-	err := e.children[0].Next(ctx, req)
+	err := Next(ctx, e.children[0], req)
 	if err != nil {
 		return err
 	}
@@ -728,7 +738,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	for !e.meetFirstBatch {
 		// transfer req's requiredRows to childResult and then adjust it in childResult
 		e.childResult = e.childResult.SetRequiredRows(req.RequiredRows(), e.maxChunkSize)
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.adjustRequiredRows(e.childResult)))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.adjustRequiredRows(e.childResult)))
 		if err != nil {
 			return err
 		}
@@ -753,7 +763,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		e.cursor += batchSize
 	}
 	e.adjustRequiredRows(req.Chunk)
-	err := e.children[0].Next(ctx, req)
+	err := Next(ctx, e.children[0], req)
 	if err != nil {
 		return err
 	}
@@ -823,7 +833,7 @@ func init() {
 		}
 		chk := newFirstChunk(exec)
 		for {
-			err = exec.Next(ctx, chunk.NewRecordBatch(chk))
+			err = Next(ctx, exec, chunk.NewRecordBatch(chk))
 			if err != nil {
 				return rows, err
 			}
@@ -940,7 +950,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 			}
 			req.AppendRow(e.inputRow)
 		}
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
 		if err != nil {
 			return err
 		}
@@ -972,7 +982,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 				return nil
 			}
 		}
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
 		if err != nil {
 			return err
 		}
@@ -1120,7 +1130,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		return nil
 	}
 	e.evaluated = true
-	err := e.children[0].Next(ctx, req)
+	err := Next(ctx, e.children[0], req)
 	if err != nil {
 		return err
 	}
@@ -1135,7 +1145,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 
 	childChunk := newFirstChunk(e.children[0])
-	err = e.children[0].Next(ctx, chunk.NewRecordBatch(childChunk))
+	err = Next(ctx, e.children[0], chunk.NewRecordBatch(childChunk))
 	if err != nil {
 		return err
 	}
@@ -1246,7 +1256,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 			return
 		case result.chk = <-e.resourcePools[childID]:
 		}
-		result.err = e.children[childID].Next(ctx, chunk.NewRecordBatch(result.chk))
+		result.err = Next(ctx, e.children[childID], chunk.NewRecordBatch(result.chk))
 		if result.err == nil && result.chk.NumRows() == 0 {
 			return
 		}

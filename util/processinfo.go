@@ -38,8 +38,8 @@ type ProcessInfo struct {
 	ExceedExpensiveTimeThresh bool
 }
 
-// ToRow returns []interface{} for the row data of "show processlist" and "select * from infoschema.processlist".
-func (pi *ProcessInfo) ToRow(full bool) []interface{} {
+// ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
+func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	var info string
 	if full {
 		info = pi.Info
@@ -57,6 +57,12 @@ func (pi *ProcessInfo) ToRow(full bool) []interface{} {
 		fmt.Sprintf("%d", pi.State),
 		info,
 	}
+}
+
+// ToRow returns []interface{} for the row data of
+// "SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST".
+func (pi *ProcessInfo) ToRow() []interface{} {
+	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed())
 }
 
 // SessionManager is an interface for session manage. Show processlist and
