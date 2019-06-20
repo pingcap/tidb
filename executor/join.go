@@ -178,10 +178,10 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 	var allTypes []*types.FieldType
 	if isOuterKey {
 		keyColIdx = e.outerKeyColIdx
-		allTypes = e.outerExec.retTypes()
+		allTypes = retTypes(e.outerExec)
 	} else {
 		keyColIdx = e.innerKeyColIdx
-		allTypes = e.innerExec.retTypes()
+		allTypes = retTypes(e.innerExec)
 	}
 
 	for _, i := range keyColIdx {
@@ -202,6 +202,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 		if e.finished.Load().(bool) {
 			return
 		}
+
 		var outerResource *outerChkResource
 		var ok bool
 		select {
@@ -217,7 +218,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			required := int(atomic.LoadInt64(&e.requiredRows))
 			outerResult.SetRequiredRows(required, e.maxChunkSize)
 		}
-		err := e.outerExec.Next(ctx, chunk.NewRecordBatch(outerResult))
+		err := Next(ctx, e.outerExec, chunk.NewRecordBatch(outerResult))
 		if err != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{
 				err: err,
@@ -244,6 +245,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 		if outerResult.NumRows() == 0 {
 			return
 		}
+
 		outerResource.dest <- outerResult
 	}
 }
@@ -268,7 +270,7 @@ var innerResultLabel fmt.Stringer = stringutil.StringerStr("innerResult")
 // fetchInnerRows fetches all rows from inner executor, and append them to
 // e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context) error {
-	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
+	e.innerResult = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	var err error
@@ -276,8 +278,9 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context) error {
 		if e.finished.Load().(bool) {
 			return nil
 		}
-		chk := e.children[e.innerIdx].newFirstChunk()
-		err = e.innerExec.Next(ctx, chunk.NewRecordBatch(chk))
+
+		chk := newFirstChunk(e.children[e.innerIdx])
+		err = Next(ctx, e.innerExec, chunk.NewRecordBatch(chk))
 		if err != nil || chk.NumRows() == 0 {
 			return err
 		}
@@ -299,7 +302,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.outerChkResourceCh = make(chan *outerChkResource, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.outerChkResourceCh <- &outerChkResource{
-			chk:  e.outerExec.newFirstChunk(),
+			chk:  newFirstChunk(e.outerExec),
 			dest: e.outerResultChs[i],
 		}
 	}
@@ -309,7 +312,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
-		e.joinChkResourceCh[i] <- e.newFirstChunk()
+		e.joinChkResourceCh[i] <- newFirstChunk(e)
 	}
 
 	// e.joinResultCh is for transmitting the join result chunks to the main
@@ -512,6 +515,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err er
 	if e.joinResultCh == nil {
 		return nil
 	}
+
 	result, ok := <-e.joinResultCh
 	if !ok {
 		return nil
@@ -625,9 +629,9 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	}
 	e.cursor = 0
 	e.innerRows = e.innerRows[:0]
-	e.outerChunk = e.outerExec.newFirstChunk()
-	e.innerChunk = e.innerExec.newFirstChunk()
-	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
+	e.outerChunk = newFirstChunk(e.outerExec)
+	e.innerChunk = newFirstChunk(e.innerExec)
+	e.innerList = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
 
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -642,7 +646,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
 		if e.outerChunkCursor >= e.outerChunk.NumRows() {
-			err := e.outerExec.Next(ctx, chunk.NewRecordBatch(e.outerChunk))
+			err := Next(ctx, e.outerExec, chunk.NewRecordBatch(e.outerChunk))
 			if err != nil {
 				return nil, err
 			}
@@ -679,7 +683,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	e.innerList.Reset()
 	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
 	for {
-		err := e.innerExec.Next(ctx, chunk.NewRecordBatch(e.innerChunk))
+		err := Next(ctx, e.innerExec, chunk.NewRecordBatch(e.innerChunk))
 		if err != nil {
 			return err
 		}

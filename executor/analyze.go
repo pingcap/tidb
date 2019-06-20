@@ -1072,6 +1072,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		collector.Samples = collector.Samples[:e.sampCursor]
 		sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].RowID < collector.Samples[j].RowID })
 		collector.CalcTotalSize()
+		// Adjust the row count in case the count of `tblStats` is not accurate and too small.
 		rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
 		// Scale the total column size.
 		collector.TotalSize *= rowCount / int64(len(collector.Samples))
