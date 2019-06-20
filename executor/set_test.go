@@ -349,14 +349,14 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("set tidb_wait_split_region_finish = 0")
 	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
 
-	// test for tidb_wait_split_region_finish_backoff
-	tk.MustQuery(`select @@session.tidb_wait_split_region_finish_backoff;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitScatterRegionFinishBackoff)))
-	tk.MustExec("set tidb_wait_split_region_finish_backoff = 1")
-	tk.MustQuery(`select @@session.tidb_wait_split_region_finish_backoff;`).Check(testkit.Rows("1"))
-	_, err = tk.Exec("set tidb_wait_split_region_finish_backoff = 0")
+	// test for tidb_wait_split_region_timeout
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeOut)))
+	tk.MustExec("set tidb_wait_split_region_timeout = 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
+	_, err = tk.Exec("set tidb_wait_split_region_timeout = 0")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "tidb_wait_split_region_finish_backoff(0) cannot be smaller than 1")
-	tk.MustQuery(`select @@session.tidb_wait_split_region_finish_backoff;`).Check(testkit.Rows("1"))
+	c.Assert(err.Error(), Equals, "tidb_wait_split_region_timeout(0) cannot be smaller than 1")
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
 
 	tk.MustExec("set session tidb_back_off_weight = 3")
 	tk.MustQuery("select @@session.tidb_back_off_weight;").Check(testkit.Rows("3"))
