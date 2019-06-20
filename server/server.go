@@ -531,7 +531,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
-	atomic.StoreUint32(&sessVars.Killed, 1)
+	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
