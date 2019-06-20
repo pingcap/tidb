@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -52,6 +53,7 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),
 	)
+	tikv.PessimisticLockTTL = uint64(config.MinPessimisticTTL / time.Millisecond)
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
@@ -229,4 +231,16 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	tk.MustExec("update single_statement set v = v + 1")
 	tk.MustExec("commit")
 	syncCh <- true
+}
+
+func (s *testPessimisticSuite) TestFirstStatementFail(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists first")
+	tk.MustExec("create table first (k int unique)")
+	tk.MustExec("insert first values (1)")
+	tk.MustExec("begin pessimistic")
+	_, err := tk.Exec("insert first values (1)")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert first values (2)")
+	tk.MustExec("commit")
 }

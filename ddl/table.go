@@ -365,7 +365,7 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	}
 }
 
-func preSplitTableRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSplitFinish bool) {
+func preSplitTableShardRowIDBitsRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSplitFinish bool) {
 	s, ok := store.(splitableStore)
 	if !ok {
 		return
