@@ -103,7 +103,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for {
 		chk := e.children[0].newFirstChunk()
-		err := e.children[0].Next(ctx, chk)
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -270,7 +270,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		srcChk := e.children[0].newFirstChunk()
 		// adjust required rows by total limit
 		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
-		err := e.children[0].Next(ctx, srcChk)
+		err := Next(ctx, e.children[0], srcChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -295,7 +295,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	}
 	childRowChk := e.children[0].newFirstChunk()
 	for {
-		err := e.children[0].Next(ctx, childRowChk)
+		err := Next(ctx, e.children[0], childRowChk)
 		if err != nil {
 			return errors.Trace(err)
 		}

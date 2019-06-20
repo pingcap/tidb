@@ -322,6 +322,9 @@ type SessionVars struct {
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
+
+	// Killed is a flag to indicate that this query is killed.
+	Killed uint32
 }
 
 // ConnectionInfo present connection used by audit.
