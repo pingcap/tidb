@@ -130,8 +130,8 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk
 		return errors.Trace(err)
 	}
 
-	childResult := e.children[0].newFirstChunk()
-	err = e.children[0].Next(ctx, &chunk.RecordBatch{Chunk: childResult})
+	childResult := newFirstChunk(e.children[0])
+	err = Next(ctx, e.children[0], &chunk.RecordBatch{Chunk: childResult})
 	if err != nil {
 		return errors.Trace(err)
 	}

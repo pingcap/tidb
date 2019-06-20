@@ -295,8 +295,8 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx context.Context, rows [][]types.Datum) error) error {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
-	fields := selectExec.retTypes()
-	chk := selectExec.newFirstChunk()
+	fields := retTypes(selectExec)
+	chk := newFirstChunk(selectExec)
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
