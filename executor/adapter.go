@@ -395,7 +395,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		a.logAudit()
 	}()
 
-	err = Next(ctx, e, chunk.NewRecordBatch(newFirstChunk(e)))
+	err = Next(ctx, e, newFirstChunk(e))
 	if err != nil {
 		return nil, err
 	}

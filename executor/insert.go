@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/opentracing/opentracing-go"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -134,7 +135,12 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *InsertExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("insert.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	req.Reset()
 	if len(e.children) > 0 && e.children[0] != nil {
 		return e.insertRowsFromSelect(ctx, e.exec)

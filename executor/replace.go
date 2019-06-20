@@ -181,7 +181,11 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ReplaceExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *ReplaceExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("replace.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	req.Reset()
 	if len(e.children) > 0 && e.children[0] != nil {
 		return e.insertRowsFromSelect(ctx, e.exec)
