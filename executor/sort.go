@@ -105,13 +105,13 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
-	fields := e.retTypes()
+	fields := retTypes(e)
 	e.rowChunks = chunk.NewList(fields, e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	for {
-		chk := e.children[0].newFirstChunk()
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		chk := newFirstChunk(e.children[0])
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
 		if err != nil {
 			return err
 		}
@@ -275,14 +275,14 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
+	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
-		srcChk := e.children[0].newFirstChunk()
+		srcChk := newFirstChunk(e.children[0])
 		// adjust required rows by total limit
 		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(srcChk))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(srcChk))
 		if err != nil {
 			return err
 		}
@@ -305,9 +305,9 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
-	childRowChk := e.children[0].newFirstChunk()
+	childRowChk := newFirstChunk(e.children[0])
 	for {
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(childRowChk))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(childRowChk))
 		if err != nil {
 			return err
 		}
@@ -349,7 +349,7 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
+	newRowChunks := chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
