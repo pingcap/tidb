@@ -117,7 +117,7 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	us.snapshotChunkBuffer = us.newFirstChunk()
+	us.snapshotChunkBuffer = newFirstChunk(us)
 	return nil
 }
 
@@ -133,7 +133,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 		defer func() { us.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(us.maxChunkSize)
-	mutableRow := chunk.MutRowFromTypes(us.retTypes())
+	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
@@ -199,7 +199,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		err = us.children[0].Next(ctx, chunk.NewRecordBatch(us.snapshotChunkBuffer))
+		err = Next(ctx, us.children[0], chunk.NewRecordBatch(us.snapshotChunkBuffer))
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
 		}
@@ -214,7 +214,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				// commit, but for simplicity, we don't handle it here.
 				continue
 			}
-			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(us.children[0].retTypes()))
+			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
 		}
 	}
 	return us.snapshotRows[0], nil
@@ -295,7 +295,7 @@ func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.
 
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
-	mutableRow := chunk.MutRowFromTypes(us.retTypes())
+	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	cols := t.WritableCols()
 	for h := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, us.schema.Len())

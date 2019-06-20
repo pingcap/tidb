@@ -239,7 +239,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.groupKeyBuffer = make([]byte, 0, 8)
 	e.groupValDatums = make([]types.Datum, 0, len(e.groupKeyBuffer))
-	e.childResult = e.children[0].newFirstChunk()
+	e.childResult = newFirstChunk(e.children[0])
 }
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
@@ -275,12 +275,12 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			partialResultsMap: make(aggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
 			groupValDatums:    make([]types.Datum, 0, len(e.GroupByItems)),
-			chk:               e.children[0].newFirstChunk(),
+			chk:               newFirstChunk(e.children[0]),
 		}
 
 		e.partialWorkers[i] = w
 		e.inputCh <- &HashAggInput{
-			chk:        e.children[0].newFirstChunk(),
+			chk:        newFirstChunk(e.children[0]),
 			giveBackCh: w.inputCh,
 		}
 	}
@@ -295,7 +295,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			outputCh:            e.finalOutputCh,
 			finalResultHolderCh: e.finalInputCh,
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
-			mutableRow:          chunk.MutRowFromTypes(e.retTypes()),
+			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
 		}
 	}
 }
@@ -555,7 +555,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 			}
 			chk = input.chk
 		}
-		err = e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err = Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
 			return
@@ -681,7 +681,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childResult)
 	for {
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
 		if err != nil {
 			return err
 		}
@@ -772,7 +772,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	e.childResult = e.children[0].newFirstChunk()
+	e.childResult = newFirstChunk(e.children[0])
 	e.executed = false
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
@@ -870,7 +870,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return err
 	}
 
-	err = e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
+	err = Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
 	if err != nil {
 		return err
 	}
