@@ -754,7 +754,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := tableReader.newFirstChunk()
-		err = tableReader.Next(ctx, chk)
+		err = Next(ctx, tableReader, chk)
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
 			return errors.Trace(err)
