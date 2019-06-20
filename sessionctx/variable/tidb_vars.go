@@ -14,9 +14,8 @@
 package variable
 
 import (
-	"os"
-
 	"github.com/pingcap/parser/mysql"
+	"os"
 )
 
 /*
@@ -247,8 +246,8 @@ const (
 	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
 	TiDBWaitSplitRegionFinish = "tidb_wait_split_region_finish"
 
-	// TiDBWaitSplitRegionFinishBackoff uses to set the split and scatter region back off time.
-	TiDBWaitSplitRegionFinishBackoff = "tidb_wait_split_region_finish_backoff"
+	// TiDBWaitSplitRegionTimeout uses to set the split and scatter region back off time.
+	TiDBWaitSplitRegionTimeout = "tidb_wait_split_region_timeout"
 
 	// tidb_force_priority defines the operations priority of all statements.
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
@@ -337,8 +336,8 @@ const (
 	DefTiDBUseFastAnalyze              = false
 	DefTiDBSkipIsolationLevelCheck     = false
 	DefTiDBWaitSplitRegionFinish       = true
-	DefTiDBExpensiveQueryTimeThreshold = 60 // 60s
-	DefWaitScatterRegionFinishBackoff  = 120000
+	DefTiDBExpensiveQueryTimeThreshold = 60  // 60s
+	DefWaitSplitRegionTimeOut          = 300 // 300s
 )
 
 // Process global variables.

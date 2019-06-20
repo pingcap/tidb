@@ -344,7 +344,7 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 type splitableStore interface {
 	SplitRegion(splitKey kv.Key) error
 	SplitRegionAndScatter(splitKey kv.Key) (uint64, error)
-	WaitScatterRegionFinish(regionID uint64, backoffTime int) error
+	WaitScatterRegionFinish(regionID uint64) error
 }
 
 func splitPartitionTableRegion(store kv.Storage, pi *model.PartitionInfo) {
@@ -427,7 +427,7 @@ func preSplitTableShardRowIDBitsRegion(ctx sessionctx.Context, store kv.Storage,
 		return
 	}
 	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(regionID, ctx.GetSessionVars().BackoffTimeVars.GetWaitScatterRegionFinishBackoff())
+		err := s.WaitScatterRegionFinish(regionID)
 		if err != nil {
 			logutil.Logger(ddlLogCtx).Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 		}

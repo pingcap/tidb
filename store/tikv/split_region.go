@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -99,11 +98,10 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 	return nil
 }
 
-func (s *tikvStore) WaitScatterRegionFinish(regionID uint64, backoffTime int) error {
+func (s *tikvStore) WaitScatterRegionFinish(regionID uint64) error {
 	logutil.Logger(context.Background()).Info("wait scatter region",
-		zap.Uint64("regionID", regionID),
-		zap.Int("backoff time", backoffTime))
-	bo := NewBackoffer(context.Background(), backoffTime)
+		zap.Uint64("regionID", regionID))
+	bo := NewBackoffer(context.Background(), waitScatterRegionFinishBackoff)
 	logFreq := 0
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)

@@ -345,6 +345,9 @@ type SessionVars struct {
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
+	// WaitSplitRegionTimeout defines the split region timeout.
+	WaitSplitRegionTimeout uint64
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -379,9 +382,6 @@ type SessionVars struct {
 
 	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	LowResolutionTSO bool
-
-	// Backoff is used for set the back off time.
-	BackoffTimeVars BackoffTimer
 }
 
 // ConnectionInfo present connection used by audit.
@@ -433,7 +433,7 @@ func NewSessionVars() *SessionVars {
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
-		BackoffTimeVars:             BackoffTimer{waitScatterRegionFinish: DefWaitScatterRegionFinishBackoff},
+		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeOut,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -476,6 +476,11 @@ func NewSessionVars() *SessionVars {
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
 func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 	return &s.writeStmtBufs
+}
+
+// GetSplitRegionTimeout gets split region timeout.
+func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
+	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -790,8 +795,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableFastAnalyze = TiDBOptOn(val)
 	case TiDBWaitSplitRegionFinish:
 		s.WaitSplitRegionFinish = TiDBOptOn(val)
-	case TiDBWaitSplitRegionFinishBackoff:
-		s.BackoffTimeVars.waitScatterRegionFinish = tidbOptPositiveInt32(val, DefWaitScatterRegionFinishBackoff)
+	case TiDBWaitSplitRegionTimeout:
+		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeOut))
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
@@ -988,16 +993,6 @@ const (
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
 )
-
-// BackoffTimer contains variable back off time.
-type BackoffTimer struct {
-	waitScatterRegionFinish int
-}
-
-// GetWaitScatterRegionFinishBackoff gets the back off time of waitScatterRegionFinish.
-func (b *BackoffTimer) GetWaitScatterRegionFinishBackoff() int {
-	return b.waitScatterRegionFinish
-}
 
 // SlowLogFormat uses for formatting slow log.
 // The slow log output is like below:
