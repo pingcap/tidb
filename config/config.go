@@ -35,7 +35,9 @@ import (
 
 // Config number limitations
 const (
-	MaxLogFileSize = 4096 // MB
+	MaxLogFileSize    = 4096 // MB
+	MinPessimisticTTL = time.Second * 15
+	MaxPessimisticTTL = time.Second * 60
 )
 
 // Valid config maps
@@ -564,10 +566,9 @@ func (c *Config) Valid() error {
 		if err != nil {
 			return err
 		}
-		minDur := time.Second * 15
-		maxDur := time.Second * 60
-		if dur < minDur || dur > maxDur {
-			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]", dur, minDur, maxDur)
+		if dur < MinPessimisticTTL || dur > MaxPessimisticTTL {
+			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]",
+				dur, MinPessimisticTTL, MaxPessimisticTTL)
 		}
 	}
 	return nil
