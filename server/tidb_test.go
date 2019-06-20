@@ -526,17 +526,3 @@ func (ts *TidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
 	runTestSumAvg(c)
 }
-
-func (ts *TidbTestSuite) TestShowProcess(c *C) {
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
-	c.Assert(err, IsNil)
-	ctx := context.Background()
-	results, err := qctx.Execute(ctx, "select 1")
-	c.Assert(err, IsNil)
-	pi := qctx.ShowProcess()
-	c.Assert(pi.Command, Equals, "Query")
-	results[0].Close()
-	pi = qctx.ShowProcess()
-	c.Assert(pi.Command, Equals, "Sleep")
-	qctx.Close()
-}
