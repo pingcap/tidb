@@ -186,7 +186,10 @@ func Next(ctx context.Context, e Executor, req *chunk.RecordBatch) error {
 	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
 		return ErrQueryInterrupted
 	}
-
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	return e.Next(ctx, req)
 }
 
@@ -672,11 +675,6 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *SelectLockExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("selectLock.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
 	req.GrowAndReset(e.maxChunkSize)
 	err := Next(ctx, e.children[0], req)
 	if err != nil {
@@ -723,10 +721,6 @@ type LimitExec struct {
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("limit.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -867,10 +861,6 @@ func (e *TableDualExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tableDual.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -926,10 +916,6 @@ func (e *SelectionExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("selection.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -1009,10 +995,6 @@ type TableScanExec struct {
 
 // Next implements the Executor Next interface.
 func (e *TableScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tableScan.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -1117,10 +1099,6 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("maxOneRow.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -1270,10 +1248,6 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 
 // Next implements the Executor Next interface.
 func (e *UnionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("union.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
