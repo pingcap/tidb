@@ -277,6 +277,11 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	s.ttlEquals(c, l.TTL, defaultLockTTL+uint64(time.Since(start)/time.Millisecond))
 }
 
+func (s *testLockSuite) TestNewLockZeroTTL(c *C) {
+	l := NewLock(&kvrpcpb.LockInfo{})
+	c.Assert(l.TTL, Equals, uint64(0))
+}
+
 func init() {
 	// Speed up tests.
 	defaultLockTTL = 3
