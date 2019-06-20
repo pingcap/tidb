@@ -363,7 +363,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for task.outerResult.NumRows() < ow.batchSize {
-		err := ow.executor.Next(ctx, ow.executorChk)
+		err := Next(ctx, ow.executor, ow.executorChk)
 		if err != nil {
 			return task, errors.Trace(err)
 		}
@@ -555,7 +555,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		err := innerExec.Next(ctx, iw.executorChk)
+		err := Next(ctx, innerExec, iw.executorChk)
 		if err != nil {
 			return errors.Trace(err)
 		}

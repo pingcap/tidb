@@ -76,27 +76,27 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	return ndv
 }
 
-func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.StatsInfo {
-	profile := &property.StatsInfo{
+func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
+	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),
 		Cardinality:  make([]float64, len(ds.Columns)),
 		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
 		StatsVersion: ds.statisticTable.Version,
 	}
 	if ds.statisticTable.Pseudo {
-		profile.StatsVersion = statistics.PseudoVersion
+		tableStats.StatsVersion = statistics.PseudoVersion
 	}
 
 	for i, col := range ds.Columns {
-		profile.Cardinality[i] = ds.getColumnNDV(col.ID)
+		tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
 	}
-	ds.stats = profile
-	selectivity, err := profile.HistColl.Selectivity(ds.ctx, conds)
+	ds.tableStats = tableStats
+	selectivity, err := tableStats.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("an error happened, use the default selectivity", zap.Error(err))
+		logutil.Logger(context.Background()).Debug("an error happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
-	return profile.Scale(selectivity)
+	ds.stats = tableStats.Scale(selectivity)
 }
 
 func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
@@ -104,7 +104,7 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
-	ds.stats = ds.getStatsByFilter(ds.pushedDownConds)
+	ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
