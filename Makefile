@@ -40,7 +40,7 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser
+.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy
 
 default: server buildsucc
 
@@ -54,6 +54,10 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
+tidy:
+	@echo "go mod tidy"
+	./tools/check/check-tidy.sh
+
 dev: checklist test check
 
 build:
@@ -62,7 +66,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/megacheck tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint
+check: fmt errcheck lint tidy
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
