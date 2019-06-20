@@ -42,7 +42,8 @@ import (
 
 var (
 	tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
-	RangeCheck                                = atomicValue.NewBool(false)
+	// RangeCheck is the variables controls whether the ranges are legal.
+	RangeCheck = atomicValue.NewBool(false)
 )
 
 // CopClient is coprocessor client.

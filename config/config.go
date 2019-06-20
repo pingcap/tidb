@@ -61,7 +61,7 @@ type Config struct {
 	Socket           string          `toml:"socket" json:"socket"`
 	Lease            string          `toml:"lease" json:"lease"`
 	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
-	RangeCheck       bool            `toml:"range-check" json:"range_check"`
+	RangeCheck       bool            `toml:"range-check" json:"range-check"`
 	SplitTable       bool            `toml:"split-table" json:"split-table"`
 	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
