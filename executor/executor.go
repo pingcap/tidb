@@ -83,6 +83,10 @@ type baseExecutor struct {
 	runtimeStats  *execdetails.RuntimeStats
 }
 
+func (e *baseExecutor) base() *baseExecutor {
+	return e
+}
+
 // Open initializes children recursively and "childrenResults" according to children's schemas.
 func (e *baseExecutor) Open(ctx context.Context) error {
 	for _, child := range e.children {
@@ -161,6 +165,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 // return a batch of rows, other than a single row in Volcano.
 // NOTE: Executors must call "chk.Reset()" before appending their results to it.
 type Executor interface {
+	base() *baseExecutor
 	Open(context.Context) error
 	Next(ctx context.Context, chk *chunk.Chunk) error
 	Close() error
@@ -168,6 +173,16 @@ type Executor interface {
 
 	retTypes() []*types.FieldType
 	newFirstChunk() *chunk.Chunk
+}
+
+// Next is a wrapper function on e.Next(), it handles some common codes.
+func Next(ctx context.Context, e Executor, chk *chunk.Chunk) error {
+	sessVars := e.base().ctx.GetSessionVars()
+	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+		return ErrQueryInterrupted
+	}
+
+	return e.Next(ctx, chk)
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -533,7 +548,7 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	chk = e.src.newFirstChunk()
 	for {
-		err := e.src.Next(ctx, chk)
+		err := Next(ctx, e.src, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -636,7 +651,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
-	err := e.children[0].Next(ctx, chk)
+	err := Next(ctx, e.children[0], chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -693,7 +708,7 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for !e.meetFirstBatch {
 		// transfer req's requiredRows to childResult and then adjust it in childResult
 		e.childResult = e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
-		err := e.children[0].Next(ctx, e.adjustRequiredRows(e.childResult))
+		err := Next(ctx, e.children[0], e.adjustRequiredRows(e.childResult))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -718,7 +733,7 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		e.cursor += batchSize
 	}
 	e.adjustRequiredRows(chk)
-	err := e.children[0].Next(ctx, chk)
+	err := Next(ctx, e.children[0], chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -788,7 +803,7 @@ func init() {
 		}
 		chk := exec.newFirstChunk()
 		for {
-			err = exec.Next(ctx, chk)
+			err = Next(ctx, exec, chk)
 			if err != nil {
 				return rows, errors.Trace(err)
 			}
@@ -897,7 +912,7 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			}
 			chk.AppendRow(e.inputRow)
 		}
-		err := e.children[0].Next(ctx, e.childResult)
+		err := Next(ctx, e.children[0], e.childResult)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -929,7 +944,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 				return nil
 			}
 		}
-		err := e.children[0].Next(ctx, e.childResult)
+		err := Next(ctx, e.children[0], e.childResult)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1069,7 +1084,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 	e.evaluated = true
-	err := e.children[0].Next(ctx, chk)
+	err := Next(ctx, e.children[0], chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
