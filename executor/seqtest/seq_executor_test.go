@@ -131,7 +131,7 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err1, IsNil)
 		rs := rss[0]
-		req := rs.NewRecordBatch()
+		req := rs.NewFirstChunk()
 		err = rs.Next(ctx, req)
 		c.Assert(err, IsNil)
 		rs.Close()
@@ -145,7 +145,7 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	req := rs.NewRecordBatch()
+	req := rs.NewFirstChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err, NotNil)
 	rs.Close()
@@ -641,7 +641,7 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	req := rs.NewRecordBatch()
+	req := rs.NewFirstChunk()
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
@@ -673,7 +673,7 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	rss, err := tk.Se.Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	req := rs.NewRecordBatch()
+	req := rs.NewFirstChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err.Error(), Equals, "HashAggExec.parallelExec error")
 }
@@ -694,7 +694,7 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 	rss, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	req := rs.NewRecordBatch()
+	req := rs.NewFirstChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err.Error(), Equals, "HashAggExec.unparallelExec error")
 }

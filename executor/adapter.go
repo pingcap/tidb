@@ -100,7 +100,12 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("recordSet.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	err := Next(ctx, a.executor, req)
 	if err != nil {
 		a.lastErr = err
@@ -120,8 +125,8 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 }
 
 // NewRecordBatch create a recordBatch base on top-level executor's newFirstChunk().
-func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
-	return chunk.NewRecordBatch(newFirstChunk(a.executor))
+func (a *recordSet) NewFirstChunk() *chunk.Chunk {
+	return newFirstChunk(a.executor)
 }
 
 func (a *recordSet) Close() error {
@@ -306,8 +311,7 @@ func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
 	return c.fields
 }
 
-func (c *chunkRowRecordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	chk := req.Chunk
+func (c *chunkRowRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for !chk.IsFull() && c.idx < len(c.rows) {
 		chk.AppendRow(c.rows[c.idx])
@@ -316,8 +320,8 @@ func (c *chunkRowRecordSet) Next(ctx context.Context, req *chunk.RecordBatch) er
 	return nil
 }
 
-func (c *chunkRowRecordSet) NewRecordBatch() *chunk.RecordBatch {
-	return chunk.NewRecordBatch(newFirstChunk(c.e))
+func (c *chunkRowRecordSet) NewFirstChunk() *chunk.Chunk {
+	return newFirstChunk(c.e)
 }
 
 func (c *chunkRowRecordSet) Close() error {
@@ -349,7 +353,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 	var rows []chunk.Row
 	var err error
 	fields := rs.Fields()
-	req := rs.NewRecordBatch()
+	req := rs.NewFirstChunk()
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {
@@ -359,11 +363,11 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 		if req.NumRows() == 0 {
 			return &chunkRowRecordSet{rows: rows, fields: fields, e: e}, nil
 		}
-		iter := chunk.NewIterator4Chunk(req.Chunk)
+		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		req.Chunk = chunk.Renew(req.Chunk, a.Ctx.GetSessionVars().MaxChunkSize)
+		req = chunk.Renew(req, a.Ctx.GetSessionVars().MaxChunkSize)
 	}
 	return nil, err
 }
