@@ -186,7 +186,7 @@ func (e *RadixHashJoinExec) preAlloc4InnerParts() (err error) {
 func (e *RadixHashJoinExec) getPartition(idx uint32) partition {
 	if e.innerParts[idx] == nil {
 		e.numNonEmptyPart++
-		e.innerParts[idx] = chunk.New(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
+		e.innerParts[idx] = chunk.New(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
 	}
 	return e.innerParts[idx]
 }
