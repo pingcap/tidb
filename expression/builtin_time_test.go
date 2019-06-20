@@ -1742,6 +1742,33 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v.GetMysqlTime().String(), Equals, test.expected)
 	}
+	testDurations := []struct {
+		dur      string
+		fsp      int
+		unit     string
+		format   interface{}
+		expected string
+	}{
+		{
+			dur:      "00:00:00",
+			fsp:      0,
+			unit:     "MICROSECOND",
+			format:   "100",
+			expected: "00:00:00.000100",
+		},
+	}
+	for _, tt := range testDurations {
+		dur, _, ok, err := types.StrToDuration(nil, tt.dur, tt.fsp)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+		args = types.MakeDatums(dur, tt.format, tt.unit)
+		f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v.GetMysqlDuration().String(), Equals, tt.expected)
+	}
 }
 
 func (s *testEvaluatorSuite) TestTimestamp(c *C) {
