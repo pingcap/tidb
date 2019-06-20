@@ -138,6 +138,24 @@ func (s *testRangeTaskSuite) checkRanges(c *C, obtained []kv.KeyRange, expected 
 	c.Assert(obtained, DeepEquals, expected)
 }
 
+func batchRanges(ranges []kv.KeyRange, batchSize int) []kv.KeyRange {
+	result := make([]kv.KeyRange, 0, len(ranges))
+
+	for i := 0; i < len(ranges); i += batchSize {
+		lastRange := i + batchSize - 1
+		if lastRange >= len(ranges) {
+			lastRange = len(ranges) - 1
+		}
+
+		result = append(result, kv.KeyRange{
+			StartKey: ranges[i].StartKey,
+			EndKey:   ranges[lastRange].EndKey,
+		})
+	}
+
+	return result
+}
+
 func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 	c.Logf("Test RangeTask, concurrency: %v", concurrency)
 
@@ -150,13 +168,17 @@ func (s *testRangeTaskSuite) testRangeTaskImpl(c *C, concurrency int) {
 
 	runner := NewRangeTaskRunner("test-runner", s.store, concurrency, handler)
 
-	for i, r := range s.testRanges {
-		expectedRanges := s.expectedRanges[i]
+	for regionsPerTask := 1; regionsPerTask <= 5; regionsPerTask++ {
+		for i, r := range s.testRanges {
+			runner.SetRegionsPerTask(regionsPerTask)
 
-		err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
-		c.Assert(err, IsNil)
-		s.checkRanges(c, collect(ranges), expectedRanges)
-		c.Assert(int(runner.completedRegions), Equals, len(expectedRanges))
+			expectedRanges := batchRanges(s.expectedRanges[i], regionsPerTask)
+
+			err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
+			c.Assert(err, IsNil)
+			s.checkRanges(c, collect(ranges), expectedRanges)
+			c.Assert(int(runner.completedRegions), Equals, len(expectedRanges))
+		}
 	}
 }
 
@@ -182,6 +204,7 @@ func (s *testRangeTaskSuite) testRangeTaskErrorImpl(c *C, concurrency int) {
 			}
 
 			runner := NewRangeTaskRunner("test-error-runner", s.store, concurrency, handler)
+			runner.SetRegionsPerTask(1)
 			err := runner.RunOnRange(context.Background(), r.StartKey, r.EndKey)
 			// RunOnRange returns no error only when all sub tasks are done successfully.
 			c.Assert(err, NotNil)

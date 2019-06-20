@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -44,11 +43,6 @@ type DeleteExec struct {
 
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("delete.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
 	req.Reset()
 	if e.IsMultiTable {
 		return e.deleteMultiTablesByChunk(ctx)
@@ -105,7 +99,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
 		if err != nil {
 			return err
 		}
@@ -187,7 +181,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	chk := newFirstChunk(e.children[0])
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
 		if err != nil {
 			return err
 		}
