@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -128,7 +128,8 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf), clientv3.WithLease(is.session.Lease()))
+	str := string(hack.String(infoBuf))
+	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
 	return errors.Trace(err)
 }
 
@@ -137,7 +138,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	if is.etcdCli == nil {
 		return
 	}
-	err := ddl.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	err := util.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
 		logutil.Logger(context.Background()).Error("remove server info failed", zap.Error(err))
 	}
