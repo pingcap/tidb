@@ -71,8 +71,8 @@ import (
 const (
 	connStatusDispatching int32 = iota
 	connStatusReading
-	connStatusShutdown      // Closed by server.
-	connStatusWaitShutdown  // Notified by server to close.
+	connStatusShutdown     // Closed by server.
+	connStatusWaitShutdown // Notified by server to close.
 )
 
 var (
