@@ -14,8 +14,6 @@
 package math
 
 import (
-	"math/rand"
-	"strconv"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -29,28 +27,10 @@ var _ = Suite(&testMath{})
 
 type testMath struct{}
 
-func (s *testMath) TestStrLenOfUint64Fast_RandomTestCases(c *C) {
-	for i := 0; i < 1000000; i++ {
-		num := rand.Uint64()
-		expected := len(strconv.FormatUint(num, 10))
-		actual := StrLenOfUint64Fast(num)
-		c.Assert(actual, Equals, expected)
-	}
-}
-
-func (s *testMath) TestStrLenOfUint64Fast_ManualTestCases(c *C) {
-	nums := [22]uint64{0,
-		1, 12, 123, 1234, 12345,
-		123456, 1234567, 12345678, 123456789, 1234567890,
-		1234567891, 12345678912, 123456789123, 1234567891234, 12345678912345,
-		123456789123456, 1234567891234567, 12345678912345678, 123456789123456789,
-		123456789123457890,
-		^uint64(0),
-	}
-
-	for _, num := range nums {
-		expected := len(strconv.FormatUint(num, 10))
-		actual := StrLenOfUint64Fast(num)
-		c.Assert(actual, Equals, expected)
-	}
+func (s *testMath) TestAbs(c *C) {
+	c.Assert(Abs(1), Equals, int64(1))
+	c.Assert(Abs(0), Equals, int64(0))
+	c.Assert(Abs(1000), Equals, int64(1000))
+	c.Assert(Abs(-100), Equals, int64(100))
+	c.Assert(Abs(-1234), Equals, int64(1234))
 }
