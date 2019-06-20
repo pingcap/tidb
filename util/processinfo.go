@@ -38,7 +38,7 @@ type ProcessInfo struct {
 	ExceedExpensiveTimeThresh bool
 }
 
-// ToRowForShow returns []interface{} for the row data of "show processlist".
+// ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
 func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	var info string
 	if full {
@@ -60,7 +60,7 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 }
 
 // ToRow returns []interface{} for the row data of
-// "select * from information_schema.processlist".
+// "SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST".
 func (pi *ProcessInfo) ToRow() []interface{} {
 	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed())
 }
