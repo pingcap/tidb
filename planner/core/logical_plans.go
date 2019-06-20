@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -332,6 +333,7 @@ type DataSource struct {
 	relevantIndices []bool
 
 	statisticTable *statistics.Table
+	tableStats     *property.StatsInfo
 
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*accessPath
@@ -462,7 +464,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.accessConds = res.AccessConds
 		path.tableFilters = res.RemainedConds
 		path.eqCondCount = res.EqCondCount
-		path.countAfterAccess, err = ds.stats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
+		path.countAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
 			return false, err
 		}
@@ -495,9 +497,9 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, err := ds.tableStats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("calculate selectivity faild, use selection factor", zap.Error(err))
+			logutil.Logger(context.Background()).Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = selectionFactor
 		}
 		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)
