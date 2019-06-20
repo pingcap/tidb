@@ -151,7 +151,11 @@ func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error
 	if err != nil {
 		return nil, err
 	}
-	rs, err := se.ExecutePreparedStmt(ctx, stmtID, args...)
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, err
 	}

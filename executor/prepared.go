@@ -28,6 +28,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -265,15 +266,12 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (sqlexec.Statement, error) {
+func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args []types.Datum) (sqlexec.Statement, error) {
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	if err := ResetContextOfStmt(ctx, execStmt); err != nil {
 		return nil, err
 	}
-	execStmt.UsingVars = make([]ast.ExprNode, len(args))
-	for i, val := range args {
-		execStmt.UsingVars[i] = ast.NewValueExpr(val)
-	}
+	execStmt.BinaryArgs = args
 	is := GetInfoSchema(ctx)
 	execPlan, err := planner.Optimize(ctx, execStmt, is)
 	if err != nil {

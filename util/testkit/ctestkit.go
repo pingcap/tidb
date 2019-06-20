@@ -15,6 +15,7 @@ package testkit
 
 import (
 	"context"
+	"github.com/pingcap/tidb/types"
 	"math/rand"
 	"sync/atomic"
 
@@ -98,7 +99,11 @@ func (tk *CTestKit) Exec(ctx context.Context, sql string, args ...interface{}) (
 	if err != nil {
 		return nil, err
 	}
-	rs, err := getSession(ctx).ExecutePreparedStmt(ctx, stmtID, args...)
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	rs, err := getSession(ctx).ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, err
 	}
