@@ -342,8 +342,11 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
-	// WaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
-	WaitTableSplitFinish bool
+	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
+	WaitSplitRegionFinish bool
+
+	// WaitSplitRegionTimeout defines the split region timeout.
+	WaitSplitRegionTimeout uint64
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -432,6 +435,8 @@ func NewSessionVars() *SessionVars {
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -474,6 +479,11 @@ func NewSessionVars() *SessionVars {
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
 func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 	return &s.writeStmtBufs
+}
+
+// GetSplitRegionTimeout gets split region timeout.
+func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
+	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -786,8 +796,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SlowQueryFile = val
 	case TiDBEnableFastAnalyze:
 		s.EnableFastAnalyze = TiDBOptOn(val)
-	case TiDBWaitTableSplitFinish:
-		s.WaitTableSplitFinish = TiDBOptOn(val)
+	case TiDBWaitSplitRegionFinish:
+		s.WaitSplitRegionFinish = TiDBOptOn(val)
+	case TiDBWaitSplitRegionTimeout:
+		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
 	case TiDBExpensiveQueryTimeThreshold:
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
