@@ -53,7 +53,8 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 	curInterval := time.Second * time.Duration(threshold)
-	ticker := time.NewTicker(curInterval / 2)
+	// ticker := time.NewTicker(curInterval / 2)
+	ticker := time.NewTicker(time.Millisecond)
 	for {
 		select {
 		case <-ticker.C:

@@ -221,7 +221,7 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	ts.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	ts.dom, err = session.BootstrapSession(ts.store)
-	go ts.dom.ExpensiveQueryHandle().Run(nil)
+	go ts.dom.ExpensiveQueryHandle().Run()
 	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
@@ -258,7 +258,7 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 500;")
 	c.Assert(err, IsNil)
 
-	err = cc.handleQuery(context.Background(), "select  * FROM testTable2 WHERE  SLEEP(2);")
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE  SLEEP(2);")
 	c.Assert(err, Equals, errMaxExecTimeExceeded)
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
