@@ -373,7 +373,11 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 			if err != nil {
 				return err
 			}
+		}
+		var assignedPrimaryKey bool
+		if txn.committer.primaryKey == nil {
 			txn.committer.primaryKey = keys[0]
+			assignedPrimaryKey = true
 		}
 
 		bo := NewBackoffer(ctx, pessimisticLockMaxBackoff).WithVars(txn.vars)
@@ -390,6 +394,10 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 				wg.Wait()
 				// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
 				time.Sleep(time.Millisecond * 5)
+			}
+			if assignedPrimaryKey {
+				// unset the primary key if we assigned primary key when failed to lock it.
+				txn.committer.primaryKey = nil
 			}
 			return err
 		}
