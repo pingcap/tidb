@@ -131,7 +131,7 @@ func TestInfo(t *testing.T) {
 	}
 
 	// Test the scene where syncer.Done() gets the information.
-	err = failpoint.Enable("github.com/pingcap/tidb/ddl/ErrorMockSessionDone", `return(true)`)
+	err = failpoint.Enable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone", `return(true)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestInfo(t *testing.T) {
 	if !syncerStarted {
 		t.Fatal("start syncer failed")
 	}
-	err = failpoint.Disable("github.com/pingcap/tidb/ddl/ErrorMockSessionDone")
+	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
 	if err != nil {
 		t.Fatal(err)
 	}
