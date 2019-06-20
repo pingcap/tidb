@@ -372,6 +372,7 @@ func NewSessionVars() *SessionVars {
 		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:     DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:    DefWaitSplitRegionTimeout,
+		CommandValue:              uint32(mysql.ComSleep),
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
