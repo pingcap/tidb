@@ -250,7 +250,7 @@ type MVCCStore interface {
 	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS, forUpdateTS uint64, ttl uint64) []error
 	PessimisticRollback(keys [][]byte, startTS, forUpdateTS uint64) []error
-	Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS, ttl uint64) []error
+	Prewrite(req *kvrpcpb.PrewriteRequest) []error
 	Commit(keys [][]byte, startTS, commitTS uint64) error
 	Rollback(keys [][]byte, startTS uint64) error
 	Cleanup(key []byte, startTS uint64) error

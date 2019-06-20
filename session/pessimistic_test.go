@@ -232,3 +232,15 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	tk.MustExec("commit")
 	syncCh <- true
 }
+
+func (s *testPessimisticSuite) TestFirstStatementFail(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists first")
+	tk.MustExec("create table first (k int unique)")
+	tk.MustExec("insert first values (1)")
+	tk.MustExec("begin pessimistic")
+	_, err := tk.Exec("insert first values (1)")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert first values (2)")
+	tk.MustExec("commit")
+}
