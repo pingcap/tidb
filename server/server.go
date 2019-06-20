@@ -490,8 +490,9 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
 		}
-		pi := client.ctx.ShowProcess()
-		rs[pi.ID] = pi
+		if pi := client.ctx.ShowProcess(); pi != nil {
+			rs[pi.ID] = pi
+		}
 	}
 	s.rwlock.RUnlock()
 	return rs
@@ -529,12 +530,8 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 }
 
 func killConn(conn *clientConn) {
-	conn.mu.RLock()
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-	if cancelFunc != nil {
-		cancelFunc()
-	}
+	sessVars := conn.ctx.GetSessionVars()
+	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.

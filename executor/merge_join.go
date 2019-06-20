@@ -185,7 +185,7 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 	// Create a new Chunk and append it to "resourceQueue" if there is no more
 	// available chunk in "resourceQueue".
 	if len(t.resourceQueue) == 0 {
-		newChunk := t.reader.newFirstChunk()
+		newChunk := newFirstChunk(t.reader)
 		t.memTracker.Consume(newChunk.MemoryUsage())
 		t.resourceQueue = append(t.resourceQueue, newChunk)
 	}
@@ -222,7 +222,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 
 	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
 	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
+		e.childrenResults = append(e.childrenResults, newFirstChunk(child))
 	}
 
 	e.innerTable.memTracker = memory.NewTracker(innerTableLabel, -1)
