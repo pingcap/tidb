@@ -108,7 +108,7 @@ type Server struct {
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
-	rwlock            *sync.RWMutex
+	rwlock            sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
@@ -200,7 +200,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
-		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
@@ -514,8 +513,8 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
-	logutil.Logger(context.Background()).Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
+	// logutil.Logger(context.Background()).Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
 
 	conn, ok := s.clients[uint32(connectionID)]
 	if !ok {
@@ -531,19 +530,8 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 }
 
 func killConn(conn *clientConn) {
-	conn.mu.RLock()
-	resultSets := conn.mu.resultSets
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-	for _, resultSet := range resultSets {
-		// resultSet.Close() is reentrant so it's safe to kill a same connID multiple times
-		if err := resultSet.Close(); err != nil {
-			logutil.Logger(context.Background()).Error("close result set error", zap.Uint32("connID", conn.connectionID), zap.Error(err))
-		}
-	}
-	if cancelFunc != nil {
-		cancelFunc()
-	}
+	sessVars := conn.ctx.GetSessionVars()
+	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.

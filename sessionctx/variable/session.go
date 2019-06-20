@@ -383,6 +383,9 @@ type SessionVars struct {
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+
+	// Killed is a flag to indicate that this query is killed.
+	Killed uint32
 }
 
 // ConnectionInfo present connection used by audit.

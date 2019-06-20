@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 )
 
 type ConnTestSuite struct {
@@ -221,27 +221,31 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	ts.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	ts.dom, err = session.BootstrapSession(ts.store)
-	go ts.dom.ExpensiveQueryHandle().Run()
 	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
+	connID := 1
+	se.SetConnectionID(uint64(connID))
 	tc := &TiDBContext{
 		session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
-		connectionID: 1,
+		connectionID: uint32(connID),
 		server: &Server{
 			capability: defaultCapability,
 		},
 		ctx:   tc,
 		alloc: arena.NewAllocator(32 * 1024),
 	}
-	str := fmt.Sprintf("cc:%p", cc)
-	logutil.Logger(context.Background()).Info(str)
+	srv := &Server{
+		clients: map[uint32]*clientConn{
+			uint32(connID): cc,
+		},
+	}
+	go ts.dom.ExpensiveQueryHandle().SetSessionManager(srv).Run()
 
-	//handleQuery will WriteOK even there is no data output, which may cause panic in packetIO.writePacket
 	_, err = se.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
@@ -258,17 +262,17 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 500;")
 	c.Assert(err, IsNil)
 
-	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE  SLEEP(2);")
-	c.Assert(err, Equals, errMaxExecTimeExceeded)
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
+	c.Assert(err, NotNil)
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
 	c.Assert(err, IsNil)
 
-	err = cc.handleQuery(context.Background(), "select SLEEP(2);")
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
 	c.Assert(err, IsNil)
 
-	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(2);")
-	c.Assert(err, Equals, errMaxExecTimeExceeded)
+	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
+	c.Assert(err, NotNil)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
 }

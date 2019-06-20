@@ -106,7 +106,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		defer span1.Finish()
 	}
 
-	err := a.executor.Next(ctx, req)
+	err := Next(ctx, a.executor, req)
 	if err != nil {
 		a.lastErr = err
 		return err
@@ -400,7 +400,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		a.logAudit()
 	}()
 
-	err = e.Next(ctx, chunk.NewRecordBatch(newFirstChunk(e)))
+	err = Next(ctx, e, chunk.NewRecordBatch(newFirstChunk(e)))
 	if err != nil {
 		return nil, err
 	}
