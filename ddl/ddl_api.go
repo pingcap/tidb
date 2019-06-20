@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -60,10 +61,11 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		return errors.Trace(err)
 	}
 
-	schemaID, err := d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	schemaID := genIDs[0]
 	dbInfo := &model.DBInfo{
 		Name: schema,
 	}
@@ -162,7 +164,22 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	// Clear table locks hold by the session.
+	tbs := is.SchemaTables(schema)
+	lockTableIDs := make([]int64, 0)
+	for _, tb := range tbs {
+		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+			lockTableIDs = append(lockTableIDs, tb.Meta().ID)
+		}
+	}
+	ctx.ReleaseTableLockByTableIDs(lockTableIDs)
+	return nil
 }
 
 func checkTooLongSchema(schema model.CIStr) error {
@@ -967,10 +984,11 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 	// When this function is called by MockTableInfo, we should set a particular table id.
 	// So the `ddl` structure may be nil.
 	if d != nil {
-		tbInfo.ID, err = d.genGlobalID()
+		genIDs, err := d.genGlobalIDs(1)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		tbInfo.ID = genIDs[0]
 	}
 	for _, v := range cols {
 		v.ID = allocateColumnID(tbInfo)
@@ -1097,10 +1115,22 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	}
 
 	tblInfo := buildTableInfoWithLike(ident, referTbl.Meta())
-	tblInfo.ID, err = d.genGlobalID()
+	count := 1
+	if tblInfo.Partition != nil {
+		count += len(tblInfo.Partition.Definitions)
+	}
+	var genIDs []int64
+	genIDs, err = d.genGlobalIDs(count)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	tblInfo.ID = genIDs[0]
+	if tblInfo.Partition != nil {
+		for i := 0; i < len(tblInfo.Partition.Definitions); i++ {
+			tblInfo.Partition.Definitions[i].ID = genIDs[i+1]
+		}
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tblInfo.ID,
@@ -1135,6 +1165,12 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) mode
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
+	if referTblInfo.Partition != nil {
+		pi := *referTblInfo.Partition
+		pi.Definitions = make([]model.PartitionDefinition, len(referTblInfo.Partition.Definitions))
+		copy(pi.Definitions, referTblInfo.Partition.Definitions)
+		tblInfo.Partition = &pi
+	}
 	return tblInfo
 }
 
@@ -1942,7 +1978,7 @@ func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Id
 	return schema, t, nil
 }
 
-func checkColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
+func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 	for _, constraint := range col.Options {
 		switch constraint.Tp {
 		case ast.ColumnOptionAutoIncrement:
@@ -1960,8 +1996,8 @@ func checkColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 // AddColumn will add a new column to the table.
 func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
-	// Check whether the added column constraints are supported.
-	err := checkColumnConstraint(specNewColumn, ti)
+
+	err := checkUnsupportedColumnConstraint(specNewColumn, ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1993,15 +2029,17 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
 				return errors.Trace(err)
 			}
-			referableColNames := make(map[string]struct{}, len(t.Cols()))
-			for _, col := range t.Cols() {
-				referableColNames[col.Name.L] = struct{}{}
+
+			if option.Stored {
+				return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
 			}
+
 			_, dependColNames := findDependedColumnNames(specNewColumn)
 			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 				return errors.Trace(err)
 			}
-			if err = columnNamesCover(referableColNames, dependColNames); err != nil {
+
+			if err = checkDependedColExist(dependColNames, t.Cols()); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -2618,7 +2656,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	// Check whether alter column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return errBadField.GenWithStackByArgs(colName, ident.Name)
+		return ErrBadField.GenWithStackByArgs(colName, ident.Name)
 	}
 
 	// Clean the NoDefaultValueFlag value.
@@ -2837,7 +2875,16 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
+	}
+	return nil
 }
 
 // DropView will proceed even if some view in the list does not exists.
@@ -2868,10 +2915,11 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newTableID, err := d.genGlobalID()
+	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	newTableID := genIDs[0]
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
@@ -2879,9 +2927,28 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableID},
 	}
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
+		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
+		// The session will release all table locks it holds, if we don't add the new locking table id here,
+		// the session may forget to release the new locked table id when this ddl job was executed successfully
+		// but the session was killed before return.
+		ctx.AddTableLock(([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}}))
+	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if err != nil {
+		if config.TableLockEnabled() {
+			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
+		}
+		return errors.Trace(err)
+	}
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
+	}
+	return nil
 }
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
@@ -2966,7 +3033,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	}
 
 	tblInfo := t.Meta()
-	// Check before put the job is put to the queue.
+	// Check before the job is put to the queue.
 	// This check is redudant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
@@ -3166,8 +3233,12 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		Columns: meta.Partition.Columns,
 		Enable:  meta.Partition.Enable,
 	}
+	genIDs, err := d.genGlobalIDs(len(spec.PartDefinitions))
+	if err != nil {
+		return nil, err
+	}
 	buf := new(bytes.Buffer)
-	for _, def := range spec.PartDefinitions {
+	for ith, def := range spec.PartDefinitions {
 		if err := def.Clause.Validate(part.Type, len(part.Columns)); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -3188,14 +3259,10 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 			}
 			// Partition by range columns if len(part.Columns) != 0.
 		}
-		pid, err1 := d.genGlobalID()
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
-			ID:      pid,
+			ID:      genIDs[ith],
 			Comment: comment,
 		}
 
@@ -3208,4 +3275,101 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		part.Definitions = append(part.Definitions, piDef)
 	}
 	return part, nil
+}
+
+// LockTables uses to execute lock tables statement.
+func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
+	lockTables := make([]model.TableLockTpInfo, 0, len(stmt.TableLocks))
+	sessionInfo := model.SessionInfo{
+		ServerID:  d.GetID(),
+		SessionID: ctx.GetSessionVars().ConnectionID,
+	}
+	uniqueTableID := make(map[int64]struct{})
+	// Check whether the table was already locked by other.
+	for _, tl := range stmt.TableLocks {
+		tb := tl.Table
+		// TODO: replace const string "performance_schema" with xxx.LowerName.
+		// Currently use perfschema.LowerName will have import cycle problem.
+		if tb.Schema.L == infoschema.LowerName || tb.Schema.L == "performance_schema" || tb.Schema.L == mysql.SystemDB {
+			if ctx.GetSessionVars().User != nil {
+				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
+			}
+			return infoschema.ErrAccessDenied
+		}
+		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if t.Meta().IsView() {
+			return table.ErrUnsupportedOp.GenWithStackByArgs()
+		}
+		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
+		if err != nil {
+			return err
+		}
+		if _, ok := uniqueTableID[t.Meta().ID]; ok {
+			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
+		}
+		uniqueTableID[t.Meta().ID] = struct{}{}
+		lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: tl.Type})
+	}
+
+	unlockTables := ctx.GetAllTableLocks()
+	arg := &lockTablesArg{
+		LockTables:   lockTables,
+		UnlockTables: unlockTables,
+		SessionInfo:  sessionInfo,
+	}
+	job := &model.Job{
+		SchemaID:   lockTables[0].SchemaID,
+		TableID:    lockTables[0].TableID,
+		Type:       model.ActionLockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
+	ctx.AddTableLock(lockTables)
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseTableLocks(unlockTables)
+		ctx.AddTableLock(lockTables)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// UnlockTables uses to execute unlock tables statement.
+func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLockTpInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &lockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo: model.SessionInfo{
+			ServerID:  d.GetID(),
+			SessionID: ctx.GetSessionVars().ConnectionID,
+		},
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseAllTableLocks()
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+type lockTablesArg struct {
+	LockTables    []model.TableLockTpInfo
+	IndexOfLock   int
+	UnlockTables  []model.TableLockTpInfo
+	IndexOfUnlock int
+	SessionInfo   model.SessionInfo
 }

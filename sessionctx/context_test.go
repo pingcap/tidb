@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,22 +11,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mock
+package sessionctx
 
 import (
-	"context"
-
-	"github.com/pingcap/tidb/kv"
+	"fmt"
+	"testing"
 )
 
-// Client implement kv.Client interface, mocked from "CopClient" defined in
-// "store/tikv/copprocessor.go".
-type Client struct {
-	kv.RequestTypeSupportedChecker
-	MockResponse kv.Response
-}
-
-// Send implement kv.Client interface.
-func (c *Client) Send(ctx context.Context, req *kv.Request, kv *kv.Variables) kv.Response {
-	return c.MockResponse
+func TestBasicCtxTypeToString(t *testing.T) {
+	tests := []struct {
+		key fmt.Stringer
+		v   string
+	}{
+		{QueryString, "query_string"},
+		{Initing, "initing"},
+		{LastExecuteDDL, "last_execute_ddl"},
+		{basicCtxType(9), "unknown"},
+	}
+	for _, tt := range tests {
+		if tt.key.String() != tt.v {
+			t.Fatalf("want %s but got %s", tt.v, tt.key.String())
+		}
+	}
 }

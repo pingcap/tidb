@@ -109,7 +109,6 @@ var (
 	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
 	errFileNotFound             = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename            = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
-	errBadField                 = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	errInvalidUseOfNull         = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
@@ -155,12 +154,16 @@ var (
 	ErrInvalidIndexState = terror.ClassDDL.New(codeInvalidIndexState, "invalid index state")
 	// ErrInvalidForeignKeyState returns for invalid foreign key state.
 	ErrInvalidForeignKeyState = terror.ClassDDL.New(codeInvalidForeignKeyState, "invalid foreign key state")
+	// ErrInvalidTableLockState returns for invalid table state.
+	ErrInvalidTableLockState = terror.ClassDDL.New(codeInvalidTableLockState, "invalid table lock state")
 	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
 	// It's exported for testing.
 	ErrUnsupportedModifyPrimaryKey = terror.ClassDDL.New(codeUnsupportedModifyPrimaryKey, "unsupported %s primary key")
 
 	// ErrColumnBadNull returns for a bad null value.
 	ErrColumnBadNull = terror.ClassDDL.New(codeBadNull, "column cann't be null")
+	// ErrBadField forbids to refer to unknown column.
+	ErrBadField = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	// ErrCantRemoveAllFields returns for deleting all columns.
 	ErrCantRemoveAllFields = terror.ClassDDL.New(codeCantRemoveAllFields, "can't delete all columns with ALTER TABLE")
 	// ErrCantDropFieldOrKey returns for dropping a non-existent field or key.
@@ -246,6 +249,8 @@ type DDL interface {
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
 	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error
+	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
+	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
@@ -507,22 +512,28 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
 }
 
-func (d *ddl) genGlobalID() (int64, error) {
-	var globalID int64
+func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
+	ret := make([]int64, count)
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
 
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
-				failpoint.Return(errors.New("gofail genGlobalID error"))
+				failpoint.Return(errors.New("gofail genGlobalIDs error"))
 			}
 		})
 
-		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
+		m := meta.NewMeta(txn)
+		for i := 0; i < count; i++ {
+			ret[i], err = m.GenGlobalID()
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 
-	return globalID, errors.Trace(err)
+	return ret, err
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
@@ -661,6 +672,7 @@ const (
 	codeInvalidColumnState     = 102
 	codeInvalidIndexState      = 103
 	codeInvalidForeignKeyState = 104
+	codeInvalidTableLockState  = 105
 
 	codeCantDropColWithIndex               = 201
 	codeUnsupportedAddColumn               = 202

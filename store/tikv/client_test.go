@@ -14,9 +14,12 @@
 package tikv
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 )
@@ -76,4 +79,17 @@ func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
 	c.Assert(len(requests), Equals, 2)
 	newEntryPtr := &entries[0]
 	c.Assert(entryPtr, Equals, newEntryPtr)
+}
+
+func (s *testClientSuite) TestCancelTimeoutRetErr(c *C) {
+	req := new(tikvpb.BatchCommandsRequest_Request)
+	a := &connArray{batchCommandsCh: make(chan *batchCommandsEntry, 1)}
+
+	ctx, cancel := context.WithCancel(context.TODO())
+	cancel()
+	_, err := sendBatchRequest(ctx, "", a, req, 2*time.Second)
+	c.Assert(errors.Cause(err), Equals, context.Canceled)
+
+	_, err = sendBatchRequest(context.Background(), "", a, req, 0)
+	c.Assert(errors.Cause(err), Equals, context.DeadlineExceeded)
 }
