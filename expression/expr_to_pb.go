@@ -45,7 +45,7 @@ func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv
 	}
 
 	for _, expr := range exprs {
-		pbExpr := pc.ExprToPB(sc, expr)
+		pbExpr := pc.ExprToPB(expr)
 		if pbExpr == nil {
 			remained = append(remained, expr)
 			continue
@@ -72,7 +72,7 @@ func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv
 func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr) {
 	pc := PbConverter{client: client, sc: sc}
 	for _, expr := range exprs {
-		v := pc.ExprToPB(sc, expr)
+		v := pc.ExprToPB(expr)
 		pbExpr = append(pbExpr, v)
 	}
 	return
@@ -90,14 +90,14 @@ func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter 
 }
 
 // ExprToPB converts Expression to TiPB.
-func (pc PbConverter) ExprToPB(sc *stmtctx.StatementContext, expr Expression) *tipb.Expr {
+func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
 	case *Constant, *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
 		return pc.columnToPBExpr(x)
 	case *ScalarFunction:
-		return pc.scalarFuncToPBExpr(sc, x)
+		return pc.scalarFuncToPBExpr(x)
 	}
 	return nil
 }
@@ -221,7 +221,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		Val: codec.EncodeInt(nil, id)}
 }
 
-func (pc PbConverter) scalarFuncToPBExpr(sc *stmtctx.StatementContext, expr *ScalarFunction) *tipb.Expr {
+func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	// check whether this function can be pushed.
 	if !pc.canFuncBePushed(expr) {
 		return nil
@@ -236,7 +236,7 @@ func (pc PbConverter) scalarFuncToPBExpr(sc *stmtctx.StatementContext, expr *Sca
 	// check whether all of its parameters can be pushed.
 	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
 	for _, arg := range expr.GetArgs() {
-		pbArg := pc.ExprToPB(sc, arg)
+		pbArg := pc.ExprToPB(arg)
 		if pbArg == nil {
 			return nil
 		}
@@ -245,7 +245,7 @@ func (pc PbConverter) scalarFuncToPBExpr(sc *stmtctx.StatementContext, expr *Sca
 
 	var implicitParameters []byte
 	if params := expr.Function.implicitParameters(); len(params) > 0 {
-		encoded, err := codec.EncodeValue(sc, nil, params...)
+		encoded, err := codec.EncodeValue(pc.sc, nil, params...)
 		if err != nil {
 			logutil.Logger(context.Background()).Error("encode implicit parameters", zap.Any("datums", params), zap.Error(err))
 			return nil
@@ -266,7 +266,7 @@ func (pc PbConverter) scalarFuncToPBExpr(sc *stmtctx.StatementContext, expr *Sca
 // GroupByItemToPB converts group by items to pb.
 func GroupByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expression) *tipb.ByItem {
 	pc := PbConverter{client: client, sc: sc}
-	e := pc.ExprToPB(sc, expr)
+	e := pc.ExprToPB(expr)
 	if e == nil {
 		return nil
 	}
@@ -276,7 +276,7 @@ func GroupByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expres
 // SortByItemToPB converts order by items to pb.
 func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expression, desc bool) *tipb.ByItem {
 	pc := PbConverter{client: client, sc: sc}
-	e := pc.ExprToPB(sc, expr)
+	e := pc.ExprToPB(expr)
 	if e == nil {
 		return nil
 	}
