@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -401,6 +402,18 @@ type LoadStats struct {
 	baseSchemaProducer
 
 	Path string
+}
+
+// SplitRegion represents a split index regions plan.
+type SplitRegion struct {
+	baseSchemaProducer
+
+	TableInfo  *model.TableInfo
+	IndexInfo  *model.IndexInfo
+	Lower      []types.Datum
+	Upper      []types.Datum
+	Num        int
+	ValueLists [][]types.Datum
 }
 
 // DDL represents a DDL statement plan.

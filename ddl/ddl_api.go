@@ -1169,6 +1169,14 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
+		// do pre-split and scatter.
+		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
+			if ctx.GetSessionVars().WaitTableSplitFinish {
+				preSplitTableRegion(d.store, tbInfo, true)
+			} else {
+				go preSplitTableRegion(d.store, tbInfo, false)
+			}
+		}
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1239,7 +1247,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
-			if hasAutoIncrementColumn(tbInfo) && op.UintValue != 0 {
+			if op.UintValue > 0 && tbInfo.PKIsHandle {
 				return errUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
@@ -1247,9 +1255,13 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				tbInfo.ShardRowIDBits = shardRowIDBitsMax
 			}
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
+		case ast.TableOptionPreSplitRegion:
+			tbInfo.PreSplitRegions = op.UintValue
 		}
 	}
-
+	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
+		tbInfo.PreSplitRegions = tbInfo.ShardRowIDBits
+	}
 	return nil
 }
 
@@ -1452,12 +1464,12 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if hasAutoIncrementColumn(t.Meta()) && uVal != 0 {
-		return errUnsupportedShardRowIDBits
-	}
 	if uVal == t.Meta().ShardRowIDBits {
 		// Nothing need to do.
 		return nil
+	}
+	if uVal > 0 && t.Meta().PKIsHandle {
+		return errUnsupportedShardRowIDBits
 	}
 	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
 	if err != nil {

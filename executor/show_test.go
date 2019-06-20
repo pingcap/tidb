@@ -803,6 +803,16 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 			"  PARTITION p11 VALUES LESS THAN (12),\n"+
 			"  PARTITION p12 VALUES LESS THAN (MAXVALUE)\n"+
 			")"))
+
+	tk.MustExec("create table t (a int, b int) shard_row_id_bits = 4 pre_split_regions=3;")
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
+	))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestShowEscape(c *C) {
