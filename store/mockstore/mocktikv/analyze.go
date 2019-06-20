@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"context"
-	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -114,10 +113,8 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 }
 
 type analyzeColumnsExec struct {
-	tblExec         *tableScanExec
-	fields          []*ast.ResultField
-	maxExecDuration time.Duration
-	startExecTime   time.Time
+	tblExec *tableScanExec
+	fields  []*ast.ResultField
 }
 
 func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
@@ -191,22 +188,6 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 		return nil, errors.Trace(err)
 	}
 	return &coprocessor.Response{Data: data}, nil
-}
-
-func (e *analyzeColumnsExec) SetMaxExecDuration(d time.Duration) {
-	e.maxExecDuration = d
-}
-
-func (e *analyzeColumnsExec) MaxExecDuration() time.Duration {
-	return e.maxExecDuration
-}
-
-func (e *analyzeColumnsExec) SetStartExecTime(t time.Time) {
-	e.startExecTime = t
-}
-
-func (e *analyzeColumnsExec) StartExecTime() time.Time {
-	return e.startExecTime
 }
 
 // Fields implements the sqlexec.RecordSet Fields interface.

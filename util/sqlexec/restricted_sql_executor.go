@@ -15,7 +15,6 @@ package sqlexec
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -96,10 +95,4 @@ type RecordSet interface {
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
-
-	SetMaxExecDuration(d time.Duration)
-	MaxExecDuration() time.Duration
-
-	SetStartExecTime(d time.Time)
-	StartExecTime() time.Time
 }

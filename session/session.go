@@ -116,7 +116,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
-	SetProcessInfo(string, time.Time, byte)
+	SetProcessInfo(string, time.Time, byte, uint64)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -907,18 +907,19 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
+func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
 	pi := util.ProcessInfo{
-		ID:            s.sessionVars.ConnectionID,
-		DB:            s.sessionVars.CurrentDB,
-		Command:       command,
-		Plan:          s.currentPlan,
-		Time:          t,
-		State:         s.Status(),
-		Info:          sql,
-		CurTxnStartTS: s.sessionVars.TxnCtx.StartTS,
-		StmtCtx:       s.sessionVars.StmtCtx,
-		StatsInfo:     plannercore.GetStatsInfo,
+		ID:               s.sessionVars.ConnectionID,
+		DB:               s.sessionVars.CurrentDB,
+		Command:          command,
+		Plan:             s.currentPlan,
+		Time:             t,
+		State:            s.Status(),
+		Info:             sql,
+		CurTxnStartTS:    s.sessionVars.TxnCtx.StartTS,
+		StmtCtx:          s.sessionVars.StmtCtx,
+		StatsInfo:        plannercore.GetStatsInfo,
+		MaxExecutionTime: maxExecutionTime,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
@@ -927,7 +928,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) (sqlexec.RecordSet, error) {
+func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet) ([]sqlexec.RecordSet, error) {
 	s.SetValue(sessionctx.QueryString, stmt.OriginText())
 	if _, ok := stmtNode.(ast.DDLNode); ok {
 		s.SetValue(sessionctx.LastExecuteDDL, true)
@@ -951,8 +952,10 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	} else {
 		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	}
-
-	return recordSet, nil
+	if recordSet != nil {
+		recordSets = append(recordSets, recordSet)
+	}
+	return recordSets, nil
 }
 
 func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
@@ -1038,7 +1041,6 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	var tempStmtNodes []ast.StmtNode
 	compiler := executor.Compiler{Ctx: s}
-
 	for idx, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
 
@@ -1073,17 +1075,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			sessionExecuteCompileDurationGeneral.Observe(time.Since(startTS).Seconds())
 		}
 		s.currentPlan = stmt.Plan
-		maxExecTimeMS := s.getStmtMaxExecTimeMS(stmtNode)
 
 		// Step3: Execute the physical plan.
-		rs, err := s.executeStatement(ctx, connID, stmtNode, stmt, recordSets)
-		if err != nil {
-			return nil, err
-		}
-		if rs != nil {
-			rs.SetMaxExecDuration(time.Duration(maxExecTimeMS) * time.Millisecond)
-			rs.SetStartExecTime(startTS)
-			recordSets = append(recordSets, rs)
+		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 

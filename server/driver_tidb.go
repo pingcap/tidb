@@ -212,8 +212,8 @@ func (tc *TiDBContext) CommitTxn(ctx context.Context) error {
 }
 
 // SetProcessInfo implements QueryCtx SetProcessInfo method.
-func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte) {
-	tc.session.SetProcessInfo(sql, t, command)
+func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	tc.session.SetProcessInfo(sql, t, command, maxExecutionTime)
 }
 
 // RollbackTxn implements QueryCtx RollbackTxn method.
@@ -355,14 +355,6 @@ type tidbResultSet struct {
 	columns   []*ColumnInfo
 	rows      []chunk.Row
 	closed    int32
-}
-
-func (trs *tidbResultSet) MaxExecDuration() time.Duration {
-	return trs.recordSet.MaxExecDuration()
-}
-
-func (trs *tidbResultSet) StartExecTime() time.Time {
-	return trs.recordSet.StartExecTime()
 }
 
 func (trs *tidbResultSet) NewRecordBatch() *chunk.RecordBatch {

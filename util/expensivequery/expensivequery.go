@@ -32,18 +32,22 @@ import (
 
 // Handle is the handler for expensive query.
 type Handle struct {
-	mu      sync.RWMutex
-	exitCh  chan struct{}
-	queries map[uint32]InterruptableQuery
+	mu     sync.RWMutex
+	exitCh chan struct{}
+	// sm     util.SessionManager
 }
 
 // NewExpensiveQueryHandle builds a new expensive query handler.
 func NewExpensiveQueryHandle(exitCh chan struct{}) *Handle {
-	return &Handle{
-		exitCh:  exitCh,
-		queries: make(map[uint32]InterruptableQuery),
-	}
+	return &Handle{exitCh: exitCh}
 }
+
+// // SetSessionManager sets the SessionManager which is used to fetching the info
+// // of all active sessions.
+// func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
+// 	eqh.sm = sm
+// 	return eqh
+// }
 
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run(sm util.SessionManager) {
@@ -53,18 +57,18 @@ func (eqh *Handle) Run(sm util.SessionManager) {
 	for {
 		select {
 		case <-ticker.C:
-			eqh.checkAll()
-			if log.GetLevel() > zapcore.WarnLevel || sm == nil {
-				continue
-			}
 			processInfo := sm.ShowProcessList()
 			for _, info := range processInfo {
 				if len(info.Info) == 0 || info.ExceedExpensiveTimeThresh {
 					continue
 				}
-				if costTime := time.Since(info.Time); costTime >= curInterval {
+				costTime := time.Since(info.Time)
+				if costTime >= curInterval && log.GetLevel() <= zapcore.WarnLevel {
 					logExpensiveQuery(costTime, info)
 					info.ExceedExpensiveTimeThresh = true
+
+				} else if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
+					sm.Kill(info.ID, true)
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)

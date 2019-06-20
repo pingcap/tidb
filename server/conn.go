@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -64,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -119,9 +117,6 @@ var (
 	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
 	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
 	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
-)
-var (
-	_ expensivequery.InterruptableQuery = &clientConn{}
 )
 
 // newClientConn creates a *clientConn object.
@@ -874,7 +869,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastCmd = string(hack.String(data))
 	token := cc.server.getToken()
 	defer func() {
-		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
+		cc.ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
@@ -887,9 +882,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
-		cc.ctx.SetProcessInfo("", t, cmd)
+		cc.ctx.SetProcessInfo("", t, cmd, 0)
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd)
+		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd, 0)
 	}
 
 	switch cmd {
@@ -1259,60 +1254,13 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	return cc.flush()
 }
 
-func (cc *clientConn) RemoveFromMaxExecMonitor() {
-	tidbCtx, ok := cc.ctx.(*TiDBContext)
-	if !ok {
-		logutil.Logger(context.Background()).Error("convert to tidbCtx failed")
-		return
-	}
-	monitor := domain.GetDomain(tidbCtx.session).ExpensiveQueryHandle()
-	monitor.RemoveQuery(cc)
-	cc.clearMonitoredResultSet()
-}
-
-func (cc *clientConn) AddToMaxExecMonitor(rs ResultSet) error {
-	if rs.MaxExecDuration() > 0 {
-		now := time.Now()
-		if now.After(rs.StartExecTime().Add(rs.MaxExecDuration())) {
-			cc.SetExecTimedOut()
-			logutil.Logger(context.Background()).Debug("Already timed out")
-			return errMaxExecTimeExceeded
-		}
-
-		tidbCtx, ok := cc.ctx.(*TiDBContext)
-		if !ok {
-			logutil.Logger(context.Background()).Error("Convert ctx to tidbCtx failed")
-			return nil
-		}
-		cc.setMonitoredResultSet(rs)
-		monitor := domain.GetDomain(tidbCtx.session).ExpensiveQueryHandle()
-		err := monitor.AddQuery(cc)
-		if err != nil {
-			logutil.Logger(context.Background()).Debug("AddQuery failed", zap.String("err:", err.Error()))
-			cc.clearMonitoredResultSet()
-			return errors.Trace(err)
-		}
-
-		logutil.Logger(context.Background()).Debug("Add to monitor ok")
-		return nil
-	}
-	return nil
-}
-
 // writeResultset writes data into a resultset and uses rs.Next to get row data back.
 // If binary is true, the data would be encoded in BINARY format.
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
 func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (runErr error) {
-	cc.ClearExecTimedOut()
-	err := cc.AddToMaxExecMonitor(rs)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	defer func() {
-		cc.RemoveFromMaxExecMonitor()
 		// close ResultSet when cursor doesn't exist
 		if !mysql.HasCursorExistsFlag(serverStatus) {
 			terror.Call(rs.Close)
@@ -1331,7 +1279,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf = buf[:stackSize]
 		logutil.Logger(ctx).Error("write query result panic", zap.String("lastCmd", cc.lastCmd), zap.String("stack", string(buf)))
 	}()
-
+	var err error
 	if mysql.HasCursorExistsFlag(serverStatus) {
 		err = cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize)
 	} else {
@@ -1339,14 +1287,11 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	}
 	if err != nil {
 		return err
-	} else if cc.ExecTimedOut() {
-		return errMaxExecTimeExceeded
 	}
-	// Only write EOF when this request has not timed out
-	err = cc.writeEOF(serverStatus)
-	if err != nil {
-		return nil
-	}
+	// else if cc.ExecTimedOut() {
+	// 	return errMaxExecTimeExceeded
+	// }
+
 	return cc.flush()
 }
 
@@ -1408,8 +1353,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 		}
 	}
-	// Only write EOF when this request has not timed out
-	return nil
+	return cc.writeEOF(serverStatus)
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
@@ -1544,66 +1488,4 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 
 	return cc.writeOK()
-}
-
-func (cc *clientConn) setMonitoredResultSet(rs ResultSet) {
-	cc.mu.Lock()
-	cc.mu.monitoredResultSet = rs
-	cc.mu.Unlock()
-}
-
-func (cc *clientConn) clearMonitoredResultSet() {
-	cc.mu.Lock()
-	cc.mu.monitoredResultSet = nil
-	cc.mu.Unlock()
-}
-
-func (cc *clientConn) ClearExecTimedOut() {
-	atomic.StoreInt32(&cc.timedOut, 0)
-}
-
-func (cc *clientConn) SetExecTimedOut() {
-	atomic.StoreInt32(&cc.timedOut, 1)
-}
-func (cc *clientConn) ExecTimedOut() bool {
-	return (atomic.LoadInt32(&cc.timedOut) > 0)
-}
-
-func (cc *clientConn) CancelOnTimeout() {
-	//similar to killConn, with double check and only kills 1 result set
-	var resultSet ResultSet
-
-	cc.mu.RLock()
-	//cc.mu.monitoredResultSet may has changed before we get this lock, so do a double check
-	if recordSetTimedOut(cc.mu.monitoredResultSet) {
-		resultSet = cc.mu.monitoredResultSet
-		cc.SetExecTimedOut()
-	}
-	cc.mu.RUnlock()
-
-	if resultSet != nil {
-		if err := resultSet.Close(); err != nil {
-			logutil.Logger(context.Background()).Error("close result set error", zap.Uint32("connID", cc.connectionID), zap.Error(err))
-		}
-	}
-}
-
-func (cc *clientConn) QueryID() uint32 {
-	return cc.connectionID
-}
-
-func recordSetTimedOut(rs ResultSet) bool {
-	if rs == nil || rs.MaxExecDuration() == 0 {
-		logutil.Logger(context.Background()).Info("rs:", zap.Bool("rs is nil:", rs == nil))
-		return false
-	}
-
-	now := time.Now()
-	return now.After(rs.StartExecTime().Add(rs.MaxExecDuration()))
-}
-
-func (cc *clientConn) MaxExecTimeExceeded() bool {
-	cc.mu.RLock()
-	defer cc.mu.RUnlock()
-	return recordSetTimedOut(cc.mu.monitoredResultSet)
 }
