@@ -202,7 +202,7 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
 	req := records.NewFirstChunk()
-	it := chunk.NewIterator4Chunk(reqc)
+	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := records.Next(ctx, req)
 		if err != nil {
