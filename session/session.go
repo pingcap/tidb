@@ -185,6 +185,59 @@ type session struct {
 	statsCollector *handle.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
+	// lockedTables use to record the table locks hold by the session.
+	lockedTables map[int64]model.TableLockTpInfo
+}
+
+// AddTableLock adds table lock to the session lock map.
+func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
+	for _, l := range locks {
+		s.lockedTables[l.TableID] = l
+	}
+}
+
+// ReleaseTableLocks releases table lock in the session lock map.
+func (s *session) ReleaseTableLocks(locks []model.TableLockTpInfo) {
+	for _, l := range locks {
+		delete(s.lockedTables, l.TableID)
+	}
+}
+
+// ReleaseTableLockByTableIDs releases table lock in the session lock map by table ID.
+func (s *session) ReleaseTableLockByTableIDs(tableIDs []int64) {
+	for _, tblID := range tableIDs {
+		delete(s.lockedTables, tblID)
+	}
+}
+
+// CheckTableLocked checks the table lock.
+func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
+	lt, ok := s.lockedTables[tblID]
+	if !ok {
+		return false, model.TableLockNone
+	}
+	return true, lt.Tp
+}
+
+// GetAllTableLocks gets all table locks table id and db id hold by the session.
+func (s *session) GetAllTableLocks() []model.TableLockTpInfo {
+	lockTpInfo := make([]model.TableLockTpInfo, 0, len(s.lockedTables))
+	for _, tl := range s.lockedTables {
+		lockTpInfo = append(lockTpInfo, tl)
+	}
+	return lockTpInfo
+}
+
+// HasLockedTables uses to check whether this session locked any tables.
+// If so, the session can only visit the table which locked by self.
+func (s *session) HasLockedTables() bool {
+	b := len(s.lockedTables) > 0
+	return b
+}
+
+// ReleaseAllTableLocks releases all table locks hold by the session.
+func (s *session) ReleaseAllTableLocks() {
+	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -266,10 +319,6 @@ func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
 
 func (s *session) SetCommandValue(command byte) {
 	atomic.StoreUint32(&s.sessionVars.CommandValue, uint32(command))
-}
-
-func (s *session) GetTLSState() *tls.ConnectionState {
-	return s.sessionVars.TLSConnectionState
 }
 
 func (s *session) SetCollation(coID int) error {
@@ -1330,7 +1379,17 @@ func (s *session) ClearValue(key fmt.Stringer) {
 }
 
 // Close function does some clean work when session end.
+// Close should release the table locks which hold by the session.
 func (s *session) Close() {
+	// TODO: do clean table locks when session exited without execute Close.
+	// TODO: do clean table locks when tidb-server was `kill -9`.
+	if s.HasLockedTables() && config.TableLockEnabled() {
+		lockedTables := s.GetAllTableLocks()
+		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
+		}
+	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
@@ -1493,6 +1552,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	timeutil.SetSystemTZ(tz)
 	dom := domain.GetDomain(se)
+	dom.InitExpensiveQueryHandle()
 
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(se)
@@ -1529,7 +1589,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	dom.InitExpensiveQueryHandle()
 	if raw, ok := store.(tikv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
@@ -1585,6 +1644,7 @@ func createSession(store kv.Storage) (*session, error) {
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -1608,6 +1668,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s

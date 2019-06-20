@@ -84,6 +84,7 @@ func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
 	// Update can see the change, so this statement affects 0 roews.
 	tk1.MustExec("update pessimistic set v = 3 where v = 1")
 	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(0))
+	c.Assert(session.GetHistory(tk1.Se).Count(), Equals, 0)
 	// select for update can see the change of another transaction.
 	tk1.MustQuery("select * from pessimistic for update").Check(testkit.Rows("1 2"))
 	// plain select can not see the change of another transaction.

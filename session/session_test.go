@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"google.golang.org/grpc"
 )
 
@@ -2700,4 +2700,18 @@ func (s *testSessionSuite) TestGrantViewRelated(c *C) {
 	tkRoot.MustExec(`grant select on v_version29 to 'u_version29'@'%'`)
 	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
 	tkUser.MustExec("create view v_version29_c as select * from v_version29;")
+}
+
+func (s *testSessionSuite) TestLoadClientInteractive(c *C) {
+	var (
+		err          error
+		connectionID uint64
+	)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	id := atomic.AddUint64(&connectionID, 1)
+	tk.Se.SetConnectionID(id)
+	tk.Se.GetSessionVars().ClientCapability = tk.Se.GetSessionVars().ClientCapability | mysql.ClientInteractive
+	tk.MustQuery("select @@wait_timeout").Check(testkit.Rows("28800"))
 }

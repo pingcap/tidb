@@ -144,7 +144,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 // NewRecordBatch create a recordBatch base on top-level executor's newFirstChunk().
 func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
-	return chunk.NewRecordBatch(a.executor.newFirstChunk())
+	return chunk.NewRecordBatch(newFirstChunk(a.executor))
 }
 
 func (a *recordSet) Close() error {
@@ -342,7 +342,7 @@ func (c *chunkRowRecordSet) Next(ctx context.Context, req *chunk.RecordBatch) er
 }
 
 func (c *chunkRowRecordSet) NewRecordBatch() *chunk.RecordBatch {
-	return chunk.NewRecordBatch(c.e.newFirstChunk())
+	return chunk.NewRecordBatch(newFirstChunk(c.e))
 }
 
 func (c *chunkRowRecordSet) Close() error {
@@ -436,7 +436,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		a.logAudit()
 	}()
 
-	err = e.Next(ctx, chunk.NewRecordBatch(e.newFirstChunk()))
+	err = e.Next(ctx, chunk.NewRecordBatch(newFirstChunk(e)))
 	if err != nil {
 		return nil, err
 	}
