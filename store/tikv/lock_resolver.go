@@ -138,17 +138,12 @@ func (l *Lock) String() string {
 
 // NewLock creates a new *Lock.
 func NewLock(l *kvrpcpb.LockInfo) *Lock {
-	ttl := l.GetLockTtl()
-	if ttl == 0 {
-		ttl = defaultLockTTL
-	}
-	txnSize := l.GetTxnSize()
 	return &Lock{
 		Key:     l.GetKey(),
 		Primary: l.GetPrimaryLock(),
 		TxnID:   l.GetLockVersion(),
-		TTL:     ttl,
-		TxnSize: txnSize,
+		TTL:     l.GetLockTtl(),
+		TxnSize: l.GetTxnSize(),
 	}
 }
 
