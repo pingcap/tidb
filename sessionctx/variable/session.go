@@ -305,8 +305,11 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
-	// WaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
-	WaitTableSplitFinish bool
+	// WaitSplitRegionFinish defines the create table pre-split behaviour is sync or async.
+	WaitSplitRegionFinish bool
+
+	// WaitSplitRegionTimeout defines the split region timeout.
+	WaitSplitRegionTimeout uint64
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -367,6 +370,8 @@ func NewSessionVars() *SessionVars {
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
 		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:     DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:    DefWaitSplitRegionTimeout,
 		CommandValue:              uint32(mysql.ComSleep),
 	}
 	vars.Concurrency = Concurrency{
@@ -416,6 +421,11 @@ func (s *SessionVars) CleanBuffers() {
 	if !s.LightningMode {
 		s.GetWriteStmtBufs().clean()
 	}
+}
+
+// GetSplitRegionTimeout gets split region timeout.
+func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
+	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
 }
 
 // AllocPlanColumnID allocates column id for plan.
@@ -650,8 +660,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
-	case TiDBWaitTableSplitFinish:
-		s.WaitTableSplitFinish = TiDBOptOn(val)
+	case TiDBWaitSplitRegionFinish:
+		s.WaitSplitRegionFinish = TiDBOptOn(val)
+	case TiDBWaitSplitRegionTimeout:
+		s.WaitSplitRegionTimeout = uint64(tidbOptPositiveInt32(val, DefWaitSplitRegionTimeout))
 	}
 	s.systems[name] = val
 	return nil

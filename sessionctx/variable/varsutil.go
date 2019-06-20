@@ -380,6 +380,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return upVal, nil
+	case TiDBWaitSplitRegionTimeout:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v <= 0 {
+			return value, errors.Errorf("tidb_wait_split_region_timeout(%d) cannot be smaller than 1", v)
+		}
 	}
 	return value, nil
 }

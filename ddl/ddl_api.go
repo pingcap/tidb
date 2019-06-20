@@ -1171,10 +1171,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err == nil {
 		// do pre-split and scatter.
 		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-			if ctx.GetSessionVars().WaitTableSplitFinish {
-				preSplitTableRegion(d.store, tbInfo, true)
+			if ctx.GetSessionVars().WaitSplitRegionFinish {
+				preSplitTableShardRowIDBitsRegion(d.store, tbInfo, true)
 			} else {
-				go preSplitTableRegion(d.store, tbInfo, false)
+				go preSplitTableShardRowIDBitsRegion(d.store, tbInfo, false)
 			}
 		}
 		if tbInfo.AutoIncID > 1 {
