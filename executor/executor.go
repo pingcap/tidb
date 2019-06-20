@@ -680,11 +680,6 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("selectLock.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
 	req.GrowAndReset(e.maxChunkSize)
 	err := Next(ctx, e.children[0], req)
 	if err != nil {

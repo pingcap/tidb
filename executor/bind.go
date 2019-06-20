@@ -15,8 +15,7 @@ package executor
 
 import (
 	"context"
-	"github.com/opentracing/opentracing-go"
-
+	
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
@@ -40,11 +39,6 @@ type SQLBindExec struct {
 
 // Next implements the Executor Next interface.
 func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("SQLBindExec.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
 	req.Reset()
 	switch e.sqlBindOp {
 	case plannercore.OpSQLBindCreate:

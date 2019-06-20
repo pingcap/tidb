@@ -17,8 +17,8 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"github.com/opentracing/opentracing-go"
 	"sort"
+	"time"
 
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
