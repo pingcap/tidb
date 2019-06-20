@@ -217,8 +217,8 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		}
 	}
 	ctx := context.TODO()
-	req := s.RecordSet.NewRecordBatch()
-	it := chunk.NewIterator4Chunk(req.Chunk)
+	req := s.RecordSet.NewFirstChunk()
+	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := s.RecordSet.Next(ctx, req)
 		if err != nil {

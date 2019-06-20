@@ -117,7 +117,7 @@ func (ut *benchDB) mustExec(sql string) {
 	if len(rss) > 0 {
 		ctx := context.Background()
 		rs := rss[0]
-		req := rs.NewRecordBatch()
+		req := rs.NewFirstChunk()
 		for {
 			err := rs.Next(ctx, req)
 			if err != nil {

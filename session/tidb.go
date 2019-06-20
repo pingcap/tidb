@@ -268,7 +268,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		return nil, nil
 	}
 	var rows []chunk.Row
-	req := rs.NewRecordBatch()
+	req := rs.NewFirstChunk()
 	for {
 		// Since we collect all the rows, we can not reuse the chunk.
 		iter := chunk.NewIterator4Chunk(req.Chunk)
