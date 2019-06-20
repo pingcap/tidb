@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -286,19 +287,25 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		DB:      "test",
 		Command: byte(2),
 		State:   2,
-		Info:    "do something",
+		Info:    strings.Repeat("x", 101),
 		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
 	tk.Se.SetSessionManager(sm)
-	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
-		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something 0",
-			"2 user-2 localhost test Init DB 9223372036 2 do something 0"))
-	tk.MustQuery("SHOW PROCESSLIST;").Check(
-		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something",
-			"2 user-2 localhost test Init DB 9223372036 2 do something"))
-	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(
-		testkit.Rows("1 user-1 localhost information_schema Quit 9223372036 1 do something",
-			"2 user-2 localhost test Init DB 9223372036 2 do something"))
+	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s 0", strings.Repeat("x", 101)),
+		))
+	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s", strings.Repeat("x", 100)),
+		))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
+		testkit.Rows(
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+		))
 }
 
 func (s *testTableSuite) TestSchemataCharacterSet(c *C) {
