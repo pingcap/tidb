@@ -64,7 +64,7 @@ func (s *testSuite) TestInfoschemaFieldValue(c *C) {
 		testkit.Rows("1"))
 	tk.MustExec("insert into t(c, d) values(1, 1)")
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("30002"))
+		testkit.Rows("1000002"))
 
 	tk.MustExec("create user xxx")
 	tk.MustExec("flush privileges")
