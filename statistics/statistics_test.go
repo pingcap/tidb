@@ -94,7 +94,7 @@ func (r *recordSet) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (r *recordSet) NewFirstChunk() *chunk.Chunk {
+func (r *recordSet) NewChunk() *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(r.fields))
 	for _, field := range r.fields {
 		fields = append(fields, &field.Column.FieldType)
@@ -177,7 +177,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	ctx := context.Background()
 	for {
-		req := records.NewFirstChunk()
+		req := records.NewChunk()
 		err := records.Next(ctx, req)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -201,7 +201,7 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
-	req := records.NewFirstChunk()
+	req := records.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := records.Next(ctx, req)

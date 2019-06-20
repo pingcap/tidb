@@ -116,7 +116,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewFirstChunk()
+	req := rs.NewChunk()
 
 	for {
 		err := rs.Next(ctx, req)

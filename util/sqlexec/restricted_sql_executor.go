@@ -89,8 +89,8 @@ type RecordSet interface {
 	// Next reads records into chunk.
 	Next(ctx context.Context, req *chunk.Chunk) error
 
-	//NewFirstChunk create a chunk.
-	NewFirstChunk() *chunk.Chunk
+	//NewChunk create a chunk.
+	NewChunk() *chunk.Chunk
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.

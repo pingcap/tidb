@@ -357,8 +357,8 @@ type tidbResultSet struct {
 	closed    int32
 }
 
-func (trs *tidbResultSet) NewFirstChunk() *chunk.Chunk {
-	return trs.recordSet.NewFirstChunk()
+func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
+	return trs.recordSet.NewChunk()
 }
 
 func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {

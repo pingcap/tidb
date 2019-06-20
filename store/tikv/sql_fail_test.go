@@ -89,7 +89,7 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 			defer terror.Call(rs[0].Close)
 		}
 		c.Assert(err, IsNil)
-		req := rs[0].NewFirstChunk()
+		req := rs[0].NewChunk()
 		err = rs[0].Next(context.Background(), req)
 		c.Assert(err, IsNil)
 		c.Assert(req.NumRows() == 0, IsFalse)
@@ -124,7 +124,7 @@ func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
 	res, err := tk.Se.Execute(ctx, "select * from t")
 	c.Assert(err, IsNil)
 
-	req := res[0].NewFirstChunk()
+	req := res[0].NewChunk()
 	for {
 		err := res[0].Next(ctx, req)
 		c.Assert(err, IsNil)

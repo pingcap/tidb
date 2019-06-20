@@ -124,8 +124,8 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-// NewFirstChunk create a chunk base on top-level executor's newFirstChunk().
-func (a *recordSet) NewFirstChunk() *chunk.Chunk {
+// NewChunk create a chunk base on top-level executor's newFirstChunk().
+func (a *recordSet) NewChunk() *chunk.Chunk {
 	return newFirstChunk(a.executor)
 }
 
@@ -320,7 +320,7 @@ func (c *chunkRowRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (c *chunkRowRecordSet) NewFirstChunk() *chunk.Chunk {
+func (c *chunkRowRecordSet) NewChunk() *chunk.Chunk {
 	return newFirstChunk(c.e)
 }
 
@@ -353,7 +353,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 	var rows []chunk.Row
 	var err error
 	fields := rs.Fields()
-	req := rs.NewFirstChunk()
+	req := rs.NewChunk()
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {

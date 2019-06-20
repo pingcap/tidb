@@ -1259,7 +1259,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	req := rs[0].NewFirstChunk()
+	req := rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	if err != nil {
 		return "", errors.Trace(err)

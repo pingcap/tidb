@@ -384,7 +384,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	}
 	r := rs[0]
 	defer terror.Call(r.Close)
-	req := r.NewFirstChunk()
+	req := r.NewChunk()
 	err = r.Next(ctx, req)
 	if err != nil || req.NumRows() == 0 {
 		return "", true, errors.Trace(err)
@@ -658,7 +658,7 @@ func upgradeToVer12(s Session) {
 	r := rs[0]
 	sqls := make([]string, 0, 1)
 	defer terror.Call(r.Close)
-	req := r.NewFirstChunk()
+	req := r.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
 	err = r.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {

@@ -129,7 +129,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 		if err != nil {
 			return
 		}
-		req := rs[0].NewFirstChunk()
+		req := rs[0].NewChunk()
 		err = rs[0].Next(ctx, req)
 		if err != nil {
 			return
