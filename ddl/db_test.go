@@ -92,6 +92,8 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
 	ddl.WaitTimeWhenErrorOccured = 0
+	// Test for table lock.
+	config.GetGlobalConfig().EnableTableLock = true
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -2887,18 +2889,6 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
 
-	// recover table lock config.
-	originValue := config.GetGlobalConfig().EnableTableLock
-	defer func() {
-		config.GetGlobalConfig().EnableTableLock = originValue
-	}()
-
-	// Test for enable table lock config.
-	config.GetGlobalConfig().EnableTableLock = false
-	tk.MustExec("lock tables t1 write")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-	config.GetGlobalConfig().EnableTableLock = true
-
 	// Test lock 1 table.
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
@@ -3074,7 +3064,10 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
-func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
+func (s *testDBSuite4) TestConcurrentLockTables(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
 	s.tk = testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk := s.tk
@@ -3083,15 +3076,6 @@ func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
 	tk2.MustExec("use test")
-
-	// recover table lock config.
-	originValue := config.GetGlobalConfig().EnableTableLock
-	defer func() {
-		config.GetGlobalConfig().EnableTableLock = originValue
-	}()
-
-	// Test for enable table lock config.
-	config.GetGlobalConfig().EnableTableLock = true
 
 	// Test concurrent lock tables read.
 	sql1 := "lock tables t1 read"
@@ -3125,7 +3109,7 @@ func (s *testDBSuite2) TestConcurrentLockTables(c *C) {
 	tk2.MustExec("unlock tables")
 }
 
-func (s *testDBSuite2) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
+func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
