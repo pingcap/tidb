@@ -464,19 +464,8 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 }
 
 func killConn(conn *clientConn) {
-	conn.mu.RLock()
-	resultSets := conn.mu.resultSets
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-	for _, resultSet := range resultSets {
-		// resultSet.Close() is reentrant so it's safe to kill a same connID multiple times
-		if err := resultSet.Close(); err != nil {
-			logutil.Logger(context.Background()).Error("close result set error", zap.Uint32("connID", conn.connectionID), zap.Error(err))
-		}
-	}
-	if cancelFunc != nil {
-		cancelFunc()
-	}
+	sessVars := conn.ctx.GetSessionVars()
+	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
