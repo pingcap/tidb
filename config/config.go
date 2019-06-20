@@ -396,8 +396,8 @@ var defaultConf = Config{
 		Strategy:     "range",
 	},
 	PessimisticTxn: PessimisticTxn{
-		Enable:        false,
-		Default:       false,
+		Enable:        true,
+		Default:       true,
 		MaxRetryCount: 256,
 		TTL:           "30s",
 	},
