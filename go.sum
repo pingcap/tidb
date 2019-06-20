@@ -97,6 +97,8 @@ github.com/pingcap/parser v0.0.0-20190612082136-d4cf758dcb7f h1:8uWFPaemhZ6CE3dr
 github.com/pingcap/parser v0.0.0-20190612082136-d4cf758dcb7f/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20190619113912-b634efe14a7a h1:1TKjrAf3ddVOMjmQ4FY329DGPPjTJSiQL8lh/k51tqA=
 github.com/pingcap/parser v0.0.0-20190619113912-b634efe14a7a/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20190619123558-24bef3cae697 h1:LphXdKb4HK+NL1JT4kSlyapHkMgU3W4tOh7Dq/wRMsI=
+github.com/pingcap/parser v0.0.0-20190619123558-24bef3cae697/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/pd v2.1.12+incompatible h1:6N3LBxx2aSZqT+IWEG730EDNDttP7dXO8J6yvBh+HXw=
