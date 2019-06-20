@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
-	// "github.com/pingcap/tidb/util/logutil"
 )
 
 type ConnTestSuite struct {
@@ -244,7 +244,9 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 			uint32(connID): cc,
 		},
 	}
-	go ts.dom.ExpensiveQueryHandle().SetSessionManager(srv).Run()
+	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	go handle.Run(time.Millisecond)
+	defer handle.Close()
 
 	_, err = se.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)

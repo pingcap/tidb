@@ -50,11 +50,13 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 }
 
 // Run starts a expensive query checker goroutine at the start time of the server.
-func (eqh *Handle) Run() {
+func (eqh *Handle) Run(interval time.Duration) {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-	curInterval := time.Second * time.Duration(threshold)
-	// ticker := time.NewTicker(curInterval / 2)
-	ticker := time.NewTicker(time.Millisecond)
+	curInterval := time.Second * time.Duration(threshold) / 2
+	if interval > 0 {
+		curInterval = interval
+	}
+	ticker := time.NewTicker(interval)
 	for {
 		select {
 		case <-ticker.C:
@@ -82,6 +84,11 @@ func (eqh *Handle) Run() {
 			return
 		}
 	}
+}
+
+// Close closes the handle and release the background goroutine.
+func (eqh *Handle) Close() {
+	close(eqh.exitCh)
 }
 
 // LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.

@@ -1001,6 +1001,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	} else {
 		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	}
+
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
 	}
@@ -1706,6 +1707,7 @@ var builtinGlobalVariable = []string{
 	variable.AutoIncrementIncrement,
 	variable.CollationServer,
 	variable.NetWriteTimeout,
+
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,

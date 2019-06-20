@@ -267,7 +267,6 @@ func (cc *clientConn) writePacket(data []byte) error {
 		if cc.pkt == nil {
 			failpoint.Return(nil)
 		}
-		logutil.Logger(context.Background()).Info("cc.pkg not nil")
 	})
 	return cc.pkt.writePacket(data)
 }
@@ -941,7 +940,6 @@ func (cc *clientConn) flush() error {
 }
 
 func (cc *clientConn) writeOK() error {
-
 	msg := cc.ctx.LastMessage()
 	enclen := 0
 	if len(msg) > 0 {
@@ -1268,9 +1266,6 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	if err != nil {
 		return err
 	}
-	// else if cc.ExecTimedOut() {
-	// 	return errMaxExecTimeExceeded
-	// }
 
 	return cc.flush()
 }

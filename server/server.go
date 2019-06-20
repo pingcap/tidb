@@ -513,8 +513,8 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
+	logutil.Logger(context.Background()).Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
-	// logutil.Logger(context.Background()).Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
 
 	conn, ok := s.clients[uint32(connectionID)]
 	if !ok {
