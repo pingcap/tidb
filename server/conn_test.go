@@ -270,6 +270,5 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(2);")
 	c.Assert(err, Equals, errMaxExecTimeExceeded)
 
-	//	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/SleepInwriteChunks"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
 }

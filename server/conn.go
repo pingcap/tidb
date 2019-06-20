@@ -151,15 +151,12 @@ type clientConn struct {
 	peerHost     string            // peer host
 	peerPort     string            // peer port
 	lastCode     uint16            // last error code
-	timedOut     int32             //max_execution_time execeeded
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 		resultSets []ResultSet
-		// monitoredResultSet is used for nomintoring max execution time, set only if there is a result set to be monitored
-		monitoredResultSet ResultSet
 	}
 }
 
@@ -1413,8 +1410,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 			return err
 		}
 	}
-	// Only write EOF when this request has not timed out
-	return nil
+	return cc.writeEOF(serverStatus)
 }
 
 func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {

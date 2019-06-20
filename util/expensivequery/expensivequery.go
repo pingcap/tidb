@@ -49,13 +49,6 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 	return eqh
 }
 
-// // SetSessionManager sets the SessionManager which is used to fetching the info
-// // of all active sessions.
-// func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
-// 	eqh.sm = sm
-// 	return eqh
-// }
-
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)

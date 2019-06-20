@@ -241,7 +241,6 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 
 func (tr *tableResultHandler) Close() error {
 	err := closeAll(tr.optionalResult, tr.result)
-	// keep optionalResult and result unchanged, Next and Close(by timeout) may run concurrently and panic.
-	//tr.optionalResult, tr.result = nil, nil
+	tr.optionalResult, tr.result = nil, nil
 	return err
 }

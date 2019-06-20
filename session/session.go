@@ -1018,49 +1018,6 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return
 }
 
-const (
-	// MaxExecutionTime is currently used for selection Statement only
-	MaxExecutionTime = "max_execution_time"
-)
-
-type exeutionHints struct {
-	maxExecutionTime uint64
-}
-
-func (s *session) getExecutionHints(hints []*ast.TableOptimizerHint) (execHints *exeutionHints) {
-	execHints = &exeutionHints{maxExecutionTime: 0}
-	for _, hint := range hints {
-		switch hint.HintName.L {
-		case MaxExecutionTime:
-			execHints.maxExecutionTime = hint.MaxExecutionTime
-		default:
-		}
-	}
-	return execHints
-}
-
-// getStmtMaxExecTimeMS the timeout value of a stmt, 0 if there is no timeout value.
-func (s *session) getStmtMaxExecTimeMS(stmtNode ast.StmtNode) uint64 {
-	var timeOutMS uint64 = 0
-	switch stmtNode.(type) {
-	case *ast.SelectStmt:
-		sel := stmtNode.(*ast.SelectStmt)
-		execHints := s.getExecutionHints(sel.TableHints)
-		if execHints.maxExecutionTime != 0 {
-			timeOutMS = execHints.maxExecutionTime
-		} else if s.GetSessionVars().MaxExecutionTime != 0 {
-			timeOutMS = s.GetSessionVars().MaxExecutionTime
-		} else if str, ok := s.GetSessionVars().GetSystemVar(variable.MaxExecutionTime); ok {
-			t, err := strconv.ParseUint(str, 10, 64)
-			if err == nil {
-				timeOutMS = t
-			}
-		}
-	default:
-	}
-	return timeOutMS
-}
-
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
 	connID := s.sessionVars.ConnectionID
@@ -1127,9 +1084,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
-			if err != nil {
-				return nil, err
-			}
+			return nil, err
 		}
 	}
 
