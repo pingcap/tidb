@@ -350,7 +350,7 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_wait_split_region_finish;`).Check(testkit.Rows("0"))
 
 	// test for tidb_wait_split_region_timeout
-	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeOut)))
+	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeout)))
 	tk.MustExec("set tidb_wait_split_region_timeout = 1")
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
 	_, err = tk.Exec("set tidb_wait_split_region_timeout = 0")

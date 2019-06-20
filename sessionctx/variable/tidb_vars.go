@@ -14,8 +14,9 @@
 package variable
 
 import (
-	"github.com/pingcap/parser/mysql"
 	"os"
+
+	"github.com/pingcap/parser/mysql"
 )
 
 /*
@@ -337,7 +338,7 @@ const (
 	DefTiDBSkipIsolationLevelCheck     = false
 	DefTiDBWaitSplitRegionFinish       = true
 	DefTiDBExpensiveQueryTimeThreshold = 60  // 60s
-	DefWaitSplitRegionTimeOut          = 300 // 300s
+	DefWaitSplitRegionTimeout          = 300 // 300s
 )
 
 // Process global variables.

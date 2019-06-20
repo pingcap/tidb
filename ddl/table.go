@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -366,7 +365,7 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	}
 }
 
-func preSplitTableShardRowIDBitsRegion(ctx sessionctx.Context, store kv.Storage, tblInfo *model.TableInfo, waitTableSplitFinish bool) {
+func preSplitTableShardRowIDBitsRegion(store kv.Storage, tblInfo *model.TableInfo, waitTableSplitFinish bool) {
 	s, ok := store.(splitableStore)
 	if !ok {
 		return
