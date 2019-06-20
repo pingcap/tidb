@@ -181,7 +181,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	chk := newFirstChunk(e.children[0])
 	e.evalBuffer = chunk.MutRowFromTypes(fields)
 	for {
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
 		if err != nil {
 			return err
 		}
