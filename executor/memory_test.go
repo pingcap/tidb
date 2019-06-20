@@ -72,7 +72,7 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	c.Assert(err, IsNil)
 	record := records[0]
 	rowCnt := 0
-	chk := record.NewRecordBatch()
+	chk := record.NewFirstChunk()
 	for {
 		c.Assert(record.Next(context.Background(), chk), IsNil)
 		rowCnt += chk.NumRows()

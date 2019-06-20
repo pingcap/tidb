@@ -88,7 +88,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	r = mustExecSQL(c, se, "select * from t")
 	c.Assert(r, NotNil)
 
-	req = r.NewRecordBatch()
+	req = r.NewFirstChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	datums = statistics.RowToDatums(req.GetRow(0), r.Fields())
