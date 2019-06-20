@@ -379,6 +379,9 @@ type SessionVars struct {
 
 	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
 	LowResolutionTSO bool
+
+	// Killed is a flag to indicate that this query is killed.
+	Killed uint32
 }
 
 // ConnectionInfo present connection used by audit.
@@ -572,15 +575,6 @@ func (s *SessionVars) GetExecuteArgumentsInfo() string {
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	val, ok := s.systems[name]
 	return val, ok
-}
-
-// deleteSystemVar deletes a system variable.
-func (s *SessionVars) deleteSystemVar(name string) error {
-	if name != CharacterSetResults {
-		return ErrCantSetToNull
-	}
-	delete(s.systems, name)
-	return nil
 }
 
 func (s *SessionVars) setDDLReorgPriority(val string) {

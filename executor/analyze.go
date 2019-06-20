@@ -990,11 +990,13 @@ func (e *AnalyzeFastExec) buildHist(ID int64, collector *statistics.SampleCollec
 		}
 		data = append(data, bytes)
 	}
-	stats := domain.GetDomain(e.ctx).StatsHandle()
+	handle := domain.GetDomain(e.ctx).StatsHandle()
+	tblStats := handle.GetTableStats(e.tblInfo)
 	rowCount := int64(e.rowCount)
-	if stats.Lease > 0 {
-		rowCount = mathutil.MinInt64(stats.GetTableStats(e.tblInfo).Count, rowCount)
+	if handle.Lease() > 0 && !tblStats.Pseudo {
+		rowCount = mathutil.MinInt64(tblStats.Count, rowCount)
 	}
+	// Adjust the row count in case the count of `tblStats` is not accurate and too small.
 	rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
 	// build CMSketch
 	var ndv, scaleRatio uint64

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 
 	"github.com/cznic/mathutil"
@@ -424,34 +425,7 @@ func (c *CMSketch) TotalCount() uint64 {
 
 // Equal tests if two CM Sketch equal, it is only used for test.
 func (c *CMSketch) Equal(rc *CMSketch) bool {
-	if c == nil || rc == nil {
-		return c == nil && rc == nil
-	}
-	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count || c.defaultValue != rc.defaultValue {
-		return false
-	}
-	for i := range c.table {
-		for j := range c.table[i] {
-			if c.table[i][j] != rc.table[i][j] {
-				return false
-			}
-		}
-	}
-	if len(c.topN) != len(rc.topN) {
-		return false
-	}
-	for h1, topNData := range c.topN {
-		if len(topNData) != len(rc.topN[h1]) {
-			return false
-		}
-		for _, val := range topNData {
-			meta := rc.findTopNMeta(h1, val.h2, val.Data)
-			if meta == nil || meta.Count != val.Count {
-				return false
-			}
-		}
-	}
-	return true
+	return reflect.DeepEqual(c, rc)
 }
 
 // Copy makes a copy for current CMSketch.

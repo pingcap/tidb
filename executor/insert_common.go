@@ -295,8 +295,8 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx context.Context, rows [][]types.Datum) error) error {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
-	fields := selectExec.retTypes()
-	chk := selectExec.newFirstChunk()
+	fields := retTypes(selectExec)
+	chk := newFirstChunk(selectExec)
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
@@ -501,7 +501,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		recordID, err = e.Table.AllocAutoID(e.ctx)
+		recordID, err = e.Table.AllocAutoIncrementValue(e.ctx)
 		if e.filterErr(err) != nil {
 			return types.Datum{}, err
 		}

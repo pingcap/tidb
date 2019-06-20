@@ -100,12 +100,12 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
-	fields := e.children[0].retTypes()
-	chk := e.children[0].newFirstChunk()
+	fields := retTypes(e.children[0])
+	chk := newFirstChunk(e.children[0])
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
 		if err != nil {
 			return err
 		}
@@ -183,11 +183,11 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	e.initialMultiTableTblMap()
 	colPosInfos := e.getColPosInfos(e.children[0].Schema())
 	tblRowMap := make(tableRowMapType)
-	fields := e.children[0].retTypes()
-	chk := e.children[0].newFirstChunk()
+	fields := retTypes(e.children[0])
+	chk := newFirstChunk(e.children[0])
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
 		if err != nil {
 			return err
 		}

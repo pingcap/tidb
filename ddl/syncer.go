@@ -57,7 +57,7 @@ var (
 	CheckVersFirstWaitTime = 50 * time.Millisecond
 	// SyncerSessionTTL is the etcd session's TTL in seconds.
 	// and it's an exported variable for testing.
-	SyncerSessionTTL = 10 * 60
+	SyncerSessionTTL = 90
 	// WaitTimeWhenErrorOccured is waiting interval when processing DDL jobs encounter errors.
 	WaitTimeWhenErrorOccured = 1 * time.Second
 )
