@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -52,6 +53,7 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),
 	)
+	tikv.PessimisticLockTTL = uint64(config.MinPessimisticTTL / time.Millisecond)
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
