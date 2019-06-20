@@ -18,9 +18,11 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -252,8 +254,14 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 		}
 		regionIDs = append(regionIDs, regionID)
 
+		failpoint.Inject("mockSplitRegionTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				time.Sleep(time.Second * 1)
+			}
+		})
+
 		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
+			return errors.Errorf("split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
 		}
 	}
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
@@ -268,8 +276,14 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 				zap.Error(err))
 		}
 
+		failpoint.Inject("mockScatterRegionTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				time.Sleep(time.Second * 1)
+			}
+		})
+
 		if isCtxDone(ctxWithTimeout) {
-			return errors.Errorf("wait split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
+			return errors.Errorf("wait split region scatter timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
 		}
 	}
 	return nil
