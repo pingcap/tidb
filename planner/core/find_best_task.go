@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -620,33 +621,35 @@ func splitIndexFilterConditions(conditions []expression.Expression, indexColumns
 }
 
 // getMostCorrColFromExprs checks if column in the condition is correlated enough with handle. If the condition
-// contains multiple columns, choose the most correlated one, and compute an overall correlation factor by multiplying
-// single factors.
+// contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
 func getMostCorrColFromExprs(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	compCorr := 1.0
+	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		hist, ok := histColl.Columns[col.ID]
-		if !ok {
-			return nil, 0
-		}
-		curCorr := math.Abs(hist.Correlation)
-		compCorr *= curCorr
-		if curCorr < threshold {
+		if colSet.Exist(col.UniqueID) {
 			continue
 		}
+		colSet.Insert(col.UniqueID)
+		hist, ok := histColl.Columns[col.ID]
+		if !ok {
+			continue
+		}
+		curCorr := math.Abs(hist.Correlation)
 		if corrCol == nil || corr < curCorr {
 			corrCol = col
 			corr = curCorr
 		}
 	}
-	return corrCol, compCorr
+	if len(colSet) == 1 && corr >= threshold {
+		return corrCol, corr
+	}
+	return nil, corr
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
@@ -805,6 +808,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if prop.ExpectedCnt < ds.stats.RowCount {
 		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, candidate.isMatchProp && prop.Items[0].Desc)
 		if ok {
+			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
+			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
+			// for one region now, so even if it is `limit 1`, we have to scan at least one region in table scan.
+			// Currently, we can use `tikvrpc.CmdDebugGetRegionProperties` interface as `getSampRegionsRowCount()` does
+			// to get the row count in a region, but that result contains MVCC old version rows, so it is not that accurate.
+			// Considering that when this scenario happens, the execution time is close between IndexScan and TableScan,
+			// we do not add this check temporarily.
 			rowCount = count
 		} else if corr < 1 {
 			correlationFactor := math.Pow(1-corr, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
