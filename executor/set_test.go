@@ -257,6 +257,13 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_constraint_check_in_place = 0")
 	tk.MustQuery(`select @@global.tidb_constraint_check_in_place;`).Check(testkit.Rows("0"))
+
+	// test for tidb_wait_table_split_finish
+	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_wait_table_split_finish = 1")
+	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_wait_table_split_finish = 0")
+	tk.MustQuery(`select @@session.tidb_wait_table_split_finish;`).Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {

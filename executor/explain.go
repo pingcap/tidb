@@ -73,7 +73,7 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 	if e.analyzeExec != nil {
 		chk := e.analyzeExec.newFirstChunk()
 		for {
-			err := e.analyzeExec.Next(ctx, chk)
+			err := Next(ctx, e.analyzeExec, chk)
 			if err != nil {
 				return nil, err
 			}

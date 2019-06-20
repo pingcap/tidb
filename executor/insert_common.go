@@ -309,7 +309,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || config.GetGlobalConfig().EnableBatchDML
 
 	for {
-		err := selectExec.Next(ctx, chk)
+		err := Next(ctx, selectExec, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

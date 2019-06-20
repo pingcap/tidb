@@ -98,7 +98,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	err := a.executor.Next(ctx, chk)
+	err := Next(ctx, a.executor, chk)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)
@@ -286,7 +286,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logAudit()
 	}()
 
-	err = e.Next(ctx, e.newFirstChunk())
+	err = Next(ctx, e, e.newFirstChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

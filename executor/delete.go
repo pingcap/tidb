@@ -100,7 +100,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].Next(ctx, chk)
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -177,7 +177,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	chk := e.children[0].newFirstChunk()
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
-		err := e.children[0].Next(ctx, chk)
+		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

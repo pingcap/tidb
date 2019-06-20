@@ -549,7 +549,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 			}
 			chk = input.chk
 		}
-		err = e.children[0].Next(ctx, chk)
+		err = Next(ctx, e.children[0], chk)
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: errors.Trace(err)}
 			return
@@ -669,7 +669,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childResult)
 	for {
-		err := e.children[0].Next(ctx, e.childResult)
+		err := Next(ctx, e.children[0], e.childResult)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -856,7 +856,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return errors.Trace(err)
 	}
 
-	err = e.children[0].Next(ctx, e.childResult)
+	err = Next(ctx, e.children[0], e.childResult)
 	if err != nil {
 		return errors.Trace(err)
 	}

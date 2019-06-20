@@ -305,6 +305,9 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
+	// WaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
+	WaitTableSplitFinish bool
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -319,6 +322,9 @@ type SessionVars struct {
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
+
+	// Killed is a flag to indicate that this query is killed.
+	Killed uint32
 }
 
 // ConnectionInfo present connection used by audit.
@@ -643,6 +649,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
+	case TiDBWaitTableSplitFinish:
+		s.WaitTableSplitFinish = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
