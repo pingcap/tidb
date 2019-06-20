@@ -203,8 +203,8 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
-	// TiDBWaitSplitRegionFinish defines the create table pre-split behaviour is sync or async.
-	TiDBWaitSplitRegionFinish = "tidb_wait_table_split_finish"
+	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
+	TiDBWaitSplitRegionFinish = "tidb_wait_split_region_finish"
 
 	// TiDBWaitSplitRegionTimeout uses to set the split and scatter region back off time.
 	TiDBWaitSplitRegionTimeout = "tidb_wait_split_region_timeout"

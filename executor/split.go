@@ -242,7 +242,7 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	
+
 	regionIDs := make([]uint64, 0, len(splitKeys))
 	for _, key := range splitKeys {
 		regionID, err := s.SplitRegionAndScatter(key)
