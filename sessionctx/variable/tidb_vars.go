@@ -203,8 +203,11 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
-	// TiDBWaitTableSplitFinish defines the create table pre-split behaviour is sync or async.
-	TiDBWaitTableSplitFinish = "tidb_wait_table_split_finish"
+	// TiDBWaitSplitRegionFinish defines the create table pre-split behaviour is sync or async.
+	TiDBWaitSplitRegionFinish = "tidb_wait_table_split_finish"
+
+	// TiDBWaitSplitRegionTimeout uses to set the split and scatter region back off time.
+	TiDBWaitSplitRegionTimeout = "tidb_wait_split_region_timeout"
 
 	// tidb_force_priority defines the operations priority of all statements.
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
@@ -261,7 +264,8 @@ const (
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
 	DefTiDBForcePriority             = mysql.NoPriority
-	DefTiDBWaitTableSplitFinish      = false
+	DefTiDBWaitSplitRegionFinish     = true
+	DefWaitSplitRegionTimeout        = 300 // 300s
 )
 
 // Process global variables.
