@@ -425,11 +425,7 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	}()
 
 	// Test for enable table lock config.
-<<<<<<< HEAD
 	atomic.StoreUint32(&tableLockEnabled, 0)
-=======
-	atomic.StoreUint32(&tableLockEnabled, 1)
->>>>>>> ddl: fix data race
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 }
