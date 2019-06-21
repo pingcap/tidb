@@ -243,9 +243,20 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		children = append(children, pbArg)
 	}
 
+	var implicitArgs []byte
+	if args := expr.Function.implicitArgs(); len(args) > 0 {
+		encoded, err := codec.EncodeValue(pc.sc, nil, args...)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("encode implicit parameters", zap.Any("datums", args), zap.Error(err))
+			return nil
+		}
+		implicitArgs = encoded
+	}
+
 	// construct expression ProtoBuf.
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
+		Val:       implicitArgs,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(expr.RetType),
