@@ -113,6 +113,7 @@ func parseSlowLogDataFromFile(tz *time.Location, filePath string, offset int64, 
 	var st *slowQueryTuple
 	for {
 		lineByte, err := getOneLine(reader)
+		// `+ 1` means add the `\n` byte.
 		currentOffset += int64(len(lineByte) + 1)
 		if err != nil {
 			if err == io.EOF {
