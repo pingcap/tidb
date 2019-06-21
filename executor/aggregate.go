@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
@@ -515,10 +514,6 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("hashagg.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -555,7 +550,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 			}
 			chk = input.chk
 		}
-		err = e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err = Next(ctx, e.children[0], chunk.NewRecordBatch(chk))
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
 			return
@@ -681,7 +676,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childResult)
 	for {
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
 		if err != nil {
 			return err
 		}
@@ -795,10 +790,6 @@ func (e *StreamAggExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("streamAgg.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -870,7 +861,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return err
 	}
 
-	err = e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
+	err = Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
 	if err != nil {
 		return err
 	}

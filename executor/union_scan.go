@@ -18,7 +18,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -123,11 +122,6 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("unionScan.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
 	if us.runtimeStats != nil {
 		start := time.Now()
 		defer func() { us.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -199,7 +193,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		err = us.children[0].Next(ctx, chunk.NewRecordBatch(us.snapshotChunkBuffer))
+		err = Next(ctx, us.children[0], chunk.NewRecordBatch(us.snapshotChunkBuffer))
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
 		}

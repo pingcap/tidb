@@ -101,12 +101,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("recordSet.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
-	err := a.executor.Next(ctx, req)
+	err := Next(ctx, a.executor, req)
 	if err != nil {
 		a.lastErr = err
 		return err
@@ -385,7 +380,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		a.logAudit()
 	}()
 
-	err = e.Next(ctx, chunk.NewRecordBatch(newFirstChunk(e)))
+	err = Next(ctx, e, chunk.NewRecordBatch(newFirstChunk(e)))
 	if err != nil {
 		return nil, err
 	}

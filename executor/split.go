@@ -18,9 +18,11 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -60,6 +62,9 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 	if err != nil {
 		return err
 	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
+	defer cancel()
 	regionIDs := make([]uint64, 0, len(splitIdxKeys))
 	for _, idxKey := range splitIdxKeys {
 		regionID, err := s.SplitRegionAndScatter(idxKey)
@@ -72,8 +77,11 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 		}
 		regionIDs = append(regionIDs, regionID)
 
+		if isCtxDone(ctxWithTimeout) {
+			return errors.Errorf("wait split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
+		}
 	}
-	if !e.ctx.GetSessionVars().WaitTableSplitFinish {
+	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
 	for _, regionID := range regionIDs {
@@ -84,6 +92,9 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 				zap.String("table", e.tableInfo.Name.L),
 				zap.String("index", e.indexInfo.Name.L),
 				zap.Error(err))
+		}
+		if isCtxDone(ctxWithTimeout) {
+			return errors.Errorf("wait split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
 		}
 	}
 	return nil
@@ -224,6 +235,10 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 	if !ok {
 		return nil
 	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
+	defer cancel()
+
 	splitKeys, err := e.getSplitTableKeys()
 	if err != nil {
 		return err
@@ -238,8 +253,18 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 			continue
 		}
 		regionIDs = append(regionIDs, regionID)
+
+		failpoint.Inject("mockSplitRegionTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				time.Sleep(time.Second * 1)
+			}
+		})
+
+		if isCtxDone(ctxWithTimeout) {
+			return errors.Errorf("split region timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
+		}
 	}
-	if !e.ctx.GetSessionVars().WaitTableSplitFinish {
+	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
 	for _, regionID := range regionIDs {
@@ -250,8 +275,27 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, _ *chunk.RecordBatch) e
 				zap.String("table", e.tableInfo.Name.L),
 				zap.Error(err))
 		}
+
+		failpoint.Inject("mockScatterRegionTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				time.Sleep(time.Second * 1)
+			}
+		})
+
+		if isCtxDone(ctxWithTimeout) {
+			return errors.Errorf("wait split region scatter timeout(%v)", e.ctx.GetSessionVars().GetSplitRegionTimeout())
+		}
 	}
 	return nil
+}
+
+func isCtxDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
+	}
 }
 
 var minRegionStepValue = uint64(1000)

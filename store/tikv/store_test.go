@@ -168,6 +168,16 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*met
 	return c.client.GetRegionByID(ctx, regionID)
 }
 
+func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return nil, nil, errors.Trace(errStopped)
+	}
+	return c.client.ScanRegions(ctx, startKey, limit)
+}
+
 func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	c.RLock()
 	defer c.RUnlock()
