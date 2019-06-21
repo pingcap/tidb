@@ -240,7 +240,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		reverseTasks(tasks)
 	}
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		logutil.Logger(context.Background()).Warn("buildCopTasks takes too much time",
+		logutil.BgLogger().Warn("buildCopTasks takes too much time",
 			zap.Duration("elapsed", elapsed),
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
@@ -578,7 +578,7 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.Logger(context.Background()).Error("copIteratorWork meet panic",
+			logutil.BgLogger().Error("copIteratorWork meet panic",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: errors.Errorf("%v", r)}
@@ -686,7 +686,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			}
 		}
 	}
-	logutil.Logger(context.Background()).Info(logStr)
+	logutil.BgLogger().Info(logStr)
 }
 
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
@@ -722,7 +722,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
-			logutil.Logger(context.Background()).Info("stream recv timeout", zap.Error(err))
+			logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
 		lastRange = resp.Range
@@ -742,7 +742,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		logutil.Logger(context.Background()).Debug("coprocessor encounters",
+		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
 		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
@@ -757,7 +757,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
-		logutil.Logger(context.Background()).Warn("other error",
+		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.id),
 			zap.String("storeAddr", task.storeAddr),
