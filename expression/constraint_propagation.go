@@ -15,7 +15,6 @@ package expression
 
 import (
 	"bytes"
-	"context"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -152,7 +151,7 @@ func ruleConstantFalse(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	if cons, ok := cond.(*Constant); ok {
 		v, isNull, err := cons.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("eval constant", zap.Error(err))
+			logutil.BgLogger().Warn("eval constant", zap.Error(err))
 			return
 		}
 		if !isNull && v == 0 {
@@ -249,7 +248,7 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 		var err error
 		fc1, err = NewFunction(ctx, scalarFunc.FuncName.L, scalarFunc.RetType, con1)
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("build new function in ruleColumnOPConst", zap.Error(err))
+			logutil.BgLogger().Warn("build new function in ruleColumnOPConst", zap.Error(err))
 			return
 		}
 	}
@@ -272,7 +271,7 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	}
 	v, isNull, err := compareConstant(ctx, negOP(OP2), fc1, con2)
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("comparing constant in ruleColumnOPConst", zap.Error(err))
+		logutil.BgLogger().Warn("comparing constant in ruleColumnOPConst", zap.Error(err))
 		return
 	}
 	if !isNull && v > 0 {
