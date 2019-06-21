@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"golang.org/x/net/context"
@@ -56,9 +57,9 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
 	// Compose schema.
-	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
 	schema := buildSchema(names, ftypes)
 
 	// Compose a mocked session manager.
@@ -71,6 +72,9 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 		Command: 't',
 		State:   1,
 		Info:    "",
+		StmtCtx: &stmtctx.StatementContext{
+			MemTracker: memory.NewTracker("", -1),
+		},
 	}
 	ps = append(ps, pi)
 	sm := &mockSessionManager{

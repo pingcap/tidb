@@ -156,7 +156,7 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 	row := pi.ToRowForShow(false)
 	row2 := pi.ToRowForShow(true)
 	c.Assert(row, DeepEquals, row2)
-	c.Assert(len(row), Equals, 8)
+	c.Assert(len(row), Equals, 9)
 	c.Assert(row[0], Equals, pi.ID)
 	c.Assert(row[1], Equals, pi.User)
 	c.Assert(row[2], Equals, pi.Host)
@@ -165,9 +165,10 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 	c.Assert(row[5], Equals, uint64(0))
 	c.Assert(row[6], Equals, "1")
 	c.Assert(row[7], Equals, "test")
+	c.Assert(row[8], Equals, int64(0))
 
 	row3 := pi.ToRow()
-	c.Assert(row3[:8], DeepEquals, row)
+	c.Assert(row3, DeepEquals, row)
 	c.Assert(row3[8], Equals, int64(0))
 
 	// Test for RandomBuf.

@@ -52,13 +52,14 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 		t,
 		fmt.Sprintf("%d", pi.State),
 		info,
+		pi.StmtCtx.MemTracker.BytesConsumed(),
 	}
 }
 
 // ToRow returns []interface{} for the row data of
 // "SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST".
 func (pi *ProcessInfo) ToRow() []interface{} {
-	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed())
+	return pi.ToRowForShow(true)
 }
 
 // SessionManager is an interface for session manage. Show processlist and
