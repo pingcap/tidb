@@ -247,7 +247,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	if args := expr.Function.implicitArgs(); len(args) > 0 {
 		encoded, err := codec.EncodeValue(pc.sc, nil, args...)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("encode implicit parameters", zap.Any("datums", params), zap.Error(err))
+			logutil.Logger(context.Background()).Error("encode implicit parameters", zap.Any("datums", args), zap.Error(err))
 			return nil
 		}
 		implicitArgs = encoded
