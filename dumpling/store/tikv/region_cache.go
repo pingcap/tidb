@@ -202,7 +202,7 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.Logger(context.Background()).Error("panic in the checkAndResolve goroutine",
+			logutil.BgLogger().Error("panic in the checkAndResolve goroutine",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 		}
@@ -495,7 +495,7 @@ func (c *RegionCache) InvalidateCachedRegion(id RegionVerID) {
 func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, currentPeerIdx int) {
 	r := c.getCachedRegionWithRLock(regionID)
 	if r == nil {
-		logutil.Logger(context.Background()).Debug("regionCache: cannot find region when updating leader",
+		logutil.BgLogger().Debug("regionCache: cannot find region when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		return
@@ -503,20 +503,20 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 
 	if leaderStoreID == 0 {
 		c.switchNextPeer(r, currentPeerIdx)
-		logutil.Logger(context.Background()).Info("switch region peer to next due to NotLeader with NULL leader",
+		logutil.BgLogger().Info("switch region peer to next due to NotLeader with NULL leader",
 			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("regionID", regionID.GetID()))
 		return
 	}
 
 	if !c.switchToPeer(r, leaderStoreID) {
-		logutil.Logger(context.Background()).Info("invalidate region cache due to cannot find peer when updating leader",
+		logutil.BgLogger().Info("invalidate region cache due to cannot find peer when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		r.invalidate()
 	} else {
-		logutil.Logger(context.Background()).Info("switch region leader to specific leader due to kv return NotLeader",
+		logutil.BgLogger().Info("switch region leader to specific leader due to kv return NotLeader",
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("leaderStoreID", leaderStoreID))
@@ -783,7 +783,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 			(meta.GetRegionEpoch().GetConfVer() < ctx.Region.confVer ||
 				meta.GetRegionEpoch().GetVersion() < ctx.Region.ver) {
 			err := errors.Errorf("region epoch is ahead of tikv. rpc ctx: %+v, currentRegions: %+v", ctx, currentRegions)
-			logutil.Logger(context.Background()).Info("region epoch is ahead of tikv", zap.Error(err))
+			logutil.BgLogger().Info("region epoch is ahead of tikv", zap.Error(err))
 			return bo.Backoff(BoRegionMiss, err)
 		}
 	}
@@ -1023,7 +1023,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		tikvRegionCacheCounterWithGetStoreOK.Inc()
 	}
 	if err != nil {
-		logutil.Logger(context.Background()).Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
+		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
 		// we cannot do backoff in reResolve loop but try check other store and wait tick.
 		return
 	}

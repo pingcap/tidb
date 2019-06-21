@@ -14,7 +14,6 @@
 package autoid
 
 import (
-	"context"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -237,7 +236,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64) (int64, error) {
 	}
 
 	alloc.base = int64(uint64(alloc.base) + 1)
-	logutil.Logger(context.Background()).Debug("alloc unsigned ID",
+	logutil.BgLogger().Debug("alloc unsigned ID",
 		zap.Uint64("ID", uint64(alloc.base)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
@@ -270,7 +269,7 @@ func (alloc *allocator) alloc4Signed(tableID int64) (int64, error) {
 	}
 
 	alloc.base++
-	logutil.Logger(context.Background()).Debug("alloc signed ID",
+	logutil.BgLogger().Debug("alloc signed ID",
 		zap.Uint64("ID", uint64(alloc.base)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
