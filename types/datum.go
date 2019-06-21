@@ -14,7 +14,6 @@
 package types
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -1245,7 +1244,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
-		logutil.Logger(context.Background()).Error("convert to MySQL enum failed", zap.Error(err))
+		logutil.BgLogger().Error("convert to MySQL enum failed", zap.Error(err))
 		err = errors.Trace(ErrTruncated)
 	}
 	ret.SetValue(e)
