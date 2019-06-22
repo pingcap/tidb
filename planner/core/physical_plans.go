@@ -377,7 +377,8 @@ type PhysicalMaxOneRow struct {
 type PhysicalTableDual struct {
 	physicalSchemaProducer
 
-	RowCount int
+	RowCount    int
+	placeHolder bool
 }
 
 // PhysicalWindow is the physical operator of window function.

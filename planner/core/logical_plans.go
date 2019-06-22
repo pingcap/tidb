@@ -307,7 +307,8 @@ type LogicalMaxOneRow struct {
 type LogicalTableDual struct {
 	logicalSchemaProducer
 
-	RowCount int
+	RowCount    int
+	placeHolder bool
 }
 
 // LogicalUnionScan is only used in non read-only txn.

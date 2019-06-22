@@ -1112,7 +1112,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
-	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
+	mockTablePlan := LogicalTableDual{placeHolder: true}.Init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
@@ -1125,20 +1125,47 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		p.Conditions = append(p.Conditions, expr)
 	}
 	if show.Where != nil {
+		var err error
+		var np LogicalPlan
+		np = mockTablePlan
 		conds := splitWhere(show.Where)
 		for _, cond := range conds {
-			expr, _, err := b.rewrite(cond, mockTablePlan, nil, false)
+			var expr expression.Expression
+			expr, np, err = b.rewrite(cond, np, nil, false)
 			if err != nil {
 				return nil, err
 			}
-			p.Conditions = append(p.Conditions, expr)
+			if expr != nil {
+				p.Conditions = append(p.Conditions, expr)
+			}
 		}
-		err := p.ResolveIndices()
-		if err != nil {
-			return nil, err
+		if np != mockTablePlan {
+			physical, err := DoOptimize(0, np)
+			if err != nil {
+				return nil, err
+			}
+			return substitutePlaceHolderDual(physical, p), nil
+		} else {
+			err = p.ResolveIndices()
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return p, nil
+}
+
+func substitutePlaceHolderDual(src PhysicalPlan, dst PhysicalPlan) PhysicalPlan {
+	if dual, ok := src.(*PhysicalTableDual); ok && dual.placeHolder {
+		return dst
+	}
+	newChildren := make([]PhysicalPlan, 0, len(src.Children()))
+	for _, child := range src.Children() {
+		newChild := substitutePlaceHolderDual(child, dst)
+		newChildren = append(newChildren, newChild)
+	}
+	src.SetChildren(newChildren...)
+	return src
 }
 
 func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {

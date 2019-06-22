@@ -323,7 +323,7 @@ type Deallocate struct {
 
 // Show represents a show plan.
 type Show struct {
-	baseSchemaProducer
+	physicalSchemaProducer
 
 	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName      string
