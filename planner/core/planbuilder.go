@@ -1140,7 +1140,18 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			}
 		}
 		if np != mockTablePlan {
-			physical, err := DoOptimize(0, np)
+			fieldsLen := len(mockTablePlan.schema.Columns)
+			proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx)
+			schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
+			for _, col := range mockTablePlan.schema.Columns {
+				proj.Exprs = append(proj.Exprs, col)
+				newCol := col.Clone().(*expression.Column)
+				newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+				schema.Append(newCol)
+			}
+			proj.SetSchema(schema)
+			proj.SetChildren(np)
+			physical, err := DoOptimize(b.optFlag|flagEliminateProjection, proj)
 			if err != nil {
 				return nil, err
 			}
