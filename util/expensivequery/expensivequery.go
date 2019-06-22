@@ -51,14 +51,16 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run(interval time.Duration) {
+
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-	curInterval := time.Second * time.Duration(threshold) / 2
+	curInterval := time.Millisecond * time.Duration(threshold) / 2
 	if interval > 0 {
 		curInterval = interval
 	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(curInterval)
 	for {
 		select {
+
 		case <-ticker.C:
 			processInfo := eqh.sm.ShowProcessList()
 			for _, info := range processInfo {
@@ -75,7 +77,7 @@ func (eqh *Handle) Run(interval time.Duration) {
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-			if newInterval := time.Second * time.Duration(threshold); curInterval != newInterval {
+			if newInterval := time.Millisecond * time.Duration(threshold); curInterval != newInterval {
 				curInterval = newInterval
 				ticker.Stop()
 				ticker = time.NewTicker(curInterval / 2)
