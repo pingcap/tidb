@@ -333,7 +333,11 @@ func validRangePartitionType(col *table.Column) bool {
 
 // checkDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
 func checkDropTablePartition(meta *model.TableInfo, partName string) error {
-	oldDefs := meta.Partition.Definitions
+	pi := meta.Partition
+	if pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList {
+		return errOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
+	}
+	oldDefs := pi.Definitions
 	for _, def := range oldDefs {
 		if strings.EqualFold(def.Name.L, strings.ToLower(partName)) {
 			if len(oldDefs) == 1 {
