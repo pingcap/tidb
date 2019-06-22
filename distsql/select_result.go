@@ -202,7 +202,7 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		logutil.Logger(context.Background()).Error("invalid cop task execution summaries length",
+		logutil.BgLogger().Error("invalid cop task execution summaries length",
 			zap.Int("expected", len(r.copPlanIDs)),
 			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
 

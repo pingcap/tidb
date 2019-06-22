@@ -61,7 +61,7 @@ func (e *DDLExec) toErr(err error) error {
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	txn, err1 := e.ctx.Txn(true)
 	if err1 != nil {
-		logutil.Logger(context.Background()).Error("active txn failed", zap.Error(err))
+		logutil.BgLogger().Error("active txn failed", zap.Error(err))
 		return err1
 	}
 	schemaInfoErr := checker.Check(txn.StartTS())
@@ -266,7 +266,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 		}
 
 		if config.CheckTableBeforeDrop {
-			logutil.Logger(context.Background()).Warn("admin check table before drop",
+			logutil.BgLogger().Warn("admin check table before drop",
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),
 			)

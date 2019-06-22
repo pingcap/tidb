@@ -664,11 +664,11 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 		if setOnUpdateNow {
 			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
 				context.Background()
-				logutil.Logger(ddlLogCtx).Error("set default value failed", zap.Error(err))
+				logutil.BgLogger().Error("set default value failed", zap.Error(err))
 			}
 		} else {
 			if err := c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp)); err != nil {
-				logutil.Logger(ddlLogCtx).Error("set default value failed", zap.Error(err))
+				logutil.BgLogger().Error("set default value failed", zap.Error(err))
 			}
 		}
 	}
@@ -1310,7 +1310,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		var preSplitAndScatter func()
 		// do pre-split and scatter.
 		if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-			preSplitAndScatter = func() { preSplitTableRegion(d.store, tbInfo, ctx.GetSessionVars().WaitTableSplitFinish) }
+			preSplitAndScatter = func() {
+				preSplitTableShardRowIDBitsRegion(d.store, tbInfo, ctx.GetSessionVars().WaitSplitRegionFinish)
+			}
 		} else if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			pi := tbInfo.GetPartitionInfo()
 			if pi != nil {
@@ -1320,7 +1322,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			}
 		}
 		if preSplitAndScatter != nil {
-			if ctx.GetSessionVars().WaitTableSplitFinish {
+			if ctx.GetSessionVars().WaitSplitRegionFinish {
 				preSplitAndScatter()
 			} else {
 				go preSplitAndScatter()

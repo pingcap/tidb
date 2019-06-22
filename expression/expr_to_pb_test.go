@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -592,4 +593,42 @@ func (s *testEvaluatorSuite) TestSortByItem2Pb(c *C) {
 	js, err = json.Marshal(pbByItem)
 	c.Assert(err, IsNil)
 	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},\"desc\":true}")
+}
+
+func (s *testEvaluatorSuite) TestImplicitArgs(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("all")`), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/PushDownTestSwitcher"), IsNil) }()
+
+	pc := PbConverter{client: client, sc: sc}
+
+	// InUnion flag is false in `BuildCastFunction` when `ScalarFuncSig_CastStringAsInt`
+	cast := BuildCastFunction(mock.NewContext(), dg.genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	c.Assert(cast.(*ScalarFunction).Function.implicitArgs(), DeepEquals, []types.Datum{types.NewIntDatum(0)})
+	expr := pc.ExprToPB(cast)
+	c.Assert(expr.Sig, Equals, tipb.ScalarFuncSig_CastStringAsInt)
+	c.Assert(len(expr.Val), Greater, 0)
+	datums, err := codec.Decode(expr.Val, 1)
+	c.Assert(err, IsNil)
+	c.Assert(datums, DeepEquals, []types.Datum{types.NewIntDatum(0)})
+
+	// InUnion flag is nil in `BuildCastFunction4Union` when `ScalarFuncSig_CastIntAsString`
+	castInUnion := BuildCastFunction4Union(mock.NewContext(), dg.genColumn(mysql.TypeLonglong, 1), types.NewFieldType(mysql.TypeString))
+	c.Assert(castInUnion.(*ScalarFunction).Function.implicitArgs(), IsNil)
+	expr = pc.ExprToPB(castInUnion)
+	c.Assert(expr.Sig, Equals, tipb.ScalarFuncSig_CastIntAsString)
+	c.Assert(len(expr.Val), Equals, 0)
+
+	// InUnion flag is true in `BuildCastFunction4Union` when `ScalarFuncSig_CastStringAsInt`
+	castInUnion = BuildCastFunction4Union(mock.NewContext(), dg.genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	c.Assert(castInUnion.(*ScalarFunction).Function.implicitArgs(), DeepEquals, []types.Datum{types.NewIntDatum(1)})
+	expr = pc.ExprToPB(castInUnion)
+	c.Assert(expr.Sig, Equals, tipb.ScalarFuncSig_CastStringAsInt)
+	c.Assert(len(expr.Val), Greater, 0)
+	datums, err = codec.Decode(expr.Val, 1)
+	c.Assert(err, IsNil)
+	c.Assert(datums, DeepEquals, []types.Datum{types.NewIntDatum(1)})
 }
