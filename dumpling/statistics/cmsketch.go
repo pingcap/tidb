@@ -287,14 +287,46 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	return uint64(res)
 }
 
+func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*TopNMeta, numTop uint32) {
+	counter := make(map[hack.MutableString]uint64)
+	for _, metas := range lTopN {
+		for _, meta := range metas {
+			counter[hack.String(meta.Data)] += meta.Count
+		}
+	}
+	for _, metas := range rTopN {
+		for _, meta := range metas {
+			counter[hack.String(meta.Data)] += meta.Count
+		}
+	}
+	sorted := make([]uint64, len(counter))
+	for _, cnt := range counter {
+		sorted = append(sorted, cnt)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] > sorted[j]
+	})
+	numTop = mathutil.MinUint32(uint32(len(counter)), numTop)
+	lastTopCnt := sorted[numTop-1]
+	c.topN = make(map[uint64][]*TopNMeta)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		if cnt >= lastTopCnt {
+			h1, h2 := murmur3.Sum128(data)
+			c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, cnt})
+		} else {
+			c.insertBytesByCount(data, cnt)
+		}
+	}
+}
+
 // MergeCMSketch merges two CM Sketch.
-// Call with CMSketch with Top-N initialized may downgrade the result
-func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
+func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
 	if c.topN != nil || rc.topN != nil {
-		return errors.New("CMSketch with Top-N does not support merge")
+		c.mergeTopN(c.topN, rc.topN, numTopN)
 	}
 	c.count += rc.count
 	for i := range c.table {
