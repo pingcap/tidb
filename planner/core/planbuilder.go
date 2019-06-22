@@ -1145,11 +1145,10 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 				return nil, err
 			}
 			return substitutePlaceHolderDual(physical, p), nil
-		} else {
-			err = p.ResolveIndices()
-			if err != nil {
-				return nil, err
-			}
+		}
+		err = p.ResolveIndices()
+		if err != nil {
+			return nil, err
 		}
 	}
 	return p, nil
