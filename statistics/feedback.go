@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"context"
 	"encoding/gob"
 	"math"
 	"math/rand"
@@ -158,12 +157,12 @@ func (q *QueryFeedback) DecodeIntValues() *QueryFeedback {
 	for _, fb := range q.Feedback {
 		_, lowInt, err := codec.DecodeInt(fb.Lower.GetBytes())
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("decode feedback lower bound value to integer failed", zap.Binary("value", fb.Lower.GetBytes()), zap.Error(err))
+			logutil.BgLogger().Debug("decode feedback lower bound value to integer failed", zap.Binary("value", fb.Lower.GetBytes()), zap.Error(err))
 			continue
 		}
 		_, highInt, err := codec.DecodeInt(fb.Upper.GetBytes())
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("decode feedback upper bound value to integer failed", zap.Binary("value", fb.Upper.GetBytes()), zap.Error(err))
+			logutil.BgLogger().Debug("decode feedback upper bound value to integer failed", zap.Binary("value", fb.Upper.GetBytes()), zap.Error(err))
 			continue
 		}
 		low, high := types.NewIntDatum(lowInt), types.NewIntDatum(highInt)
@@ -309,7 +308,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 	for _, fb := range feedback.Feedback {
 		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("adjust feedback boundaries failed", zap.Error(err))
+			logutil.BgLogger().Debug("adjust feedback boundaries failed", zap.Error(err))
 			continue
 		}
 		if skip {
@@ -337,7 +336,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		// Update the bound if necessary.
 		res, err := bkt.lower.CompareDatum(nil, fb.Lower)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("compare datum failed", zap.Any("value1", bkt.lower), zap.Any("value2", fb.Lower), zap.Error(err))
+			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", bkt.lower), zap.Any("value2", fb.Lower), zap.Error(err))
 			continue
 		}
 		if res > 0 {
@@ -345,7 +344,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		}
 		res, err = bkt.upper.CompareDatum(nil, fb.Upper)
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("compare datum failed", zap.Any("value1", bkt.upper), zap.Any("value2", fb.Upper), zap.Error(err))
+			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", bkt.upper), zap.Any("value2", fb.Upper), zap.Error(err))
 			continue
 		}
 		if res < 0 {
@@ -365,10 +364,8 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	vals = append(vals, *b.lower)
 	err := types.SortDatums(nil, vals)
 	if err != nil {
-		logutil.Logger(context.Background()).Debug("sort datums failed", zap.Error(err))
-		vals = vals[:0]
-		vals = append(vals, *b.lower, *b.upper)
-		return vals
+		logutil.BgLogger().Debug("sort datums failed", zap.Error(err))
+		return []types.Datum{*b.lower, *b.upper}
 	}
 	total, interval := 0, len(vals)/num
 	// Pick values per `interval`.
@@ -383,7 +380,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	for i := 1; i < len(vals); i++ {
 		cmp, err := vals[total-1].CompareDatum(nil, &vals[i])
 		if err != nil {
-			logutil.Logger(context.Background()).Debug("compare datum failed", zap.Any("value1", vals[total-1]), zap.Any("value2", vals[i]), zap.Error(err))
+			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", vals[total-1]), zap.Any("value2", vals[i]), zap.Error(err))
 			continue
 		}
 		if cmp == 0 {
@@ -772,10 +769,7 @@ func EncodeFeedback(q *QueryFeedback) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	err = enc.Encode(pb)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), errors.Trace(err)
 }
 
 func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
@@ -865,41 +859,9 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldTy
 	} else if len(pb.IntRanges) > 0 {
 		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))
 	} else {
-		err := decodeFeedbackForColumn(q, pb, ft)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		err = decodeFeedbackForColumn(q, pb, ft)
 	}
-	return nil
-}
-
-// Equal tests if two query feedback equal, it is only used in test.
-func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
-	if len(q.Feedback) != len(rq.Feedback) {
-		return false
-	}
-	for i, fb := range q.Feedback {
-		rfb := rq.Feedback[i]
-		if fb.Count != rfb.Count {
-			return false
-		}
-		if fb.Lower.Kind() == types.KindInt64 {
-			if fb.Lower.GetInt64() != rfb.Lower.GetInt64() {
-				return false
-			}
-			if fb.Upper.GetInt64() != rfb.Upper.GetInt64() {
-				return false
-			}
-		} else {
-			if !bytes.Equal(fb.Lower.GetBytes(), rfb.Lower.GetBytes()) {
-				return false
-			}
-			if !bytes.Equal(fb.Upper.GetBytes(), rfb.Upper.GetBytes()) {
-				return false
-			}
-		}
-	}
-	return true
+	return err
 }
 
 // SplitFeedbackByQueryType splits the feedbacks into equality feedbacks and range feedbacks.
@@ -947,9 +909,8 @@ func SupportColumnType(ft *types.FieldType) bool {
 		mysql.TypeDouble, mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeNewDecimal, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return true
-	default:
-		return false
 	}
+	return false
 }
 
 // GetMaxValue returns the max value datum for each type.
@@ -970,7 +931,7 @@ func GetMaxValue(ft *types.FieldType) (max types.Datum) {
 		bytes, err := codec.EncodeKey(nil, nil, val)
 		// should not happen
 		if err != nil {
-			logutil.Logger(context.Background()).Error("encode key fail", zap.Error(err))
+			logutil.BgLogger().Error("encode key fail", zap.Error(err))
 		}
 		max.SetBytes(bytes)
 	case mysql.TypeNewDecimal:
@@ -1005,7 +966,7 @@ func GetMinValue(ft *types.FieldType) (min types.Datum) {
 		bytes, err := codec.EncodeKey(nil, nil, val)
 		// should not happen
 		if err != nil {
-			logutil.Logger(context.Background()).Error("encode key fail", zap.Error(err))
+			logutil.BgLogger().Error("encode key fail", zap.Error(err))
 		}
 		min.SetBytes(bytes)
 	case mysql.TypeNewDecimal:

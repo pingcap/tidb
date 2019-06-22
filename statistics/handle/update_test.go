@@ -408,8 +408,8 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	}
 
 	// Test that even if the table is recently modified, we can still analyze the table.
-	h.Lease = time.Second
-	defer func() { h.Lease = 0 }()
+	h.SetLease(time.Second)
+	defer func() { h.SetLease(0) }()
 	_, err = testKit.Exec("insert into t values ('fff')")
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
@@ -523,11 +523,11 @@ func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	c.Assert(handle.TableAnalyzed(statsTbl), IsTrue)
 
 	h.Clear()
-	oriLease := h.Lease
+	oriLease := h.Lease()
 	// set it to non-zero so we will use load by need strategy
-	h.Lease = 1
+	h.SetLease(1)
 	defer func() {
-		h.Lease = oriLease
+		h.SetLease(oriLease)
 	}()
 	h.Update(is)
 	statsTbl = h.GetTableStats(tableInfo)
@@ -538,7 +538,7 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
-	h.Lease = 0
+	h.SetLease(0)
 	h.Update(is)
 
 	oriProbability := statistics.FeedbackProbability
@@ -608,7 +608,7 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
-	h.Lease = 0
+	h.SetLease(0)
 	h.Update(is)
 
 	oriProbability := statistics.FeedbackProbability
@@ -741,7 +741,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	}{
 		{
 			// test primary key feedback
-			sql: "select * from t where t.a <= 5",
+			sql: "select * from t where t.a <= 5 order by a desc",
 			hist: "column:1 ndv:4 totColSize:0\n" +
 				"num: 1 lower_bound: -9223372036854775808 upper_bound: 1 repeats: 0\n" +
 				"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n" +
@@ -1086,18 +1086,18 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	oriMinLogCount := handle.MinLogScanCount
 	oriMinError := handle.MinLogErrorRate
 	oriLevel := log.GetLevel()
-	oriLease := s.do.StatsHandle().Lease
+	oriLease := s.do.StatsHandle().Lease()
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriMinError
-		s.do.StatsHandle().Lease = oriLease
+		s.do.StatsHandle().SetLease(oriLease)
 		log.SetLevel(oriLevel)
 	}()
 	statistics.FeedbackProbability.Store(1)
 	handle.MinLogScanCount = 0
 	handle.MinLogErrorRate = 0
-	s.do.StatsHandle().Lease = 1
+	s.do.StatsHandle().SetLease(1)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -1612,9 +1612,9 @@ func (s *testStatsSuite) TestLoadHistCorrelation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
-	origLease := h.Lease
-	h.Lease = time.Second
-	defer func() { h.Lease = origLease }()
+	origLease := h.Lease()
+	h.SetLease(time.Second)
+	defer func() { h.SetLease(origLease) }()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(c int)")
 	testKit.MustExec("insert into t values(1),(2),(3),(4),(5)")

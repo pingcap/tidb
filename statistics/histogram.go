@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -221,10 +220,7 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 		return "", errors.Trace(err)
 	}
 	str, err := types.DatumsToString(decodedVals, true)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return str, nil
+	return str, err
 }
 
 // BucketToString change the given bucket to string format.
@@ -273,10 +269,7 @@ func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 // greaterRowCount estimates the row count where the column greater than value.
 func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 	gtCount := hg.notNullCount() - hg.lessRowCount(value) - hg.equalRowCount(value)
-	if gtCount < 0 {
-		gtCount = 0
-	}
-	return gtCount
+	return math.Max(0, gtCount)
 }
 
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
@@ -595,9 +588,7 @@ func (hg *Histogram) AvgCountPerNotNullValue(totalCount int64) float64 {
 	factor := hg.GetIncreaseFactor(totalCount)
 	totalNotNull := hg.notNullCount() * factor
 	curNDV := float64(hg.NDV) * factor
-	if curNDV == 0 {
-		curNDV = 1
-	}
+	curNDV = math.Max(curNDV, 1)
 	return totalNotNull / curNDV
 }
 
@@ -974,7 +965,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			}
 			newIdxHist, err := idxHist.newIndexBySelectivity(sc, node)
 			if err != nil {
-				logutil.Logger(context.Background()).Warn("[Histogram-in-plan]: error happened when calculating row count, failed to build histogram for index %v of table %v",
+				logutil.BgLogger().Warn("[Histogram-in-plan]: error happened when calculating row count, failed to build histogram for index %v of table %v",
 					zap.String("index", idxHist.Info.Name.O), zap.String("table", idxHist.Info.Table.O), zap.Error(err))
 				continue
 			}
@@ -995,7 +986,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 		var err error
 		splitRanges, ok := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
 		if !ok {
-			logutil.Logger(context.Background()).Warn("[Histogram-in-plan]: the type of histogram and ranges mismatch")
+			logutil.BgLogger().Warn("[Histogram-in-plan]: the type of histogram and ranges mismatch")
 			continue
 		}
 		// Deal with some corner case.
@@ -1016,7 +1007,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByColumnRanges)
 		}
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("[Histogram-in-plan]: error happened when calculating row count", zap.Error(err))
+			logutil.BgLogger().Warn("[Histogram-in-plan]: error happened when calculating row count", zap.Error(err))
 			continue
 		}
 		newColl.Columns[node.ID] = newCol

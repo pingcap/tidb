@@ -244,7 +244,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	tk.MustExec("create table t(a int primary key, b int, c char(10), index index_b(b))")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -256,7 +256,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	manipulateCluster(cluster, splitKeys)
 
 	for i := 0; i < 3000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "char")`, i, i))
 	}
 	tk.MustExec("analyze table t with 5 buckets")
 
@@ -265,7 +265,7 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.String(), Equals, "Table:39 Count:3000\n"+
+	c.Assert(tbl.String(), Equals, "Table:41 Count:3000\n"+
 		"column:1 ndv:3000 totColSize:0\n"+
 		"num: 603 lower_bound: 0 upper_bound: 658 repeats: 1\n"+
 		"num: 603 lower_bound: 663 upper_bound: 1248 repeats: 1\n"+
@@ -278,6 +278,8 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 		"num: 603 lower_bound: 1250 upper_bound: 1823 repeats: 1\n"+
 		"num: 603 lower_bound: 1830 upper_bound: 2379 repeats: 1\n"+
 		"num: 588 lower_bound: 2380 upper_bound: 2998 repeats: 1\n"+
+		"column:3 ndv:1 totColSize:12000\n"+
+		"num: 3000 lower_bound: char upper_bound: char repeats: 3000\n"+
 		"index:1 ndv:3000\n"+
 		"num: 603 lower_bound: 0 upper_bound: 658 repeats: 1\n"+
 		"num: 603 lower_bound: 663 upper_bound: 1248 repeats: 1\n"+
@@ -402,6 +404,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
+	c.Assert(s.dom.StatsHandle().Update(s.dom.InfoSchema()), IsNil)
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

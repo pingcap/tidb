@@ -60,6 +60,7 @@ unrecognized-option-test = true
 
 	_, err = f.WriteString(`
 token-limit = 0
+enable-table-lock = true
 [performance]
 [tikv-client]
 commit-timeout="41s"
@@ -78,6 +79,7 @@ max-batch-size=128
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
+	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -208,6 +210,24 @@ func (s *testConfigSuite) TestValid(c *C) {
 	}
 	for _, tt := range tests {
 		c1.PessimisticTxn.TTL = tt.ttl
+		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
+}
+
+func (s *testConfigSuite) TestOOMActionValid(c *C) {
+	c1 := NewConfig()
+	tests := []struct {
+		oomAction string
+		valid     bool
+	}{
+		{"log", true},
+		{"Log", true},
+		{"Cancel", true},
+		{"cANceL", true},
+		{"quit", false},
+	}
+	for _, tt := range tests {
+		c1.OOMAction = tt.oomAction
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
 	}
 }
