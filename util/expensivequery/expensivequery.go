@@ -53,14 +53,11 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 func (eqh *Handle) Run(interval time.Duration) {
 
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-	curInterval := time.Millisecond * time.Duration(threshold) / 2
-	if interval > 0 {
-		curInterval = interval
-	}
-	ticker := time.NewTicker(curInterval)
+	// use 100ms as tickInterval temply, may use given interval or use defined variable later
+	tickInterval := time.Millisecond * time.Duration(100)
+	ticker := time.NewTicker(tickInterval)
 	for {
 		select {
-
 		case <-ticker.C:
 			processInfo := eqh.sm.ShowProcessList()
 			for _, info := range processInfo {
@@ -68,7 +65,7 @@ func (eqh *Handle) Run(interval time.Duration) {
 					continue
 				}
 				costTime := time.Since(info.Time)
-				if costTime >= curInterval && log.GetLevel() <= zapcore.WarnLevel {
+				if costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
 					logExpensiveQuery(costTime, info)
 					info.ExceedExpensiveTimeThresh = true
 
@@ -77,11 +74,6 @@ func (eqh *Handle) Run(interval time.Duration) {
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-			if newInterval := time.Millisecond * time.Duration(threshold); curInterval != newInterval {
-				curInterval = newInterval
-				ticker.Stop()
-				ticker = time.NewTicker(curInterval / 2)
-			}
 		case <-eqh.exitCh:
 			return
 		}

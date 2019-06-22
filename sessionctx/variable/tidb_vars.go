@@ -334,7 +334,7 @@ const (
 	DefTiDBUseFastAnalyze              = false
 	DefTiDBSkipIsolationLevelCheck     = false
 	DefTiDBWaitTableSplitFinish        = false
-	DefTiDBExpensiveQueryTimeThreshold = 100 // 100 ms
+	DefTiDBExpensiveQueryTimeThreshold = 60 // 60s
 
 )
 
@@ -354,5 +354,5 @@ var (
 	ServerHostname, _                     = os.Hostname()
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
-	MinExpensiveQueryTimeThreshold uint64 = 10 //10ms
+	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 )
