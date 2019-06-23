@@ -92,7 +92,10 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			p = np
 			newArgList = append(newArgList, newArg)
 		}
-		newFunc := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
+		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
+		if err != nil {
+			return nil, nil, err
+		}
 		combined := false
 		for j, oldFunc := range plan4Agg.AggFuncs {
 			if oldFunc.Equal(b.ctx, newFunc) {
@@ -114,7 +117,10 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		}
 	}
 	for _, col := range p.Schema().Columns {
-		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		if err != nil {
+			return nil, nil, err
+		}
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 		newCol, _ := col.Clone().(*expression.Column)
 		newCol.RetType = newFunc.RetTp
@@ -650,7 +656,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	return proj, oldLen, nil
 }
 
-func (b *planBuilder) buildDistinct(child LogicalPlan, length int) *LogicalAggregation {
+func (b *planBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggregation, error) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 	plan4Agg := LogicalAggregation{
@@ -659,7 +665,10 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) *LogicalAggre
 	}.init(b.ctx)
 	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
-		aggDesc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		if err != nil {
+			return nil, err
+		}
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, aggDesc)
 	}
 	plan4Agg.SetChildren(child)
@@ -669,7 +678,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) *LogicalAggre
 	for i, col := range plan4Agg.schema.Columns {
 		col.RetType = plan4Agg.AggFuncs[i].RetTp
 	}
-	return plan4Agg
+	return plan4Agg, nil
 }
 
 // unionJoinFieldType finds the type which can carry the given types in Union.
@@ -741,7 +750,10 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 
 	unionDistinctPlan := b.buildUnionAll(distinctSelectPlans)
 	if unionDistinctPlan != nil {
-		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
+		unionDistinctPlan, err = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
+		if err != nil {
+			return nil, err
+		}
 		if len(allSelectPlans) > 0 {
 			// Can't change the statements order in order to get the correct column info.
 			allSelectPlans = append([]LogicalPlan{unionDistinctPlan}, allSelectPlans...)
@@ -1792,7 +1804,10 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	}
 
 	if sel.Distinct {
-		p = b.buildDistinct(p, oldLen)
+		p, err = b.buildDistinct(p, oldLen)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if sel.OrderBy != nil {
