@@ -176,7 +176,7 @@ func (e *RadixHashJoinExec) preAlloc4InnerParts() (err error) {
 	if e.numNonEmptyPart < len(e.innerParts) {
 		numTotalPart := len(e.innerParts)
 		numEmptyPart := numTotalPart - e.numNonEmptyPart
-		logutil.Logger(context.Background()).Debug("empty partition in radix hash join", zap.Uint64("txnStartTS", e.ctx.GetSessionVars().TxnCtx.StartTS),
+		logutil.BgLogger().Debug("empty partition in radix hash join", zap.Uint64("txnStartTS", e.ctx.GetSessionVars().TxnCtx.StartTS),
 			zap.Int("numEmptyParts", numEmptyPart), zap.Int("numTotalParts", numTotalPart),
 			zap.Float64("emptyRatio", float64(numEmptyPart)/float64(numTotalPart)))
 	}
