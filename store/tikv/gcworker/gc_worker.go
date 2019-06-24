@@ -452,6 +452,18 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		w.done <- errors.Trace(err)
 		return
 	}
+	// Save safe point to pd.
+	err = w.saveSafePoint(w.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] failed to save safe point to PD",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		w.gcIsRunning = false
+		metrics.GCJobFailureCounter.WithLabelValues("save_safe_point").Inc()
+		w.done <- errors.Trace(err)
+		return
+	}
+
 	err = w.deleteRanges(ctx, safePoint, concurrency)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] delete range returns an error",
@@ -478,18 +490,6 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 			zap.Error(err))
 		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
 		useDistributedGC = false
-	}
-
-	// Save safe point to pd.
-	err = w.saveSafePoint(w.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
-	if err != nil {
-		logutil.Logger(ctx).Error("[gc worker] failed to save safe point to PD",
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		w.gcIsRunning = false
-		metrics.GCJobFailureCounter.WithLabelValues("save_safe_point").Inc()
-		w.done <- errors.Trace(err)
-		return
 	}
 
 	if useDistributedGC {
