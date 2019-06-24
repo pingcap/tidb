@@ -226,6 +226,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.syncLog = val.(bool)
 	case kv.KeyOnly:
 		txn.snapshot.keyOnly = val.(bool)
+	case kv.SnapshotTS:
+		txn.snapshot.version.Ver = val.(uint64)
 	}
 }
 
@@ -387,6 +389,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
 		err := txn.committer.pessimisticLockKeys(bo, keys)
 		if err != nil {
+			for _, key := range keys {
+				txn.us.DeleteConditionPair(key)
+			}
 			wg := txn.asyncPessimisticRollback(ctx, keys)
 			if dl, ok := errors.Cause(err).(*ErrDeadlock); ok && hashInKeys(dl.DeadlockKeyHash, keys) {
 				dl.IsRetryable = true
