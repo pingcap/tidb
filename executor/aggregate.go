@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -514,10 +513,6 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.Reset()
 	if e.isUnparallelExec {
 		return e.unparallelExec(ctx, req.Chunk)
@@ -790,10 +785,6 @@ func (e *StreamAggExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.Reset()
 	for !e.executed && !req.IsFull() {
 		err := e.consumeOneGroup(ctx, req.Chunk)

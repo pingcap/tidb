@@ -182,7 +182,12 @@ type Executor interface {
 
 // Next is a wrapper function on e.Next(), it handles some common codes.
 func Next(ctx context.Context, e Executor, req *chunk.RecordBatch) error {
-	sessVars := e.base().ctx.GetSessionVars()
+	base := e.base()
+	if base.runtimeStats != nil {
+		start := time.Now()
+		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
+	}
+	sessVars := base.ctx.GetSessionVars()
 	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
 		return ErrQueryInterrupted
 	}
@@ -204,10 +209,6 @@ type CancelDDLJobsExec struct {
 
 // Next implements the Executor Next interface.
 func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
 		return nil
@@ -721,10 +722,6 @@ type LimitExec struct {
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.Reset()
 	if e.cursor >= e.end {
 		return nil
@@ -861,10 +858,6 @@ func (e *TableDualExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.Reset()
 	if e.numReturned >= e.numDualRows {
 		return nil
@@ -916,10 +909,6 @@ func (e *SelectionExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 
 	if !e.batched {
@@ -995,10 +984,6 @@ type TableScanExec struct {
 
 // Next implements the Executor Next interface.
 func (e *TableScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isVirtualTable {
 		return e.nextChunk4InfoSchema(ctx, req.Chunk)
@@ -1099,10 +1084,6 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.Reset()
 	if e.evaluated {
 		return nil
@@ -1248,10 +1229,6 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 
 // Next implements the Executor Next interface.
 func (e *UnionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 	if !e.initialized {
 		e.initialize(ctx)

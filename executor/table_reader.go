@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
@@ -131,10 +130,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	if err := e.resultHandler.nextChunk(ctx, req.Chunk); err != nil {
 		e.feedback.Invalidate()
 		return err
