@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -498,10 +497,6 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
 func (e *HashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
 		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.handleFetchInnerAndBuildHashTablePanic)
@@ -705,10 +700,6 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 
 // Next implements the Executor interface.
 func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.Reset()
 	for {
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {

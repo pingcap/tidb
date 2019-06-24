@@ -154,7 +154,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 
 				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
 				for i, col := range outerPlan.Schema().Columns {
-					first := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					first, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					if err != nil {
+						return nil, err
+					}
 					newAggFuncs = append(newAggFuncs, first)
 
 					outerCol, _ := outerPlan.Schema().Columns[i].Clone().(*expression.Column)
@@ -201,7 +204,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 							clonedCol := eqCond.GetArgs()[1]
 							// If the join key is not in the aggregation's schema, add first row function.
 							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
-								newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+								newFunc, err := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+								if err != nil {
+									return nil, err
+								}
 								agg.AggFuncs = append(agg.AggFuncs, newFunc)
 								agg.schema.Append(clonedCol.(*expression.Column))
 								agg.schema.Columns[agg.schema.Len()-1].RetType = newFunc.RetTp

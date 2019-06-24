@@ -228,7 +228,10 @@ func buildAggExecutor(b *testing.B, testCase *aggTestCase, child Executor) Execu
 	childCols := testCase.columns()
 	schema := expression.NewSchema(childCols...)
 	groupBy := []expression.Expression{childCols[1]}
-	aggFunc := aggregation.NewAggFuncDesc(testCase.ctx, testCase.aggFunc, []expression.Expression{childCols[0]}, testCase.hasDistinct)
+	aggFunc, err := aggregation.NewAggFuncDesc(testCase.ctx, testCase.aggFunc, []expression.Expression{childCols[0]}, testCase.hasDistinct)
+	if err != nil {
+		b.Fatal(err)
+	}
 	aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 
 	var aggExec Executor

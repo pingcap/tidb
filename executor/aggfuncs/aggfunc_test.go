@@ -82,7 +82,8 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
 	}
-	desc := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
+	c.Assert(err, IsNil)
 	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build partial func for partial phase.
@@ -183,7 +184,8 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
 	}
-	desc := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
+	c.Assert(err, IsNil)
 	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
 	finalPr := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
@@ -208,7 +210,8 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	c.Assert(result, Equals, 0)
 
 	// test the agg func with distinct
-	desc = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
+	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
+	c.Assert(err, IsNil)
 	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
 	finalPr = finalFunc.AllocPartialResult()
 
