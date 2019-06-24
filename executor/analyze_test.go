@@ -406,6 +406,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
+	c.Assert(s.dom.StatsHandle().Update(s.dom.InfoSchema()), IsNil)
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
