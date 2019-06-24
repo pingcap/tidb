@@ -3,6 +3,7 @@ module github.com/pingcap/tidb
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/StackExchange/wmi v0.0.0-20180725035823-b12b22c5341f // indirect
+	github.com/beorn7/perks v1.0.0 // indirect
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
@@ -18,6 +19,7 @@ require (
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
 	github.com/gogo/protobuf v1.2.0 // indirect
 	github.com/golang/protobuf v1.2.0
+	github.com/golang/snappy v0.0.1 // indirect
 	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/context v1.1.1 // indirect
@@ -39,9 +41,9 @@ require (
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190422094118-d8535965f59b
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190528074401-b942b3f4108f
+	github.com/pingcap/kvproto v0.0.0-20190619024611-a4759dfe3753
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
-	github.com/pingcap/parser v0.0.0-20190605085902-82be48fe0267
+	github.com/pingcap/parser v0.0.0-20190613045206-37cc370a20a4
 	github.com/pingcap/pd v0.0.0-20190424024702-bd1e2496a669
 	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
 	github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330

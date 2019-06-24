@@ -94,7 +94,12 @@ func (s *testMockTiKVSuite) mustGetRC(c *C, key string, ts uint64, expect string
 }
 
 func (s *testMockTiKVSuite) mustPutOK(c *C, key, value string, startTS, commitTS uint64) {
-	errs := s.store.Prewrite(putMutations(key, value), []byte(key), startTS, 0)
+	req := &kvrpcpb.PrewriteRequest{
+		Mutations:    putMutations(key, value),
+		PrimaryLock:  []byte(key),
+		StartVersion: startTS,
+	}
+	errs := s.store.Prewrite(req)
 	for _, err := range errs {
 		c.Assert(err, IsNil)
 	}
@@ -109,7 +114,12 @@ func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uin
 			Key: []byte(key),
 		},
 	}
-	errs := s.store.Prewrite(mutations, []byte(key), startTS, 0)
+	req := &kvrpcpb.PrewriteRequest{
+		Mutations:    mutations,
+		PrimaryLock:  []byte(key),
+		StartVersion: startTS,
+	}
+	errs := s.store.Prewrite(req)
 	for _, err := range errs {
 		c.Assert(err, IsNil)
 	}
@@ -146,7 +156,12 @@ func (s *testMockTiKVSuite) mustRangeReverseScanOK(c *C, start, end string, limi
 }
 
 func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
-	errs := s.store.Prewrite(mutations, []byte(primary), startTS, 0)
+	req := &kvrpcpb.PrewriteRequest{
+		Mutations:    mutations,
+		PrimaryLock:  []byte(primary),
+		StartVersion: startTS,
+	}
+	errs := s.store.Prewrite(req)
 	for _, err := range errs {
 		c.Assert(err, IsNil)
 	}
@@ -412,7 +427,12 @@ func (s *testMockTiKVSuite) TestCommitConflict(c *C) {
 	// A prewrite.
 	s.mustPrewriteOK(c, putMutations("x", "A"), "x", 5)
 	// B prewrite and find A's lock.
-	errs := s.store.Prewrite(putMutations("x", "B"), []byte("x"), 10, 0)
+	req := &kvrpcpb.PrewriteRequest{
+		Mutations:    putMutations("x", "B"),
+		PrimaryLock:  []byte("x"),
+		StartVersion: 10,
+	}
+	errs := s.store.Prewrite(req)
 	c.Assert(errs[0], NotNil)
 	// B find rollback A because A exist too long.
 	s.mustRollbackOK(c, [][]byte{[]byte("x")}, 5)
@@ -470,8 +490,13 @@ func (s *testMockTiKVSuite) TestBatchResolveLock(c *C) {
 
 func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
 	s.mustPutOK(c, "test", "test", 1, 3)
-
-	errs := s.store.Prewrite(putMutations("lock", "lock", "test", "test1"), []byte("test"), 2, 2)
+	req := &kvrpcpb.PrewriteRequest{
+		Mutations:    putMutations("lock", "lock", "test", "test1"),
+		PrimaryLock:  []byte("test"),
+		StartVersion: 2,
+		LockTtl:      2,
+	}
+	errs := s.store.Prewrite(req)
 	s.mustWriteWriteConflict(c, errs, 1)
 
 	s.mustPutOK(c, "test", "test2", 5, 8)
@@ -479,8 +504,13 @@ func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
 	// simulate `getTxnStatus` for txn 2.
 	err := s.store.Cleanup([]byte("test"), 2)
 	c.Assert(err, IsNil)
-
-	errs = s.store.Prewrite(putMutations("test", "test3"), []byte("test"), 6, 1)
+	req = &kvrpcpb.PrewriteRequest{
+		Mutations:    putMutations("test", "test3"),
+		PrimaryLock:  []byte("test"),
+		StartVersion: 6,
+		LockTtl:      1,
+	}
+	errs = s.store.Prewrite(req)
 	s.mustWriteWriteConflict(c, errs, 0)
 }
 

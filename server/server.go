@@ -483,27 +483,28 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
+func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
-	rs := make(map[uint64]util.ProcessInfo, len(s.clients))
+	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
 		}
-		pi := client.ctx.ShowProcess()
-		rs[pi.ID] = pi
+		if pi := client.ctx.ShowProcess(); pi != nil {
+			rs[pi.ID] = pi
+		}
 	}
 	s.rwlock.RUnlock()
 	return rs
 }
 
 // GetProcessInfo implements the SessionManager interface.
-func (s *Server) GetProcessInfo(id uint64) (util.ProcessInfo, bool) {
+func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[uint32(id)]
 	s.rwlock.RUnlock()
 	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
-		return util.ProcessInfo{}, false
+		return &util.ProcessInfo{}, false
 	}
 	return conn.ctx.ShowProcess(), ok
 }
@@ -529,19 +530,8 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 }
 
 func killConn(conn *clientConn) {
-	conn.mu.RLock()
-	resultSets := conn.mu.resultSets
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-	for _, resultSet := range resultSets {
-		// resultSet.Close() is reentrant so it's safe to kill a same connID multiple times
-		if err := resultSet.Close(); err != nil {
-			logutil.Logger(context.Background()).Error("close result set error", zap.Uint32("connID", conn.connectionID), zap.Error(err))
-		}
-	}
-	if cancelFunc != nil {
-		cancelFunc()
-	}
+	sessVars := conn.ctx.GetSessionVars()
+	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.

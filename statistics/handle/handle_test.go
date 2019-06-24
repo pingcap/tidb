@@ -379,7 +379,7 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	c.Assert(err, IsNil)
 	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
 	// `Lease` is not 0, so here we just change it.
-	h.Lease = time.Millisecond
+	h.SetLease(time.Millisecond)
 
 	h.Clear()
 	c.Assert(h.InitStats(is), IsNil)
@@ -388,7 +388,7 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	table1 := h.GetTableStats(tbl.Meta())
 	assertTableEqual(c, table0, table1)
-	h.Lease = 0
+	h.SetLease(0)
 }
 
 func (s *testStatsSuite) TestLoadStats(c *C) {
@@ -398,10 +398,10 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
-	oriLease := s.do.StatsHandle().Lease
-	s.do.StatsHandle().Lease = 1
+	oriLease := s.do.StatsHandle().Lease()
+	s.do.StatsHandle().SetLease(1)
 	defer func() {
-		s.do.StatsHandle().Lease = oriLease
+		s.do.StatsHandle().SetLease(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 

@@ -330,7 +330,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return err
 	}
-	e.result, err = e.SelectResult(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	e.result, err = e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
@@ -794,7 +794,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
-		chk := tableReader.newFirstChunk()
+		chk := newFirstChunk(tableReader)
 		err = tableReader.Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
@@ -839,6 +839,17 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 
 		if len(w.idxLookup.tblPlans) == 1 {
+			obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
+			for _, row := range task.rows {
+				handle := row.GetInt64(w.handleIdx)
+				obtainedHandlesMap[handle] = struct{}{}
+			}
+
+			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
+				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
+				zap.Int64s("missing_handles", GetLackHandles(task.handles, obtainedHandlesMap)),
+				zap.Int64s("total_handles", task.handles))
+
 			// table scan in double read can never has conditions according to convertToIndexScan.
 			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
 			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",

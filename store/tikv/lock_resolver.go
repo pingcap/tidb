@@ -33,6 +33,9 @@ import (
 // ResolvedCacheSize is max number of cached txn status.
 const ResolvedCacheSize = 2048
 
+// bigTxnThreshold : transaction involves keys exceed this threshold can be treated as `big transaction`.
+const bigTxnThreshold = 16
+
 var (
 	tikvLockResolverCountWithBatchResolve             = metrics.TiKVLockResolverCounter.WithLabelValues("batch_resolve")
 	tikvLockResolverCountWithExpired                  = metrics.TiKVLockResolverCounter.WithLabelValues("expired")
@@ -43,6 +46,7 @@ var (
 	tikvLockResolverCountWithQueryTxnStatusCommitted  = metrics.TiKVLockResolverCounter.WithLabelValues("query_txn_status_committed")
 	tikvLockResolverCountWithQueryTxnStatusRolledBack = metrics.TiKVLockResolverCounter.WithLabelValues("query_txn_status_rolled_back")
 	tikvLockResolverCountWithResolveLocks             = metrics.TiKVLockResolverCounter.WithLabelValues("query_resolve_locks")
+	tikvLockResolverCountWithResolveLockLite          = metrics.TiKVLockResolverCounter.WithLabelValues("query_resolve_lock_lite")
 )
 
 // LockResolver resolves locks and also caches resolved txn status.
@@ -125,6 +129,7 @@ type Lock struct {
 	Primary []byte
 	TxnID   uint64
 	TTL     uint64
+	TxnSize uint64
 }
 
 func (l *Lock) String() string {
@@ -133,15 +138,12 @@ func (l *Lock) String() string {
 
 // NewLock creates a new *Lock.
 func NewLock(l *kvrpcpb.LockInfo) *Lock {
-	ttl := l.GetLockTtl()
-	if ttl == 0 {
-		ttl = defaultLockTTL
-	}
 	return &Lock{
 		Key:     l.GetKey(),
 		Primary: l.GetPrimaryLock(),
 		TxnID:   l.GetLockVersion(),
-		TTL:     ttl,
+		TTL:     l.GetLockTtl(),
+		TxnSize: l.GetTxnSize(),
 	}
 }
 
@@ -388,6 +390,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cleanRegions map[RegionVerID]struct{}) error {
 	tikvLockResolverCountWithResolveLocks.Inc()
+	cleanWholeRegion := l.TxnSize >= bigTxnThreshold
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
 		if err != nil {
@@ -404,6 +407,12 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		}
 		if status.IsCommitted() {
 			req.ResolveLock.CommitVersion = status.CommitTS()
+		}
+		if l.TxnSize < bigTxnThreshold {
+			// Only resolve specified keys when it is a small transaction,
+			// prevent from scanning the whole region in this case.
+			tikvLockResolverCountWithResolveLockLite.Inc()
+			req.ResolveLock.Keys = [][]byte{l.Key}
 		}
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
@@ -429,7 +438,9 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			logutil.Logger(context.Background()).Error("resolveLock error", zap.Error(err))
 			return err
 		}
-		cleanRegions[loc.Region] = struct{}{}
+		if cleanWholeRegion {
+			cleanRegions[loc.Region] = struct{}{}
+		}
 		return nil
 	}
 }
