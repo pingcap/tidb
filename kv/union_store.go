@@ -19,6 +19,8 @@ type UnionStore interface {
 	MemBuffer
 	// Returns related condition pair
 	LookupConditionPair(k Key) *conditionPair
+	// DeleteConditionPair deletes a condition pair.
+	DeleteConditionPair(k Key)
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -215,6 +217,10 @@ func (us *unionStore) LookupConditionPair(k Key) *conditionPair {
 		return c
 	}
 	return nil
+}
+
+func (us *unionStore) DeleteConditionPair(k Key) {
+	delete(us.lazyConditionPairs, string(k))
 }
 
 // SetOption implements the UnionStore SetOption interface.
