@@ -3044,6 +3044,16 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// Forbid adding index on generated column
+	for _, idxCol := range idxColNames {
+		colName := idxCol.Column.Name.L
+		column := table.FindCol(t.Cols(), colName)
+		if column.IsGenerated() {
+			return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("adding index")
+		}
+	}
+
 	if unique && tblInfo.GetPartitionInfo() != nil {
 		if err := checkPartitionKeysConstraint(ctx, tblInfo.GetPartitionInfo().Expr, idxColNames, tblInfo); err != nil {
 			return err

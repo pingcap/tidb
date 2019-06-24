@@ -547,7 +547,13 @@ func (s *testIntegrationSuite2) TestNullGeneratedColumn(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 	tk.MustExec("insert into t values()")
-	tk.MustExec("alter table t add index idx_c(c)")
+
+	// Currently TiDB not support adding an index on the virtual generated column.
+	// Tests below should be uncommented in the future.
+	// tk.MustExec("alter table t add index idx_c(c)")
+	_, err := tk.Exec("alter table t add index idx_c(c)")
+	c.Assert(err.Error(), Equals, "[ddl:3106]'adding index' is not supported for generated columns.")
+
 	tk.MustExec("drop table t")
 }
 

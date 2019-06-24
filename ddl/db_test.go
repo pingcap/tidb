@@ -2656,42 +2656,60 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	s.tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
 }
 
+// Currently TiDB not support adding an index on the virtual generated column.
+// Tests below should be uncommented in the future.
+//func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
+//	s.tk = testkit.NewTestKit(c, s.store)
+//	s.tk.MustExec("use test_db")
+//	s.tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
+//	defer s.mustExec(c, "drop table t;")
+//	for i := 0; i < 50; i++ {
+//		s.mustExec(c, "insert into t values (?)", i)
+//	}
+//	s.tk.MustExec("insert into t values()")
+//	s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
+//	_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
+//	c.Assert(err.Error(), Equals, "[ddl:15]cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+//
+//	t := s.testGetTable(c, "t")
+//	for _, idx := range t.Indices() {
+//		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
+//	}
+//	s.mustExec(c, "delete from t where y = 2155")
+//	s.mustExec(c, "alter table t add index idx_y(y1)")
+//	s.mustExec(c, "alter table t drop index idx_y")
+//
+//	// Fix issue 9311.
+//	s.tk.MustExec("create table gcai_table (id int primary key);")
+//	s.tk.MustExec("insert into gcai_table values(1);")
+//	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d date DEFAULT '9999-12-31';")
+//	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d1 date as (DATE_SUB(d, INTERVAL 31 DAY));")
+//	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx(d1);")
+//	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30"))
+//	s.tk.MustQuery("select d1 from gcai_table use index(idx)").Check(testkit.Rows("9999-11-30"))
+//	s.tk.MustExec("admin check table gcai_table")
+//	// The column is PKIsHandle in generated column expression.
+//	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN id1 int as (id+5);")
+//	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx1(id1);")
+//	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30 6"))
+//	s.tk.MustQuery("select id1 from gcai_table use index(idx1)").Check(testkit.Rows("6"))
+//	s.tk.MustExec("admin check table gcai_table")
+//}
 func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
-	s.tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
+	s.tk.MustExec("create table t(x int)")
 	defer s.mustExec(c, "drop table t;")
 	for i := 0; i < 50; i++ {
 		s.mustExec(c, "insert into t values (?)", i)
 	}
-	s.tk.MustExec("insert into t values()")
-	s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
-	_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
-	c.Assert(err.Error(), Equals, "[ddl:15]cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+	s.tk.MustExec("alter table t add column y int as (x + 1);")
 
-	t := s.testGetTable(c, "t")
-	for _, idx := range t.Indices() {
-		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
-	}
-	s.mustExec(c, "delete from t where y = 2155")
-	s.mustExec(c, "alter table t add index idx_y(y1)")
-	s.mustExec(c, "alter table t drop index idx_y")
-
-	// Fix issue 9311.
-	s.tk.MustExec("create table gcai_table (id int primary key);")
-	s.tk.MustExec("insert into gcai_table values(1);")
-	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d date DEFAULT '9999-12-31';")
-	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d1 date as (DATE_SUB(d, INTERVAL 31 DAY));")
-	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx(d1);")
-	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30"))
-	s.tk.MustQuery("select d1 from gcai_table use index(idx)").Check(testkit.Rows("9999-11-30"))
-	s.tk.MustExec("admin check table gcai_table")
-	// The column is PKIsHandle in generated column expression.
-	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN id1 int as (id+5);")
-	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx1(id1);")
-	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30 6"))
-	s.tk.MustQuery("select id1 from gcai_table use index(idx1)").Check(testkit.Rows("6"))
-	s.tk.MustExec("admin check table gcai_table")
+	errMsg := "[ddl:3106]'adding index' is not supported for generated columns."
+	_, err := s.tk.Exec("alter table t add index idx(y);")
+	c.Assert(err.Error(), Equals, errMsg)
+	_, err = s.tk.Exec("create index idx on t (y);")
+	c.Assert(err.Error(), Equals, errMsg)
 }
 
 func (s *testDBSuite4) TestIssue9100(c *C) {

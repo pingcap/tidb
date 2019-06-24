@@ -15,6 +15,9 @@ package admin_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -90,15 +93,39 @@ func (s *testAdminSuite) TestAdminCheckTable(c *C) {
 		k json);`)
 
 	tk.MustExec("insert into t1 set k='{\"a\": 100,\"c\":1.234,\"d\":1.2340000000,\"e\":\"abcdefg\",\"f\":\"2018-09-28\",\"g\":\"12:59:59\",\"h\":\"2018-09-28 12:59:59\",\"i\":\"2018-09-28 16:40:33\",\"j\":\"2018\"}';")
-	tk.MustExec("alter table t1 add index idx_a(a);")
-	tk.MustExec("alter table t1 add index idx_c(c);")
-	tk.MustExec("alter table t1 add index idx_d(d);")
-	tk.MustExec("alter table t1 add index idx_e(e);")
-	tk.MustExec("alter table t1 add index idx_f(f);")
-	tk.MustExec("alter table t1 add index idx_g(g);")
-	tk.MustExec("alter table t1 add index idx_h(h);")
-	tk.MustExec("alter table t1 add index idx_j(j);")
-	tk.MustExec("alter table t1 add index idx_i(i);")
-	tk.MustExec("alter table t1 add index idx_m(a,c,d,e,f,g,h,i,j);")
+
+	// Currently TiDB not support adding an index on the virtual generated column.
+	// Tests below should be uncommented in the future.
+	//tk.MustExec("alter table t1 add index idx_a(a);")
+	//tk.MustExec("alter table t1 add index idx_c(c);")
+	//tk.MustExec("alter table t1 add index idx_d(d);")
+	//tk.MustExec("alter table t1 add index idx_e(e);")
+	//tk.MustExec("alter table t1 add index idx_f(f);")
+	//tk.MustExec("alter table t1 add index idx_g(g);")
+	//tk.MustExec("alter table t1 add index idx_h(h);")
+	//tk.MustExec("alter table t1 add index idx_j(j);")
+	//tk.MustExec("alter table t1 add index idx_i(i);")
+	//tk.MustExec("alter table t1 add index idx_m(a,c,d,e,f,g,h,i,j);")
+	genExprTests := []string{
+		"alter table t1 add index idx_a(a);",
+		"alter table t1 add index idx_c(c);",
+		"alter table t1 add index idx_d(d);",
+		"alter table t1 add index idx_e(e);",
+		"alter table t1 add index idx_f(f);",
+		"alter table t1 add index idx_g(g);",
+		"alter table t1 add index idx_h(h);",
+		"alter table t1 add index idx_j(j);",
+		"alter table t1 add index idx_i(i);",
+		"alter table t1 add index idx_m(a,c,d,e,f,g,h,i,j);",
+	}
+	for _, tt := range genExprTests {
+		_, err := tk.Exec(tt)
+		c.Assert(err, NotNil)
+		originErr := errors.Cause(err)
+		tErr, ok := originErr.(*terror.Error)
+		c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
+		c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(mysql.ErrUnsupportedOnGeneratedColumn), Commentf("MySQL code:%v", tErr.ToSQLError()))
+	}
+
 	tk.MustExec("admin check table t1;")
 }
