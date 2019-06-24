@@ -1114,53 +1114,41 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 	}
 	mockTablePlan := LogicalTableDual{placeHolder: true}.Init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
+	var err error
+	var np LogicalPlan
+	np = mockTablePlan
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.Schema().Columns[0].ColName},
 		}
-		expr, _, err := b.rewrite(show.Pattern, mockTablePlan, nil, false)
+		np, err = b.buildSelection(np, show.Pattern, nil)
 		if err != nil {
 			return nil, err
 		}
-		p.Conditions = append(p.Conditions, expr)
 	}
 	if show.Where != nil {
-		var err error
-		var np LogicalPlan
-		np = mockTablePlan
-		conds := splitWhere(show.Where)
-		for _, cond := range conds {
-			var expr expression.Expression
-			expr, np, err = b.rewrite(cond, np, nil, false)
-			if err != nil {
-				return nil, err
-			}
-			if expr != nil {
-				p.Conditions = append(p.Conditions, expr)
-			}
-		}
-		if np != mockTablePlan {
-			fieldsLen := len(mockTablePlan.schema.Columns)
-			proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx)
-			schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
-			for _, col := range mockTablePlan.schema.Columns {
-				proj.Exprs = append(proj.Exprs, col)
-				newCol := col.Clone().(*expression.Column)
-				newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-				schema.Append(newCol)
-			}
-			proj.SetSchema(schema)
-			proj.SetChildren(np)
-			physical, err := DoOptimize(b.optFlag|flagEliminateProjection, proj)
-			if err != nil {
-				return nil, err
-			}
-			return substitutePlaceHolderDual(physical, p), nil
-		}
-		err = p.ResolveIndices()
+		np, err = b.buildSelection(np, show.Where, nil)
 		if err != nil {
 			return nil, err
 		}
+	}
+	if np != mockTablePlan {
+		fieldsLen := len(mockTablePlan.schema.Columns)
+		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx)
+		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
+		for _, col := range mockTablePlan.schema.Columns {
+			proj.Exprs = append(proj.Exprs, col)
+			newCol := col.Clone().(*expression.Column)
+			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+			schema.Append(newCol)
+		}
+		proj.SetSchema(schema)
+		proj.SetChildren(np)
+		physical, err := DoOptimize(b.optFlag|flagEliminateProjection, proj)
+		if err != nil {
+			return nil, err
+		}
+		return substitutePlaceHolderDual(physical, p), nil
 	}
 	return p, nil
 }

@@ -335,8 +335,6 @@ type Show struct {
 	Roles       []*auth.RoleIdentity // Used for show grants.
 	IfNotExists bool                 // Used for `show create database if not exists`
 
-	Conditions []expression.Expression
-
 	GlobalScope bool // Used by show variables
 }
 

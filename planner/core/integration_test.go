@@ -33,10 +33,11 @@ func (s *testIntegrationSuite) TestShowSubquery(c *C) {
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t(a varchar(10), b int, c int)")
 	tk.MustQuery("show columns from t where true").Check(testkit.Rows(
-		"a int(11) YES  <nil> ",
+		"a varchar(10) YES  <nil> ",
 		"b int(11) YES  <nil> ",
+		"c int(11) YES  <nil> ",
 	))
 	tk.MustQuery("show columns from t where field = 'b'").Check(testkit.Rows(
 		"b int(11) YES  <nil> ",
@@ -48,4 +49,13 @@ func (s *testIntegrationSuite) TestShowSubquery(c *C) {
 		"b int(11) YES  <nil> ",
 	))
 	tk.MustQuery("show columns from t where field in (select 'b') and false").Check(testkit.Rows())
+	tk.MustExec("insert into t values('c', 0, 0)")
+	tk.MustQuery("show columns from t where field < all (select a from t)").Check(testkit.Rows(
+		"a varchar(10) YES  <nil> ",
+		"b int(11) YES  <nil> ",
+	))
+	tk.MustExec("insert into t values('b', 0, 0)")
+	tk.MustQuery("show columns from t where field < all (select a from t)").Check(testkit.Rows(
+		"a varchar(10) YES  <nil> ",
+	))
 }

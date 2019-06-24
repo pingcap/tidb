@@ -569,14 +569,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 			b.err = err
 		}
 	}
-	if len(v.Conditions) == 0 {
-		return e
-	}
-	sel := &SelectionExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), e),
-		filters:      v.Conditions,
-	}
-	return sel
+	return e
 }
 
 func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
