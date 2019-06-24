@@ -86,6 +86,11 @@ type baseExecutor struct {
 	runtimeStats  *execdetails.RuntimeStats
 }
 
+// base returns the baseExecutor of an executor, don't override this method!
+func (e *baseExecutor) base() *baseExecutor {
+	return e
+}
+
 // Open initializes children recursively and "childrenResults" according to children's schemas.
 func (e *baseExecutor) Open(ctx context.Context) error {
 	for _, child := range e.children {
@@ -117,13 +122,15 @@ func (e *baseExecutor) Schema() *expression.Schema {
 }
 
 // newFirstChunk creates a new chunk to buffer current executor's result.
-func (e *baseExecutor) newFirstChunk() *chunk.Chunk {
-	return chunk.New(e.retTypes(), e.initCap, e.maxChunkSize)
+func newFirstChunk(e Executor) *chunk.Chunk {
+	base := e.base()
+	return chunk.New(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
 // retTypes returns all output column types.
-func (e *baseExecutor) retTypes() []*types.FieldType {
-	return e.retFieldTypes
+func retTypes(e Executor) []*types.FieldType {
+	base := e.base()
+	return base.retFieldTypes
 }
 
 // Next fills mutiple rows into a chunk.
@@ -166,13 +173,29 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 // return a batch of rows, other than a single row in Volcano.
 // NOTE: Executors must call "chk.Reset()" before appending their results to it.
 type Executor interface {
+	base() *baseExecutor
 	Open(context.Context) error
 	Next(ctx context.Context, req *chunk.RecordBatch) error
 	Close() error
 	Schema() *expression.Schema
+}
 
-	retTypes() []*types.FieldType
-	newFirstChunk() *chunk.Chunk
+// Next is a wrapper function on e.Next(), it handles some common codes.
+func Next(ctx context.Context, e Executor, req *chunk.RecordBatch) error {
+	base := e.base()
+	if base.runtimeStats != nil {
+		start := time.Now()
+		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
+	}
+	sessVars := base.ctx.GetSessionVars()
+	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+		return ErrQueryInterrupted
+	}
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	return e.Next(ctx, req)
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -186,10 +209,6 @@ type CancelDDLJobsExec struct {
 
 // Next implements the Executor Next interface.
 func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
 		return nil
@@ -552,9 +571,9 @@ func (e *CheckIndexExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 	if err != nil {
 		return err
 	}
-	chk := e.src.newFirstChunk()
+	chk := newFirstChunk(e.src)
 	for {
-		err := e.src.Next(ctx, chunk.NewRecordBatch(chk))
+		err := Next(ctx, e.src, chunk.NewRecordBatch(chk))
 		if err != nil {
 			return err
 		}
@@ -657,13 +676,8 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *SelectLockExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("selectLock.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
 	req.GrowAndReset(e.maxChunkSize)
-	err := e.children[0].Next(ctx, req)
+	err := Next(ctx, e.children[0], req)
 	if err != nil {
 		return err
 	}
@@ -708,14 +722,6 @@ type LimitExec struct {
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("limit.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.Reset()
 	if e.cursor >= e.end {
 		return nil
@@ -723,7 +729,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	for !e.meetFirstBatch {
 		// transfer req's requiredRows to childResult and then adjust it in childResult
 		e.childResult = e.childResult.SetRequiredRows(req.RequiredRows(), e.maxChunkSize)
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.adjustRequiredRows(e.childResult)))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.adjustRequiredRows(e.childResult)))
 		if err != nil {
 			return err
 		}
@@ -748,7 +754,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		e.cursor += batchSize
 	}
 	e.adjustRequiredRows(req.Chunk)
-	err := e.children[0].Next(ctx, req)
+	err := Next(ctx, e.children[0], req)
 	if err != nil {
 		return err
 	}
@@ -770,7 +776,7 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	e.childResult = e.children[0].newFirstChunk()
+	e.childResult = newFirstChunk(e.children[0])
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
 	return nil
@@ -816,9 +822,9 @@ func init() {
 		if err != nil {
 			return rows, err
 		}
-		chk := exec.newFirstChunk()
+		chk := newFirstChunk(exec)
 		for {
-			err = exec.Next(ctx, chunk.NewRecordBatch(chk))
+			err = Next(ctx, exec, chunk.NewRecordBatch(chk))
 			if err != nil {
 				return rows, err
 			}
@@ -827,7 +833,7 @@ func init() {
 			}
 			iter := chunk.NewIterator4Chunk(chk)
 			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-				row := r.GetDatumRow(exec.retTypes())
+				row := r.GetDatumRow(retTypes(exec))
 				rows = append(rows, row)
 			}
 			chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
@@ -852,14 +858,6 @@ func (e *TableDualExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tableDual.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.Reset()
 	if e.numReturned >= e.numDualRows {
 		return nil
@@ -892,7 +890,7 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	e.childResult = e.children[0].newFirstChunk()
+	e.childResult = newFirstChunk(e.children[0])
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
 		e.selected = make([]bool, 0, chunk.InitialCapacity)
@@ -911,14 +909,6 @@ func (e *SelectionExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("selection.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 
 	if !e.batched {
@@ -935,7 +925,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 			}
 			req.AppendRow(e.inputRow)
 		}
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
 		if err != nil {
 			return err
 		}
@@ -967,7 +957,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 				return nil
 			}
 		}
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
+		err := Next(ctx, e.children[0], chunk.NewRecordBatch(e.childResult))
 		if err != nil {
 			return err
 		}
@@ -994,14 +984,6 @@ type TableScanExec struct {
 
 // Next implements the Executor Next interface.
 func (e *TableScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tableScan.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isVirtualTable {
 		return e.nextChunk4InfoSchema(ctx, req.Chunk)
@@ -1011,7 +993,7 @@ func (e *TableScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		return err
 	}
 
-	mutableRow := chunk.MutRowFromTypes(e.retTypes())
+	mutableRow := chunk.MutRowFromTypes(retTypes(e))
 	for req.NumRows() < req.Capacity() {
 		row, err := e.getRow(handle)
 		if err != nil {
@@ -1027,12 +1009,12 @@ func (e *TableScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.virtualTableChunkList == nil {
-		e.virtualTableChunkList = chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
+		e.virtualTableChunkList = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 		columns := make([]*table.Column, e.schema.Len())
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)
 		}
-		mutableRow := chunk.MutRowFromTypes(e.retTypes())
+		mutableRow := chunk.MutRowFromTypes(retTypes(e))
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
@@ -1102,20 +1084,12 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("maxOneRow.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.Reset()
 	if e.evaluated {
 		return nil
 	}
 	e.evaluated = true
-	err := e.children[0].Next(ctx, req)
+	err := Next(ctx, e.children[0], req)
 	if err != nil {
 		return err
 	}
@@ -1129,8 +1103,8 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		return errors.New("subquery returns more than 1 row")
 	}
 
-	childChunk := e.children[0].newFirstChunk()
-	err = e.children[0].Next(ctx, chunk.NewRecordBatch(childChunk))
+	childChunk := newFirstChunk(e.children[0])
+	err = Next(ctx, e.children[0], chunk.NewRecordBatch(childChunk))
 	if err != nil {
 		return err
 	}
@@ -1194,7 +1168,7 @@ func (e *UnionExec) Open(ctx context.Context) error {
 		return err
 	}
 	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
+		e.childrenResults = append(e.childrenResults, newFirstChunk(child))
 	}
 	e.stopFetchData.Store(false)
 	e.initialized = false
@@ -1241,7 +1215,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 			return
 		case result.chk = <-e.resourcePools[childID]:
 		}
-		result.err = e.children[childID].Next(ctx, chunk.NewRecordBatch(result.chk))
+		result.err = Next(ctx, e.children[childID], chunk.NewRecordBatch(result.chk))
 		if result.err == nil && result.chk.NumRows() == 0 {
 			return
 		}
@@ -1255,14 +1229,6 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 
 // Next implements the Executor Next interface.
 func (e *UnionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("union.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 	if !e.initialized {
 		e.initialize(ctx)
@@ -1303,11 +1269,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
-		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
+		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		sc.MemTracker.SetActionOnExceed(action)
 	case config.OOMActionLog:
-		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+		fallthrough
 	default:
-		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+		action := &memory.LogOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		sc.MemTracker.SetActionOnExceed(action)
 	}
 
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {

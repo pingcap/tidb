@@ -28,12 +28,13 @@ var (
 
 // metrics labels.
 const (
-	LabelSession  = "session"
-	LabelDomain   = "domain"
-	LabelDDLOwner = "ddl-owner"
-	LabelDDL      = "ddl"
-	LabelGCWorker = "gcworker"
-	LabelAnalyze  = "analyze"
+	LabelSession   = "session"
+	LabelDomain    = "domain"
+	LabelDDLOwner  = "ddl-owner"
+	LabelDDL       = "ddl"
+	LabelDDLSyncer = "ddl-syncer"
+	LabelGCWorker  = "gcworker"
+	LabelAnalyze   = "analyze"
 
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
@@ -131,6 +132,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GCJobFailureCounter)
 	prometheus.MustRegister(GCRegionTooManyLocksCounter)
 	prometheus.MustRegister(GCWorkerCounter)
+	prometheus.MustRegister(GCUnsafeDestroyRangeFailuresCounterVec)
 	prometheus.MustRegister(TSFutureWaitDuration)
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)

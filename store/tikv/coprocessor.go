@@ -240,7 +240,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		reverseTasks(tasks)
 	}
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		logutil.Logger(context.Background()).Warn("buildCopTasks takes too much time",
+		logutil.BgLogger().Warn("buildCopTasks takes too much time",
 			zap.Duration("elapsed", elapsed),
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
@@ -367,8 +367,8 @@ type copIteratorTaskSender struct {
 }
 
 type copResponse struct {
-	pbResp *coprocessor.Response
-	execdetails.ExecDetails
+	pbResp   *coprocessor.Response
+	detail   *execdetails.ExecDetails
 	startKey kv.Key
 	err      error
 	respSize int64
@@ -390,7 +390,7 @@ func (rs *copResponse) GetStartKey() kv.Key {
 }
 
 func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
-	return &rs.ExecDetails
+	return rs.detail
 }
 
 // MemSize returns how many bytes of memory this response use
@@ -401,9 +401,11 @@ func (rs *copResponse) MemSize() int64 {
 
 	// ignore rs.err
 	rs.respSize += int64(cap(rs.startKey))
-	rs.respSize += int64(sizeofExecDetails)
-	if rs.CommitDetail != nil {
-		rs.respSize += int64(sizeofCommitDetails)
+	if rs.detail != nil {
+		rs.respSize += int64(sizeofExecDetails)
+		if rs.detail.CommitDetail != nil {
+			rs.respSize += int64(sizeofCommitDetails)
+		}
 	}
 	if rs.pbResp != nil {
 		// Using a approximate size since it's hard to get a accurate value.
@@ -576,7 +578,7 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.Logger(context.Background()).Error("copIteratorWork meet panic",
+			logutil.BgLogger().Error("copIteratorWork meet panic",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: errors.Errorf("%v", r)}
@@ -684,7 +686,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			}
 		}
 	}
-	logutil.Logger(context.Background()).Info(logStr)
+	logutil.BgLogger().Info(logStr)
 }
 
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
@@ -720,7 +722,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
-			logutil.Logger(context.Background()).Info("stream recv timeout", zap.Error(err))
+			logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
 		lastRange = resp.Range
@@ -740,7 +742,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		logutil.Logger(context.Background()).Debug("coprocessor encounters",
+		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
 		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
@@ -755,7 +757,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
-		logutil.Logger(context.Background()).Warn("other error",
+		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.id),
 			zap.String("storeAddr", task.storeAddr),
@@ -768,19 +770,22 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	} else {
 		resp.startKey = task.ranges.at(0).StartKey
 	}
-	resp.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	if resp.detail == nil {
+		resp.detail = new(execdetails.ExecDetails)
+	}
+	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
 	if rpcCtx != nil {
-		resp.CalleeAddress = rpcCtx.Addr
+		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if handleTime := pbDetails.HandleTime; handleTime != nil {
-			resp.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
-			resp.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
+			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
+			resp.detail.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				resp.TotalKeys += scanDetail.Write.Total
-				resp.ProcessedKeys += scanDetail.Write.Processed
+				resp.detail.TotalKeys += scanDetail.Write.Total
+				resp.detail.ProcessedKeys += scanDetail.Write.Processed
 			}
 		}
 	}
