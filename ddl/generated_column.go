@@ -41,7 +41,7 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 					return errors.Trace(err)
 				}
 			} else {
-				err := errBadField.GenWithStackByArgs(depCol, "generated column function")
+				err := ErrBadField.GenWithStackByArgs(depCol, "generated column function")
 				return errors.Trace(err)
 			}
 		}
@@ -49,13 +49,16 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 	return nil
 }
 
-// columnNamesCover checks whether dependColNames is covered by normalColNames or not.
-// it's only for alter table add column because before alter, we can make sure that all
-// columns in table are verified already.
-func columnNamesCover(normalColNames map[string]struct{}, dependColNames map[string]struct{}) error {
-	for name := range dependColNames {
-		if _, ok := normalColNames[name]; !ok {
-			return errBadField.GenWithStackByArgs(name, "generated column function")
+// checkDependedColExist ensure all depended columns exist.
+//
+// NOTE: this will MODIFY parameter `dependCols`.
+func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column) error {
+	for _, col := range cols {
+		delete(dependCols, col.Name.L)
+	}
+	if len(dependCols) != 0 {
+		for arbitraryCol := range dependCols {
+			return ErrBadField.GenWithStackByArgs(arbitraryCol, "generated column function")
 		}
 	}
 	return nil

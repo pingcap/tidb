@@ -22,6 +22,9 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -152,9 +155,12 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 		Time:    time.Now(),
 		State:   1,
 		Info:    "test",
+		StmtCtx: &stmtctx.StatementContext{
+			MemTracker: memory.NewTracker(stringutil.StringerStr(""), -1),
+		},
 	}
-	row := pi.ToRow(false)
-	row2 := pi.ToRow(true)
+	row := pi.ToRowForShow(false)
+	row2 := pi.ToRowForShow(true)
 	c.Assert(row, DeepEquals, row2)
 	c.Assert(len(row), Equals, 8)
 	c.Assert(row[0], Equals, pi.ID)
@@ -165,6 +171,10 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 	c.Assert(row[5], Equals, uint64(0))
 	c.Assert(row[6], Equals, "1")
 	c.Assert(row[7], Equals, "test")
+
+	row3 := pi.ToRow()
+	c.Assert(row3[:8], DeepEquals, row)
+	c.Assert(row3[8], Equals, int64(0))
 
 	// Test for RandomBuf.
 	buf := RandomBuf(5)

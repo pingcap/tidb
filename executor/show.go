@@ -81,7 +81,7 @@ type ShowExec struct {
 func (e *ShowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
-		e.result = e.newFirstChunk()
+		e.result = newFirstChunk(e)
 		err := e.fetchAll()
 		if err != nil {
 			return errors.Trace(err)
@@ -273,7 +273,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 		if !hasProcessPriv && pi.User != loginUser.Username {
 			continue
 		}
-		row := pi.ToRow(e.Full)
+		row := pi.ToRowForShow(e.Full)
 		e.appendRow(row)
 	}
 	return nil

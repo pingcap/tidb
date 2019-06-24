@@ -61,7 +61,7 @@ func (e *DDLExec) toErr(err error) error {
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	txn, err1 := e.ctx.Txn(true)
 	if err1 != nil {
-		logutil.Logger(context.Background()).Error("active txn failed", zap.Error(err))
+		logutil.BgLogger().Error("active txn failed", zap.Error(err))
 		return err1
 	}
 	schemaInfoErr := checker.Check(txn.StartTS())
@@ -109,6 +109,10 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 		err = e.executeRenameTable(x)
 	case *ast.TruncateTableStmt:
 		err = e.executeTruncateTable(x)
+	case *ast.LockTablesStmt:
+		err = e.executeLockTables(x)
+	case *ast.UnlockTablesStmt:
+		err = e.executeUnlockTables(x)
 	}
 	if err != nil {
 		return e.toErr(err)
@@ -262,7 +266,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 		}
 
 		if config.CheckTableBeforeDrop {
-			logutil.Logger(context.Background()).Warn("admin check table before drop",
+			logutil.BgLogger().Warn("admin check table before drop",
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),
 			)
@@ -432,4 +436,19 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 		return nil, nil, errors.Errorf("Can't found drop table: %v in ddl history jobs", s.Table.Name)
 	}
 	return job, tblInfo, nil
+}
+
+func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
+}
+
+func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	lockedTables := e.ctx.GetAllTableLocks()
+	return domain.GetDomain(e.ctx).DDL().UnlockTables(e.ctx, lockedTables)
 }
