@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -154,10 +153,6 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  +------------------------------+       +----------------------+
 //
 func (e *ProjectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
 		return e.unParallelExecute(ctx, req.Chunk)
