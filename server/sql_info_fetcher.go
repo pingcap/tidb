@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -87,7 +88,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	timeoutString := r.FormValue("timeout")
 	curDB := strings.ToLower(r.FormValue("current_db"))
 	if curDB != "" {
-		_, err = sh.s.Execute(reqCtx, "use %v" + curDB)
+		_, err = sh.s.Execute(reqCtx, "use %v"+curDB)
 		if err != nil {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("use database %v failed, err: %v", curDB, err))
 			return
@@ -314,12 +315,13 @@ func (sh *sqlInfoFetcher) extractTableNames(sql, curDB string) (map[tableNamePai
 	if err != nil {
 		return nil, err
 	}
+	if len(stmts) > 1 {
+		return nil, errors.Errorf("Only 1 statement is allowed")
+	}
 	extractor := &tableNameExtractor{
 		curDB: curDB,
 		names: make(map[tableNamePair]struct{}),
 	}
-	for _, stmt := range stmts {
-		stmt.Accept(extractor)
-	}
+	stmts[0].Accept(extractor)
 	return extractor.names, nil
 }
