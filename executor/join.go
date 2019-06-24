@@ -376,7 +376,7 @@ func (e *HashJoinExec) doInnerPartition(workerID int) {
 // preAlloc4InnerParts evaluates partRowPtr and pre-alloc the memory space
 // for every inner row to help re-order the inner relation.
 // TODO: we need to evaluate the skewness for the partitions size, if the
-// skewness exceeds a thresexecutor/join.gohold, we do not use partition phase.
+// skewness exceeds a threshold, we do not use partition phase.
 func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
 	var hasNull bool
 	keyBuf := make([]byte, 0, 64)
