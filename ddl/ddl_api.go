@@ -664,11 +664,11 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 		if setOnUpdateNow {
 			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
 				context.Background()
-				logutil.Logger(ddlLogCtx).Error("set default value failed", zap.Error(err))
+				logutil.BgLogger().Error("set default value failed", zap.Error(err))
 			}
 		} else {
 			if err := c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp)); err != nil {
-				logutil.Logger(ddlLogCtx).Error("set default value failed", zap.Error(err))
+				logutil.BgLogger().Error("set default value failed", zap.Error(err))
 			}
 		}
 	}

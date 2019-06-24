@@ -15,7 +15,6 @@ package infoschema
 
 import (
 	"bufio"
-	"context"
 	"io"
 	"os"
 	"strconv"
@@ -97,7 +96,7 @@ func parseSlowLogDataFromFile(tz *time.Location, filePath string, offset int64, 
 	}
 	defer func() {
 		if err = file.Close(); err != nil {
-			logutil.Logger(context.Background()).Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
+			logutil.BgLogger().Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
 		}
 	}()
 
