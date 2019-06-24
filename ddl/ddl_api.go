@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
@@ -42,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -468,6 +469,11 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			},
 		}
 
+		var sb strings.Builder
+		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+			format.RestoreSpacesAroundBinaryOperation
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+
 		for _, v := range colDef.Options {
 			switch v.Tp {
 			case ast.ColumnOptionNotNull:
@@ -509,9 +515,12 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					return nil, nil, errors.Trace(err)
 				}
 			case ast.ColumnOptionGenerated:
-				var buf = bytes.NewBuffer([]byte{})
-				v.Expr.Format(buf)
-				col.GeneratedExprString = buf.String()
+				sb.Reset()
+				err = v.Expr.Restore(restoreCtx)
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+				}
+				col.GeneratedExprString = sb.String()
 				col.GeneratedStored = v.Stored
 				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
@@ -2401,6 +2410,12 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	if len(options) == 0 {
 		return nil
 	}
+
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		format.RestoreSpacesAroundBinaryOperation
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+
 	var hasDefaultValue, setOnUpdateNow bool
 	var err error
 	for _, opt := range options {
@@ -2435,9 +2450,12 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
 		case ast.ColumnOptionGenerated:
-			var buf = bytes.NewBuffer([]byte{})
-			opt.Expr.Format(buf)
-			col.GeneratedExprString = buf.String()
+			sb.Reset()
+			err = opt.Expr.Restore(restoreCtx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			col.GeneratedExprString = sb.String()
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
 			col.GeneratedExpr = opt.Expr
