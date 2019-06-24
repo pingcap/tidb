@@ -980,9 +980,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	executorCountHashJoinExec.Inc()
-	if e.ctx.GetSessionVars().EnableRadixJoin {
-		return &RadixHashJoinExec{HashJoinExec: e}
-	}
 	return e
 }
 
@@ -1002,7 +999,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	//
 	// 1. If all the aggregation functions are FIRST_ROW, we do not need to set the defaultVal for them:
 	// e.g.
-	// mysql> select distinct a, b from t;
+	// mysql> selexecutor/join.goect distinct a, b from t;
 	// 0 rows in set (0.00 sec)
 	//
 	// 2. If there exists group by items, we do not need to set the defaultVal for them either:

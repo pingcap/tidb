@@ -130,7 +130,7 @@ func prepareOneColChildExec(sctx sessionctx.Context, rowCount int) Executor {
 	return exec
 }
 
-func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *RadixHashJoinExec {
+func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *HashJoinExec {
 	childExec0 := prepareOneColChildExec(sctx, rowCount)
 	childExec1 := prepareOneColChildExec(sctx, rowCount)
 
@@ -149,7 +149,7 @@ func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *RadixHashJo
 		innerExec:      childExec0,
 		outerExec:      childExec1,
 	}
-	return &RadixHashJoinExec{HashJoinExec: hashJoinExec}
+	return hashJoinExec
 }
 
 func (s *pkgTestSuite) TestRadixPartition(c *C) {
@@ -280,7 +280,7 @@ func (s *pkgTestSuite) TestParallelBuildHashTable4RadixJoin(c *C) {
 	err := hashJoinExec.Open(ctx)
 	c.Assert(err, IsNil)
 
-	hashJoinExec.partitionInnerAndBuildHashTables(ctx)
+	hashJoinExec.fetchInnerAndBuildHashTable(ctx)
 	innerParts := hashJoinExec.innerParts
 	c.Assert(len(hashJoinExec.hashTables), Equals, len(innerParts))
 	for i := 0; i < len(innerParts); i++ {

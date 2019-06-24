@@ -61,20 +61,6 @@ type RadixHashJoinExec struct {
 	hashTables []*mvmap.MVMap
 }
 
-// partition stores the sub-relations of inner relation and outer relation after
-// partition phase. Every partition can be fully stored in L2 cache thus can
-// reduce the cache miss ratio when building and probing the hash table.
-type partition = *chunk.Chunk
-
-// partRowPtr stores the actual index in `innerParts` or `outerParts`.
-type partRowPtr struct {
-	partitionIdx uint32
-	rowIdx       uint32
-}
-
-// partPtr4NullKey indicates a partition pointer which points to a row with null-join-key.
-var partPtr4NullKey = partRowPtr{math.MaxUint32, math.MaxUint32}
-
 // Next implements the Executor Next interface.
 // radix hash join constructs the result following these steps:
 // step 1. fetch data from inner child
