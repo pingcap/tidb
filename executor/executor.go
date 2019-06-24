@@ -183,6 +183,10 @@ type Executor interface {
 // Next is a wrapper function on e.Next(), it handles some common codes.
 func Next(ctx context.Context, e Executor, req *chunk.RecordBatch) error {
 	base := e.base()
+	if base.runtimeStats != nil {
+		start := time.Now()
+		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
+	}
 	sessVars := base.ctx.GetSessionVars()
 	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
 		return ErrQueryInterrupted
@@ -190,10 +194,6 @@ func Next(ctx context.Context, e Executor, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-	}
-	if base.runtimeStats != nil {
-		start := time.Now()
-		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	return e.Next(ctx, req)
 }
