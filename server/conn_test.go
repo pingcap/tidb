@@ -19,9 +19,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"time"
 	"io"
-
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"

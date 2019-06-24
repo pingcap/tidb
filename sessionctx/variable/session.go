@@ -697,7 +697,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
 	case MaxExecutionTime:
-		timeoutMS := tidbOptInt64(val, 0)
+		timeoutMS := tidbOptPositiveInt32(val, 0)
 		if timeoutMS < 0 {
 			timeoutMS = 0
 		}
