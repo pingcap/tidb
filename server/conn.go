@@ -845,7 +845,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastCmd = string(hack.String(data))
 	token := cc.server.getToken()
 	defer func() {
-		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
+		// if handleChangeUser failed, cc.ctx may be nil
+		if cc.ctx != nil {
+			cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
+		}
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
@@ -1428,7 +1431,6 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context error", zap.Error(err))
 	}
-
 	err = cc.openSessionAndDoAuth(pass)
 	if err != nil {
 		return err
