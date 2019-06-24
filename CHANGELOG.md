@@ -1,6 +1,76 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.1.13] 2019-06-21
+* Add a feature to use `SHARD_ROW_ID_BITS` to scatter row IDs when the column contains an `AUTO_INCREMENT` attribute to relieve the hotspot issue [#10788](https://github.com/pingcap/tidb/pull/10788)
+* Optimize the lifetime of invalid DDL metadata to speed up recovering the normal execution of DDL operations after upgrading the TiDB cluster [#10789](https://github.com/pingcap/tidb/pull/10789)
+* Fix the OOM issue in high concurrent scenarios caused by the failure to quickly release Coprocessor resources, resulted from the `execdetails.ExecDetails` pointer [#10833](https://github.com/pingcap/tidb/pull/10833)
+* Add the `update-stats` configuration item to control whether to update statistics [#10772](https://github.com/pingcap/tidb/pull/10772)
+* Add the following TiDB-specific syntax to support Region presplit to solve the hotspot issue:
+  - Add the `PRE_SPLIT_REGIONS` table option  [#10863](https://github.com/pingcap/tidb/pull/10863)
+  - Add the `SPLIT TABLE table_name INDEX index_name` syntax [#10865](https://github.com/pingcap/tidb/pull/10865)
+  - Add the `SPLIT TABLE [table_name] BETWEEN (min_value...) AND (max_value...) REGIONS [region_num]` syntax [#10882](https://github.com/pingcap/tidb/pull/10882)
+* Fix the panic issue caused by the `KILL` syntax in some cases [#10879](https://github.com/pingcap/tidb/pull/10879)
+* Improve the compatibility with MySQL for `ADD_DATE` in some cases [#10718](https://github.com/pingcap/tidb/pull/10718)
+* Fix the wrong estimation for the selectivity rate of the inner table selection in index join [#10856](https://github.com/pingcap/tidb/pull/10856)
+
+## [2.1.12] 2019-06-13
+* Fix the issue caused by unmatched data types when using the index query feedback [#10755](https://github.com/pingcap/tidb/pull/10755)
+* Fix the issue that the blob column is changed to the text column caused by charset altering in some cases [#10745](https://github.com/pingcap/tidb/pull/10745)
+* Fix the issue that the `GRANT` operation in the transaction mistakenly reports “Duplicate Entry” in some cases [#10739](https://github.com/pingcap/tidb/pull/10739)
+* Improve the compatibility with MySQL of the following features
+    - The `DAYNAME` function [#10732](https://github.com/pingcap/tidb/pull/10732)
+    - The `MONTHNAME` function [#10733](https://github.com/pingcap/tidb/pull/10733)
+    - Support the 0 value for the `EXTRACT` function when processing `MONTH` [#10702](https://github.com/pingcap/tidb/pull/10702)
+    - The `DECIMAL` type can be converted to `TIMESTAMP` or  `DATETIME` [#10734](https://github.com/pingcap/tidb/pull/10734)
+* Change the column charset while changing the table charset [#10714](https://github.com/pingcap/tidb/pull/10714)
+* Fix the overflow issue when converting a decimal to a float in some cases [#10730](https://github.com/pingcap/tidb/pull/10730)
+* Fix the issue that some extremely large messages report the “grpc: received message larger than max” error caused by inconsistent maximum sizes of messages sent/received by gRPC of TiDB and TiKV [#10710](https://github.com/pingcap/tidb/pull/10710)
+* Fix the panic issue caused by `ORDER BY` not filtering NULL in some cases [#10488](https://github.com/pingcap/tidb/pull/10488)
+* Fix the issue that values returned by the `UUID` function might be duplicate when multiple nodes exist [#10711](https://github.com/pingcap/tidb/pull/10711) 
+* Change the value returned by `CAST(-num as datetime)` from `error` to NULL [#10703](https://github.com/pingcap/tidb/pull/10703) 
+* Fix the issue that an unsigned histogram meets signed ranges in some cases [#10695](https://github.com/pingcap/tidb/pull/10695)
+* Fix the issue that an error is reported mistakenly for reading data when the statistics feedback meets the bigint unsigned primary key [#10307](https://github.com/pingcap/tidb/pull/10307)
+* Fix the issue that the result of `Show Create Table` for partitioned tables is not correctly displayed in some cases [#10690](https://github.com/pingcap/tidb/pull/10690)
+* Fix the issue that the calculation result of the `GROUP_CONCAT` aggregate function is not correct for some correlated subqueries [#10670](https://github.com/pingcap/tidb/pull/10670)
+* Fix the issue that the result of `Show Create Table` for partitioned tables is not correctly displayed in some cases [#10690](https://github.com/pingcap/tidb/pull/10690)
+
+## [2.1.11] 2019-05-31
+
+* Fix the issue that incorrect schema is used for `delete from join` [#10595](https://github.com/pingcap/tidb/pull/10595)
+* Fix the issue that the built-in `CONVERT()` may return incorrect field type [#10263](https://github.com/pingcap/tidb/pull/10263)
+* Merge non-overlapped feedback when updating bucket count [#10569](https://github.com/pingcap/tidb/pull/10569)
+* Fix calculation errors of `unix_timestamp()-unix_timestamp(now())` [#10491](https://github.com/pingcap/tidb/pull/10491)
+* Fix the incompatibility issue of `period_diff` with MySQL 8.0 [#10501](https://github.com/pingcap/tidb/pull/10501)
+* Skip `Virtual Column` when collecting statistics to avoid exceptions [#10628](https://github.com/pingcap/tidb/pull/10628)
+* Support the `SHOW OPEN TABLES` statement [#10374](https://github.com/pingcap/tidb/pull/10374)
+* Fix the issue that goroutine leak may happen in some cases [#10656](https://github.com/pingcap/tidb/pull/10656)
+* Fix the issue that setting the `tidb_snapshot` variable in some cases may cause incorrect parsing of time format [#10637](https://github.com/pingcap/tidb/pull/10637)
+
+## [2.1.10] 2019-05-21
+* Fix the issue that some abnormalities cause incorrect table schema when using `tidb_snapshot` to read the history data [#10359](https://github.com/pingcap/tidb/pull/10359)
+* Fix the issue that the `NOT` function causes wrong read results in some cases [#10363](https://github.com/pingcap/tidb/pull/10363)
+* Fix the wrong behavior of `Generated Column` in the `Replace` or `Insert on duplicate update` statement [#10385](https://github.com/pingcap/tidb/pull/10385)
+* Fix a bug of the `BETWEEN` function in the `DATE`/`DATETIME` comparison [#10407](https://github.com/pingcap/tidb/pull/10407)
+* Fix the issue that a single line of a slow log that is too long causes an error report when using the `SLOW_QUERY` table to query a slow log [#10412](https://github.com/pingcap/tidb/pull/10412)
+* Fix the issue that the result of `DATETIME ` plus `INTERVAL` is not the same with that of MySQL in some cases [#10416](https://github.com/pingcap/tidb/pull/10416), [#10418](https://github.com/pingcap/tidb/pull/10418)
+* Add the check for the invalid time of February in a leap year [#10417](https://github.com/pingcap/tidb/pull/10417)
+* Execute the internal initialization operation limitation only in the DDL owner to avoid a large number of conflict error reports when initializing the cluster [#10426](https://github.com/pingcap/tidb/pull/10426)
+* Fix the issue that `DESC` is incompatible with MySQL when the default value of the output timestamp column is `default current_timestamp on update current_timestamp` [#10337](https://github.com/pingcap/tidb/issues/10337) 
+* Fix the issue that an error occurs during the privilege check in the `Update` statement [#10439](https://github.com/pingcap/tidb/pull/10439)
+* Fix the issue that wrong calculation of `RANGE` causes a wrong result in the `CHAR` column in some cases [#10455](https://github.com/pingcap/tidb/pull/10455)
+* Fix the issue that the data might be overwritten after decreasing `SHARD_ROW_ID_BITS` [#9868](https://github.com/pingcap/tidb/pull/9868)
+* Fix the issue that `ORDER BY RAND()` does not return random numbers [#10064](https://github.com/pingcap/tidb/pull/10064)
+* Prohibit the `ALTER` statement modifying the precision of decimals [#10458](https://github.com/pingcap/tidb/pull/10458) 
+* Fix the compatibility issue of the `TIME_FORMAT` function with MySQL [#10474](https://github.com/pingcap/tidb/pull/10474)
+* Check the parameter validity of `PERIOD_ADD` [#10430](https://github.com/pingcap/tidb/pull/10430)
+* Fix the issue that the behavior of the invalid `YEAR` string in TiDB is incompatible with that in MySQL [#10493](https://github.com/pingcap/tidb/pull/10493)
+* Support the `ALTER DATABASE` syntax [#10503](https://github.com/pingcap/tidb/pull/10503)
+* Fix the issue that the `SLOW_QUERY` memory engine reports an error when no  `;` exists in the slow query statement [#10536](https://github.com/pingcap/tidb/pull/10536)
+* Fix the issue that the `Add index` operation in partitioned tables cannot be canceled in some cases [#10533](https://github.com/pingcap/tidb/pull/10533)
+* Fix the issue that the OOM panic cannot be recovered in some cases [#10545](https://github.com/pingcap/tidb/pull/10545)
+* Improve the security of the DDL operation rewriting the table metadata [#10547](https://github.com/pingcap/tidb/pull/10547)
+
 ## [2.1.9] 2019-05-06
 * Fix compatibility of the `MAKETIME` function when unsigned type overflows [#10089](https://github.com/pingcap/tidb/pull/10089)
 * Fix the stack overflow caused by constant folding in some cases [#10189](https://github.com/pingcap/tidb/pull/10189)

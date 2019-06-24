@@ -45,7 +45,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -107,13 +106,6 @@ type clientConn struct {
 	peerHost     string            // peer host
 	peerPort     string            // peer port
 	lastCode     uint16            // last error code
-
-	// mu is used for cancelling the execution of current transaction.
-	mu struct {
-		sync.RWMutex
-		cancelFunc context.CancelFunc
-		resultSets []ResultSet
-	}
 }
 
 func (cc *clientConn) String() string {
@@ -621,22 +613,29 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
 	ctx = opentracing.ContextWithSpan(ctx, span)
 
-	ctx1, cancelFunc := context.WithCancel(ctx)
-	cc.mu.Lock()
-	cc.mu.cancelFunc = cancelFunc
-	cc.mu.Unlock()
-
+	t := time.Now()
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = hack.String(data)
 	token := cc.server.getToken()
 	defer func() {
+		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
 
+	vars := cc.ctx.GetSessionVars()
+	atomic.StoreUint32(&vars.Killed, 0)
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
+	}
+
+	switch cmd {
+	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
+		mysql.ComSetOption, mysql.ComChangeUser:
+		cc.ctx.SetProcessInfo("", t, cmd)
+	case mysql.ComInitDB:
+		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd)
 	}
 
 	switch cmd {
@@ -655,11 +654,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
-		return cc.handleQuery(ctx1, hack.String(data))
+		return cc.handleQuery(ctx, hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		if err := cc.useDB(ctx1, hack.String(data)); err != nil {
+		if err := cc.useDB(ctx, hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
@@ -668,9 +667,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
-		return cc.handleStmtExecute(ctx1, data)
+		return cc.handleStmtExecute(ctx, data)
 	case mysql.ComStmtFetch:
-		return cc.handleStmtFetch(ctx1, data)
+		return cc.handleStmtFetch(ctx, data)
 	case mysql.ComStmtClose:
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
@@ -680,7 +679,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	case mysql.ComSetOption:
 		return cc.handleSetOption(data)
 	case mysql.ComChangeUser:
-		return cc.handleChangeUser(ctx1, data)
+		return cc.handleChangeUser(ctx, data)
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
 	}
@@ -921,15 +920,11 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
-	cc.mu.Lock()
-	cc.mu.resultSets = rs
 	status := atomic.LoadInt32(&cc.status)
 	if status == connStatusShutdown || status == connStatusWaitShutdown {
-		cc.mu.Unlock()
 		killConn(cc)
 		return errors.New("killed by another connection")
 	}
-	cc.mu.Unlock()
 	if rs != nil {
 		if len(rs) == 1 {
 			err = cc.writeResultset(ctx, rs[0], false, 0, 0)

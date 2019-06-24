@@ -46,17 +46,16 @@ import (
 
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
-	SetProcessInfo(string)
+	SetProcessInfo(string, time.Time, byte)
 }
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
-	fields      []*ast.ResultField
-	executor    Executor
-	stmt        *ExecStmt
-	processinfo processinfoSetter
-	lastErr     error
-	txnStartTS  uint64
+	fields     []*ast.ResultField
+	executor   Executor
+	stmt       *ExecStmt
+	lastErr    error
+	txnStartTS uint64
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -98,7 +97,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	err := a.executor.Next(ctx, chk)
+	err := Next(ctx, a.executor, chk)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)
@@ -124,9 +123,6 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
-	if a.processinfo != nil {
-		a.processinfo.SetProcessInfo("")
-	}
 	a.stmt.logAudit()
 	return errors.Trace(err)
 }
@@ -226,6 +222,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
+	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
+	cmd := byte(cmd32)
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
@@ -237,17 +235,18 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 			}
 		}
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql)
+		pi.SetProcessInfo(sql, time.Now(), cmd)
 		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
 	}
+
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
-		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
+		return a.handleNoDelayExecutor(ctx, sctx, e)
 	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
-		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
+		return a.handleNoDelayExecutor(ctx, sctx, e)
 	}
 
 	var txnStartTS uint64
@@ -259,14 +258,13 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		txnStartTS = txn.StartTS()
 	}
 	return &recordSet{
-		executor:    e,
-		stmt:        a,
-		processinfo: pi,
-		txnStartTS:  txnStartTS,
+		executor:   e,
+		stmt:       a,
+		txnStartTS: txnStartTS,
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor, pi processinfoSetter) (sqlexec.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -279,14 +277,11 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 	var err error
 	defer func() {
-		if pi != nil {
-			pi.SetProcessInfo("")
-		}
 		terror.Log(errors.Trace(e.Close()))
 		a.logAudit()
 	}()
 
-	err = e.Next(ctx, e.newFirstChunk())
+	err = Next(ctx, e, e.newFirstChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

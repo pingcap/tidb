@@ -78,7 +78,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
 
 	for {
-		if err := stmtExec.Next(ctx, stmtExecChk); err != nil {
+		if err := Next(ctx, stmtExec, stmtExecChk); err != nil {
 			return errors.Trace(err)
 		}
 		if stmtExecChk.NumRows() == 0 {

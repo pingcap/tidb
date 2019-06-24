@@ -156,9 +156,9 @@ Projection_9	0.00	root	test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt
     ├─TableReader_38	0.00	root	data:Selection_37
     │ └─Selection_37	0.00	cop	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592)
     │   └─TableScan_36	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
-    └─IndexLookUp_17	3.33	root	
+    └─IndexLookUp_17	0.00	root	
       ├─IndexScan_14	10.00	cop	table:rr, index:aid, dic, range: decided by [test.dt.aid test.dt.dic], keep order:false, stats:pseudo
-      └─Selection_16	3.33	cop	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
+      └─Selection_16	0.00	cop	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
         └─TableScan_15	10.00	cop	table:rr, keep order:false, stats:pseudo
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	count	task	operator info

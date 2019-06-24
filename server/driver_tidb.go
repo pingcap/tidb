@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -62,6 +63,7 @@ type TiDBStatement struct {
 	paramsType  []byte
 	ctx         *TiDBContext
 	rs          ResultSet
+	sql         string
 }
 
 // ID implements PreparedStatement ID method.
@@ -210,6 +212,11 @@ func (tc *TiDBContext) CommitTxn(ctx context.Context) error {
 	return tc.session.CommitTxn(ctx)
 }
 
+// SetProcessInfo implements QueryCtx SetProcessInfo method.
+func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte) {
+	tc.session.SetProcessInfo(sql, t, command)
+}
+
 // RollbackTxn implements QueryCtx RollbackTxn method.
 func (tc *TiDBContext) RollbackTxn() error {
 	return tc.session.RollbackTxn(context.TODO())
@@ -303,6 +310,7 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 		return
 	}
 	stmt := &TiDBStatement{
+		sql:         sql,
 		id:          stmtID,
 		numParams:   paramCount,
 		boundParams: make([][]byte, paramCount),
@@ -328,14 +336,14 @@ func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 	return tc.session.ShowProcess()
 }
 
-// GetSessionVars return SessionVars.
-func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
-	return tc.session.GetSessionVars()
-}
-
 // SetCommandValue implements QueryCtx SetCommandValue method.
 func (tc *TiDBContext) SetCommandValue(command byte) {
 	tc.session.SetCommandValue(command)
+}
+
+// GetSessionVars return SessionVars.
+func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
+	return tc.session.GetSessionVars()
 }
 
 type tidbResultSet struct {
