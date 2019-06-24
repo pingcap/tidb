@@ -466,6 +466,11 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		}
 	}
 	txnCtx.SetForUpdateTS(newForUpdateTS)
+	txn, err := a.Ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	txn.SetOption(kv.SnapshotTS, newForUpdateTS)
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
