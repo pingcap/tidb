@@ -99,7 +99,7 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 		case DecorrJitter:
 			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
 		}
-		logutil.Logger(context.Background()).Debug("backoff",
+		logutil.BgLogger().Debug("backoff",
 			zap.Int("base", base),
 			zap.Int("sleep", sleep))
 
@@ -268,7 +268,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 // and never sleep more than maxSleepMs for each sleep.
 func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err error) error {
 	if strings.Contains(err.Error(), mismatchClusterID) {
-		logutil.Logger(context.Background()).Fatal("critical error", zap.Error(err))
+		logutil.BgLogger().Fatal("critical error", zap.Error(err))
 	}
 	select {
 	case <-b.ctx.Done():
@@ -294,7 +294,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
 		startTs = ts
 	}
-	logutil.Logger(context.Background()).Debug("retry later",
+	logutil.BgLogger().Debug("retry later",
 		zap.Error(err),
 		zap.Int("totalSleep", b.totalSleep),
 		zap.Int("maxSleep", b.maxSleep),
@@ -310,7 +310,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 				errMsg += "\n" + err.Error()
 			}
 		}
-		logutil.Logger(context.Background()).Warn(errMsg)
+		logutil.BgLogger().Warn(errMsg)
 		// Use the first backoff type to generate a MySQL error.
 		return b.types[0].TError()
 	}

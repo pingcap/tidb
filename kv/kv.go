@@ -47,6 +47,8 @@ const (
 	KeyOnly
 	// Pessimistic is defined for pessimistic lock
 	Pessimistic
+	// SnapshotTS is defined to set snapshot ts.
+	SnapshotTS
 )
 
 // Priority value for transaction priority.

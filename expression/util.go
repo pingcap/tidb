@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -677,7 +676,7 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 	con, ok := expr.(*Constant)
 	if !ok {
-		logutil.Logger(context.Background()).Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
+		logutil.BgLogger().Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
 		return 0, false, false
 	}
 	dt := con.Value
@@ -685,7 +684,7 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 		var err error
 		dt, err = con.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			logutil.Logger(context.Background()).Warn("eval deferred expr failed", zap.Error(err))
+			logutil.BgLogger().Warn("eval deferred expr failed", zap.Error(err))
 			return 0, false, false
 		}
 	}

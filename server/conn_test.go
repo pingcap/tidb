@@ -20,10 +20,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"time"
+	"io"
+
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -173,6 +176,159 @@ func (ts ConnTestSuite) TestInitialHandshake(c *C) {
 	expected.WriteString("mysql_native_password")                                                        // Authentication Plugin
 	expected.WriteByte(0x00)                                                                             // NULL
 	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
+}
+
+func (ts ConnTestSuite) TestDispatch(c *C) {
+	userData := append([]byte("root"), 0x0, 0x0)
+	userData = append(userData, []byte("test")...)
+	userData = append(userData, 0x0)
+
+	inputs := []struct {
+		com byte
+		in  []byte
+		err error
+		out []byte
+	}{
+		{
+			com: mysql.ComSleep,
+			in:  nil,
+			err: nil,
+			out: nil,
+		},
+		{
+			com: mysql.ComQuit,
+			in:  nil,
+			err: io.EOF,
+			out: nil,
+		},
+		{
+			com: mysql.ComQuery,
+			in:  []byte("do 1"),
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x0, 0x0, 0x00, 0x0},
+		},
+		{
+			com: mysql.ComInitDB,
+			in:  []byte("test"),
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComPing,
+			in:  nil,
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComStmtPrepare,
+			in:  []byte("select 1"),
+			err: nil,
+			out: []byte{
+				0xc, 0x0, 0x0, 0x3, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x18,
+				0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x1, 0x31, 0xc, 0x3f,
+				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x80, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x5, 0xfe,
+			},
+		},
+		{
+			com: mysql.ComStmtExecute,
+			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x1, 0x0},
+			err: nil,
+			out: []byte{
+				0x1, 0x0, 0x0, 0x6, 0x1, 0x18, 0x0, 0x0, 0x7, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
+				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x80, 0x0, 0x0, 0x0,
+				0x0, 0x1, 0x0, 0x0, 0x8, 0xfe,
+			},
+		},
+		{
+			com: mysql.ComStmtFetch,
+			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x1, 0x0, 0x0, 0x9, 0xfe},
+		},
+		{
+			com: mysql.ComStmtReset,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0xa, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComSetOption,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x1, 0x0, 0x0, 0xb, 0xfe},
+		},
+		{
+			com: mysql.ComStmtClose,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{},
+		},
+		{
+			com: mysql.ComFieldList,
+			in:  []byte("t"),
+			err: nil,
+			out: []byte{
+				0x26, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
+				0x1, 0x74, 0x1, 0x61, 0x1, 0x61, 0xc, 0x3f, 0x0, 0xb, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0,
+				0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0xd, 0xfe,
+			},
+		},
+		{
+			com: mysql.ComChangeUser,
+			in:  userData,
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0xe, 0x0, 0x0, 0x0},
+		},
+	}
+
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	_, err = session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	_, err = se.Execute(context.Background(), "create table test.t(a int)")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "insert into test.t values (1)")
+	c.Assert(err, IsNil)
+
+	var outBuffer bytes.Buffer
+	tidbdrv := NewTiDBDriver(store)
+	cfg := config.NewConfig()
+	cfg.Port = 4005
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	c.Assert(err, IsNil)
+
+	cc := &clientConn{
+		connectionID: 1,
+		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
+		server:       server,
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(&outBuffer),
+		},
+		collation: mysql.DefaultCollationID,
+		peerHost:  "localhost",
+		alloc:     arena.NewAllocator(512),
+		ctx:       tc,
+	}
+	for _, cs := range inputs {
+		inBytes := append([]byte{cs.com}, cs.in...)
+		err := cc.dispatch(context.Background(), inBytes)
+		c.Assert(err, Equals, cs.err)
+		if err == nil {
+			err = cc.flush()
+			c.Assert(err, IsNil)
+			c.Assert(outBuffer.Bytes(), DeepEquals, cs.out)
+		} else {
+			_ = cc.flush()
+		}
+		outBuffer.Reset()
+	}
 }
 
 func (ts ConnTestSuite) testGetSessionVarsWaitTimeout(c *C) {

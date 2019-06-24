@@ -17,7 +17,6 @@ import (
 	"context"
 	"math"
 	"sync"
-	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -86,10 +85,6 @@ var partPtr4NullKey = partRowPtr{math.MaxUint32, math.MaxUint32}
 // step 4. probe the corresponded sub-hash-table for every sub-outer-relation in
 // multiple join workers
 func (e *RadixHashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
-	}
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
 		go util.WithRecovery(func() { e.partitionInnerAndBuildHashTables(ctx) }, e.handleFetchInnerAndBuildHashTablePanic)
@@ -176,7 +171,7 @@ func (e *RadixHashJoinExec) preAlloc4InnerParts() (err error) {
 	if e.numNonEmptyPart < len(e.innerParts) {
 		numTotalPart := len(e.innerParts)
 		numEmptyPart := numTotalPart - e.numNonEmptyPart
-		logutil.Logger(context.Background()).Debug("empty partition in radix hash join", zap.Uint64("txnStartTS", e.ctx.GetSessionVars().TxnCtx.StartTS),
+		logutil.BgLogger().Debug("empty partition in radix hash join", zap.Uint64("txnStartTS", e.ctx.GetSessionVars().TxnCtx.StartTS),
 			zap.Int("numEmptyParts", numEmptyPart), zap.Int("numTotalParts", numTotalPart),
 			zap.Float64("emptyRatio", float64(numEmptyPart)/float64(numTotalPart)))
 	}

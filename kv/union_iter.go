@@ -14,8 +14,6 @@
 package kv
 
 import (
-	"context"
-
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -122,7 +120,7 @@ func (iter *UnionIter) updateCur() error {
 			} else {
 				// record from dirty comes first
 				if len(iter.dirtyIt.Value()) == 0 {
-					logutil.Logger(context.Background()).Warn("delete a record not exists?",
+					logutil.BgLogger().Warn("delete a record not exists?",
 						zap.Binary("key", iter.dirtyIt.Key()))
 					// jump over this deletion
 					if err := iter.dirtyNext(); err != nil {

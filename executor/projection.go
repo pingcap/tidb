@@ -17,9 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
-	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -155,15 +153,6 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  +------------------------------+       +----------------------+
 //
 func (e *ProjectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("projection.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
-	if e.runtimeStats != nil {
-		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
 		return e.unParallelExecute(ctx, req.Chunk)
@@ -380,7 +369,7 @@ func recoveryProjection(output *projectionOutput, r interface{}) {
 		output.done <- errors.Errorf("%v", r)
 	}
 	buf := util.GetStack()
-	logutil.Logger(context.Background()).Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.String("stack", string(buf)))
+	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.String("stack", string(buf)))
 }
 
 func readProjectionInput(inputCh <-chan *projectionInput, finishCh <-chan struct{}) *projectionInput {
