@@ -506,6 +506,7 @@ func createServer() {
 		xsvr, err = xserver.NewServer(xcfg)
 		terror.MustNil(err, closeDomainAndStorage)
 	}
+	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 }
 
 func serverShutdown(isgraceful bool) {

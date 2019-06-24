@@ -50,6 +50,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -219,6 +220,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
+	failpoint.Inject("FakeClientConn", func() {
+		if cc.pkt == nil {
+			failpoint.Return(nil)
+		}
+	})
 	return cc.pkt.writePacket(data)
 }
 
@@ -619,7 +625,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastCmd = hack.String(data)
 	token := cc.server.getToken()
 	defer func() {
-		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
+		// if handleChangeUser failed, cc.ctx may be nil
+		if cc.ctx != nil {
+			cc.ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
+		}
+
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
@@ -633,9 +643,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
-		cc.ctx.SetProcessInfo("", t, cmd)
+		cc.ctx.SetProcessInfo("", t, cmd, 0)
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd)
+		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd, 0)
 	}
 
 	switch cmd {
@@ -697,6 +707,11 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 }
 
 func (cc *clientConn) flush() error {
+	failpoint.Inject("FakeClientConn", func() {
+		if cc.pkt == nil {
+			failpoint.Return(nil)
+		}
+	})
 	return cc.pkt.flush()
 }
 

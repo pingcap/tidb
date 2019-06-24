@@ -105,7 +105,7 @@ type Server struct {
 	tlsConfig         *tls.Config
 	driver            IDriver
 	listener          net.Listener
-	rwlock            *sync.RWMutex
+	rwlock            sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
@@ -164,7 +164,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
-		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}

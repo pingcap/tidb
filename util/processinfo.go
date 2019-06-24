@@ -28,6 +28,9 @@ type ProcessInfo struct {
 	State   uint16
 	Info    string
 	Mem     int64
+	// MaxExecutionTime is the timeout for select statement, in milliseconds.
+	// If the query takes too long, kill it.
+	MaxExecutionTime uint64
 }
 
 // SessionManager is an interface for session manage. Show processlist and

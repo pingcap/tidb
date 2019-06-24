@@ -83,7 +83,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
-	SetProcessInfo(string, time.Time, byte)
+	SetProcessInfo(string, time.Time, byte, uint64)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -661,6 +661,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		return se, nil
@@ -674,6 +678,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 			return nil, errors.Trace(err)
 		}
 		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -783,7 +791,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
+func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
 	pi := util.ProcessInfo{
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
@@ -791,6 +799,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 		Time:    t,
 		State:   s.Status(),
 		Info:    sql,
+
+		MaxExecutionTime: maxExecutionTime,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
@@ -1232,6 +1242,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	timeutil.SetSystemTZ(tz)
 	dom := domain.GetDomain(se)
+	dom.InitExpensiveQueryHandle()
 
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(se)
