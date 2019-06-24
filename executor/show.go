@@ -1229,10 +1229,9 @@ func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTa
 			return nil, err
 		}
 		for i := range partitionRegions {
-			if _, ok := uniqueRegionID[partitionRegions[i].region.Id]; ok {
+			if exist := checkUniqueRegion(uniqueRegionID, partitionRegions[i].region.Id); exist {
 				continue
 			}
-			uniqueRegionID[partitionRegions[i].region.Id] = struct{}{}
 			regions = append(regions, partitionRegions[i])
 		}
 	}
@@ -1251,14 +1250,21 @@ func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTa
 			return nil, err
 		}
 		for i := range partitionRegions {
-			if _, ok := uniqueRegionID[partitionRegions[i].region.Id]; ok {
+			if exist := checkUniqueRegion(uniqueRegionID, partitionRegions[i].region.Id); exist {
 				continue
 			}
-			uniqueRegionID[partitionRegions[i].region.Id] = struct{}{}
 			regions = append(regions, partitionRegions[i])
 		}
 	}
 	return regions, nil
+}
+
+func checkUniqueRegion(uniqueRegionID map[uint64]struct{}, id uint64) (exist bool) {
+	if _, ok := uniqueRegionID[id]; ok {
+		return true
+	}
+	uniqueRegionID[id] = struct{}{}
+	return false
 }
 
 func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
