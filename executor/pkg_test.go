@@ -130,7 +130,7 @@ func prepareOneColChildExec(sctx sessionctx.Context, rowCount int) Executor {
 	return exec
 }
 
-func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *HashJoinExec {
+func prepare4RadixPartition(sctx sessionctx.Context, rowCount int) *HashJoinExec {
 	childExec0 := prepareOneColChildExec(sctx, rowCount)
 	childExec1 := prepareOneColChildExec(sctx, rowCount)
 
@@ -154,7 +154,7 @@ func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *HashJoinExe
 
 func (s *pkgTestSuite) TestRadixPartition(c *C) {
 	sctx := mock.NewContext()
-	hashJoinExec := buildExec4RadixHashJoin(sctx, 200)
+	hashJoinExec := prepare4RadixPartition(sctx, 200)
 	sv := sctx.GetSessionVars()
 	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
 	sv.L2CacheSize = 100
@@ -170,7 +170,14 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 	err := hashJoinExec.Open(ctx)
 	c.Assert(err, IsNil)
 
-	hashJoinExec.fetchInnerRows(ctx)
+	innerResultCh := make(chan *chunk.Chunk, 1)
+	doneCh := make(chan struct{})
+	go func() {
+		for range innerResultCh {
+		}
+	}()
+
+	hashJoinExec.fetchInnerRows(ctx, innerResultCh, doneCh)
 	c.Assert(hashJoinExec.innerResult.GetMemTracker().BytesConsumed(), Equals, int64(14400))
 
 	hashJoinExec.evalRadixBit()
@@ -241,7 +248,7 @@ func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
 
 func BenchmarkPartitionInnerRows(b *testing.B) {
 	sctx := mock.NewContext()
-	hashJoinExec := buildExec4RadixHashJoin(sctx, 1500000)
+	hashJoinExec := prepare4RadixPartition(sctx, 1500000)
 	sv := sctx.GetSessionVars()
 	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
 	sv.L2CacheSize = cpuid.CPU.Cache.L2
@@ -254,7 +261,14 @@ func BenchmarkPartitionInnerRows(b *testing.B) {
 
 	ctx := context.Background()
 	hashJoinExec.Open(ctx)
-	hashJoinExec.fetchInnerRows(ctx)
+	innerResultCh := make(chan *chunk.Chunk, 1)
+	doneCh := make(chan struct{})
+	go func() {
+		for range innerResultCh {
+		}
+	}()
+
+	hashJoinExec.fetchInnerRows(ctx, innerResultCh, doneCh)
 	hashJoinExec.evalRadixBit()
 	b.ResetTimer()
 	hashJoinExec.concurrency = 16
@@ -263,31 +277,5 @@ func BenchmarkPartitionInnerRows(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		hashJoinExec.partitionInnerRows()
 		hashJoinExec.innerRowPrts = hashJoinExec.innerRowPrts[:0]
-	}
-}
-
-func (s *pkgTestSuite) TestParallelBuildHashTable4RadixJoin(c *C) {
-	sctx := mock.NewContext()
-	hashJoinExec := buildExec4RadixHashJoin(sctx, 200)
-
-	sv := sctx.GetSessionVars()
-	sv.L2CacheSize = 100
-	sv.EnableRadixJoin = true
-	sv.MaxChunkSize = 100
-	sv.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("RootMemTracker"), variable.DefTiDBMemQuotaHashJoin)
-
-	ctx := context.Background()
-	err := hashJoinExec.Open(ctx)
-	c.Assert(err, IsNil)
-
-	hashJoinExec.fetchInnerAndBuildHashTable(ctx)
-	innerParts := hashJoinExec.innerParts
-	c.Assert(len(hashJoinExec.hashTables), Equals, len(innerParts))
-	for i := 0; i < len(innerParts); i++ {
-		if innerParts[i] == nil {
-			c.Assert(hashJoinExec.hashTables[i], IsNil)
-		} else {
-			c.Assert(hashJoinExec.hashTables[i], NotNil)
-		}
 	}
 }
