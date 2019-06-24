@@ -378,7 +378,8 @@ func (e *HashJoinExec) doInnerPartition(workerID int) {
 // TODO: we need to evaluate the skewness for the partitions size, if the
 // skewness exceeds a thresexecutor/join.gohold, we do not use partition phase.
 func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
-	hasNull, keyBuf := false, make([]byte, 0, 64)
+	var hasNull bool
+	keyBuf := make([]byte, 0, 64)
 	for chkIdx, chkNum := 0, e.innerResult.NumChunks(); chkIdx < chkNum; chkIdx++ {
 		chk := e.innerResult.GetChunk(chkIdx)
 		partPtrs := make([]partRowPtr, chk.NumRows())
