@@ -3,22 +3,16 @@ package executor
 import (
 	"context"
 	"fmt"
-	"testing"
-
-	"github.com/klauspost/cpuid"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/spaolacci/murmur3"
 )
 
 var _ = Suite(&pkgTestSuite{})
@@ -152,70 +146,6 @@ func prepare4RadixPartition(sctx sessionctx.Context, rowCount int) *HashJoinExec
 	return hashJoinExec
 }
 
-func (s *pkgTestSuite) TestRadixPartition(c *C) {
-	sctx := mock.NewContext()
-	hashJoinExec := prepare4RadixPartition(sctx, 200)
-	sv := sctx.GetSessionVars()
-	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
-	sv.L2CacheSize = 100
-	sv.EnableRadixJoin = true
-	// FIXME: use initChunkSize when join support initChunkSize.
-	sv.MaxChunkSize = 100
-	defer func() {
-		sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize = originL2CacheSize, originEnableRadixJoin, originMaxChunkSize
-	}()
-	sv.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("RootMemTracker"), variable.DefTiDBMemQuotaHashJoin)
-
-	ctx := context.Background()
-	err := hashJoinExec.Open(ctx)
-	c.Assert(err, IsNil)
-
-	innerResultCh := make(chan *chunk.Chunk, 1)
-	doneCh := make(chan struct{})
-	go func() {
-		for range innerResultCh {
-		}
-	}()
-
-	hashJoinExec.fetchInnerRows(ctx, innerResultCh, doneCh)
-	c.Assert(hashJoinExec.innerResult.GetMemTracker().BytesConsumed(), Equals, int64(14400))
-
-	hashJoinExec.evalRadixBit()
-	// ceil(log_2(14400/(100*3/4))) = 8
-	c.Assert(len(hashJoinExec.innerParts), Equals, 256)
-	radixBits := hashJoinExec.radixBits
-	c.Assert(radixBits, Equals, uint32(0x00ff))
-
-	err = hashJoinExec.partitionInnerRows()
-	c.Assert(err, IsNil)
-	totalRowCnt := 0
-	for i, part := range hashJoinExec.innerParts {
-		if part == nil {
-			continue
-		}
-		totalRowCnt += part.NumRows()
-		iter := chunk.NewIterator4Chunk(part)
-		keyBuf := make([]byte, 0, 64)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			hasNull, keyBuf, err := hashJoinExec.getJoinKeyFromChkRow(false, row, keyBuf)
-			c.Assert(err, IsNil)
-			c.Assert(hasNull, IsFalse)
-			joinHash := murmur3.Sum32(keyBuf)
-			c.Assert(joinHash&radixBits, Equals, uint32(i)&radixBits)
-		}
-	}
-	c.Assert(totalRowCnt, Equals, 200)
-
-	for _, ch := range hashJoinExec.outerResultChs {
-		close(ch)
-	}
-	for _, ch := range hashJoinExec.joinChkResourceCh {
-		close(ch)
-	}
-	err = hashJoinExec.Close()
-	c.Assert(err, IsNil)
-}
-
 func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
 	dbss := [][]string{
 		{},
@@ -243,39 +173,5 @@ func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
 		for j, db := range dbs {
 			c.Check(dbss[i][j], Equals, db)
 		}
-	}
-}
-
-func BenchmarkPartitionInnerRows(b *testing.B) {
-	sctx := mock.NewContext()
-	hashJoinExec := prepare4RadixPartition(sctx, 1500000)
-	sv := sctx.GetSessionVars()
-	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
-	sv.L2CacheSize = cpuid.CPU.Cache.L2
-	sv.EnableRadixJoin = true
-	sv.MaxChunkSize = 1024
-	defer func() {
-		sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize = originL2CacheSize, originEnableRadixJoin, originMaxChunkSize
-	}()
-	sv.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("RootMemTracker"), variable.DefTiDBMemQuotaHashJoin)
-
-	ctx := context.Background()
-	hashJoinExec.Open(ctx)
-	innerResultCh := make(chan *chunk.Chunk, 1)
-	doneCh := make(chan struct{})
-	go func() {
-		for range innerResultCh {
-		}
-	}()
-
-	hashJoinExec.fetchInnerRows(ctx, innerResultCh, doneCh)
-	hashJoinExec.evalRadixBit()
-	b.ResetTimer()
-	hashJoinExec.concurrency = 16
-	hashJoinExec.maxChunkSize = 1024
-	hashJoinExec.initCap = 1024
-	for i := 0; i < b.N; i++ {
-		hashJoinExec.partitionInnerRows()
-		hashJoinExec.innerRowPrts = hashJoinExec.innerRowPrts[:0]
 	}
 }
